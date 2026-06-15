@@ -11,6 +11,10 @@
 
 const nodemailer = require('nodemailer');
 
+// Railway no enruta IPv6 hacia Gmail (causa ENETUNREACH). Forzamos que toda
+// resolucion DNS del proceso priorice IPv4.
+try { require('node:dns').setDefaultResultOrder('ipv4first'); } catch (e) {}
+
 const GMAIL_USER = process.env.GMAIL_USER || '';
 const GMAIL_PASS = process.env.GMAIL_PASS || '';
 const CORREO_PRUEBA = process.env.CORREO_PRUEBA || '';
@@ -19,12 +23,10 @@ let transporter = null;
 if (GMAIL_USER && GMAIL_PASS) {
   transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // STARTTLS en 587
+    port: 465,
+    secure: true, // SSL directo (mas estable en Railway que STARTTLS 587)
     auth: { user: GMAIL_USER, pass: GMAIL_PASS },
-    // Railway no enruta IPv6: forzamos IPv4 para evitar ENETUNREACH.
-    family: 4,
-    tls: { servername: 'smtp.gmail.com' }
+    family: 4
   });
 }
 
