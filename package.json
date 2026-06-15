@@ -1,6 +1,6 @@
 {
   "name": "crm-tasatop-web",
-  "version": "1.1.0",
+  "version": "1.13.0",
   "description": "CRM comercial Tasatop - version web",
   "main": "index.js",
   "scripts": {
@@ -11,7 +11,6 @@
   "license": "ISC",
   "dependencies": {
     "express": "^5.2.1",
-    "node-cron": "^4.2.1",
     "nodemailer": "^9.0.0"
   },
   "engines": {
