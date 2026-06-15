@@ -21,7 +21,10 @@ if (GMAIL_USER && GMAIL_PASS) {
     host: 'smtp.gmail.com',
     port: 587,
     secure: false, // STARTTLS en 587
-    auth: { user: GMAIL_USER, pass: GMAIL_PASS }
+    auth: { user: GMAIL_USER, pass: GMAIL_PASS },
+    // Railway no enruta IPv6: forzamos IPv4 para evitar ENETUNREACH.
+    family: 4,
+    tls: { servername: 'smtp.gmail.com' }
   });
 }
 
