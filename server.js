@@ -12,6 +12,7 @@ const path = require('path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const L = require('./logic');
+const mailer = require('./mailer');
 
 const db = new DatabaseSync(path.join(__dirname, 'crm.db'));
 db.exec(`
@@ -299,6 +300,23 @@ app.put('/api/leads/asignar', soloAdmin, (req, res) => {
   let n = 0;
   codigos.forEach(c => { if (st.run(asesor, ahora, c).changes) n++; });
   auditar(req, 'asignar', codigos.length === 1 ? codigos[0] : `${n} leads`, 'Asignados a ' + asesor);
+
+  // Notificacion por correo a la GP (en modo prueba va a CORREO_PRUEBA).
+  // Correos por GP via env: CORREOS_GP='Mafer:mafer@...,Lourdes:lourdes@...'
+  if (mailer.activo()) {
+    const mapa = {};
+    (process.env.CORREOS_GP || '').split(',').forEach(par => {
+      const [nombre, mail] = par.split(':');
+      if (nombre && mail) mapa[nombre.trim()] = mail.trim();
+    });
+    const correoGP = mapa[asesor] || null;
+    // Enviar un correo por cada lead asignado (sin bloquear la respuesta)
+    codigos.forEach(c => {
+      const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(c);
+      if (lead) mailer.correoLeadAsignado(lead, correoGP).catch(() => {});
+    });
+  }
+
   res.json({ asignados: n, asesor });
 });
 
