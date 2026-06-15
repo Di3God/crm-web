@@ -47,7 +47,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     usuario TEXT UNIQUE NOT NULL,
     nombre TEXT NOT NULL,
-    rol TEXT NOT NULL CHECK (rol IN ('admin','gestora')),
+    rol TEXT NOT NULL CHECK (rol IN ('admin','jefa','gestora')),
     hash TEXT NOT NULL,
     sal TEXT NOT NULL,
     activo INTEGER DEFAULT 1
@@ -94,14 +94,15 @@ function crearUsuario(usuario, nombre, rol, clave) {
     .run(usuario, nombre, rol, hashClave(clave, sal), sal);
 }
 if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
-  // 2 admins + 4 gestoras. Clave inicial para todos: Tasatop2026
-  crearUsuario('admin1', 'Admin 1', 'admin', 'Tasatop2026');
-  crearUsuario('admin2', 'Admin 2', 'admin', 'Tasatop2026');
-  crearUsuario('mafer', 'Mafer', 'gestora', 'Tasatop2026');
-  crearUsuario('lourdes', 'Lourdes', 'gestora', 'Tasatop2026');
-  crearUsuario('breezy', 'Breezy', 'gestora', 'Tasatop2026');
-  crearUsuario('dora', 'Dora', 'gestora', 'Tasatop2026');
-  console.log('Usuarios creados (clave inicial: Tasatop2026): admin1, admin2, mafer, lourdes, breezy, dora');
+  // Usuarios reales. Login por correo. Clave inicial para todos: 12345678
+  // (solo el admin puede cambiar contrasenas).
+  crearUsuario('jnazario@tasatop.com', 'Julio Nazario', 'admin', '12345678');
+  crearUsuario('dcubas@tasatop.com', 'Diego Cubas', 'admin', '12345678');
+  crearUsuario('jdelgado@tasatop.com', 'Jenny Delgado', 'jefa', '12345678');
+  crearUsuario('mlujan@tasatop.com', 'Mafer Lujan', 'gestora', '12345678');
+  crearUsuario('bortega@tasatop.com', 'Breezy Ortega', 'gestora', '12345678');
+  crearUsuario('lvillavicencio@tasatop.com', 'Lourdes Villavicencio', 'gestora', '12345678');
+  console.log('Usuarios creados (clave inicial 12345678): 2 admin, 1 jefa, 3 GP');
 }
 
 const app = express();
@@ -148,21 +149,31 @@ app.get('/api/me', (req, res) => {
   res.json(u);
 });
 
+// Solo el admin gestiona contrasenas. Puede cambiar la suya o la de cualquier usuario.
 app.post('/api/cambiar-clave', (req, res) => {
   const u = usuarioDeSesion(req);
   if (!u) return res.status(401).json({ error: 'Sin sesion' });
-  const { claveActual, claveNueva } = req.body || {};
-  const full = db.prepare('SELECT * FROM usuarios WHERE usuario = ?').get(u.usuario);
-  if (hashClave(claveActual || '', full.sal) !== full.hash) {
-    return res.status(422).json({ error: 'La contrasena actual no es correcta' });
-  }
+  if (u.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede cambiar contrasenas' });
+  const { usuarioObjetivo, claveNueva } = req.body || {};
+  const destino = usuarioObjetivo ? String(usuarioObjetivo).toLowerCase() : u.usuario;
+  const full = db.prepare('SELECT * FROM usuarios WHERE usuario = ?').get(destino);
+  if (!full) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (!claveNueva || claveNueva.length < 8) {
     return res.status(422).json({ error: 'La nueva contrasena debe tener al menos 8 caracteres' });
   }
   const sal = crypto.randomBytes(8).toString('hex');
   db.prepare('UPDATE usuarios SET hash = ?, sal = ? WHERE usuario = ?')
-    .run(hashClave(claveNueva, sal), sal, u.usuario);
+    .run(hashClave(claveNueva, sal), sal, destino);
+  auditar(req, 'cambiar-clave', destino, 'Contrasena actualizada por admin');
   res.json({ ok: true });
+});
+
+// Lista de usuarios (solo admin) para el panel de gestion de claves.
+app.get('/api/usuarios', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const lista = db.prepare('SELECT usuario, nombre, rol FROM usuarios WHERE activo = 1 ORDER BY rol, nombre').all();
+  res.json(lista);
 });
 
 // Middleware: toda la API (salvo login) requiere sesion.
@@ -176,6 +187,17 @@ app.use('/api', (req, res, next) => {
 function soloAdmin(req, res, next) {
   if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   next();
+}
+// Admin y Jefa de Ventas pueden asignar/reasignar leads.
+function puedeAsignar(req, res, next) {
+  if (req.user.rol !== 'admin' && req.user.rol !== 'jefa') {
+    return res.status(403).json({ error: 'No autorizado para asignar' });
+  }
+  next();
+}
+// True si el usuario ve toda la cartera (admin y jefa). La GP solo ve lo suyo.
+function veTodo(user) {
+  return user.rol === 'admin' || user.rol === 'jefa';
 }
 
 // ---------- Helpers de leads ----------
@@ -201,23 +223,25 @@ app.get('/api/catalogos', (req, res) => {
     tiempo: L.TIEMPO, experiencia: L.EXPERIENCIA,
     tipoReunion: L.TIPO_REUNION, estadoReunion: L.ESTADO_REUNION,
     objeciones: L.OBJECIONES, motivosPerdida: L.MOTIVOS_PERDIDA,
-    accionesPorResultado: require('./logic').ACCIONES_POR_RESULTADO || {}
+    accionesPorResultado: require('./logic').ACCIONES_POR_RESULTADO || {},
+    kanbanColumnas: L.KANBAN_COLUMNAS, kanbanResultadoDestino: L.KANBAN_RESULTADO_DESTINO
   });
 });
 
 // ---------- Leads ----------
 app.post('/api/leads', soloAdmin, (req, res) => {
-  const { nombre, telefono, email, fuente, campana, asesor } = req.body;
+  const { nombre, telefono, email, fuente, campana, asesor, montoReal } = req.body;
   if (!nombre) return res.status(400).json({ error: 'Falta nombre del lead' });
   if (asesor && !L.ASESORES.includes(asesor)) {
     return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + L.ASESORES.join(', ') });
   }
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?)`)
+  const monto = montoReal ? Number(montoReal) : null;
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, nombre, L.normalizarCelular(telefono) || telefono || null, email || null,
-         fuente || null, campana || null, asesor || null, ahora, asesor ? ahora : null);
+         fuente || null, campana || null, asesor || null, monto, monto, ahora, asesor ? ahora : null);
   res.json(leadConsolidado(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo)));
 });
 
@@ -289,7 +313,7 @@ app.post('/api/leads/importar/confirmar', soloAdmin, (req, res) => {
 });
 
 // Asignacion individual o en bloque (admin)
-app.put('/api/leads/asignar', soloAdmin, (req, res) => {
+app.put('/api/leads/asignar', puedeAsignar, (req, res) => {
   const { codigos, asesor } = req.body;
   if (!Array.isArray(codigos) || !codigos.length) return res.status(400).json({ error: 'Faltan codigos' });
   if (!L.ASESORES.includes(asesor)) {
@@ -321,14 +345,108 @@ app.put('/api/leads/asignar', soloAdmin, (req, res) => {
 });
 
 // Cola de leads. Gestora: solo los suyos. Admin: todos / sin-asignar / por asesor.
+// Filtra leads por rango de fecha de asignacion (inclusive). Vacios = sin limite.
+function filtrarPorAsignacion(leads, desde, hasta) {
+  if (!desde && !hasta) return leads;
+  const d = desde ? new Date(desde + 'T00:00:00') : null;
+  const h = hasta ? new Date(hasta + 'T23:59:59') : null;
+  return leads.filter(l => {
+    if (!l.fechaAsignacion) return false;
+    const f = new Date(l.fechaAsignacion);
+    if (d && f < d) return false;
+    if (h && f > h) return false;
+    return true;
+  });
+}
+
+// Tarjetas de resumen (highlights). 4 segun rol, respetando rango de fechas.
+app.get('/api/highlights', (req, res) => {
+  let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
+  const verTodo = veTodo(req.user);
+  if (!verTodo) leads = leads.filter(l => l.asesor === req.user.nombre);
+  // Sin asignar se cuenta antes de aplicar el filtro de asesor (solo admin/jefa)
+  const sinAsignarTotal = verTodo ? leads.filter(l => !l.asesor).length : 0;
+  // El resto de tarjetas respeta el rango de fecha de asignacion
+  const enRango = filtrarPorAsignacion(leads.filter(l => l.asesor), req.query.desde, req.query.hasta)
+    .map(leadConsolidado);
+
+  const ahora = new Date();
+  const hoyStr = ahora.toISOString().slice(0, 10);
+  const finHoy = new Date(hoyStr + 'T23:59:59');
+
+  const vivos = enRango.filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido');
+  const vencidos = vivos.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) < ahora).length;
+  const paraHoy = vivos.filter(l => l.fechaProxAccion &&
+    new Date(l.fechaProxAccion) >= ahora && new Date(l.fechaProxAccion) <= finHoy).length;
+  const ganados = enRango.filter(l => l.etapa === 'Cerrado ganado').length;
+
+  // Tasa de avance: % de leads que pasaron de 3x5 a contactado o mas (solo GP)
+  const totalConGestion = enRango.filter(l => l.etapa !== 'Contactabilidad 3x5').length;
+  const tasaAvance = enRango.length ? Math.round(totalConGestion / enRango.length * 100) : 0;
+
+  if (verTodo) {
+    res.json([
+      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo' },
+      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul' },
+      { clave: 'sinasignar', etiqueta: 'Sin asignar', valor: sinAsignarTotal, tono: 'naranja' },
+      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde' }
+    ]);
+  } else {
+    res.json([
+      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo' },
+      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul' },
+      { clave: 'avance', etiqueta: 'Tasa de avance', valor: tasaAvance + '%', tono: 'morado' },
+      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde' }
+    ]);
+  }
+});
+
+// Distribucion para el pie del Kanban: monto agrupado por etapa, GP o prioridad.
+app.get('/api/distribucion', (req, res) => {
+  let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
+  if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
+  else if (req.query.asesor) leads = leads.filter(l => l.asesor === req.query.asesor);
+  leads = filtrarPorAsignacion(leads.filter(l => l.asesor), req.query.desde, req.query.hasta);
+  let lista = leads.map(leadConsolidado);
+
+  // Filtro opcional por columna kanban (etapa)
+  const filtroCol = req.query.etapa;
+  if (filtroCol) {
+    const col = L.KANBAN_COLUMNAS.find(c => c.id === filtroCol);
+    if (col) lista = lista.filter(l => col.etapas.includes(l.etapa));
+  }
+
+  const verPor = req.query.verPor || 'etapa';
+  const grupos = {};
+  const orden = [];
+  lista.forEach(l => {
+    let clave;
+    if (verPor === 'gp') clave = l.asesor || 'Sin asignar';
+    else if (verPor === 'prioridad') clave = l.prioridad || 'Baja';
+    else { // etapa -> nombre de columna kanban
+      const col = L.KANBAN_COLUMNAS.find(c => c.etapas.includes(l.etapa));
+      clave = col ? col.titulo : l.etapa;
+    }
+    if (!grupos[clave]) { grupos[clave] = { clave, monto: 0, cantidad: 0 }; orden.push(clave); }
+    grupos[clave].monto += (l.montoReal || 0);
+    grupos[clave].cantidad += 1;
+  });
+  const items = orden.map(k => grupos[k]);
+  const totalMonto = items.reduce((s, i) => s + i.monto, 0);
+  const totalLeads = items.reduce((s, i) => s + i.cantidad, 0);
+  res.json({ items, totalMonto, totalLeads });
+});
+
 app.get('/api/leads', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
-  if (req.user.rol === 'gestora') {
+  if (!veTodo(req.user)) {
     leads = leads.filter(l => l.asesor === req.user.nombre);
   } else {
     if (req.query.filtro === 'sin-asignar') leads = leads.filter(l => !l.asesor);
     else if (req.query.asesor) leads = leads.filter(l => l.asesor === req.query.asesor);
   }
+  // Filtro por rango de fecha de ASIGNACION (desde / hasta, formato YYYY-MM-DD)
+  leads = filtrarPorAsignacion(leads, req.query.desde, req.query.hasta);
   let lista = leads.map(leadConsolidado);
   if (req.query.activos !== '0') {
     lista = lista.filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido');
@@ -343,7 +461,7 @@ app.get('/api/leads', (req, res) => {
 app.get('/api/leads/:codigo', (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
-  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) {
+  if (!veTodo(req.user) && lead.asesor !== req.user.nombre) {
     return res.status(403).json({ error: 'Este lead no esta asignado a ti' });
   }
   res.json(leadConsolidado(lead));
@@ -367,13 +485,14 @@ app.post('/api/gestiones', (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(g.codigo);
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
 
-  if (req.user.rol === 'gestora') {
+  if (!veTodo(req.user)) {
     if (lead.asesor !== req.user.nombre) {
       return res.status(403).json({ error: `Este lead esta asignado a ${lead.asesor || 'nadie'}.` });
     }
     g.asesor = req.user.nombre;
   } else {
-    g.asesor = g.asesor || lead.asesor;
+    // Admin o Jefa gestionan como apoyo: el lead sigue atribuido a su GP duena.
+    g.asesor = lead.asesor;
   }
   if (!g.asesor) return res.status(422).json({ error: 'El lead no tiene asesor asignado. Asignalo primero.' });
 
@@ -419,7 +538,7 @@ app.post('/api/gestiones', (req, res) => {
 app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
-  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) {
+  if (!veTodo(req.user) && lead.asesor !== req.user.nombre) {
     return res.status(403).json({ error: 'Este lead no esta asignado a ti' });
   }
   res.json(L.trazabilidad(lead, gestionesDeLead(lead.codigo)));
@@ -481,14 +600,14 @@ app.get('/api/cohortes', soloAdmin, (req, res) => {
 // ---------- Dashboard ----------
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
-  if (req.user.rol === 'gestora') leads = leads.filter(l => l.asesor === req.user.nombre);
+  if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
   leads = leads.map(leadConsolidado);
 
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
   const man = new Date(hoy); man.setDate(man.getDate() + 1);
   let deHoy = db.prepare('SELECT * FROM gestiones WHERE fecha >= ? AND fecha < ?')
     .all(hoy.toISOString(), man.toISOString());
-  if (req.user.rol === 'gestora') deHoy = deHoy.filter(g => g.asesor === req.user.nombre);
+  if (!veTodo(req.user)) deHoy = deHoy.filter(g => g.asesor === req.user.nombre);
   const unicos = arr => [...new Set(arr.filter(Boolean))];
 
   const etapas = [
@@ -502,7 +621,7 @@ app.get('/api/dashboard', (req, res) => {
   });
 
   const ahoraTs = new Date();
-  const asesoresVisibles = req.user.rol === 'gestora' ? [req.user.nombre] : L.ASESORES;
+  const asesoresVisibles = veTodo(req.user) ? L.ASESORES : [req.user.nombre];
   const porAsesor = asesoresVisibles.map(a => {
     const rows = deHoy.filter(g => g.asesor === a);
     // #10 Semaforo: rojo si tiene acciones vencidas; amarillo si tiene pendientes
@@ -538,4 +657,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.13 (con mailer) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.21 (kanban+pie) corriendo en puerto ${PORT}`));

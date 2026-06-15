@@ -6,37 +6,153 @@
 <title>CRM Tasatop</title>
 <style>
   :root {
-    --navy: #0D2B4E; --navy-2: #1F2D3D; --bg: #F2F5F9; --card: #FFFFFF;
+    --navy: #0B72E8; --navy-2: #1F2D3D; --bg: #F2F5F9; --card: #FFFFFF;
     --ink: #1F2D3D; --muted: #6B7A8D; --line: #DDE4EC;
-    --rojo: #CC0000; --naranja: #FF9900; --azul: #4A86E8; --gris: #9AA5B1;
+    --rojo: #CC0000; --naranja: #FF9900; --azul: #0B72E8; --gris: #9AA5B1;
     --verde: #1A7A3A;
+    --side: #0A2540;        /* fondo de la barra lateral (azul muy oscuro) */
+    --side-act: #0B72E8;    /* item activo */
+    --sidebar-w: 220px; --sidebar-w-min: 64px;
   }
   * { box-sizing: border-box; margin: 0; }
   body { font: 14px/1.45 -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background: var(--bg); color: var(--ink); }
 
-  header { background: var(--navy); color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  header h1 { font-size: 17px; font-weight: 700; letter-spacing: .3px; }
-  header h1 span { color: #8FB8E8; font-weight: 400; }
-  nav { display: flex; gap: 4px; margin-left: auto; }
-  nav button {
-    background: transparent; color: #C9D8EA; border: none; padding: 8px 14px;
-    border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
+  /* ===== Layout con barra lateral ===== */
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: var(--sidebar-w); background: var(--side); color: #C9D8EA;
+    display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0;
+    transition: width .18s ease; z-index: 50; overflow: hidden;
   }
-  nav button.act { background: rgba(255,255,255,.16); color: #fff; }
-  .rol { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #C9D8EA; }
-  .rol select { padding: 5px 8px; border-radius: 6px; border: none; font-size: 13px; }
+  .sidebar.min { width: var(--sidebar-w-min); }
+  .side-top { display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px; }
+  .side-logo { font-size: 17px; font-weight: 800; letter-spacing: .3px; color: #fff; white-space: nowrap; }
+  .side-logo span { color: #7FB3F2; font-weight: 400; }
+  .sidebar.min .side-logo { display: none; }
+  .side-toggle {
+    margin-left: auto; background: rgba(255,255,255,.1); color: #fff; border: none;
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 15px; flex: none;
+  }
+  .sidebar.min .side-toggle { margin: 0 auto; }
+  .side-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; flex: 1; }
+  .side-nav button {
+    display: flex; align-items: center; gap: 12px; background: transparent; color: #C9D8EA;
+    border: none; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13.5px;
+    font-weight: 600; text-align: left; width: 100%; white-space: nowrap;
+  }
+  .side-nav button:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .side-nav button.act { background: var(--side-act); color: #fff; }
+  .side-nav button .ico { flex: none; width: 20px; text-align: center; font-size: 16px; }
+  .sidebar.min .side-nav button .txt { display: none; }
+  .sidebar.min .side-nav button { justify-content: center; padding: 10px 0; }
+  .side-foot { padding: 10px; border-top: 1px solid rgba(255,255,255,.1); }
+  .side-user { font-size: 12px; color: #9DB3CC; padding: 6px 10px; white-space: nowrap; }
+  .side-user b { color: #fff; display: block; font-size: 13px; }
+  .sidebar.min .side-user { display: none; }
+  .side-foot button {
+    display: flex; align-items: center; gap: 12px; background: transparent; color: #C9D8EA;
+    border: none; padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    width: 100%; white-space: nowrap;
+  }
+  .side-foot button:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .side-foot button .ico { flex: none; width: 20px; text-align: center; }
+  .sidebar.min .side-foot button .txt { display: none; }
+  .sidebar.min .side-foot button { justify-content: center; padding: 9px 0; }
 
-  main { max-width: 1180px; margin: 18px auto; padding: 0 16px; }
+  .content { flex: 1; margin-left: var(--sidebar-w); transition: margin-left .18s ease; padding: 20px 24px; }
+  .content.min { margin-left: var(--sidebar-w-min); }
+  .selAsesorTop { margin-bottom: 14px; }
+  .selAsesorTop select { padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); font-size: 13px; }
+
   .vista { display: none; } .vista.act { display: block; }
 
   .barra { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .barra h2 { font-size: 15px; }
   .barra .sub { color: var(--muted); font-size: 12px; }
+  /* Tarjetas de resumen (highlights) */
+  .tarjetas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .tarjeta {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+    border-left: 4px solid var(--gris);
+  }
+  .tarjeta .et { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+  .tarjeta .v { font-size: 28px; font-weight: 800; color: var(--ink); line-height: 1; }
+  .tarjeta.rojo { border-left-color: var(--rojo); } .tarjeta.rojo .v { color: var(--rojo); }
+  .tarjeta.azul { border-left-color: var(--azul); } .tarjeta.azul .v { color: var(--azul); }
+  .tarjeta.naranja { border-left-color: var(--naranja); } .tarjeta.naranja .v { color: #C77700; }
+  .tarjeta.verde { border-left-color: var(--verde); } .tarjeta.verde .v { color: var(--verde); }
+  .tarjeta.morado { border-left-color: #7B5EA7; } .tarjeta.morado .v { color: #7B5EA7; }
+  /* Filtro de fechas */
+  .fechas { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .fechas input[type=date] { padding: 5px 7px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; }
+  /* Toggle Tabla / Kanban */
+  .vista-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .vista-toggle button { background: #fff; border: none; padding: 6px 12px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .vista-toggle button.act { background: var(--azul); color: #fff; }
+  /* Kanban estilo pipeline */
+  .kanban { display: flex; gap: 0; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
+  .kcol { flex: 0 0 200px; display: flex; flex-direction: column; max-height: 74vh; }
+  .kcol-head {
+    position: relative; background: var(--azul); color: #fff; padding: 9px 12px 9px 24px;
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .2px;
+    clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 0 100%, 13px 50%);
+  }
+  .kcol:first-child .kcol-head { clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 0 100%); padding-left: 14px; }
+  .kcol-head .ktit b { font-weight: 700; opacity: .9; }
+  .kcol-total { color: var(--verde); font-size: 16px; font-weight: 800; padding: 8px 6px 6px 10px; }
+  .kcol-body { background: #F4F6F9; padding: 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 60px; margin-right: 2px; }
+  .kcol-body.drop { background: #DDEBFB; outline: 2px dashed var(--azul); outline-offset: -4px; }
+  .kvacio { color: var(--gris); text-align: center; padding: 16px 0; font-size: 13px; }
+  .kcard {
+    position: relative; background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 11px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  .kcard:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .kcard:active { cursor: grabbing; }
+  .kcard.drag { opacity: .5; }
+  .kcard .knom { color: var(--azul); font-weight: 600; font-size: 13px; margin-bottom: 3px; line-height: 1.3; }
+  .kcard .kmonto { color: var(--verde); font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+  .kcard .kgp { font-size: 11.5px; color: var(--muted); }
+  .kcard .kestado { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
+  .kcard .kestado.cal { background: #D9EAD3; color: #2E7D32; }
+  .kcard .kestado.gan { background: var(--verde); color: #fff; }
+  .kcard .kestado.per { background: var(--rojo); color: #fff; }
+  .kcard .kalerta { position: absolute; top: 9px; right: 10px; color: var(--naranja); font-size: 15px; }
+  .kcard.ganado { border-left: 3px solid var(--verde); }
+  .kcard.perdido { border-left: 3px solid var(--rojo); }
+  .kcard.prio-Muyalta { border-left: 3px solid var(--rojo); }
+  .kcard.prio-Alta { border-left: 3px solid var(--naranja); }
+  .kcard.prio-Media { border-left: 3px solid var(--azul); }
+  .kcard.prio-Baja { border-left: 3px solid var(--line); }
+  /* Panel del pie a la derecha */
+  .kpanel { flex: 0 0 250px; margin-left: 14px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .kpanel h4 { font-size: 13px; color: var(--navy-2); margin-bottom: 10px; }
+  .kpanel .filtros { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .kpanel select { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; }
+  .kpanel .pie-wrap { display: flex; justify-content: center; position: relative; margin: 6px 0 12px; }
+  .kpanel .pie-centro { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; }
+  .kpanel .pie-centro .t { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+  .kpanel .pie-centro .m { font-size: 13px; font-weight: 800; color: var(--navy-2); }
+  .kpanel .leyenda { display: flex; flex-direction: column; gap: 6px; }
+  .kpanel .leg-item { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+  .kpanel .leg-item .punto { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .kpanel .leg-item .nom { flex: 1; color: var(--ink); }
+  .kpanel .leg-item .val { color: var(--muted); font-weight: 600; }
   .btn {
     background: var(--navy); color: #fff; border: none; padding: 8px 14px;
     border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
   }
   .btn.sec { background: #E4EAF1; color: var(--navy); }
+  /* Botones de accion secundarios: tono sobrio (gris azulado), no el azul fuerte del encabezado */
+  .btn.accion { background: #3D5A80; color: #fff; font-weight: 600; }
+  .btn.accion:hover { background: #34507A; }
+  /* Botones de solo icono (exportar, actualizar) */
+  .ico-btn {
+    background: #E4EAF1; color: var(--navy); padding: 7px 11px; font-size: 16px;
+    line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ico-btn:hover { background: #D2DCE8; }
   .btn-cancelar:hover { background: var(--rojo); color: #fff; }
   .btn:disabled { opacity: .5; cursor: default; }
 
@@ -117,34 +233,44 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>CRM <span>Tasatop</span></h1>
-  <div class="rol" id="rolBox" style="display:none">
-    <span id="rolNombre"></span>
-    <select id="selAsesor" onchange="cargarLeads()" class="soloAdmin oculto"></select>
+<div class="app">
+<aside class="sidebar" id="sidebar">
+  <div class="side-top">
+    <span class="side-logo">CRM <span>Tasatop</span></span>
+    <button class="side-toggle" onclick="toggleSidebar()" title="Contraer / expandir">‹</button>
   </div>
-  <nav>
-    <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads</button>
-    <button id="nv-dash" onclick="ir('dash')">Dashboard</button>
-    <button id="nv-nuevo" class="soloAdmin oculto" onclick="abrirNuevoLead()">+ Nuevo Lead</button>
-    <button id="nv-import" class="soloAdmin oculto" onclick="abrirImport()">Importar</button>
-    <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoria</button>
-    <button id="nv-cohortes" class="soloAdmin oculto" onclick="ir('cohortes')">Cohortes</button>
-    <button onclick="abrirClave()" title="Cambiar contrasena">Clave</button>
-    <button onclick="logout()">Salir</button>
+  <nav class="side-nav" id="rolBox" style="display:none">
+    <button id="nv-leads" class="act" onclick="ir('leads')"><span class="ico">📋</span><span class="txt">Mis Leads</span></button>
+    <button id="nv-dash" onclick="ir('dash')"><span class="ico">📊</span><span class="txt">Dashboard</span></button>
+    <button id="nv-cohortes" class="soloAdmin oculto" onclick="ir('cohortes')"><span class="ico">📈</span><span class="txt">Cohortes</span></button>
+    <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')"><span class="ico">🗂️</span><span class="txt">Auditoría</span></button>
   </nav>
-</header>
+  <div class="side-foot">
+    <div class="side-user"><b id="rolNombre"></b><span id="rolTipo"></span></div>
+    <button class="soloAdmin oculto" onclick="abrirClave()"><span class="ico">🔑</span><span class="txt">Contraseñas</span></button>
+    <button onclick="logout()"><span class="ico">↩</span><span class="txt">Salir</span></button>
+  </div>
+</aside>
 
-<main>
+<div class="content" id="content">
   <!-- ===== MIS LEADS ===== -->
   <section id="v-leads" class="vista act">
+    <div id="tarjetas" class="tarjetas"></div>
     <div class="barra">
-      <h2>Cola diaria de acción</h2>
-      <span class="sub">Toca un lead para registrar gestión. Ordenada por prioridad y fecha de próxima acción.</span>
-      <select id="selFiltro" class="soloAdmin oculto" onchange="cargarLeads()" style="width:auto;padding:6px 8px">
+      <h2>Gestión de oportunidades</h2>
+      <span class="sub" id="leadsSub"></span>
+      <div class="fechas">
+        <label>Asignados:</label>
+        <input type="date" id="fDesde" onchange="cargarLeads()" title="Desde (fecha de asignación)">
+        <span>—</span>
+        <input type="date" id="fHasta" onchange="cargarLeads()" title="Hasta (fecha de asignación)">
+        <button class="btn ico-btn" onclick="limpiarFechas()" title="Limpiar fechas">✕</button>
+      </div>
+      <select id="selFiltro" class="asignador oculto" onchange="cargarLeads()" style="width:auto;padding:6px 8px">
         <option value="">Todos los activos</option>
         <option value="sin-asignar">Sin asignar</option>
       </select>
+      <select id="selAsesor" class="asignador oculto" onchange="cargarLeads()" style="width:auto;padding:6px 8px"></select>
       <select id="fPrioridad" onchange="render()" style="width:auto;padding:6px 8px">
         <option value="">Toda prioridad</option>
         <option>Muy alta</option><option>Alta</option><option>Media</option><option>Baja</option>
@@ -152,14 +278,20 @@
       <select id="fEtapa" onchange="render()" style="width:auto;padding:6px 8px">
         <option value="">Toda etapa</option>
       </select>
-      <button class="btn soloAdmin oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar seleccionados</button>
-      <button class="btn sec" onclick="exportarExcel()">Exportar Excel</button>
-      <button class="btn sec" style="margin-left:auto" onclick="cargarLeads()">Actualizar</button>
+      <button class="btn accion asignador oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar seleccionados</button>
+      <button class="btn accion soloAdmin oculto" onclick="abrirNuevoLead()">+ Nuevo Lead</button>
+      <button class="btn accion soloAdmin oculto" onclick="abrirImport()">Importar</button>
+      <div class="vista-toggle" style="margin-left:auto">
+        <button id="tg-tabla" class="act" onclick="setVista('tabla')" title="Vista tabla">☰ Tabla</button>
+        <button id="tg-kanban" onclick="setVista('kanban')" title="Vista kanban">▦ Kanban</button>
+      </div>
+      <button class="btn ico-btn" onclick="exportarExcel()" title="Exportar a Excel">⬇</button>
+      <button class="btn ico-btn" onclick="cargarLeads()" title="Actualizar">⟳</button>
     </div>
-    <div style="overflow-x:auto">
+    <div id="contTabla" style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th class="soloAdmin oculto" style="width:30px"><input type="checkbox" onclick="marcarTodos(this)" style="width:auto"></th>
+        <th class="asignador oculto" style="width:30px"><input type="checkbox" onclick="marcarTodos(this)" style="width:auto"></th>
         <th class="orden" onclick="ordenarPor('prioridad')">Prioridad <span id="ord-prioridad"></span></th>
         <th class="orden" onclick="ordenarPor('etapa')">Etapa</th>
         <th>Próxima acción</th><th>Fecha prox.</th>
@@ -173,6 +305,7 @@
       <tbody id="tbodyLeads"><tr><td colspan="11" class="vacio">Cargando...</td></tr></tbody>
     </table>
     </div>
+    <div id="contKanban" style="display:none"></div>
   </section>
 
   <!-- ===== DASHBOARD ===== -->
@@ -238,7 +371,8 @@
     </div>
     <div id="cohortesCont"><div class="vacio">Cargando...</div></div>
   </section>
-</main>
+</div><!-- .content -->
+</div><!-- .app -->
 
 <!-- ===== MODAL: REGISTRAR GESTION ===== -->
 <div class="overlay" id="ovGestion">
@@ -342,7 +476,7 @@
     <h3 style="font-size:18px">CRM <span style="color:#4A86E8">Tasatop</span></h3>
     <div class="sub">Inicia sesion para continuar.</div>
     <div class="grid" style="grid-template-columns:1fr">
-      <div><label>Usuario</label><input id="lUsuario" autocomplete="username"></div>
+      <div><label>Correo</label><input id="lUsuario" type="email" autocomplete="username" placeholder="tucorreo@tasatop.com"></div>
       <div><label>Contrasena</label><input type="password" id="lClave" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"></div>
     </div>
     <div class="error" id="lError"></div>
@@ -398,10 +532,11 @@
 
 <!-- ===== MODAL: CAMBIAR CLAVE ===== -->
 <div class="overlay" id="ovClave">
-  <div class="modal" style="max-width:380px">
-    <h3>Cambiar contrasena</h3>
+  <div class="modal" style="max-width:420px">
+    <h3>Gestionar contrasenas</h3>
+    <div class="sub">Como administrador, puedes cambiar la contrasena de cualquier usuario.</div>
     <div class="grid" style="grid-template-columns:1fr">
-      <div><label>Contrasena actual</label><input type="password" id="cActual"></div>
+      <div><label>Usuario</label><select id="cUsuario"></select></div>
       <div><label>Nueva contrasena (min. 8)</label><input type="password" id="cNueva"></div>
     </div>
     <div class="error" id="cError"></div>
@@ -414,6 +549,8 @@
 
 <script>
 let CAT = null, gCodigo = null, gLead = null, YO = null, impPreview = null, asignarCodigos = [], gYaCalificado = false;
+const veTodoJS = () => YO && (YO.rol === 'admin' || YO.rol === 'jefa');
+const puedeAsignarJS = () => YO && (YO.rol === 'admin' || YO.rol === 'jefa');
 const $ = id => document.getElementById(id);
 
 const ETAPA_COLOR = {
@@ -503,12 +640,21 @@ async function logout() {
   await api('/api/logout', { method: 'POST' });
   location.reload();
 }
-function abrirClave() { ['cActual','cNueva'].forEach(i => $(i).value=''); $('cError').classList.remove('act'); $('ovClave').classList.add('act'); }
+async function abrirClave() {
+  $('cNueva').value = ''; $('cError').classList.remove('act');
+  const sel = $('cUsuario'); sel.innerHTML = '';
+  try {
+    const usuarios = await api('/api/usuarios');
+    const etiqueta = { admin: 'Admin', jefa: 'Jefa', gestora: 'GP' };
+    usuarios.forEach(u => sel.add(new Option(`${u.nombre} (${etiqueta[u.rol] || u.rol})`, u.usuario)));
+  } catch (e) {}
+  $('ovClave').classList.add('act');
+}
 async function cambiarClave() {
   $('cError').classList.remove('act');
   try {
     await api('/api/cambiar-clave', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ claveActual: $('cActual').value, claveNueva: $('cNueva').value }) });
+      body: JSON.stringify({ usuarioObjetivo: $('cUsuario').value, claveNueva: $('cNueva').value }) });
     cerrar('ovClave'); alert('Contrasena actualizada.');
   } catch (e) { $('cError').textContent = e.message; $('cError').classList.add('act'); }
 }
@@ -520,12 +666,21 @@ async function init() {
 }
 async function arrancar() {
   $('rolBox').style.display = 'flex';
-  $('rolNombre').textContent = YO.nombre + ' (' + YO.rol + ')';
-  if (YO.rol === 'admin') document.querySelectorAll('.soloAdmin').forEach(e => e.classList.remove('oculto'));
+  const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP' };
+  $('rolNombre').textContent = YO.nombre;
+  $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
+  // Admin ve todo (incluye los elementos .soloAdmin y .asignador).
+  if (YO.rol === 'admin') {
+    document.querySelectorAll('.soloAdmin, .asignador').forEach(e => e.classList.remove('oculto'));
+  }
+  // Jefa de Ventas: ve y asigna toda la cartera, pero no carga/archiva/auditoria.
+  if (YO.rol === 'jefa') {
+    document.querySelectorAll('.asignador').forEach(e => e.classList.remove('oculto'));
+  }
   CAT = await api('/api/catalogos');
   const sel = $('selAsesor');
   sel.innerHTML = '';
-  sel.add(new Option('Todas las gestoras', ''));
+  sel.add(new Option('Todas las GP', ''));
   CAT.asesores.forEach(a => sel.add(new Option(a, a)));
   llenarSelect('gCanal', CAT.canales);
   llenarSelect('gTicket', CAT.ticketRango, true);
@@ -540,6 +695,12 @@ async function arrancar() {
   cargarLeads();
 }
 
+function toggleSidebar() {
+  const sb = $('sidebar'), ct = $('content'), btn = document.querySelector('.side-toggle');
+  const min = sb.classList.toggle('min');
+  ct.classList.toggle('min', min);
+  btn.textContent = min ? '›' : '‹';
+}
 function ir(v) {
   document.querySelectorAll('.vista').forEach(x => x.classList.remove('act'));
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('act'));
@@ -558,21 +719,50 @@ let LEADS = [], ordenCampo = '', ordenDir = 1;
 
 async function cargarLeads() {
   let q = [];
-  if (YO.rol === 'admin') {
+  if (veTodoJS()) {
     const filtro = $('selFiltro').value;
     if (filtro) q.push('filtro=' + filtro);
     else if ($('selAsesor').value) q.push('asesor=' + encodeURIComponent($('selAsesor').value));
   }
+  const desde = $('fDesde').value, hasta = $('fHasta').value;
+  if (desde) q.push('desde=' + desde);
+  if (hasta) q.push('hasta=' + hasta);
+  // Traemos TODOS (incluye cerrados) para el Kanban; cada vista filtra lo que muestra.
+  q.push('activos=0');
   LEADS = await api('/api/leads' + (q.length ? '?' + q.join('&') : ''));
   const fe = $('fEtapa'); const sel = fe.value;
   const etapas = [...new Set(LEADS.map(l => l.etapa))];
   fe.innerHTML = '<option value="">Toda etapa</option>' + etapas.map(e => '<option>' + e + '</option>').join('');
   fe.value = sel;
   render();
+  cargarTarjetas();
 }
 
-function leadsVisibles() {
+async function cargarTarjetas() {
+  let q = [];
+  const desde = $('fDesde').value, hasta = $('fHasta').value;
+  if (desde) q.push('desde=' + desde);
+  if (hasta) q.push('hasta=' + hasta);
+  try {
+    const cards = await api('/api/highlights' + (q.length ? '?' + q.join('&') : ''));
+    $('tarjetas').innerHTML = cards.map(c =>
+      '<div class="tarjeta ' + c.tono + '"><span class="et">' + c.etiqueta + '</span><span class="v">' + c.valor + '</span></div>'
+    ).join('');
+  } catch (e) {}
+}
+
+function limpiarFechas() {
+  $('fDesde').value = ''; $('fHasta').value = '';
+  cargarLeads();
+}
+
+function leadsVisibles(incluirCerrados) {
   let arr = LEADS.slice();
+  // La tabla oculta cerrados por defecto; el Kanban los incluye (columna Cerrado).
+  if (!incluirCerrados) {
+    const fe0 = $('fEtapa').value;
+    if (!fe0) arr = arr.filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido');
+  }
   const fp = $('fPrioridad').value, fe = $('fEtapa').value;
   if (fp) arr = arr.filter(l => l.prioridad === fp);
   if (fe) arr = arr.filter(l => l.etapa === fe);
@@ -599,20 +789,185 @@ function fmtSoles(n) {
   return 'S/ ' + Number(n).toLocaleString('es-PE');
 }
 
+let VISTA_LEADS = 'tabla';
+function setVista(v) {
+  VISTA_LEADS = v;
+  $('tg-tabla').classList.toggle('act', v === 'tabla');
+  $('tg-kanban').classList.toggle('act', v === 'kanban');
+  $('contTabla').style.display = v === 'tabla' ? 'block' : 'none';
+  $('contKanban').style.display = v === 'kanban' ? 'block' : 'none';
+  render();
+}
+
+function renderKanban() {
+  const lista = leadsVisibles(true); // incluye cerrados
+  const cols = CAT.kanbanColumnas;
+  const cont = $('contKanban');
+  const porCol = {};
+  cols.forEach(c => porCol[c.id] = []);
+  lista.forEach(l => {
+    const cid = cols.find(c => c.etapas.includes(l.etapa));
+    if (cid) porCol[cid.id].push(l);
+  });
+  const esGanado = e => e === 'Cerrado ganado';
+  const esPerdido = e => e === 'Cerrado perdido';
+  const fmtTotal = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
+
+  cont.innerHTML = '<div class="kanban">' + cols.map((c, idx) => {
+    const items = porCol[c.id] || [];
+    // Total de monto de la columna. En Cerrado, solo ganados.
+    let total = 0;
+    items.forEach(l => {
+      if (c.id === 'cerrado') { if (esGanado(l.etapa)) total += (l.montoReal || 0); }
+      else total += (l.montoReal || 0);
+    });
+    const tarjetas = items.map(l => {
+      const vencida = l.fechaProxAccion && new Date(l.fechaProxAccion) < new Date();
+      const calif = (l.ticket || l.tiempo || l.nivelInteres || l.experiencia);
+      let clasesExtra = 'prio-' + (l.prioridad || 'Baja').replace(' ', '');
+      let etiqueta = '';
+      if (esGanado(l.etapa)) { clasesExtra = 'ganado'; etiqueta = '<span class="kestado gan">GANADO</span>'; }
+      if (esPerdido(l.etapa)) { clasesExtra = 'perdido'; etiqueta = '<span class="kestado per">PERDIDO' + (l.motivoPerdida ? ' · ' + l.motivoPerdida : '') + '</span>'; }
+      const gp = veTodoJS() && l.asesor ? l.asesor : '';
+      return '<div class="kcard ' + clasesExtra + '" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
+        ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)" onclick="abrirGestion(\'' + l.codigo + '\')">' +
+        '<div class="knom">' + (l.nombre || '—') + '</div>' +
+        (l.montoReal ? '<div class="kmonto">' + fmtTotal(l.montoReal) + '</div>' : '') +
+        '<div class="kgp">' + (gp ? gp + ' · ' : '') + tr(l.etapa) + '</div>' +
+        (etiqueta || (calif ? '<span class="kestado cal">✓ Calificado</span>' : '')) +
+        (vencida ? '<span class="kalerta" title="Acción vencida">⚠</span>' : '') +
+      '</div>';
+    }).join('');
+    return '<div class="kcol">' +
+      '<div class="kcol-head' + (idx === cols.length - 1 ? ' last' : '') + '">' +
+        '<span class="ktit">' + c.titulo + ' <b>(' + items.length + ')</b></span>' +
+      '</div>' +
+      '<div class="kcol-total">' + fmtTotal(total) + '</div>' +
+      '<div class="kcol-body" data-col="' + c.id + '" ondragover="kDragOver(event)" ondragleave="kDragLeave(event)" ondrop="kDrop(event)">' +
+        (tarjetas || '<div class="kvacio">—</div>') +
+      '</div>' +
+    '</div>';
+  }).join('') +
+  // Panel lateral con el pie
+  '<div class="kpanel">' +
+    '<h4>Resumen de pipeline</h4>' +
+    '<div class="filtros">' +
+      '<select id="pieVerPor" onchange="cargarPie()">' +
+        '<option value="etapa">Ver por: Etapa</option>' +
+        '<option value="gp">Ver por: GP</option>' +
+        '<option value="prioridad">Ver por: Prioridad</option>' +
+      '</select>' +
+      '<select id="pieEtapa" onchange="cargarPie()">' +
+        '<option value="">Todas las etapas</option>' +
+        cols.map(c => '<option value="' + c.id + '">' + c.titulo + '</option>').join('') +
+      '</select>' +
+    '</div>' +
+    '<div id="pieCont"></div>' +
+  '</div>' +
+  '</div>';
+  cargarPie();
+}
+
+// Colores fijos para las porciones del pie
+const PIE_COLORES = ['#0B72E8', '#34A853', '#FF9900', '#7B5EA7', '#00ACC1', '#E91E63', '#9AA5B1', '#5C6BC0'];
+
+async function cargarPie() {
+  const verPor = $('pieVerPor') ? $('pieVerPor').value : 'etapa';
+  const etapa = $('pieEtapa') ? $('pieEtapa').value : '';
+  let q = ['verPor=' + verPor];
+  if (etapa) q.push('etapa=' + etapa);
+  if (veTodoJS() && $('selAsesor').value) q.push('asesor=' + encodeURIComponent($('selAsesor').value));
+  const desde = $('fDesde').value, hasta = $('fHasta').value;
+  if (desde) q.push('desde=' + desde); if (hasta) q.push('hasta=' + hasta);
+  let data;
+  try { data = await api('/api/distribucion?' + q.join('&')); } catch (e) { return; }
+  const cont = $('pieCont');
+  if (!data.items.length || data.totalMonto === 0) {
+    cont.innerHTML = '<div class="kvacio" style="padding:24px 0">Sin monto para mostrar</div>';
+    return;
+  }
+  // Construir donut SVG
+  const R = 60, r = 36, cx = 75, cy = 75;
+  let ang = -Math.PI / 2;
+  const fmtK = n => 'S/ ' + Number(n).toLocaleString('es-PE');
+  const segs = data.items.map((it, i) => {
+    const frac = it.monto / data.totalMonto;
+    const a2 = ang + frac * 2 * Math.PI;
+    const x1 = cx + R * Math.cos(ang), y1 = cy + R * Math.sin(ang);
+    const x2 = cx + R * Math.cos(a2), y2 = cy + R * Math.sin(a2);
+    const large = frac > 0.5 ? 1 : 0;
+    const path = `M ${cx} ${cy} L ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} Z`;
+    ang = a2;
+    return '<path d="' + path + '" fill="' + PIE_COLORES[i % PIE_COLORES.length] + '"/>';
+  }).join('');
+  const svg = '<div class="pie-wrap"><svg width="150" height="150" viewBox="0 0 150 150">' +
+    segs + '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="#fff"/></svg>' +
+    '<div class="pie-centro"><div class="t">Total</div><div class="m">' + fmtK(data.totalMonto) + '</div></div></div>';
+  const leyenda = '<div class="leyenda">' + data.items.map((it, i) =>
+    '<div class="leg-item"><span class="punto" style="background:' + PIE_COLORES[i % PIE_COLORES.length] + '"></span>' +
+    '<span class="nom">' + tr(it.clave) + '</span>' +
+    '<span class="val">' + fmtK(it.monto) + ' (' + it.cantidad + ')</span></div>'
+  ).join('') + '</div>';
+  cont.innerHTML = svg + leyenda;
+}
+
+// --- Drag & drop ---
+let K_DRAG = null;
+function kDragStart(e) {
+  K_DRAG = { cod: e.target.dataset.cod, etapa: e.target.dataset.etapa };
+  e.target.classList.add('drag');
+}
+function kDragEnd(e) { e.target.classList.remove('drag'); document.querySelectorAll('.kcol-body.drop').forEach(x => x.classList.remove('drop')); }
+function kDragOver(e) {
+  e.preventDefault();
+  const col = e.currentTarget.dataset.col;
+  if (K_DRAG && transicionValidaJS(K_DRAG.etapa, col)) e.currentTarget.classList.add('drop');
+}
+function kDragLeave(e) { e.currentTarget.classList.remove('drop'); }
+function kDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drop');
+  if (!K_DRAG) return;
+  const colDestino = e.currentTarget.dataset.col;
+  if (!transicionValidaJS(K_DRAG.etapa, colDestino)) { K_DRAG = null; return; } // rebota: no valido
+  // Abrir modal de gestion con el resultado sugerido preseleccionado
+  const resultadoSugerido = CAT.kanbanResultadoDestino[colDestino];
+  abrirGestion(K_DRAG.cod, resultadoSugerido);
+  K_DRAG = null;
+}
+
+// Replica en el front la validacion de transicion del motor.
+function transicionValidaJS(etapaActual, colDestino) {
+  const cols = CAT.kanbanColumnas;
+  const colActual = cols.find(c => c.etapas.includes(etapaActual));
+  if (colActual && colActual.id === colDestino) return false;
+  const resultado = CAT.kanbanResultadoDestino[colDestino];
+  if (!resultado) return false;
+  // No tenemos los resultados permitidos en el front por etapa; usamos una regla
+  // espejo simple basada en el orden de columnas + el caso "cerrado" (siempre valido si esta vivo).
+  const orden = cols.map(c => c.id);
+  const iAct = colActual ? orden.indexOf(colActual.id) : 0;
+  const iDest = orden.indexOf(colDestino);
+  if (colDestino === 'cerrado') return !['Cerrado ganado', 'Cerrado perdido'].includes(etapaActual);
+  return iDest > iAct; // solo hacia adelante (incluye saltos)
+}
+
 function render() {
+  if (VISTA_LEADS === 'kanban') { renderKanban(); return; }
   const lista = leadsVisibles();
   const tb = $('tbodyLeads');
   const esAdmin = YO.rol === 'admin';
-  const cols = esAdmin ? 17 : 16;
+  const puedeAsig = puedeAsignarJS();
+  const cols = puedeAsig ? 17 : 16;
   if (!lista.length) { tb.innerHTML = '<tr><td colspan="' + cols + '" class="vacio">Sin leads en esta vista.</td></tr>'; return; }
   tb.innerHTML = lista.map(l => {
     const col = ETAPA_COLOR[l.etapa] || ['#EEE', '#333'];
     const bg = col[0], fg = col[1];
     const vencida = l.fechaProxAccion && new Date(l.fechaProxAccion) < new Date();
-    const chk = esAdmin ? '<td onclick="event.stopPropagation()"><input type="checkbox" class="selLead" value="' + l.codigo + '" style="width:auto"></td>' : '';
+    const chk = puedeAsig ? '<td onclick="event.stopPropagation()"><input type="checkbox" class="selLead" value="' + l.codigo + '" style="width:auto"></td>' : '';
     const asesorCell = l.asesor
       ? l.asesor
-      : (esAdmin ? '<button class="btn sec" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();abrirAsignarUno(\'' + l.codigo + '\',\'' + (l.nombre||'').replace(/'/g,'') + '\')">Asignar</button>' : '—');
+      : (puedeAsig ? '<button class="btn sec" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();abrirAsignarUno(\'' + l.codigo + '\',\'' + (l.nombre||'').replace(/'/g,'') + '\')">Asignar</button>' : '—');
     const dia3x5 = l.diasDesdeAsignacion ? l.diasDesdeAsignacion + '/5' : '—';
     return '<tr class="fila" onclick="abrirGestion(\'' + l.codigo + '\')">' +
       chk +
@@ -778,13 +1133,13 @@ async function confirmarImport() {
     cerrar('ovImport');
     alert('Importados: ' + r.importados + ' nuevos' + (r.actualizados ? ' | Actualizados: ' + r.actualizados : '') +
       '.\nLos nuevos quedan SIN ASIGNAR: usa el filtro "Sin asignar" para repartirlos.');
-    if (YO.rol === 'admin') $('selFiltro').value = 'sin-asignar';
+    if (veTodoJS()) $('selFiltro').value = 'sin-asignar';
     cargarLeads();
   } catch (e) { $('impError').textContent = e.message; $('impError').classList.add('act'); }
 }
 
 // ---------- Registrar gestion ----------
-async function abrirGestion(codigo) {
+async function abrirGestion(codigo, resultadoSugerido) {
   gCodigo = codigo;
   gLead = await api('/api/leads/' + codigo);
   $('gTitulo').textContent = 'Registrar gestion — ' + gLead.nombre;
@@ -803,13 +1158,16 @@ async function abrirGestion(codigo) {
   };
   const sel = $('gResultado');
   sel.innerHTML = '<option value="">—</option>';
+  let sugeridoDisponible = false;
   permit.grupos.forEach(([grupo, opciones]) => {
     const og = document.createElement('optgroup');
     og.label = grupo.toUpperCase();
     og.style.background = COLOR_GRUPO[grupo] || '#fff';
-    opciones.forEach(o => og.appendChild(new Option(tr(o), o)));
+    opciones.forEach(o => { if (o === resultadoSugerido) sugeridoDisponible = true; og.appendChild(new Option(tr(o), o)); });
     sel.appendChild(og);
   });
+  // Si viene del Kanban con un resultado sugerido y es valido, preseleccionarlo
+  if (resultadoSugerido && sugeridoDisponible) sel.value = resultadoSugerido;
 
   ajustarCampos();
   $('ovGestion').classList.add('act');

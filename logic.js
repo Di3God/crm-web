@@ -10,7 +10,7 @@
 //  - Cadencia: autocalculo de fecha proxima accion (9am-18, dias habiles)
 // =============================================================
 
-const ASESORES = ['Mafer', 'Lourdes', 'Breezy', 'Dora'];
+const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio'];
 
 const CANALES = ['Llamada', 'WhatsApp', 'Correo'];
 const FUENTES = ['Meta Ads', 'Google Ads', 'Referido', 'Organico', 'LinkedIn', 'Otro'];
@@ -92,6 +92,49 @@ const ACCIONES_POR_RESULTADO = {
 
 function obtenerAccionesPermitidas(resultado) {
   return ACCIONES_POR_RESULTADO[resultado] || PROXIMAS_ACCIONES;
+}
+
+// ---------- Kanban ----------
+// Las 6 columnas visibles y a que etapas internas corresponde cada una.
+const KANBAN_COLUMNAS = [
+  { id: 'contactar', titulo: 'Contactar 3x5', etapas: ['Contactabilidad 3x5'] },
+  { id: 'contactado', titulo: 'Contactado', etapas: ['Contactado - por calificar', 'Calificado - pendiente agendar'] },
+  { id: 'agendado', titulo: 'Agendado', etapas: ['Agendado - pendiente reunion'] },
+  { id: 'reunido', titulo: 'Reunido', etapas: ['Reunion efectiva - seguimiento'] },
+  { id: 'negociacion', titulo: 'Negociacion', etapas: ['Cierre pendiente'] },
+  { id: 'cerrado', titulo: 'Cerrado', etapas: ['Cerrado ganado', 'Cerrado perdido'] }
+];
+
+// Al soltar una tarjeta en una columna, este es el resultado de gestion sugerido.
+// Solo se permite la movida si el resultado es valido desde la etapa actual del lead.
+const KANBAN_RESULTADO_DESTINO = {
+  contactado: 'Respondio - interesado',
+  agendado: 'Agendo reunion',
+  reunido: 'Reunion efectiva',
+  negociacion: 'Cierre pendiente',
+  cerrado: 'Venta ganada'  // en cerrado, el modal deja elegir ganada o perdida
+};
+
+// Columna a la que pertenece una etapa dada.
+function columnaDeEtapa(etapa) {
+  const c = KANBAN_COLUMNAS.find(col => col.etapas.includes(etapa));
+  return c ? c.id : 'contactar';
+}
+
+// True si se puede arrastrar de la etapa actual a la columna destino:
+// el resultado sugerido debe estar permitido desde esa etapa (misma logica que la tabla).
+function transicionKanbanValida(etapaActual, columnaDestino) {
+  if (columnaDeEtapa(etapaActual) === columnaDestino) return false; // misma columna
+  const resultado = KANBAN_RESULTADO_DESTINO[columnaDestino];
+  if (!resultado) return false;
+  const permitidos = obtenerResultadosPermitidos(etapaActual).map(g => g[1]).flat();
+  // "cerrado" tambien acepta resultados de perdida desde cualquier etapa viva
+  if (columnaDestino === 'cerrado') {
+    return permitidos.includes('Venta ganada') ||
+           permitidos.includes('Respondio - no interesado') ||
+           permitidos.includes('Respondio - no califica');
+  }
+  return permitidos.includes(resultado);
 }
 
 const NIVEL_INTERES = ['Poco interesado', 'Interesado', 'Muy interesado'];
@@ -488,6 +531,7 @@ module.exports = {
   calcularPrioridad, validarGestion, autocalcularFechaProxAccion,
   obtenerResultadosPermitidos,
   obtenerAccionesPermitidas,
+  KANBAN_COLUMNAS, KANBAN_RESULTADO_DESTINO, columnaDeEtapa, transicionKanbanValida,
   analizarCohortes, etapaMaximaAlcanzada,
   montoTicket, consolidarLead, trazabilidad, formatoDuracion, etapaDeGestion
 };
