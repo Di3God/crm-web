@@ -1278,15 +1278,27 @@ async function guardarGestion() {
 
 // ---------- Trazabilidad ----------
 async function verTrazabilidad(codigo) {
-  const t = await api('/api/leads/' + codigo + '/trazabilidad');
+  const resp = await api('/api/leads/' + codigo + '/trazabilidad');
+  const t = resp.traza || resp;       // compatibilidad
+  const llamadas = resp.llamadas || [];
   $('tTitulo').textContent = 'Trazabilidad — ' + t.lead;
   $('tCodigo').textContent = t.codigo;
-  $('tLineas').innerHTML = t.lineas.map(l =>
-    `<li><span class="h">${l.n}. ${fmtFecha(l.fecha)}</span><span>${l.etapa}</span></li>`
+  // Gestiones comerciales
+  let html = t.lineas.map(l =>
+    `<li><span class="h">${l.n}. ${fmtFecha(l.fecha)}</span><span>${tr(l.etapa)}</span></li>`
   ).join('') || '<li class="vacio">Sin gestiones registradas.</li>';
+  // Llamadas automaticas de Aircall (si hay)
+  if (llamadas.length) {
+    html += '<li style="margin-top:8px;font-weight:700;color:var(--azul)">📞 Llamadas registradas</li>';
+    html += llamadas.map(ll =>
+      `<li><span class="h">${fmtFecha(ll.fecha)}</span><span>${ll.resumen}</span></li>`
+    ).join('');
+  }
+  $('tLineas').innerHTML = html;
   $('tResumen').innerHTML = `
     <div>Intentos 3x5: <b>${t.intentos3x5}</b></div>
     <div>Total de gestiones: <b>${t.totalGestiones}</b></div>
+    <div>Llamadas registradas: <b>${llamadas.length}</b></div>
     <div>Tiempo de asignado a contactado: <b>${t.tiempoAsignadoContactado}</b></div>`;
   $('ovTraza').classList.add('act');
 }

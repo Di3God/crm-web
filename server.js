@@ -57,6 +57,19 @@ db.exec(`
     usuario TEXT NOT NULL,
     creada TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS llamadas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aircall_id TEXT UNIQUE,
+    codigo TEXT,
+    telefono TEXT,
+    direccion TEXT,
+    contestada INTEGER,
+    duracion INTEGER,
+    agente TEXT,
+    fecha TEXT NOT NULL,
+    crudo TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_llamadas_codigo ON llamadas(codigo);
   CREATE INDEX IF NOT EXISTS idx_gestiones_codigo ON gestiones(codigo);
 `);
 // Migracion suave para bases creadas con v1.0
@@ -174,6 +187,56 @@ app.get('/api/usuarios', (req, res) => {
   if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   const lista = db.prepare('SELECT usuario, nombre, rol FROM usuarios WHERE activo = 1 ORDER BY rol, nombre').all();
   res.json(lista);
+});
+
+// ---------- Webhook de Aircall (Etapa 1) ----------
+// Recibe eventos de llamada de Aircall y los registra en la trazabilidad del lead.
+// NO usa login (Aircall no inicia sesion); se protege con un token secreto en la URL:
+//   POST /api/webhooks/aircall/:token   (token = variable de entorno AIRCALL_WEBHOOK_TOKEN)
+// Match del lead por numero de telefono (ultimos 9 digitos).
+app.post('/api/webhooks/aircall/:token', (req, res) => {
+  const esperado = process.env.AIRCALL_WEBHOOK_TOKEN || '';
+  if (!esperado || req.params.token !== esperado) {
+    return res.status(403).json({ error: 'Token invalido' });
+  }
+  try {
+    const ev = req.body || {};
+    // Aircall envia { event: 'call.ended', data: { ... } }
+    const tipo = ev.event || '';
+    const c = ev.data || {};
+    // Solo registramos llamadas finalizadas (tienen duracion y desenlace)
+    if (tipo !== 'call.ended' && tipo !== 'call.hungup' && tipo !== 'call.created') {
+      return res.json({ ok: true, ignorado: tipo });
+    }
+    // Numero del lead: en salientes es 'to', en entrantes es 'from'
+    const direccion = c.direction === 'inbound' ? 'entrante' : 'saliente';
+    const numeroLead = direccion === 'entrante' ? (c.from || c.raw_digits) : (c.to || c.raw_digits);
+    const cel9 = L.normalizarCelular(numeroLead || '');
+    // Buscar lead cuyo telefono termine en esos 9 digitos
+    let lead = null;
+    if (cel9) {
+      lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
+        .get('%' + cel9);
+    }
+    const contestada = (c.answered_at || c.status === 'answered' || c.duration > 0) ? 1 : 0;
+    const duracion = Number(c.duration || 0);
+    const agente = (c.user && (c.user.name || c.user.email)) || c.agent || null;
+    const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
+    const aircallId = String(c.id || ('ac-' + Date.now()));
+
+    db.prepare(`INSERT OR IGNORE INTO llamadas
+      (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(aircallId, lead ? lead.codigo : null, numeroLead || null, direccion,
+           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 4000));
+
+    console.log('[aircall] Llamada', direccion, contestada ? 'contestada' : 'no contestada',
+      duracion + 's', '->', lead ? lead.codigo : 'sin match', numeroLead);
+    res.json({ ok: true, lead: lead ? lead.codigo : null });
+  } catch (e) {
+    console.error('[aircall] Error procesando webhook:', e.message);
+    res.json({ ok: false, error: e.message }); // 200 igual, para que Aircall no reintente en bucle
+  }
 });
 
 // Middleware: toda la API (salvo login) requiere sesion.
@@ -541,7 +604,21 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   if (!veTodo(req.user) && lead.asesor !== req.user.nombre) {
     return res.status(403).json({ error: 'Este lead no esta asignado a ti' });
   }
-  res.json(L.trazabilidad(lead, gestionesDeLead(lead.codigo)));
+  const traza = L.trazabilidad(lead, gestionesDeLead(lead.codigo));
+  // Sumar las llamadas automaticas de Aircall como eventos de tipo "llamada"
+  const llamadas = db.prepare('SELECT * FROM llamadas WHERE codigo = ? ORDER BY fecha ASC').all(lead.codigo);
+  const eventosLlamada = llamadas.map(ll => ({
+    tipo: 'llamada',
+    fecha: ll.fecha,
+    direccion: ll.direccion,
+    contestada: !!ll.contestada,
+    duracion: ll.duracion,
+    agente: ll.agente,
+    resumen: `Llamada ${ll.direccion} · ${ll.contestada ? 'contestada' : 'no contestada'}` +
+      (ll.duracion ? ` · ${Math.floor(ll.duracion/60)}:${String(ll.duracion%60).padStart(2,'0')} min` : '') +
+      (ll.agente ? ` · ${ll.agente}` : '')
+  }));
+  res.json({ traza, llamadas: eventosLlamada });
 });
 
 // ---------- Archivar / Restaurar / Eliminar (solo admin) ----------
@@ -657,4 +734,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.21 (kanban+pie) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.22 (aircall etapa 1) corriendo en puerto ${PORT}`));
