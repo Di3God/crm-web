@@ -17,72 +17,56 @@
   * { box-sizing: border-box; margin: 0; }
   body { font: 14px/1.45 -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background: var(--bg); color: var(--ink); }
 
-  /* ===== Layout con barra lateral ===== */
-  .app { display: flex; min-height: 100vh; }
-  .sidebar {
-    width: var(--sidebar-w); background: var(--side); color: #C9D8EA;
-    display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0;
-    transition: width .18s ease; z-index: 50; overflow: hidden;
+  /* ===== Header horizontal (cabecera) ===== */
+  .topbar {
+    display: flex; align-items: center; gap: 28px; background: #fff;
+    border-bottom: 1px solid var(--line); padding: 0 24px; height: 54px;
+    position: sticky; top: 0; z-index: 50;
   }
-  .sidebar.min { width: var(--sidebar-w-min); }
-  .side-top { display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px; }
-  .side-logo { font-size: 17px; font-weight: 800; letter-spacing: .3px; color: #fff; white-space: nowrap; }
-  .side-logo span { color: #7FB3F2; font-weight: 400; }
-  .sidebar.min .side-logo { display: none; }
-  .side-toggle {
-    margin-left: auto; background: rgba(255,255,255,.1); color: #fff; border: none;
-    width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 15px; flex: none;
+  .top-logo { font-size: 16px; font-weight: 800; letter-spacing: .3px; color: var(--navy-2); white-space: nowrap; }
+  .top-logo span { color: var(--azul); font-weight: 400; }
+  .top-nav { display: flex; gap: 4px; height: 100%; }
+  .top-nav button {
+    background: transparent; border: none; padding: 0 14px; cursor: pointer;
+    font-size: 13.5px; font-weight: 600; color: var(--muted); height: 100%;
+    border-bottom: 2.5px solid transparent;
   }
-  .sidebar.min .side-toggle { margin: 0 auto; }
-  .side-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; flex: 1; }
-  .side-nav button {
-    display: flex; align-items: center; gap: 12px; background: transparent; color: #C9D8EA;
-    border: none; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13.5px;
-    font-weight: 600; text-align: left; width: 100%; white-space: nowrap;
+  .top-nav button:hover { color: var(--navy-2); }
+  .top-nav button.act { color: var(--azul); border-bottom-color: var(--azul); }
+  .top-user { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .tu-info { font-size: 12px; color: var(--muted); text-align: right; line-height: 1.2; }
+  .tu-info b { color: var(--navy-2); display: block; font-size: 13px; }
+  .top-icon {
+    background: #F4F6F9; border: 1px solid var(--line); width: 32px; height: 32px;
+    border-radius: 7px; cursor: pointer; font-size: 14px;
   }
-  .side-nav button:hover { background: rgba(255,255,255,.08); color: #fff; }
-  .side-nav button.act { background: var(--side-act); color: #fff; }
-  .side-nav button .ico { flex: none; width: 20px; text-align: center; font-size: 16px; }
-  .sidebar.min .side-nav button .txt { display: none; }
-  .sidebar.min .side-nav button { justify-content: center; padding: 10px 0; }
-  .side-foot { padding: 10px; border-top: 1px solid rgba(255,255,255,.1); }
-  .side-user { font-size: 12px; color: #9DB3CC; padding: 6px 10px; white-space: nowrap; }
-  .side-user b { color: #fff; display: block; font-size: 13px; }
-  .sidebar.min .side-user { display: none; }
-  .side-foot button {
-    display: flex; align-items: center; gap: 12px; background: transparent; color: #C9D8EA;
-    border: none; padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
-    width: 100%; white-space: nowrap;
-  }
-  .side-foot button:hover { background: rgba(255,255,255,.08); color: #fff; }
-  .side-foot button .ico { flex: none; width: 20px; text-align: center; }
-  .sidebar.min .side-foot button .txt { display: none; }
-  .sidebar.min .side-foot button { justify-content: center; padding: 9px 0; }
+  .top-icon:hover { background: #E4EAF1; }
 
-  .content { flex: 1; margin-left: var(--sidebar-w); transition: margin-left .18s ease; padding: 20px 24px; }
-  .content.min { margin-left: var(--sidebar-w-min); }
-  .selAsesorTop { margin-bottom: 14px; }
-  .selAsesorTop select { padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); font-size: 13px; }
+  .content { padding: 20px 24px; max-width: 1500px; margin: 0 auto; }
 
   .vista { display: none; } .vista.act { display: block; }
+  /* Columnas de control: solo visibles para admin/jefa (body.ve-todo) */
+  .colCtrl { display: none; }
+  body.ve-todo .colCtrl { display: table-cell; }
 
   .barra { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .barra h2 { font-size: 15px; }
   .barra .sub { color: var(--muted); font-size: 12px; }
-  /* Tarjetas de resumen (highlights) */
+  /* Tarjetas de resumen (highlights) - minimalista */
   .tarjetas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
   .tarjeta {
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
-    border-left: 4px solid var(--gris);
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 6px;
   }
-  .tarjeta .et { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
-  .tarjeta .v { font-size: 28px; font-weight: 800; color: var(--ink); line-height: 1; }
-  .tarjeta.rojo { border-left-color: var(--rojo); } .tarjeta.rojo .v { color: var(--rojo); }
-  .tarjeta.azul { border-left-color: var(--azul); } .tarjeta.azul .v { color: var(--azul); }
-  .tarjeta.naranja { border-left-color: var(--naranja); } .tarjeta.naranja .v { color: #C77700; }
-  .tarjeta.verde { border-left-color: var(--verde); } .tarjeta.verde .v { color: var(--verde); }
-  .tarjeta.morado { border-left-color: #7B5EA7; } .tarjeta.morado .v { color: #7B5EA7; }
+  .tarjeta .et { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .3px; display: flex; align-items: center; gap: 6px; }
+  .tarjeta .et::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--gris); }
+  .tarjeta .v { font-size: 26px; font-weight: 700; color: var(--ink); line-height: 1; }
+  /* Solo un punto de color en la etiqueta; el número se mantiene neutro salvo alertas */
+  .tarjeta.rojo .et::before { background: var(--rojo); } .tarjeta.rojo .v { color: var(--rojo); }
+  .tarjeta.azul .et::before { background: var(--azul); }
+  .tarjeta.naranja .et::before { background: var(--naranja); }
+  .tarjeta.verde .et::before { background: var(--verde); } .tarjeta.verde .v { color: var(--verde); }
+  .tarjeta.morado .et::before { background: #7B5EA7; }
   /* Filtro de fechas */
   .fechas { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
   .fechas input[type=date] { padding: 5px 7px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; }
@@ -90,43 +74,48 @@
   .vista-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .vista-toggle button { background: #fff; border: none; padding: 6px 12px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
   .vista-toggle button.act { background: var(--azul); color: #fff; }
-  /* Kanban estilo pipeline */
-  .kanban { display: flex; gap: 0; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
-  .kcol { flex: 0 0 200px; display: flex; flex-direction: column; max-height: 74vh; }
+  /* Kanban estilo HubSpot - minimalista, columnas uniformes */
+  .kanban-wrap { display: flex; gap: 16px; align-items: flex-start; }
+  .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; flex: 1; min-width: 0; overflow-x: auto; padding-bottom: 10px; }
+  .kcol { display: flex; flex-direction: column; max-height: 74vh; min-width: 150px; }
   .kcol-head {
-    position: relative; background: var(--azul); color: #fff; padding: 9px 12px 9px 24px;
-    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .2px;
-    clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 0 100%, 13px 50%);
+    background: #F4F6F9; color: var(--navy-2); padding: 10px 12px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .2px;
+    border-bottom: 2px solid var(--azul); border-radius: 6px 6px 0 0;
   }
-  .kcol:first-child .kcol-head { clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 0 100%); padding-left: 14px; }
-  .kcol-head .ktit b { font-weight: 700; opacity: .9; }
-  .kcol-total { color: var(--verde); font-size: 16px; font-weight: 800; padding: 8px 6px 6px 10px; }
-  .kcol-body { background: #F4F6F9; padding: 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 60px; margin-right: 2px; }
+  .kcol-head .ktit b { font-weight: 700; color: var(--muted); }
+  .kcol-total { color: var(--ink); font-size: 14px; font-weight: 700; padding: 7px 12px 8px; background: #F4F6F9; border-bottom: 1px solid var(--line); }
+  .kcol-body { background: #F4F6F9; padding: 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 7px; min-height: 60px; border-radius: 0 0 6px 6px; }
   .kcol-body.drop { background: #DDEBFB; outline: 2px dashed var(--azul); outline-offset: -4px; }
   .kvacio { color: var(--gris); text-align: center; padding: 16px 0; font-size: 13px; }
   .kcard {
     position: relative; background: #fff; border: 1px solid var(--line); border-radius: 6px;
-    padding: 10px 11px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    padding: 10px 11px; cursor: grab;
   }
-  .kcard:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .kcard:hover { border-color: var(--azul); }
   .kcard:active { cursor: grabbing; }
   .kcard.drag { opacity: .5; }
-  .kcard .knom { color: var(--azul); font-weight: 600; font-size: 13px; margin-bottom: 3px; line-height: 1.3; }
-  .kcard .kmonto { color: var(--verde); font-weight: 700; font-size: 14px; margin-bottom: 3px; }
-  .kcard .kgp { font-size: 11.5px; color: var(--muted); }
-  .kcard .kestado { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
-  .kcard .kestado.cal { background: #D9EAD3; color: #2E7D32; }
+  .kcard .knom { color: var(--ink); font-weight: 600; font-size: 13px; margin-bottom: 3px; line-height: 1.3; padding-left: 0; }
+  .kcard .kmonto { color: var(--muted); font-weight: 600; font-size: 13px; margin-bottom: 2px; padding-left: 0; }
+  .kcard .kgp { font-size: 11px; color: var(--muted); padding-left: 0; }
+  .kcard .kestado { display: inline-block; margin: 6px 0 0 0; font-size: 9.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; }
+  .kcard .kestado.cal { background: #EAF3EA; color: #2E7D32; }
+  .kcard .kestado.porcal { background: #FFF3E0; color: #C77700; }
+  /* Fila de prioridad (4ta linea, en todas las tarjetas) */
+  .kcard .kpriorow { padding-left: 0; margin-top: 4px; }
+  .kcard .kprio { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 9.5px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: .3px; }
+  .kcard .kprio.p-Muyalta { background: var(--rojo); }
+  .kcard .kprio.p-Alta { background: var(--naranja); }
+  .kcard .kprio.p-Media { background: var(--azul); }
+  .kcard .kprio.p-Baja { background: var(--gris); }
+  /* Linea de proxima accion + fecha, en una sola linea (no parte) */
+  .kcard .kacc { font-size: 11px; color: var(--muted); margin-top: 5px; padding-left: 0; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kcard .kacc.venc { color: var(--rojo); font-weight: 600; }
   .kcard .kestado.gan { background: var(--verde); color: #fff; }
   .kcard .kestado.per { background: var(--rojo); color: #fff; }
-  .kcard .kalerta { position: absolute; top: 9px; right: 10px; color: var(--naranja); font-size: 15px; }
-  .kcard.ganado { border-left: 3px solid var(--verde); }
-  .kcard.perdido { border-left: 3px solid var(--rojo); }
-  .kcard.prio-Muyalta { border-left: 3px solid var(--rojo); }
-  .kcard.prio-Alta { border-left: 3px solid var(--naranja); }
-  .kcard.prio-Media { border-left: 3px solid var(--azul); }
-  .kcard.prio-Baja { border-left: 3px solid var(--line); }
-  /* Panel del pie a la derecha */
-  .kpanel { flex: 0 0 250px; margin-left: 14px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .kcard .kalerta { position: absolute; top: 9px; right: 10px; color: var(--naranja); font-size: 14px; }
+  /* Panel del pie a la derecha - ancho fijo, se mantiene a la derecha */
+  .kpanel { flex: 0 0 240px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px; align-self: flex-start; }
   .kpanel h4 { font-size: 13px; color: var(--navy-2); margin-bottom: 10px; }
   .kpanel .filtros { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
   .kpanel select { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; }
@@ -194,8 +183,16 @@
   .modal { background: #fff; border-radius: 12px; width: 100%; max-width: 640px; padding: 20px; box-shadow: 0 12px 40px rgba(13,43,78,.25); }
   .modal h3 { font-size: 15px; margin-bottom: 4px; }
   .modal .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; align-items: start; }
   .grid .full { grid-column: 1 / -1; }
+  /* Bloque "Proximo paso": recuadro verde bajito que agrupa proxima accion + fecha */
+  .bloque-paso {
+    background: #F2FAF4; border: 1px solid #CBE8D4; border-radius: 9px; padding: 11px 12px;
+  }
+  .bloque-paso .paso-tit {
+    font-size: 11px; font-weight: 800; color: #2E7D32; text-transform: uppercase;
+    letter-spacing: .5px; margin-bottom: 9px;
+  }
   label { display: block; font-size: 11.5px; font-weight: 700; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .4px; }
   input, select, textarea {
     width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px;
@@ -233,24 +230,20 @@
 </style>
 </head>
 <body>
-<div class="app">
-<aside class="sidebar" id="sidebar">
-  <div class="side-top">
-    <span class="side-logo">CRM <span>Tasatop</span></span>
-    <button class="side-toggle" onclick="toggleSidebar()" title="Contraer / expandir">‹</button>
-  </div>
-  <nav class="side-nav" id="rolBox" style="display:none">
-    <button id="nv-leads" class="act" onclick="ir('leads')"><span class="ico">📋</span><span class="txt">Mis Leads</span></button>
-    <button id="nv-dash" onclick="ir('dash')"><span class="ico">📊</span><span class="txt">Dashboard</span></button>
-    <button id="nv-cohortes" class="soloAdmin oculto" onclick="ir('cohortes')"><span class="ico">📈</span><span class="txt">Cohortes</span></button>
-    <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')"><span class="ico">🗂️</span><span class="txt">Auditoría</span></button>
+<header class="topbar" id="rolBox" style="display:none">
+  <span class="top-logo">CRM <span>Tasatop</span></span>
+  <nav class="top-nav">
+    <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads</button>
+    <button id="nv-dash" onclick="ir('dash')">Dashboard</button>
+    <button id="nv-cohortes" class="soloAdmin oculto" onclick="ir('cohortes')">Cohortes</button>
+    <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoría</button>
   </nav>
-  <div class="side-foot">
-    <div class="side-user"><b id="rolNombre"></b><span id="rolTipo"></span></div>
-    <button class="soloAdmin oculto" onclick="abrirClave()"><span class="ico">🔑</span><span class="txt">Contraseñas</span></button>
-    <button onclick="logout()"><span class="ico">↩</span><span class="txt">Salir</span></button>
+  <div class="top-user">
+    <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
+    <button class="top-icon soloAdmin oculto" onclick="abrirClave()" title="Contraseñas">🔑</button>
+    <button class="top-icon" onclick="logout()" title="Salir">↩</button>
   </div>
-</aside>
+</header>
 
 <div class="content" id="content">
   <!-- ===== MIS LEADS ===== -->
@@ -279,7 +272,6 @@
         <option value="">Toda etapa</option>
       </select>
       <button class="btn accion asignador oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar seleccionados</button>
-      <button class="btn accion soloAdmin oculto" onclick="abrirNuevoLead()">+ Nuevo Lead</button>
       <button class="btn accion soloAdmin oculto" onclick="abrirImport()">Importar</button>
       <div class="vista-toggle" style="margin-left:auto">
         <button id="tg-tabla" class="act" onclick="setVista('tabla')" title="Vista tabla">☰ Tabla</button>
@@ -296,11 +288,11 @@
         <th class="orden" onclick="ordenarPor('etapa')">Etapa</th>
         <th>Próxima acción</th><th>Fecha prox.</th>
         <th class="orden" onclick="ordenarPor('probabilidad')">Prob. Cierre <span id="ord-probabilidad"></span></th>
-        <th>GP</th><th>Lead</th><th>Monto</th>
-        <th>Teléfono</th><th>Ultimo resultado</th>
-        <th title="Intentos de hoy / meta 3">Int. día</th>
-        <th title="Días desde la asignación / 5">Día 3x5</th>
-        <th>Cargado</th><th>Asignado</th><th>Código</th>
+        <th class="colCtrl">GP</th><th>Lead</th><th>Monto</th>
+        <th>Teléfono</th><th class="colCtrl">Ultimo resultado</th>
+        <th class="colCtrl" title="Intentos de hoy / meta 3">Int. día</th>
+        <th class="colCtrl" title="Días desde la asignación / 5">Día 3x5</th>
+        <th class="colCtrl">Cargado</th><th class="colCtrl">Asignado</th><th class="colCtrl">Código</th>
       </tr></thead>
       <tbody id="tbodyLeads"><tr><td colspan="11" class="vacio">Cargando...</td></tr></tbody>
     </table>
@@ -321,6 +313,20 @@
         <table style="box-shadow:none"><thead><tr><th>Estado</th><th>GP</th><th>Gest.</th><th>Agend.</th><th>R. Efect.</th></tr></thead>
         <tbody id="tbodyAsesores"></tbody></table>
       </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <h3 style="margin:0">Distribución de pipeline</h3>
+        <select id="pieVerPor" onchange="cargarPie()" style="width:auto;padding:6px 8px;margin-left:auto">
+          <option value="etapa">Ver por: Etapa</option>
+          <option value="gp">Ver por: GP</option>
+          <option value="prioridad">Ver por: Prioridad</option>
+        </select>
+        <select id="pieEtapa" onchange="cargarPie()" style="width:auto;padding:6px 8px">
+          <option value="">Todas las etapas</option>
+        </select>
+      </div>
+      <div id="pieCont" style="display:flex;gap:30px;align-items:center;flex-wrap:wrap"></div>
     </div>
   </section>
 
@@ -372,7 +378,6 @@
     <div id="cohortesCont"><div class="vacio">Cargando...</div></div>
   </section>
 </div><!-- .content -->
-</div><!-- .app -->
 
 <!-- ===== MODAL: REGISTRAR GESTION ===== -->
 <div class="overlay" id="ovGestion">
@@ -388,10 +393,11 @@
     <div class="grid">
       <div>
         <div style="margin-bottom:10px"><label>Canal</label><select id="gCanal"></select></div>
-        <div style="margin-bottom:10px"><label>Resultado</label><select id="gResultado" onchange="ajustarCampos()"></select></div>
-        <div><label>Próxima acción</label><select id="gProxAccion" disabled></select></div>
+        <div><label>Resultado</label><select id="gResultado" onchange="ajustarCampos()"></select></div>
       </div>
-      <div>
+      <div class="bloque-paso">
+        <div class="paso-tit">Próximo paso</div>
+        <div style="margin-bottom:10px"><label>Próxima acción</label><select id="gProxAccion" disabled></select></div>
         <label>Fecha y hora de próxima acción</label>
         <input type="datetime-local" id="gFechaProx">
         <div id="gFechaRapida" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
@@ -410,10 +416,10 @@
       </div>
 
       <div class="seccion" id="secCalif">Calificación</div>
-      <div class="campoCalif"><label>Ticket estimado</label><select id="gTicket"></select></div>
-      <div class="campoCalif"><label>Tiempo de inversión</label><select id="gTiempo"></select></div>
-      <div class="campoCalif"><label>Nivel de interés</label><select id="gInteres"></select></div>
-      <div class="campoCalif"><label>Experiencia</label><select id="gExperiencia"></select></div>
+      <div class="campoCalif"><label>Ticket estimado</label><select id="gTicket" onchange="ajustarCampos()"></select></div>
+      <div class="campoCalif"><label>Tiempo de inversión</label><select id="gTiempo" onchange="ajustarCampos()"></select></div>
+      <div class="campoCalif"><label>Nivel de interés</label><select id="gInteres" onchange="ajustarCampos()"></select></div>
+      <div class="campoCalif"><label>Experiencia</label><select id="gExperiencia" onchange="ajustarCampos()"></select></div>
       <div class="campoCalif full"><label>Objeción principal</label><select id="gObjecion"></select></div>
 
       <div class="seccion" id="secReunion">Reunión</div>
@@ -623,6 +629,40 @@ function fmtFecha(iso) {
   const p = n => String(n).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth()+1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// Fecha+hora compacta para tarjetas: "16/06 9am" / "16/06 1pm"
+function fmtFechaHoraCorta(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  let h = d.getHours(); const m = d.getMinutes();
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if (h === 0) h = 12;
+  const hora = m === 0 ? `${h}${ampm}` : `${h}:${p(m)}${ampm}`;
+  return `${p(d.getDate())}/${p(d.getMonth()+1)} ${hora}`;
+}
+// Acciones abreviadas para que quepan en una linea en la tarjeta
+const ACCION_CORTA = {
+  'Llamar intento 3x5': 'Llamar',
+  'Agendar reunion': 'Agendar',
+  'Confirmar asistencia': 'Confirmar',
+  'Enviar informacion': 'Enviar info',
+  'Seguimiento post reunion': 'Seguimiento',
+  'Reprogramar reunion': 'Reprogramar',
+  'Desestimar': 'Desestimar'
+};
+function accionCorta(a, etapa) {
+  if (!a) return '';
+  // "Llamar intento 3x5" solo se nombra asi en la fase de contactabilidad;
+  // en cualquier etapa posterior es simplemente "Llamar".
+  if (a === 'Llamar intento 3x5' && etapa && etapa !== 'Contactabilidad 3x5') return 'Llamar';
+  return ACCION_CORTA[a] || tr(a);
+}
+// Para la tabla: nombre completo, pero "Llamar intento 3x5" -> "Llamar" fuera de la fase 3x5.
+function accionTabla(a, etapa) {
+  if (!a) return '';
+  if (a === 'Llamar intento 3x5' && etapa && etapa !== 'Contactabilidad 3x5') return 'Llamar';
+  return tr(a);
+}
 
 // ---------- Sesion ----------
 async function login() {
@@ -677,6 +717,8 @@ async function arrancar() {
   if (YO.rol === 'jefa') {
     document.querySelectorAll('.asignador').forEach(e => e.classList.remove('oculto'));
   }
+  // Columnas de control de la tabla: visibles solo para admin/jefa
+  if (YO.rol === 'admin' || YO.rol === 'jefa') document.body.classList.add('ve-todo');
   CAT = await api('/api/catalogos');
   const sel = $('selAsesor');
   sel.innerHTML = '';
@@ -695,12 +737,6 @@ async function arrancar() {
   cargarLeads();
 }
 
-function toggleSidebar() {
-  const sb = $('sidebar'), ct = $('content'), btn = document.querySelector('.side-toggle');
-  const min = sb.classList.toggle('min');
-  ct.classList.toggle('min', min);
-  btn.textContent = min ? '›' : '‹';
-}
 function ir(v) {
   document.querySelectorAll('.vista').forEach(x => x.classList.remove('act'));
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('act'));
@@ -829,12 +865,24 @@ function renderKanban() {
       if (esGanado(l.etapa)) { clasesExtra = 'ganado'; etiqueta = '<span class="kestado gan">GANADO</span>'; }
       if (esPerdido(l.etapa)) { clasesExtra = 'perdido'; etiqueta = '<span class="kestado per">PERDIDO' + (l.motivoPerdida ? ' · ' + l.motivoPerdida : '') + '</span>'; }
       const gp = veTodoJS() && l.asesor ? l.asesor : '';
+      const cerrado = esGanado(l.etapa) || esPerdido(l.etapa);
+      // Prioridad: en TODAS las tarjetas vivas, 4ta linea (debajo de etapa)
+      const lineaPrio = !cerrado
+        ? '<div class="kpriorow"><span class="kprio ' + (PRIO_CLASE[l.prioridad] || 'p-Baja') + '">' + l.prioridad + '</span></div>' : '';
+      // Linea de proxima accion (corta) + fecha+hora, en una sola linea
+      const fechaCorta = l.fechaProxAccion ? fmtFechaHoraCorta(l.fechaProxAccion) : '';
+      const lineaAccion = (!cerrado && l.proximaAccion)
+        ? '<div class="kacc' + (vencida ? ' venc' : '') + '">📅 ' + accionCorta(l.proximaAccion, l.etapa) + (fechaCorta ? ' · ' + fechaCorta : '') + '</div>'
+        : '';
       return '<div class="kcard ' + clasesExtra + '" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
         ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)" onclick="abrirGestion(\'' + l.codigo + '\')">' +
         '<div class="knom">' + (l.nombre || '—') + '</div>' +
         (l.montoReal ? '<div class="kmonto">' + fmtTotal(l.montoReal) + '</div>' : '') +
         '<div class="kgp">' + (gp ? gp + ' · ' : '') + tr(l.etapa) + '</div>' +
-        (etiqueta || (calif ? '<span class="kestado cal">✓ Calificado</span>' : '')) +
+        lineaPrio +
+        lineaAccion +
+        (etiqueta || (calif ? '<span class="kestado cal">✓ Calificado</span>'
+          : (!cerrado ? '<span class="kestado porcal">○ Por calificar</span>' : ''))) +
         (vencida ? '<span class="kalerta" title="Acción vencida">⚠</span>' : '') +
       '</div>';
     }).join('');
@@ -848,37 +896,24 @@ function renderKanban() {
       '</div>' +
     '</div>';
   }).join('') +
-  // Panel lateral con el pie
-  '<div class="kpanel">' +
-    '<h4>Resumen de pipeline</h4>' +
-    '<div class="filtros">' +
-      '<select id="pieVerPor" onchange="cargarPie()">' +
-        '<option value="etapa">Ver por: Etapa</option>' +
-        '<option value="gp">Ver por: GP</option>' +
-        '<option value="prioridad">Ver por: Prioridad</option>' +
-      '</select>' +
-      '<select id="pieEtapa" onchange="cargarPie()">' +
-        '<option value="">Todas las etapas</option>' +
-        cols.map(c => '<option value="' + c.id + '">' + c.titulo + '</option>').join('') +
-      '</select>' +
-    '</div>' +
-    '<div id="pieCont"></div>' +
-  '</div>' +
-  '</div>';
-  cargarPie();
+  '</div>';  // cierra .kanban (grid de columnas, ahora a todo el ancho)
 }
 
 // Colores fijos para las porciones del pie
 const PIE_COLORES = ['#0B72E8', '#34A853', '#FF9900', '#7B5EA7', '#00ACC1', '#E91E63', '#9AA5B1', '#5C6BC0'];
 
 async function cargarPie() {
+  // Llenar el select de etapas una sola vez (desde las columnas kanban)
+  const selEt = $('pieEtapa');
+  if (selEt && selEt.options.length <= 1 && CAT && CAT.kanbanColumnas) {
+    CAT.kanbanColumnas.forEach(c => selEt.add(new Option(c.titulo, c.id)));
+  }
   const verPor = $('pieVerPor') ? $('pieVerPor').value : 'etapa';
   const etapa = $('pieEtapa') ? $('pieEtapa').value : '';
   let q = ['verPor=' + verPor];
   if (etapa) q.push('etapa=' + etapa);
-  if (veTodoJS() && $('selAsesor').value) q.push('asesor=' + encodeURIComponent($('selAsesor').value));
-  const desde = $('fDesde').value, hasta = $('fHasta').value;
-  if (desde) q.push('desde=' + desde); if (hasta) q.push('hasta=' + hasta);
+  const selA = $('selAsesor');
+  if (veTodoJS() && selA && selA.value) q.push('asesor=' + encodeURIComponent(selA.value));
   let data;
   try { data = await api('/api/distribucion?' + q.join('&')); } catch (e) { return; }
   const cont = $('pieCont');
@@ -903,7 +938,7 @@ async function cargarPie() {
   const svg = '<div class="pie-wrap"><svg width="150" height="150" viewBox="0 0 150 150">' +
     segs + '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="#fff"/></svg>' +
     '<div class="pie-centro"><div class="t">Total</div><div class="m">' + fmtK(data.totalMonto) + '</div></div></div>';
-  const leyenda = '<div class="leyenda">' + data.items.map((it, i) =>
+  const leyenda = '<div class="leyenda" style="flex:1;min-width:240px">' + data.items.map((it, i) =>
     '<div class="leg-item"><span class="punto" style="background:' + PIE_COLORES[i % PIE_COLORES.length] + '"></span>' +
     '<span class="nom">' + tr(it.clave) + '</span>' +
     '<span class="val">' + fmtK(it.monto) + ' (' + it.cantidad + ')</span></div>'
@@ -973,19 +1008,19 @@ function render() {
       chk +
       '<td><span class="chip ' + (PRIO_CLASE[l.prioridad] || 'p-Baja') + '">' + l.prioridad + '</span></td>' +
       '<td><span class="et" style="background:' + bg + ';color:' + fg + '">' + tr(l.etapa) + '</span></td>' +
-      '<td>' + tr(l.proximaAccion) + '</td>' +
+      '<td>' + accionTabla(l.proximaAccion, l.etapa) + '</td>' +
       '<td class="' + (vencida ? 'vencida' : '') + '">' + fmtFecha(l.fechaProxAccion) + (vencida ? '<br><span class="badge-venc">\u26A0 Vencido</span>' : '') + '</td>' +
       '<td><div class="prob"><div class="track"><div class="fill" style="width:' + l.probabilidad + '%"></div></div><b>' + l.probabilidad + '%</b></div></td>' +
-      '<td>' + asesorCell + '</td>' +
+      '<td class="colCtrl">' + asesorCell + '</td>' +
       '<td><b>' + l.nombre + '</b></td>' +
       '<td style="white-space:nowrap">' + fmtSoles(l.montoPotencial) + '</td>' +
       '<td>' + (l.telefono || '') + '</td>' +
-      '<td>' + tr(l.ultimoResultado) + '</td>' +
-      '<td style="text-align:center">' + l.intentosHoy + '/3</td>' +
-      '<td style="text-align:center">' + dia3x5 + '</td>' +
-      '<td style="font-size:11.5px;color:var(--muted)">' + fmtFecha(l.fechaCarga) + '</td>' +
-      '<td style="font-size:11.5px;color:var(--muted)">' + fmtFecha(l.fechaAsignacion) + '</td>' +
-      '<td style="font-size:11.5px;color:var(--muted)">' + l.codigo + (esAdmin ? ' <button class=\'btn sec\' style=\'padding:2px 7px;font-size:11px\' onclick=\'event.stopPropagation();archivarLead("' + l.codigo + '","' + (l.nombre||'').replace(/"/g,'') + '")\'>Archivar</button>' : '') + '</td>' +
+      '<td class="colCtrl">' + tr(l.ultimoResultado) + '</td>' +
+      '<td class="colCtrl" style="text-align:center">' + l.intentosHoy + '/3</td>' +
+      '<td class="colCtrl" style="text-align:center">' + dia3x5 + '</td>' +
+      '<td class="colCtrl" style="font-size:11.5px;color:var(--muted)">' + fmtFecha(l.fechaCarga) + '</td>' +
+      '<td class="colCtrl" style="font-size:11.5px;color:var(--muted)">' + fmtFecha(l.fechaAsignacion) + '</td>' +
+      '<td class="colCtrl" style="font-size:11.5px;color:var(--muted)">' + l.codigo + (esAdmin ? ' <button class=\'btn sec\' style=\'padding:2px 7px;font-size:11px\' onclick=\'event.stopPropagation();archivarLead("' + l.codigo + '","' + (l.nombre||'').replace(/"/g,'') + '")\'>Archivar</button>' : '') + '</td>' +
     '</tr>';
   }).join('');
 }
@@ -1195,11 +1230,25 @@ function ajustarCampos() {
   // Proxima accion filtrada segun el resultado elegido
   const sel = $('gProxAccion');
   const previo = sel.value;
-  const acciones = (CAT.accionesPorResultado && CAT.accionesPorResultado[r]) || CAT.proximasAcciones;
+  let acciones = (CAT.accionesPorResultado && CAT.accionesPorResultado[r]) || CAT.proximasAcciones;
+  acciones = acciones.slice(); // copia para no mutar el catalogo
+  // Si el lead YA quedo calificado (datos previos o cargados ahora), "Calificar lead"
+  // deja de tener sentido: se quita y la proxima accion sugerida pasa a "Agendar reunion".
+  const calificadoAhora = gYaCalificado || camposCalifLlenos();
+  if (calificadoAhora && acciones.includes('Calificar lead')) {
+    acciones = acciones.filter(a => a !== 'Calificar lead');
+    if (!acciones.includes('Agendar reunion')) acciones.unshift('Agendar reunion');
+    if (!autoAccion) autoAccion = 'Agendar reunion';
+  }
   sel.innerHTML = '<option value="">—</option>';
   acciones.forEach(a => sel.add(new Option(tr(a), a)));
   if (autoAccion && acciones.includes(autoAccion)) sel.value = autoAccion;
   else if (acciones.includes(previo)) sel.value = previo;
+}
+
+// True si los 4 campos de calificacion estan llenos en el modal ahora mismo.
+function camposCalifLlenos() {
+  return !!($('gTicket').value && $('gTiempo').value && $('gInteres').value && $('gExperiencia').value);
 }
 
 // Botones rapidos de fecha proxima accion.
@@ -1361,6 +1410,7 @@ async function cargarCohortes() {
 }
 
 async function cargarDashboard() {
+  cargarPie();
   const d = await api('/api/dashboard');
   const fmtS = n => 'S/ ' + (n || 0).toLocaleString('es-PE');
   $('kpis').innerHTML = [
