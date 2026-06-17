@@ -95,24 +95,23 @@ function obtenerAccionesPermitidas(resultado) {
 }
 
 // ---------- Kanban ----------
-// Las 6 columnas visibles y a que etapas internas corresponde cada una.
+// Las 6 columnas visibles del pipeline ACTIVO (los cerrados no se muestran).
 const KANBAN_COLUMNAS = [
-  { id: 'contactar', titulo: 'Contactar 3x5', etapas: ['Contactabilidad 3x5'] },
-  { id: 'contactado', titulo: 'Contactado', etapas: ['Contactado - por calificar', 'Calificado - pendiente agendar'] },
+  { id: 'contactar', titulo: 'Por contactar', etapas: ['Contactabilidad 3x5'] },
+  { id: 'contactado', titulo: 'Contactado', etapas: ['Contactado - por calificar'] },
+  { id: 'calificado', titulo: 'Calificado', etapas: ['Calificado - pendiente agendar'] },
   { id: 'agendado', titulo: 'Agendado', etapas: ['Agendado - pendiente reunion'] },
-  { id: 'reunido', titulo: 'Reunido', etapas: ['Reunion efectiva - seguimiento'] },
-  { id: 'negociacion', titulo: 'Negociacion', etapas: ['Cierre pendiente'] },
-  { id: 'cerrado', titulo: 'Cerrado', etapas: ['Cerrado ganado', 'Cerrado perdido'] }
+  { id: 'reunido', titulo: 'Reunion efectiva', etapas: ['Reunion efectiva - seguimiento'] },
+  { id: 'negociacion', titulo: 'Negociacion', etapas: ['Cierre pendiente'] }
 ];
 
 // Al soltar una tarjeta en una columna, este es el resultado de gestion sugerido.
-// Solo se permite la movida si el resultado es valido desde la etapa actual del lead.
 const KANBAN_RESULTADO_DESTINO = {
   contactado: 'Respondio - interesado',
+  calificado: 'Respondio - interesado',
   agendado: 'Agendo reunion',
   reunido: 'Reunion efectiva',
-  negociacion: 'Cierre pendiente',
-  cerrado: 'Venta ganada'  // en cerrado, el modal deja elegir ganada o perdida
+  negociacion: 'Cierre pendiente'
 };
 
 // Columna a la que pertenece una etapa dada.
@@ -128,19 +127,15 @@ function transicionKanbanValida(etapaActual, columnaDestino) {
   const resultado = KANBAN_RESULTADO_DESTINO[columnaDestino];
   if (!resultado) return false;
   const permitidos = obtenerResultadosPermitidos(etapaActual).map(g => g[1]).flat();
-  // "cerrado" tambien acepta resultados de perdida desde cualquier etapa viva
-  if (columnaDestino === 'cerrado') {
-    return permitidos.includes('Venta ganada') ||
-           permitidos.includes('Respondio - no interesado') ||
-           permitidos.includes('Respondio - no califica');
-  }
   return permitidos.includes(resultado);
 }
 
-const NIVEL_INTERES = ['Poco interesado', 'Interesado', 'Muy interesado'];
+const NIVEL_INTERES = ['Muy interesado', 'Interesado', 'Solo averigua', 'Poco interes'];
 const TICKET_RANGO = ['S/ 200,000 a mas', 'S/ 100,000 - 199,999', 'S/ 50,000 - 99,999', 'S/ 10,000 - 49,999'];
 const TIEMPO = ['0 a 7 dias', '8 a 15 dias', '16 a 30 dias', '> 30 dias'];
-const EXPERIENCIA = ['Basica', 'Intermedia', 'Alta'];
+// "¿Puede avanzar?" reemplaza a Experiencia en el score
+const AVANCE = ['Decide solo', 'Decide acompanado', 'Debe consultar', 'No avanza'];
+const EXPERIENCIA = AVANCE; // alias de compatibilidad (codigo viejo que aun referencie EXPERIENCIA)
 const TIPO_REUNION = ['Zoom', 'Google Meet', 'Presencial oficina', 'Llamada telefonica'];
 const ESTADO_REUNION = ['No aplica', 'Agendada', 'Confirmada', 'No asistio', 'Reprogramada', 'Efectiva'];
 const OBJECIONES = ['Tasa', 'Confianza', 'Garantia', 'Liquidez', 'Monto', 'Tiempo', 'Ya consiguio financiamiento', 'No necesita ahora', 'Otro'];
@@ -162,14 +157,21 @@ function grupoLimpio(resultado) {
   return resultado || '';
 }
 
-// ---------- Score de calificacion 0-90 ----------
-function calcularScore({ nivelInteres, ticket, tiempo, experiencia }) {
+// ---------- Score de calificacion 0-100 ----------
+// 4 variables: Ticket (30) + Interes (30) + Tiempo (20) + Avance (20) = 100.
+// El parametro 'experiencia' se mantiene por compatibilidad y se trata como 'avance'.
+function calcularScore({ nivelInteres, ticket, tiempo, avance, experiencia }) {
+  const av = avance || experiencia; // compatibilidad con codigo/datos viejos
   let p = 0;
-  p += { 'Muy interesado': 25, 'Interesado': 15, 'Poco interesado': 5 }[nivelInteres] || 0;
-  p += { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 20, 'S/ 50,000 - 99,999': 15, 'S/ 10,000 - 49,999': 10 }[ticket] || 0;
+  // Ticket - "¿Cuanto quiere invertir?"
+  p += { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 }[ticket] || 0;
+  // Interes - "¿Quiere una propuesta?"
+  p += { 'Muy interesado': 30, 'Interesado': 20, 'Solo averigua': 10, 'Poco interes': 5 }[nivelInteres] || 0;
+  // Tiempo - "¿Cuando invertiria?"
   p += { '0 a 7 dias': 20, '8 a 15 dias': 15, '16 a 30 dias': 10, '> 30 dias': 5 }[tiempo] || 0;
-  p += { 'Alta': 15, 'Intermedia': 10, 'Basica': 5 }[experiencia] || 0;
-  return Math.min(90, p);
+  // Avance - "¿Puede avanzar?"
+  p += { 'Decide solo': 20, 'Decide acompanado': 15, 'Debe consultar': 10, 'No avanza': 5 }[av] || 0;
+  return Math.min(100, p);
 }
 
 // ---------- Etapa derivada del ultimo resultado ----------
@@ -190,32 +192,52 @@ function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
 }
 
 // ---------- Probabilidad % por tramos de etapa ----------
-// 3x5: max(4, 30 - 2*intentos). Contactado 15-50, Agendado 50-70,
-// Efectiva 62-88, Cierre 94, Ganado 100, Perdido 0.
+// Formula: Piso + (Techo - Piso) * score/100. Pisos/techos recalibrados:
+//   Por contactar 3-12 (baja por intentos), Contactado 10-25, Calificado 25-55,
+//   Agendado 45-70, Reunion efectiva 60-85, Negociacion (Cierre pendiente) 85-95,
+//   Ganado 100, Perdido 0.
 function calcularProbabilidad({ etapa, score, intentos }) {
-  const f = (score || 0) / 90;
+  const f = (score || 0) / 100;
+  const tramo = (piso, techo) => Math.round(piso + (techo - piso) * f);
   switch (etapa) {
     case 'Cerrado ganado': return 100;
     case 'Cerrado perdido': return 0;
-    case 'Cierre pendiente': return 94;
-    case 'Reunion efectiva - seguimiento': return Math.round(62 + (88 - 62) * f);
-    case 'Agendado - pendiente reunion': return Math.round(50 + (70 - 50) * f);
-    case 'Contactabilidad 3x5': return Math.max(4, 30 - (intentos || 0) * 2);
-    default: return Math.round(15 + (50 - 15) * f); // Contactado / Calificado
+    case 'Cierre pendiente': return tramo(85, 95);
+    case 'Reunion efectiva - seguimiento': return tramo(60, 85);
+    case 'Agendado - pendiente reunion': return tramo(45, 70);
+    case 'Calificado - pendiente agendar': return tramo(25, 55);
+    case 'Contactado - por calificar': return tramo(10, 25);
+    case 'Contactabilidad 3x5': {
+      // Baja por intentos fallidos: arranca en el techo (12) y baja ~1.5 por intento, piso 3.
+      return Math.max(3, Math.round(12 - (intentos || 0) * 1.5));
+    }
+    default: return tramo(10, 25);
   }
 }
 
 // ---------- Prioridad operativa ----------
-function calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, ahora }) {
+// Orden (gana la primera que se cumple):
+//  1. Cerrado -> Baja (sin gestion)
+//  2. Proxima accion vencida -> Muy alta
+//  3. Negociacion (Cierre pendiente) -> Muy alta
+//  4. Reunion en <=24h -> Muy alta
+//  5. Lead nuevo creado hoy sin contactar -> Alta
+//  6. En "Por contactar" -> segun intentos (1-3 Alta, 4-7 Media, 8-12 Baja, 13+ Muy baja)
+//  7. Otras etapas -> segun probabilidad (>=75 MuyAlta, 50-74 Alta, 25-49 Media, <25 Baja)
+function calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, fechaAsignacion, ahora }) {
   const now = ahora || new Date();
   if (etapa === 'Cerrado ganado' || etapa === 'Cerrado perdido') return 'Baja';
+  if (fechaProxAccion && new Date(fechaProxAccion) < now) return 'Muy alta';
   if (etapa === 'Cierre pendiente') return 'Muy alta';
   if (fechaReunion && new Date(fechaReunion) <= new Date(now.getTime() + 24 * 3600 * 1000)) return 'Muy alta';
-  if (fechaProxAccion && new Date(fechaProxAccion) < now) return 'Muy alta';
   if (etapa === 'Contactabilidad 3x5') {
-    if ((intentos || 0) >= 13) return 'Alta';
-    if ((intentos || 0) >= 7) return 'Media';
-    return 'Baja';
+    const ints = intentos || 0;
+    // Lead nuevo creado hoy y aun sin intentos -> Alta
+    if (ints === 0 && fechaAsignacion && esMismoDia(new Date(fechaAsignacion), now)) return 'Alta';
+    if (ints <= 3) return 'Alta';
+    if (ints <= 7) return 'Media';
+    if (ints <= 12) return 'Baja';
+    return 'Muy baja';
   }
   if (probabilidad >= 75) return 'Muy alta';
   if (probabilidad >= 50) return 'Alta';
@@ -223,7 +245,11 @@ function calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fec
   return 'Baja';
 }
 
-const ORDEN_PRIORIDAD = { 'Muy alta': 1, 'Alta': 2, 'Media': 3, 'Baja': 4 };
+function esMismoDia(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+const ORDEN_PRIORIDAD = { 'Muy alta': 1, 'Alta': 2, 'Media': 3, 'Baja': 4, 'Muy baja': 5 };
 
 // ---------- Validacion de gestion ----------
 // Factores (ticket/tiempo/interes/experiencia) SOLO se exigen en la fase
@@ -345,22 +371,23 @@ function consolidarLead(lead, gestiones) {
   const ticket = ultNV('ticket');
   const tiempo = ultNV('tiempo');
   const nivelInteres = ultNV('nivelInteres');
-  const experiencia = ultNV('experiencia');
+  // El campo 'experiencia' en BD ahora almacena el "avance" (¿Puede avanzar?).
+  const avance = ultNV('experiencia');
   const estadoReunion = ultNV('estadoReunion');
   const fechaReunion = ultNV('fechaReunion');
   const objecion = ultNV('objecion');
   const closer = ultNV('closer');
   const motivoPerdida = ult ? ult.motivoPerdida : null;
 
-  const score = calcularScore({ nivelInteres, ticket, tiempo, experiencia });
-  const tieneCalificacion = !!(ticket || tiempo || nivelInteres || experiencia);
+  const score = calcularScore({ nivelInteres, ticket, tiempo, avance });
+  const tieneCalificacion = !!(ticket || tiempo || nivelInteres || avance);
   const etapa = calcularEtapa({
     ultimoResultado: ult ? ult.resultado : 'Sin gestion',
     estadoReunion, tieneCalificacion
   });
   const probabilidad = calcularProbabilidad({ etapa, score, intentos });
   const fechaProxAccion = ult ? ult.fechaProxAccion : null;
-  const prioridad = calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion });
+  const prioridad = calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, fechaAsignacion: lead.fechaAsignacion });
 
   let proximaAccion = ult ? ult.proximaAccion : null;
   if (!proximaAccion && etapa === 'Contactabilidad 3x5') proximaAccion = 'Llamar intento 3x5';
@@ -384,12 +411,14 @@ function consolidarLead(lead, gestiones) {
     score, etapa, probabilidad, prioridad,
     ordenSort: ORDEN_PRIORIDAD[prioridad] || 4,
     ultimoResultado: ult ? ult.resultado : 'Sin gestion',
+    ultimoCanal: ult ? ult.canal : null,
     ultimaGestion: ult ? ult.fecha : null,
     proximaAccion, fechaProxAccion,
-    ticket, tiempo, nivelInteres, experiencia,
+    ticket, tiempo, nivelInteres, experiencia: avance, avance,
     estadoReunion, fechaReunion, objecion, closer, motivoPerdida,
     totalGestiones: gestiones.length,
-    pipelineEstimado: montoTicket(ticket)
+    pipelineEstimado: montoTicket(ticket),
+    fechaCierreEstimada: lead.fechaCierreEstimada || null
   };
 }
 
@@ -525,7 +554,7 @@ function obtenerResultadosPermitidos(etapa) {
 
 module.exports = {
   ASESORES, CANALES, FUENTES, RESULTADOS, RESULTADOS_POR_ETAPA, PROXIMAS_ACCIONES, ACCIONES_POR_RESULTADO,
-  NIVEL_INTERES, TICKET_RANGO, TIEMPO, EXPERIENCIA,
+  NIVEL_INTERES, TICKET_RANGO, TIEMPO, EXPERIENCIA, AVANCE,
   TIPO_REUNION, ESTADO_REUNION, OBJECIONES, MOTIVOS_PERDIDA,
   grupoLimpio, calcularScore, calcularEtapa, calcularProbabilidad,
   calcularPrioridad, validarGestion, autocalcularFechaProxAccion,

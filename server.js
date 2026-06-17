@@ -11,6 +11,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const fs = require('fs');
 const L = require('./logic');
 const mailer = require('./mailer');
 
@@ -77,6 +78,7 @@ try { db.exec('ALTER TABLE leads ADD COLUMN montoPotencial TEXT'); } catch (e) {
 try { db.exec('ALTER TABLE leads ADD COLUMN montoReal INTEGER'); } catch (e) {}
 try { db.exec('ALTER TABLE leads ADD COLUMN montoRango TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE leads ADD COLUMN archivado INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE leads ADD COLUMN fechaCierreEstimada TEXT'); } catch (e) {}
 db.exec(`
   CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,8 +269,9 @@ function veTodo(user) {
 function gestionesDeLead(codigo) {
   return db.prepare('SELECT * FROM gestiones WHERE codigo = ? ORDER BY fecha ASC').all(codigo);
 }
-function leadConsolidado(lead) {
-  return L.consolidarLead(lead, gestionesDeLead(lead.codigo));
+function leadConsolidado(lead, gestiones) {
+  const g = Array.isArray(gestiones) ? gestiones : gestionesDeLead(lead.codigo);
+  return L.consolidarLead(lead, g);
 }
 function generarCodigo() {
   const hoy = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -283,7 +286,7 @@ app.get('/api/catalogos', (req, res) => {
     asesores: L.ASESORES, canales: L.CANALES, fuentes: L.FUENTES,
     resultados: L.RESULTADOS, proximasAcciones: L.PROXIMAS_ACCIONES,
     nivelInteres: L.NIVEL_INTERES, ticketRango: L.TICKET_RANGO,
-    tiempo: L.TIEMPO, experiencia: L.EXPERIENCIA,
+    tiempo: L.TIEMPO, experiencia: L.EXPERIENCIA, avance: L.AVANCE,
     tipoReunion: L.TIPO_REUNION, estadoReunion: L.ESTADO_REUNION,
     objeciones: L.OBJECIONES, motivosPerdida: L.MOTIVOS_PERDIDA,
     accionesPorResultado: require('./logic').ACCIONES_POR_RESULTADO || {},
@@ -449,17 +452,17 @@ app.get('/api/highlights', (req, res) => {
 
   if (verTodo) {
     res.json([
-      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo' },
-      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul' },
-      { clave: 'sinasignar', etiqueta: 'Sin asignar', valor: sinAsignarTotal, tono: 'naranja' },
-      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde' }
+      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo', ico: 'reloj', sub: 'Requieren atención' },
+      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul', ico: 'cal', sub: 'Acciones programadas' },
+      { clave: 'sinasignar', etiqueta: 'Sin asignar', valor: sinAsignarTotal, tono: 'naranja', ico: 'user', sub: 'Por distribuir' },
+      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde', ico: 'trofeo', sub: 'Cierres del día' }
     ]);
   } else {
     res.json([
-      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo' },
-      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul' },
-      { clave: 'avance', etiqueta: 'Tasa de avance', valor: tasaAvance + '%', tono: 'morado' },
-      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde' }
+      { clave: 'vencidos', etiqueta: 'Vencidos', valor: vencidos, tono: 'rojo', ico: 'reloj', sub: 'Requieren atención' },
+      { clave: 'hoy', etiqueta: 'Para hoy', valor: paraHoy, tono: 'azul', ico: 'cal', sub: 'Acciones programadas' },
+      { clave: 'avance', etiqueta: 'Avance del día', valor: tasaAvance + '%', tono: 'morado', ico: 'grafico', sub: 'Leads avanzados' },
+      { clave: 'ganados', etiqueta: 'Ganados', valor: ganados, tono: 'verde', ico: 'trofeo', sub: 'Cierres del día' }
     ]);
   }
 });
@@ -594,6 +597,12 @@ app.post('/api/gestiones', (req, res) => {
       g.estadoReunion || null, g.closer || null, g.motivoPerdida || null
     );
 
+  // Fecha estimada de cierre: se guarda en el lead (proyeccion). null la limpia.
+  if (g.fechaCierreEstimada !== undefined) {
+    db.prepare('UPDATE leads SET fechaCierreEstimada = ? WHERE codigo = ?')
+      .run(g.fechaCierreEstimada || null, g.codigo);
+  }
+
   res.json(leadConsolidado(lead));
 });
 
@@ -604,22 +613,169 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   if (!veTodo(req.user) && lead.asesor !== req.user.nombre) {
     return res.status(403).json({ error: 'Este lead no esta asignado a ti' });
   }
-  const traza = L.trazabilidad(lead, gestionesDeLead(lead.codigo));
-  // Sumar las llamadas automaticas de Aircall como eventos de tipo "llamada"
+  const gestiones = gestionesDeLead(lead.codigo);
+  const cons = leadConsolidado(lead);
   const llamadas = db.prepare('SELECT * FROM llamadas WHERE codigo = ? ORDER BY fecha ASC').all(lead.codigo);
-  const eventosLlamada = llamadas.map(ll => ({
-    tipo: 'llamada',
-    fecha: ll.fecha,
-    direccion: ll.direccion,
-    contestada: !!ll.contestada,
-    duracion: ll.duracion,
-    agente: ll.agente,
-    resumen: `Llamada ${ll.direccion} · ${ll.contestada ? 'contestada' : 'no contestada'}` +
-      (ll.duracion ? ` · ${Math.floor(ll.duracion/60)}:${String(ll.duracion%60).padStart(2,'0')} min` : '') +
-      (ll.agente ? ` · ${ll.agente}` : '')
-  }));
-  res.json({ traza, llamadas: eventosLlamada });
+
+  // --- Timeline: construir eventos cronologicos con score/prob progresivos ---
+  const eventos = [];
+  // Evento: lead creado
+  eventos.push({
+    tipo: 'creado', fecha: lead.fechaAsignacion || lead.fechaCarga,
+    titulo: 'Ingreso de lead', sub: lead.asesor ? 'Asignado a ' + lead.asesor : 'Sin asignar',
+    actor: 'Sistema', badge: 'Nuevo', badgeColor: 'verde'
+  });
+  // Para score/prob progresivo: recalculamos el consolidado acumulando gestiones.
+  let scorePrev = 0, etapaPrev = 'Contactabilidad 3x5', probPrev = L.calcularProbabilidad({ etapa: 'Contactabilidad 3x5', score: 0, intentos: 0 });
+  let proxAccionPrev = null; // fecha de la proxima accion que dejo la gestion anterior
+  gestiones.forEach((g, i) => {
+    const parcial = leadConsolidado(lead, gestiones.slice(0, i + 1));
+    const grupo = L.grupoLimpio(g.resultado);
+    const subio = parcial.etapa !== etapaPrev;
+    // ¿Esta gestion atendio una accion que ya estaba vencida?
+    let tardanza = null;
+    if (proxAccionPrev) {
+      const desfaseMs = new Date(g.fecha) - new Date(proxAccionPrev);
+      if (desfaseMs > 6 * 3600 * 1000) tardanza = textoDesfase(desfaseMs); // > 6h se considera tarde
+    }
+    eventos.push({
+      tipo: 'gestion', fecha: g.fecha,
+      titulo: tituloResultado(g.resultado), sub: g.comentario || subtituloResultado(g.resultado, g),
+      actor: g.asesor || lead.asesor || '', canal: g.canal,
+      score: parcial.score, probabilidad: parcial.probabilidad,
+      sinContacto: grupo === 'No_respondio',
+      intentoNum: grupo === 'No_respondio' ? eventos.filter(e => e.sinContacto).length + 1 : null,
+      tardanza
+    });
+    // Si hubo cambio de etapa, insertar evento de sistema
+    if (subio) {
+      eventos.push({
+        tipo: 'cambio', fecha: g.fecha,
+        titulo: 'Pasó a ' + trEtapaServer(parcial.etapa),
+        sub: parcial.score > scorePrev && parcial.etapa === 'Calificado - pendiente agendar'
+          ? 'Se completaron las 4 variables del score.' : 'Avance de etapa.',
+        actor: 'Sistema', evoEtapa: [trEtapaServer(etapaPrev), trEtapaServer(parcial.etapa)]
+      });
+    }
+    scorePrev = parcial.score; etapaPrev = parcial.etapa; probPrev = parcial.probabilidad;
+    proxAccionPrev = g.fechaProxAccion || null;
+  });
+  // Evento: proxima accion pendiente (si hay)
+  if (cons.proximaAccion && cons.fechaProxAccion) {
+    const venc = new Date(cons.fechaProxAccion) < new Date();
+    eventos.push({
+      tipo: 'proxima', fecha: cons.fechaProxAccion,
+      titulo: trAccionServer(cons.proximaAccion, cons.etapa),
+      sub: venc ? 'Acción vencida' : 'Pendiente',
+      actor: lead.asesor || '', badge: venc ? 'Vencido' : 'Pendiente', badgeColor: venc ? 'rojo' : 'naranja',
+      futuro: true
+    });
+  }
+  // Llamadas Aircall como eventos
+  llamadas.forEach(ll => {
+    eventos.push({
+      tipo: 'llamada', fecha: ll.fecha,
+      titulo: 'Llamada ' + ll.direccion, sub: (ll.contestada ? 'Contestada' : 'No contestada') +
+        (ll.duracion ? ' · ' + Math.floor(ll.duracion/60) + ':' + String(ll.duracion%60).padStart(2,'0') : ''),
+      actor: ll.agente || ''
+    });
+  });
+  // Ordenar: futuros primero (arriba), luego por fecha desc
+  eventos.sort((a, b) => {
+    if (a.futuro && !b.futuro) return -1;
+    if (!a.futuro && b.futuro) return 1;
+    return new Date(b.fecha) - new Date(a.fecha);
+  });
+
+  // --- Evolucion (primer score/prob/etapa -> actual) ---
+  const primeraGest = gestiones[0];
+  const evoInicial = primeraGest ? leadConsolidado(lead, [primeraGest]) : { score: 0, probabilidad: probPrev, etapa: 'Contactabilidad 3x5' };
+
+  // --- Calificacion actual con puntos ---
+  const ptsTicket = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
+  const ptsInteres = { 'Muy interesado': 30, 'Interesado': 20, 'Solo averigua': 10, 'Poco interes': 5 };
+  const ptsTiempo = { '0 a 7 dias': 20, '8 a 15 dias': 15, '16 a 30 dias': 10, '> 30 dias': 5 };
+  const ptsAvance = { 'Decide solo': 20, 'Decide acompanado': 15, 'Debe consultar': 10, 'No avanza': 5 };
+  const av = cons.avance || cons.experiencia;
+  const calificacion = [
+    { ico: '$', etiqueta: 'Monto', valor: cons.ticket, pts: ptsTicket[cons.ticket] || 0 },
+    { ico: '♥', etiqueta: 'Interés', valor: cons.nivelInteres, pts: ptsInteres[cons.nivelInteres] || 0 },
+    { ico: '◷', etiqueta: 'Plazo', valor: cons.tiempo, pts: ptsTiempo[cons.tiempo] || 0 },
+    { ico: '👤', etiqueta: 'Avance', valor: av, pts: ptsAvance[av] || 0 }
+  ];
+
+  const intentosContacto = gestiones.filter(g => L.grupoLimpio(g.resultado) === 'No_respondio').length;
+  const contactado = gestiones.some(g => !['No_respondio'].includes(L.grupoLimpio(g.resultado)) && g.resultado !== 'Sin gestion');
+
+  res.json({
+    codigo: lead.codigo, nombre: lead.nombre, telefono: lead.telefono,
+    etapa: cons.etapa, etapaVisible: trEtapaServer(cons.etapa),
+    prioridad: cons.prioridad, score: cons.score, probabilidad: cons.probabilidad,
+    asesor: lead.asesor,
+    resumen: {
+      ultimaGestion: cons.ultimaGestion, ultimoResultado: cons.ultimoResultado,
+      proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : null,
+      fechaProxAccion: cons.fechaProxAccion,
+      intentos: intentosContacto, contactado,
+      monto: cons.montoReal || cons.montoPotencial, ticket: cons.ticket
+    },
+    estadoActual: {
+      etapa: trEtapaServer(cons.etapa), prioridad: cons.prioridad,
+      probabilidad: cons.probabilidad, proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : '—'
+    },
+    evolucion: {
+      etapa: [trEtapaServer(evoInicial.etapa), trEtapaServer(cons.etapa)],
+      score: [evoInicial.score, cons.score],
+      probabilidad: [evoInicial.probabilidad, cons.probabilidad]
+    },
+    calificacion,
+    eventos
+  });
 });
+
+// Helpers de presentacion en el server (espejo de los del front)
+function trEtapaServer(e) {
+  const m = {
+    'Contactabilidad 3x5': 'Por contactar', 'Contactado - por calificar': 'Contactado',
+    'Calificado - pendiente agendar': 'Calificado', 'Agendado - pendiente reunion': 'Agendado',
+    'Reunion efectiva - seguimiento': 'Reunión efectiva', 'Cierre pendiente': 'Negociación',
+    'Cerrado ganado': 'Ganado', 'Cerrado perdido': 'Perdido'
+  };
+  return m[e] || e;
+}
+function trAccionServer(a, etapa) {
+  if (a === 'Llamar intento 3x5' && etapa && etapa !== 'Contactabilidad 3x5') return 'Llamar';
+  const m = { 'Llamar intento 3x5': 'Llamar intento 3x5', 'Agendar reunion': 'Agendar reunión',
+    'Confirmar asistencia': 'Confirmar asistencia', 'Enviar informacion': 'Enviar información',
+    'Seguimiento post reunion': 'Seguimiento', 'Reprogramar reunion': 'Reprogramar', 'Desestimar': 'Desestimar',
+    'Enviar propuesta': 'Enviar propuesta', 'Cerrar venta': 'Cerrar venta' };
+  return m[a] || a;
+}
+function tituloResultado(r) {
+  const m = {
+    'No contesto': 'No contestó', 'Buzon / apagado': 'Buzón / apagado',
+    'WhatsApp enviado sin respuesta': 'WhatsApp sin respuesta',
+    'Respondio - no pudo hablar': 'Respondió · no pudo hablar',
+    'Respondio - pidio informacion': 'Respondió · pidió información',
+    'Respondio - interesado': 'Respondió · interesado',
+    'Respondio - no interesado': 'Respondió · no interesado',
+    'Respondio - no califica': 'Respondió · no califica',
+    'Agendo reunion': 'Agendó reunión', 'Confirmo reunion': 'Confirmó reunión',
+    'Reunion efectiva': 'Reunión efectiva', 'Venta ganada': 'Venta ganada'
+  };
+  return m[r] || r;
+}
+function subtituloResultado(r, g) {
+  if (L.grupoLimpio(r) === 'No_respondio') return 'Intento de contacto.';
+  return '';
+}
+// Texto legible del desfase de una gestion tardia
+function textoDesfase(ms) {
+  const horas = Math.round(ms / 3600000);
+  if (horas < 24) return 'Gestionado ' + horas + 'h tarde';
+  const dias = Math.round(horas / 24);
+  return 'Gestionado ' + dias + (dias === 1 ? ' día tarde' : ' días tarde');
+}
 
 // ---------- Archivar / Restaurar / Eliminar (solo admin) ----------
 // Archivar: borrado logico, sale de la vista pero queda en BD.
@@ -664,6 +820,15 @@ app.get('/api/auditoria', soloAdmin, (req, res) => {
   res.json(filas);
 });
 
+// Backup: descarga el archivo crm.db completo (solo admin).
+app.get('/api/backup', soloAdmin, (req, res) => {
+  const dbPath = path.join(__dirname, 'crm.db');
+  if (!fs.existsSync(dbPath)) return res.status(404).json({ error: 'Base no encontrada' });
+  const fecha = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  auditar(req, 'descargar backup', '-', 'backup manual');
+  res.download(dbPath, `crm-backup-${fecha}.db`);
+});
+
 // Analisis de cohortes (solo admin): leads agrupados por mes de asignacion
 app.get('/api/cohortes', soloAdmin, (req, res) => {
   const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
@@ -686,52 +851,99 @@ app.get('/api/dashboard', (req, res) => {
     .all(hoy.toISOString(), man.toISOString());
   if (!veTodo(req.user)) deHoy = deHoy.filter(g => g.asesor === req.user.nombre);
   const unicos = arr => [...new Set(arr.filter(Boolean))];
+  const ahoraTs = new Date();
+  const monto = l => (l.montoReal || l.pipelineEstimado || 0);
+  const esCerrado = e => e === 'Cerrado ganado' || e === 'Cerrado perdido';
+  const activos = leads.filter(l => !esCerrado(l.etapa));
 
-  const etapas = [
-    'Contactabilidad 3x5', 'Contactado - por calificar', 'Calificado - pendiente agendar',
-    'Agendado - pendiente reunion', 'Reunion efectiva - seguimiento',
-    'Cierre pendiente', 'Cerrado ganado', 'Cerrado perdido'
+  // --- Embudo: 5 etapas activas con prob.prom y pipeline ponderado ---
+  const etapasEmbudo = [
+    'Contactabilidad 3x5', 'Calificado - pendiente agendar',
+    'Agendado - pendiente reunion', 'Reunion efectiva - seguimiento', 'Cierre pendiente'
   ];
-  const embudo = etapas.map(et => {
-    const rows = leads.filter(l => l.etapa === et);
-    return { etapa: et, cantidad: rows.length, pipeline: rows.reduce((s, l) => s + l.pipelineEstimado, 0) };
+  // Nota: Contactado se une visualmente con Por contactar para el embudo comercial
+  const embudo = etapasEmbudo.map(et => {
+    let rows;
+    if (et === 'Contactabilidad 3x5') rows = leads.filter(l => l.etapa === 'Contactabilidad 3x5' || l.etapa === 'Contactado - por calificar');
+    else rows = leads.filter(l => l.etapa === et);
+    const total = rows.reduce((s, l) => s + monto(l), 0);
+    const ponderado = rows.reduce((s, l) => s + monto(l) * (l.probabilidad || 0) / 100, 0);
+    const probProm = rows.length ? Math.round(rows.reduce((s, l) => s + (l.probabilidad || 0), 0) / rows.length) : 0;
+    return { etapa: et, cantidad: rows.length, monto: total, ponderado: Math.round(ponderado), probProm };
   });
 
-  const ahoraTs = new Date();
+  // --- Pipeline global ---
+  const pipelineTotal = activos.reduce((s, l) => s + monto(l), 0);
+  const pipelinePonderado = Math.round(activos.reduce((s, l) => s + monto(l) * (l.probabilidad || 0) / 100, 0));
+  const conMonto = activos.filter(l => monto(l) > 0);
+  const ticketProm = conMonto.length ? Math.round(pipelineTotal / conMonto.length) : 0;
+
+  // --- Salud del dia ---
+  const vencidosTot = activos.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) < ahoraTs).length;
+  const gestionadosHoy = unicos(deHoy.map(g => g.codigo)).length;
+  const agendadosHoy = unicos(deHoy.filter(g => g.grupoLimpio === 'Agendo_reunion').map(g => g.codigo)).length;
+  const ganadosHoy = unicos(deHoy.filter(g => g.grupoLimpio === 'Ganado' || g.resultado === 'Venta ganada').map(g => g.codigo)).length;
+  const porContactar = leads.filter(l => l.etapa === 'Contactabilidad 3x5').length;
+  const enNegociacion = leads.filter(l => l.etapa === 'Cierre pendiente').length;
+
+  // --- Alertas operativas ---
+  const alertas = [];
+  if (vencidosTot > 0) alertas.push({ nivel: 'Alto', color: 'rojo', titulo: vencidosTot + (vencidosTot === 1 ? ' acción vencida' : ' acciones vencidas'), sub: 'Requieren atención inmediata', cola: 'vencidos' });
+  if (porContactar > 0) alertas.push({ nivel: 'Medio', color: 'naranja', titulo: porContactar + ' leads por contactar', sub: 'Leads nuevos sin gestionar', cola: 'porcontactar' });
+  const reunion24 = activos.filter(l => l.fechaReunion && new Date(l.fechaReunion) <= new Date(ahoraTs.getTime() + 24*3600*1000) && new Date(l.fechaReunion) >= ahoraTs).length;
+  alertas.push({ nivel: 'Info', color: 'azul', titulo: reunion24 + (reunion24 === 1 ? ' reunión en próximas 24h' : ' reuniones en próximas 24h'), sub: 'Requiere preparación y confirmación', cola: 'reunion' });
+  alertas.push({ nivel: 'Ok', color: 'verde', titulo: enNegociacion + ' cierres pendientes', sub: enNegociacion > 0 ? 'En etapa de negociación' : 'Sin cierres próximos', cola: 'negociacion' });
+
+  // --- Productividad por GP ---
   const asesoresVisibles = veTodo(req.user) ? L.ASESORES : [req.user.nombre];
   const porAsesor = asesoresVisibles.map(a => {
     const rows = deHoy.filter(g => g.asesor === a);
-    // #10 Semaforo: rojo si tiene acciones vencidas; amarillo si tiene pendientes
-    // futuros; verde si esta al dia (sin pendientes vencidos).
     const susLeads = leads.filter(l => l.asesor === a);
-    const vencidos = susLeads.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) < ahoraTs).length;
-    const pendientes = susLeads.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) >= ahoraTs).length;
-    const semaforo = vencidos > 0 ? 'rojo' : (pendientes > 0 ? 'amarillo' : 'verde');
-    return {
-      asesor: a,
-      gestionados: unicos(rows.map(g => g.codigo)).length,
-      agendados: unicos(rows.filter(g => g.grupoLimpio === 'Agendo_reunion').map(g => g.codigo)).length,
-      reunionesEfectivas: unicos(rows.filter(g => g.grupoLimpio === 'Reunion_efectiva').map(g => g.codigo)).length,
-      semaforo, vencidos, pendientes
-    };
+    const susActivos = susLeads.filter(l => !esCerrado(l.etapa));
+    const vencidos = susActivos.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) < ahoraTs).length;
+    const gestHoy = unicos(rows.map(g => g.codigo)).length;
+    const agend = unicos(rows.filter(g => g.grupoLimpio === 'Agendo_reunion').map(g => g.codigo)).length;
+    const gan = susLeads.filter(l => l.etapa === 'Cerrado ganado').length;
+    // Cumplimiento: gestionados hoy / meta diaria (asumimos meta 3 por activo, tope visual)
+    const meta = Math.max(1, Math.min(susActivos.length, 10));
+    const cumpl = Math.min(100, Math.round((gestHoy / meta) * 100));
+    const estado = vencidos > 2 ? 'En riesgo' : (vencidos > 0 ? 'Atención' : 'Al día');
+    return { asesor: a, activos: susActivos.length, gestHoy, vencidos, agendados: agend, ganados: gan, cumplimiento: cumpl, estado };
   });
 
+  // --- Forecast: leads con fecha estimada de cierre (proyeccion de ingresos) ---
+  const conCierre = activos.filter(l => l.fechaCierreEstimada);
+  const fcItems = conCierre.map(l => ({
+    nombre: l.nombre, etapa: l.etapa, fecha: l.fechaCierreEstimada, monto: monto(l)
+  })).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const fcTotal = fcItems.reduce((s, i) => s + i.monto, 0);
+  // Agrupar por periodo: Esta semana / Próx. semana / Este mes / Más adelante
+  const hoyD = new Date(); hoyD.setHours(0, 0, 0, 0);
+  const finSemana = new Date(hoyD); finSemana.setDate(finSemana.getDate() + (7 - hoyD.getDay()));
+  const finProxSem = new Date(finSemana); finProxSem.setDate(finProxSem.getDate() + 7);
+  const finMes = new Date(hoyD.getFullYear(), hoyD.getMonth() + 1, 0, 23, 59, 59);
+  const periodosDef = [
+    { etiqueta: 'Esta semana', test: f => f <= finSemana },
+    { etiqueta: 'Próxima semana', test: f => f > finSemana && f <= finProxSem },
+    { etiqueta: 'Resto del mes', test: f => f > finProxSem && f <= finMes },
+    { etiqueta: 'Más adelante', test: f => f > finMes }
+  ];
+  const fcPeriodos = periodosDef.map(p => {
+    const items = fcItems.filter(i => p.test(new Date(i.fecha)));
+    return { etiqueta: p.etiqueta, monto: items.reduce((s, i) => s + i.monto, 0), cantidad: items.length };
+  }).filter(p => p.cantidad > 0);
+
   res.json({
-    totalLeads: leads.length,
-    gestionadosHoy: unicos(deHoy.map(g => g.codigo)).length,
-    contactadosHoy: unicos(deHoy.filter(g =>
-      ['Respondio_sin_agendar', 'Agendo_reunion', 'Reunion_efectiva', 'Cierre'].includes(g.grupoLimpio)
-    ).map(g => g.codigo)).length,
-    agendadosHoy: unicos(deHoy.filter(g => g.grupoLimpio === 'Agendo_reunion').map(g => g.codigo)).length,
-    reunionesEfectivasHoy: unicos(deHoy.filter(g => g.grupoLimpio === 'Reunion_efectiva').map(g => g.codigo)).length,
-    cierrePendiente: leads.filter(l => l.etapa === 'Cierre pendiente').length,
-    ganados: leads.filter(l => l.etapa === 'Cerrado ganado').length,
-    pipelineActivo: leads
-      .filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido')
-      .reduce((s, l) => s + l.pipelineEstimado, 0),
-    embudo, porAsesor
+    salud: {
+      leadsActivos: activos.length, vencidos: vencidosTot, gestionadosHoy,
+      agendadosHoy, ganados: ganadosHoy, pipelinePonderado
+    },
+    embudo, pipelineTotal, pipelinePonderado, ticketProm,
+    alertas, porAsesor,
+    forecast: { total: fcTotal, items: fcItems, periodos: fcPeriodos },
+    totalActivos: activos.length
   });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.22 (aircall etapa 1) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.38 (registro + forecast) corriendo en puerto ${PORT}`));
