@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM Tasatop</title>
+<title>MiTasatop</title>
 <style>
   :root {
     --navy: #0B72E8; --navy-2: #1F2D3D; --bg: #F2F5F9; --card: #FFFFFF;
@@ -103,17 +103,20 @@
   .kcard:hover { border-color: #BBC9DC; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
   .kcard:active { cursor: grabbing; }
   .kcard.drag { opacity: .5; }
-  .kcard-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .kcard-top { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .kprio { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 10px; font-weight: 700; color: #fff; }
   .kprio.p-Muyalta { background: var(--rojo); } .kprio.p-Alta { background: var(--naranja); }
   .kprio.p-Media { background: #E6B800; } .kprio.p-Baja { background: var(--gris); }
   .kprio.p-Muybaja { background: #B0B8C1; }
-  .kprob { font-size: 12px; font-weight: 800; color: var(--navy-2); }
+  .kprob { font-size: 11px; font-weight: 700; color: var(--navy-2); background: #EEF1F5; border-radius: 8px; padding: 1px 9px; margin-left: auto; }
   .kcard .knom { color: var(--ink); font-weight: 700; font-size: 13px; margin-bottom: 2px; line-height: 1.3; cursor: pointer; }
   .kcard .knom:hover { color: var(--azul); }
   .kcard .kgp { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-  .kcard .kacc { font-size: 11px; color: var(--azul); font-weight: 600; margin-bottom: 6px; line-height: 1.3; }
-  .kcard .kacc.venc { color: var(--rojo); }
+  .kcard .kgp .kasig { color: var(--gris); }
+  .kcard .kacc { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--azul); font-weight: 600; margin-bottom: 6px; line-height: 1.3; }
+  .kcard .kacc .kacc-ico { display: inline-flex; align-items: center; flex: none; }
+  .kcard .kacc .kacc-txt { flex: 1; }
+  .kcard .kacc.venc .kacc-txt { color: var(--rojo); }
   .kbadge-venc { display: inline-block; background: #FCE4E4; color: var(--rojo); border: 1px solid #F2C4C4; font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 8px; }
   .kchips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
   .kchip { background: #EAF3EA; color: #2E7D32; font-size: 10px; font-weight: 600; padding: 1px 8px; border-radius: 9px; }
@@ -329,12 +332,16 @@
   .mg-num.verde { background: #34A853; }
   .mg-atajos { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin: 10px 0 5px; }
   .mg-calif-sub { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .mg-calif-aviso { font-size: 12px; font-weight: 600; margin-bottom: 10px; min-height: 0; }
+  .calif-bloq .mg-calif-aviso { color: var(--gris); }
+  .calif-oblig .mg-calif-aviso { color: #C77700; }
+  .calif-bloq .mg-preguntas { opacity: .5; pointer-events: none; }
   .mg-preguntas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .mg-preg { background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 11px; }
   .mg-preg-tit { font-size: 12px; font-weight: 700; color: var(--navy-2); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; line-height: 1.2; }
   .mg-pnum { width: 18px; height: 18px; border-radius: 50%; background: var(--azul); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; flex: none; }
   .mg-pts { display: inline-block; margin-top: 8px; background: #E8EEF6; color: var(--navy-2); font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 9px; }
-  .mg-resultado { display: flex; align-items: center; gap: 20px; background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-top: 14px; }
+  .mg-resultado { display: flex; align-items: center; justify-content: center; gap: 30px; background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-top: 14px; }
   .mg-res-item { display: flex; align-items: center; gap: 12px; }
   .mg-res-ico { width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; }
   .mg-res-ico.score { background: #E4ECF7; color: var(--azul); }
@@ -447,7 +454,7 @@
 </head>
 <body>
 <header class="topbar" id="rolBox" style="display:none">
-  <span class="top-logo">CRM <span>Tasatop</span></span>
+  <span class="top-logo">Mi<span>Tasatop</span></span>
   <nav class="top-nav">
     <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads</button>
     <button id="nv-dash" onclick="ir('dash')">Dashboard</button>
@@ -650,6 +657,11 @@
         <select id="gCanal"></select>
         <label style="margin-top:10px">Resultado</label>
         <select id="gResultado" onchange="ajustarCampos()"></select>
+        <!-- Check: solo si lead en Agendado + resultado Reunion efectiva -> salta a Negociacion -->
+        <label class="campoCheckNeg oculto" style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:600;color:#2E7D32;cursor:pointer">
+          <input type="checkbox" id="gPasaNegociacion" onchange="ajustarCampos()" style="width:auto">
+          El lead quedó interesado — pasar a Negociación
+        </label>
         <!-- Fecha y hora de la reunion: aparece al agendar o reprogramar (sin atajos) -->
         <div class="campoReu" style="margin-top:10px"><label>Fecha y hora de la reunión</label>
           <input type="datetime-local" id="gFechaReunion">
@@ -690,6 +702,7 @@
     <div class="mg-bloque b-calif" id="secCalif">
       <div class="mg-tit b-azul" style="margin-bottom:3px"><span class="mg-num">3</span> Calificación del lead</div>
       <div class="mg-calif-sub">Actualiza las 4 variables para recalcular el score y la probabilidad de cierre.</div>
+      <div class="mg-calif-aviso" id="califAviso"></div>
       <div class="mg-preguntas">
         <div class="mg-preg campoCalif">
           <div class="mg-preg-tit"><span class="mg-pnum">1</span> ¿Cuánto quiere invertir?</div>
@@ -797,7 +810,7 @@
 <!-- ===== LOGIN ===== -->
 <div class="overlay act" id="ovLogin" style="background:var(--navy);align-items:center">
   <div class="modal" style="max-width:360px">
-    <h3 style="font-size:18px">CRM <span style="color:#4A86E8">Tasatop</span></h3>
+    <h3 style="font-size:18px">Mi<span style="color:#4A86E8">Tasatop</span></h3>
     <div class="sub">Inicia sesion para continuar.</div>
     <div class="grid" style="grid-template-columns:1fr">
       <div><label>Correo</label><input id="lUsuario" type="email" autocomplete="username" placeholder="tucorreo@tasatop.com"></div>
@@ -905,6 +918,8 @@ const ES = {
   'No contesto': 'No contestó', 'Buzon / apagado': 'Buzón / apagado',
   'WhatsApp enviado sin respuesta': 'WhatsApp sin respuesta',
   'Respondio - no pudo hablar': 'Respondió · no pudo hablar',
+  'Respondio - sin calificar': 'Respondió · sin calificar',
+  'Respondio - calificado': 'Respondió · calificado',
   'Respondio - pidio informacion': 'Respondió · pidió información',
   'Respondio - interesado': 'Respondió · interesado',
   'Respondio - no interesado': 'Respondió · no interesado',
@@ -919,6 +934,13 @@ const ES = {
   // Proximas acciones
   'Llamar intento 3x5': 'Llamar intento 3x5', 'Enviar WhatsApp de apoyo': 'Enviar WhatsApp de apoyo',
   'Calificar lead': 'Calificar lead', 'Agendar reunion': 'Agendar reunión',
+  'Llamar para calificar': 'Llamar para calificar', 'WhatsApp para calificar': 'WhatsApp para calificar',
+  'Seguimiento post reunion (llamada)': 'Seguimiento post reunión (llamada)',
+  'Seguimiento post reunion (whatsapp)': 'Seguimiento post reunión (WhatsApp)',
+  'Evaluando': 'Evaluando', 'En negociacion': 'En negociación', 'Desistio': 'Desistió',
+  'Cerrar venta (llamada)': 'Cerrar venta (llamada)', 'Cerrar venta (whatsapp)': 'Cerrar venta (WhatsApp)',
+  'Agendar reunion (llamar)': 'Agendar reunión (llamar)', 'Agendar reunion (whatsapp)': 'Agendar reunión (WhatsApp)',
+  'Confirmar reunion (llamar)': 'Confirmar reunión (llamar)', 'Confirmar reunion (whatsapp)': 'Confirmar reunión (WhatsApp)',
   'Confirmar asistencia': 'Confirmar asistencia', 'Reprogramar reunion': 'Reprogramar reunión',
   'Seguimiento post reunion': 'Seguimiento post reunión', 'Enviar informacion': 'Enviar información',
   'Enviar propuesta': 'Enviar propuesta', 'Cerrar venta': 'Cerrar venta', 'Desestimar': 'Desestimar',
@@ -980,8 +1002,16 @@ function fmtFechaHoraCorta(iso) {
 // Acciones abreviadas para que quepan en una linea en la tarjeta
 const ACCION_CORTA = {
   'Llamar intento 3x5': 'Llamar',
+  'Llamar para calificar': 'Llamar p/calificar',
+  'WhatsApp para calificar': 'WhatsApp p/calificar',
   'Agendar reunion': 'Agendar',
+  'Agendar reunion (llamar)': 'Agendar (llamar)',
+  'Agendar reunion (whatsapp)': 'Agendar (WhatsApp)',
+  'Confirmar reunion (llamar)': 'Confirmar (llamar)',
+  'Confirmar reunion (whatsapp)': 'Confirmar (WhatsApp)',
   'Confirmar asistencia': 'Confirmar',
+  'Cerrar venta (llamada)': 'Cerrar venta (llamada)',
+  'Cerrar venta (whatsapp)': 'Cerrar venta (WhatsApp)',
   'Enviar informacion': 'Enviar info',
   'Seguimiento post reunion': 'Seguimiento',
   'Reprogramar reunion': 'Reprogramar',
@@ -1178,6 +1208,7 @@ function fmtSoles(n) {
 
 let VISTA_LEADS = 'tabla';
 let modoPerdido = false;
+let modoCalifForzado = null;
 let PAG_SIZE = 25, PAG_ACTUAL = 1;
 function cambiarPagina(d) { PAG_ACTUAL += d; render(); }
 function cambiarPagSize() { PAG_SIZE = parseInt($('pagSize').value); PAG_ACTUAL = 1; render(); }
@@ -1221,15 +1252,7 @@ function renderKanban() {
         (tarjetas || '<div class="kvacio"><div class="kvacio-ic">⊟</div>Sin leads<small>Arrastra los leads<br>a esta etapa</small></div>') +
       '</div>' +
     '</div>';
-  }).join('') + '</div>' +
-  // Leyenda de prioridad
-  '<div class="kleyenda">' +
-    '<span class="kleg"><span class="kdot" style="background:var(--rojo)"></span>Muy alta</span>' +
-    '<span class="kleg"><span class="kdot" style="background:var(--naranja)"></span>Alta</span>' +
-    '<span class="kleg"><span class="kdot" style="background:#E6B800"></span>Media</span>' +
-    '<span class="kleg"><span class="kdot" style="background:var(--gris)"></span>Baja</span>' +
-    '<span class="kleg venc-leg"><span class="kbadge-venc">Vencido</span>Acción vencida</span>' +
-  '</div>';
+  }).join('') + '</div>';
 }
 
 // Nombre visible de columna (Negociacion en vez de Cierre pendiente, etc.)
@@ -1253,18 +1276,22 @@ function kanbanCard(l) {
   const estadoCalif = calif ? '' : '<span class="kestado porcal">○ Por calificar</span>';
   const fechaCorta = l.fechaProxAccion ? fmtFechaHoraCorta(l.fechaProxAccion) : '';
   const lineaAccion = l.proximaAccion
-    ? '<div class="kacc' + (vencida ? ' venc' : '') + '">' + iconoAccion(l.proximaAccion) + ' ' +
-        accionCorta(l.proximaAccion, l.etapa) + (fechaCorta ? ' · ' + fechaCorta : '') +
-        (vencida ? ' <span class="kbadge-venc">Vencido</span>' : '') + '</div>'
+    ? '<div class="kacc' + (vencida ? ' venc' : '') + '">' +
+        '<span class="kacc-ico">' + iconoAccion(l.proximaAccion) + '</span>' +
+        '<span class="kacc-txt">' + accionCorta(l.proximaAccion, l.etapa) +
+        (fechaCorta ? ' · ' + fechaCorta : '') + '</span>' +
+      '</div>'
     : '';
   return '<div class="kcard" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
     ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)">' +
     '<div class="kcard-top">' +
       '<span class="kprio ' + prioCls + '">' + l.prioridad + '</span>' +
+      (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
     '<div class="knom" onclick="abrirGestion(\'' + l.codigo + '\')">' + (l.nombre || '—') + '</div>' +
-    '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) + ' · ' + trEtapa(l.etapa) + '</div>' +
+    '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
+      (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') + '</div>' +
     lineaAccion +
     (chips ? '<div class="kchips">' + chips + '</div>' : (estadoCalif ? '<div class="kchips">' + estadoCalif + '</div>' : '')) +
     '<div class="kbtns">' +
@@ -1282,8 +1309,11 @@ const ICO_ACC_CAL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="var(-
 const ICO_ACC_AVION = '<svg viewBox="0 0 24 24" width="15" height="15" fill="var(--azul)"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
 const ICO_ACC_CHAT = '<svg viewBox="0 0 24 24" width="15" height="15" fill="var(--azul)"><path d="M20 2H4a2 2 0 00-2 2v18l4-4h14a2 2 0 002-2V4a2 2 0 00-2-2z"/></svg>';
 function iconoAccion(a) {
-  if (a === 'Llamar intento 3x5') return ICO_ACC_TEL;
-  if (a === 'Agendar reunion' || a === 'Confirmar asistencia' || a === 'Reprogramar reunion') return ICO_ACC_CAL;
+  if (a === 'Llamar intento 3x5' || a === 'Llamar para calificar' || a === 'Cerrar venta (llamada)') return ICO_ACC_TEL;
+  if (a === 'WhatsApp para calificar' || a === 'Cerrar venta (whatsapp)' || a === 'Seguimiento post reunion (whatsapp)' || a === 'Agendar reunion (whatsapp)' || a === 'Confirmar reunion (whatsapp)') return ICO_ACC_CHAT;
+  if (['Agendar reunion','Confirmar asistencia','Reprogramar reunion',
+       'Agendar reunion (llamar)','Agendar reunion (whatsapp)',
+       'Confirmar reunion (llamar)','Confirmar reunion (whatsapp)'].includes(a)) return ICO_ACC_CAL;
   if (a === 'Enviar informacion' || a === 'Enviar propuesta') return ICO_ACC_AVION;
   if (a === 'Enviar WhatsApp de apoyo') return ICO_ACC_CHAT;
   return ICO_ACC_TEL;
@@ -1355,24 +1385,32 @@ function kDrop(e) {
   if (!K_DRAG) return;
   const colDestino = e.currentTarget.dataset.col;
   if (!transicionValidaJS(K_DRAG.etapa, colDestino)) { K_DRAG = null; return; } // rebota: no valido
-  // Abrir modal de gestion con el resultado sugerido preseleccionado
   const resultadoSugerido = CAT.kanbanResultadoDestino[colDestino];
-  abrirGestion(K_DRAG.cod, resultadoSugerido);
+  // Reglas al soltar:
+  //  - "contactado": muestra solo franja Contacto, default "sin calificar", campo 3 bloqueado
+  //  - "calificado"/"agendado": obliga a calificar
+  let modo = null;
+  if (colDestino === 'contactado') modo = 'soloContacto';
+  else if (['calificado', 'agendado'].includes(colDestino)) modo = 'obligatorio';
+  abrirGestion(K_DRAG.cod, resultadoSugerido, null, modo);
   K_DRAG = null;
 }
 
-// Replica en el front la validacion de transicion del motor.
+// Matriz de transiciones permitidas (espejo del backend). Sin retroceso.
+const K_TRANSICIONES = {
+  contactar:   ['contactado', 'calificado', 'agendado'],
+  contactado:  ['calificado', 'agendado'],
+  calificado:  ['agendado'],
+  agendado:    ['reunido'],
+  reunido:     ['negociacion'],
+  negociacion: []
+};
 function transicionValidaJS(etapaActual, colDestino) {
   const cols = CAT.kanbanColumnas;
   const colActual = cols.find(c => c.etapas.includes(etapaActual));
-  if (colActual && colActual.id === colDestino) return false;
-  const resultado = CAT.kanbanResultadoDestino[colDestino];
-  if (!resultado) return false;
-  // Regla espejo: solo hacia adelante (incluye saltos validos del motor).
-  const orden = cols.map(c => c.id);
-  const iAct = colActual ? orden.indexOf(colActual.id) : 0;
-  const iDest = orden.indexOf(colDestino);
-  return iDest > iAct;
+  const origen = colActual ? colActual.id : 'contactar';
+  if (origen === colDestino) return false;
+  return (K_TRANSICIONES[origen] || []).includes(colDestino);
 }
 
 function render() {
@@ -1647,8 +1685,9 @@ async function confirmarImport() {
 }
 
 // ---------- Registrar gestion ----------
-async function abrirGestion(codigo, resultadoSugerido, canalDefault) {
+async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) {
   gCodigo = codigo;
+  modoCalifForzado = modoCalif || null; // 'bloqueado' | 'obligatorio' | null (desde kanban)
   gLead = await api('/api/leads/' + codigo);
   $('gTitulo').textContent = 'Registrar gestión — ' + gLead.nombre;
   // Cabecera con chips: codigo · etapa(estado) · prioridad · score · prob · GP
@@ -1663,10 +1702,13 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault) {
   ['gResultado','gProxAccion','gFechaProx','gTicket','gTiempo','gInteres',
    'gExperiencia','gFechaReunion','gResumen','gFechaCierre']
     .forEach(id => { if ($(id)) $(id).value = ''; });
+  if ($('gPasaNegociacion')) $('gPasaNegociacion').checked = false;
   $('gResumenCount').textContent = '0';
   $('gError').classList.remove('act');
   modoPerdido = false;
+  califObligatoria = false;
   $('gResultado').disabled = false;
+  ['gTicket','gTiempo','gInteres','gExperiencia'].forEach(id => { if ($(id)) $(id).disabled = false; });
   // Prefill de calificacion si el lead ya tiene datos (para que el score se vea de una)
   if (gLead.ticket) $('gTicket').value = gLead.ticket;
   if (gLead.tiempo) $('gTiempo').value = gLead.tiempo;
@@ -1678,13 +1720,16 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault) {
   const permit = await api('/api/leads/' + codigo + '/resultados-permitidos');
   gYaCalificado = permit.yaCalificado;
   const COLOR_GRUPO = {
-    'Sin contacto': '#EEEEEE', 'Converso': '#CFE2F3', 'Avanza': '#D9EAD3',
+    'Sin contacto': '#EEEEEE', 'Contacto': '#CFE2F3', 'Avanza': '#D9EAD3',
     'Se mantiene': '#FFF2CC', 'Cierra': '#F4CCCC', 'Descarte': '#EFEFEF', 'Resultados': '#FFFFFF'
   };
   const sel = $('gResultado');
-  sel.innerHTML = '<option value="">—</option>';
+  sel.innerHTML = '';
   let sugeridoDisponible = false;
-  permit.grupos.forEach(([grupo, opciones]) => {
+  // Si el arrastre del kanban fue a "Contactado", mostrar solo la franja "Contacto".
+  let grupos = permit.grupos;
+  if (modoCalif === 'soloContacto') grupos = grupos.filter(([g]) => g === 'Contacto');
+  grupos.forEach(([grupo, opciones]) => {
     const og = document.createElement('optgroup');
     og.label = grupo.toUpperCase();
     og.style.background = COLOR_GRUPO[grupo] || '#fff';
@@ -1692,6 +1737,7 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault) {
     sel.appendChild(og);
   });
   if (resultadoSugerido && sugeridoDisponible) sel.value = resultadoSugerido;
+  else if (sel.options.length) sel.value = sel.options[0].value;
 
   // Canal por defecto segun el boton usado (WhatsApp / Llamada)
   if (canalDefault && $('gCanal')) {
@@ -1719,15 +1765,28 @@ function ajustarCampos() {
   // Fecha de reunion: solo al AGENDAR o REPROGRAMAR (no al confirmar, que mantiene la original)
   const pideFechaReunion = ['Agendo reunion','Reprogramo reunion'].includes(r);
   document.querySelectorAll('.campoReu').forEach(e => e.classList.toggle('oculto', !pideFechaReunion));
-  // Fecha estimada de cierre: solo si el lead esta en Reunion efectiva o Negociacion
-  const etapaAvanzada = gLead && ['Reunion efectiva - seguimiento','Cierre pendiente'].includes(gLead.etapa);
-  document.querySelectorAll('.campoCierre').forEach(e => e.classList.toggle('oculto', !etapaAvanzada));
+  // Check "pasar a Negociación": solo si el lead esta en AGENDADO y el resultado es Reunion efectiva.
+  const enAgendado = gLead && gLead.etapa === 'Agendado - pendiente reunion';
+  const mostrarCheckNeg = enAgendado && r === 'Reunion efectiva';
+  document.querySelectorAll('.campoCheckNeg').forEach(e => e.classList.toggle('oculto', !mostrarCheckNeg));
+  if (!mostrarCheckNeg && $('gPasaNegociacion')) $('gPasaNegociacion').checked = false;
+  const pasaNegociacion = mostrarCheckNeg && $('gPasaNegociacion') && $('gPasaNegociacion').checked;
+
+  // Fecha estimada de cierre: si el resultado es "En negociacion", si el lead YA esta en
+  // Negociacion, o si se marco el check que lo lleva a Negociacion desde Agendado.
+  const enNegociacion = (gLead && gLead.etapa === 'Cierre pendiente') || r === 'En negociacion' || pasaNegociacion;
+  document.querySelectorAll('.campoCierre').forEach(e => e.classList.toggle('oculto', !enNegociacion));
 
   // Modo "perdido": activado por la bandera. Oculta proximo paso y calificacion, exige comentario.
-  if (modoPerdido) {
+  // Descarte (numero equivocado/invalido, no interesado, no califica) = misma dinamica
+  // que la bandera de perdido: solo Gestion realizada + motivo obligatorio.
+  const esDescarte = ['Numero invalido', 'Numero equivocado', 'Respondio - no interesado', 'Respondio - no califica', 'Desistio'].includes(r);
+  const modoSoloGestion = modoPerdido || esDescarte;
+  if (modoSoloGestion) {
     $('bloquePaso').classList.add('oculto');
     $('secCalif').classList.add('oculto');
     $('gResumenReq').classList.remove('oculto');
+    califObligatoria = false;
     recalcularScore();
     return;
   } else {
@@ -1736,27 +1795,53 @@ function ajustarCampos() {
     $('gResumenReq').classList.add('oculto');
   }
 
+  // Proxima accion por defecto segun resultado (la primera de la lista es la default).
   let autoAccion = null;
-  if (r === 'Agendo reunion') autoAccion = 'Confirmar asistencia';
-  else if (['Numero invalido', 'Numero equivocado', 'Respondio - no interesado'].includes(r)) autoAccion = 'Desestimar';
+  if (['Numero invalido', 'Numero equivocado', 'Respondio - no interesado', 'Respondio - no califica'].includes(r)) autoAccion = 'Desestimar';
 
   const sel = $('gProxAccion');
   const previo = sel.value;
   let acciones = (r && CAT.accionesPorResultado && CAT.accionesPorResultado[r]) || CAT.proximasAcciones;
   acciones = acciones.slice();
-  const calificadoAhora = gYaCalificado || camposCalifLlenos();
-  if (calificadoAhora && acciones.includes('Calificar lead')) {
-    acciones = acciones.filter(a => a !== 'Calificar lead');
-    if (!acciones.includes('Agendar reunion')) acciones.unshift('Agendar reunion');
-    if (!autoAccion) autoAccion = 'Agendar reunion';
+  // La default es la primera de la lista mapeada al resultado (Llamar.../Agendar.../Confirmar...)
+  if (!autoAccion && r && CAT.accionesPorResultado && CAT.accionesPorResultado[r]) {
+    autoAccion = acciones[0];
   }
-  sel.innerHTML = '<option value="">—</option>';
+  // Sin opcion vacia: siempre hay un valor seleccionable (registro obligatorio).
+  sel.innerHTML = '';
   acciones.forEach(a => sel.add(new Option(tr(a), a)));
   if (autoAccion && acciones.includes(autoAccion)) sel.value = autoAccion;
   else if (acciones.includes(previo)) sel.value = previo;
+  else if (acciones.length) sel.value = acciones[0];
 
+  aplicarReglaCalificacion(r);
   recalcularScore();
 }
+
+// Regla de la seccion 3 (Calificacion) segun el resultado / modo del kanban:
+//  - Bloqueada (visible pero deshabilitada): No contestó, Buzón, WhatsApp s/r,
+//    Respondió no pudo hablar, Respondió sin calificar, o modo 'bloqueado' del kanban.
+//  - Obligatoria: Respondió calificado, Agendó reunión, o modo 'obligatorio' del kanban.
+//  - Libre: cualquier otro caso.
+function aplicarReglaCalificacion(r) {
+  const bloquearPorResultado = ['No contesto','Buzon / apagado','WhatsApp enviado sin respuesta',
+    'Respondio - sin calificar'].includes(r);
+  const obligaPorResultado = ['Respondio - calificado','Agendo reunion'].includes(r);
+  const bloquear = modoCalifForzado === 'bloqueado' || bloquearPorResultado;
+  const obliga = !bloquear && (modoCalifForzado === 'obligatorio' || obligaPorResultado);
+
+  // Habilitar/deshabilitar los 4 selects y atenuar la seccion
+  ['gTicket','gTiempo','gInteres','gExperiencia'].forEach(id => { if ($(id)) $(id).disabled = bloquear; });
+  $('secCalif').classList.toggle('calif-bloq', bloquear);
+  // Marca de obligatorio
+  $('secCalif').classList.toggle('calif-oblig', obliga);
+  let aviso = $('califAviso');
+  if (aviso) aviso.textContent = bloquear
+    ? 'Calificación no disponible: el lead aún no fue calificado en esta gestión.'
+    : (obliga ? 'Completa las 4 variables para poder guardar esta gestión.' : '');
+  califObligatoria = obliga;
+}
+let califObligatoria = false;
 
 // Puntajes por variable + score total + probabilidad, todo en vivo.
 const PTS_TICKET = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
@@ -1792,7 +1877,15 @@ function colorEtapa(etapa) {
 function marcarPerdido() {
   const sel = $('gResultado');
   const opts = Array.from(sel.options).map(o => o.value);
-  const cierre = ['Respondio - no interesado', 'Respondio - no califica'].find(v => opts.includes(v));
+  // En Reunion efectiva / Negociacion el descarte se llama "Desistió".
+  const etapaAvanzada = gLead && ['Reunion efectiva - seguimiento','Cierre pendiente'].includes(gLead.etapa);
+  let cierre;
+  if (etapaAvanzada) {
+    cierre = 'Desistio';
+    if (!opts.includes('Desistio')) sel.add(new Option('Desistió', 'Desistio'));
+  } else {
+    cierre = ['Respondio - no interesado', 'Respondio - no califica'].find(v => opts.includes(v));
+  }
   if (!cierre) { alert('Este lead no se puede desestimar desde su etapa actual.'); return; }
   modoPerdido = true;
   sel.value = cierre;
@@ -1844,11 +1937,19 @@ function sugerirFechaProx() {
 }
 
 async function guardarGestion() {
-  // En modo perdido, el comentario (motivo) es obligatorio.
-  if (modoPerdido && !$('gResumen').value.trim()) {
-    $('gError').textContent = 'Escribe el motivo de la pérdida para poder guardar.';
+  const r = $('gResultado').value;
+  const esDescarte = ['Numero invalido', 'Numero equivocado', 'Respondio - no interesado', 'Respondio - no califica', 'Desistio'].includes(r);
+  // En modo perdido o descarte, el comentario (motivo) es obligatorio.
+  if ((modoPerdido || esDescarte) && !$('gResumen').value.trim()) {
+    $('gError').textContent = 'Escribe el motivo del descarte para poder guardar.';
     $('gError').classList.add('act');
     $('gResumen').focus();
+    return;
+  }
+  // Calificacion obligatoria (Respondió calificado / Agendó / modo kanban obligatorio).
+  if (califObligatoria && !camposCalifLlenos()) {
+    $('gError').textContent = 'Completa las 4 variables de Calificación del lead para poder guardar.';
+    $('gError').classList.add('act');
     return;
   }
   $('gGuardar').disabled = true;
@@ -1871,12 +1972,31 @@ async function guardarGestion() {
       estadoReunion: $('gResultado').value === 'Reunion efectiva' ? 'Efectiva'
         : (['Agendo reunion','Confirmo reunion','Reprogramo reunion'].includes($('gResultado').value) ? 'Agendada' : null),
       closer: gLead.asesor || null,
-      motivoPerdida: modoPerdido ? ($('gResumen').value || null) : null
+      motivoPerdida: (modoPerdido || esDescarte) ? ($('gResumen').value || null) : null
     };
     await api('/api/gestiones', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+    // Si marcó el check "pasar a Negociación", registrar 2da gestion (En negociacion)
+    // en el mismo guardado: el lead salta Reunion efectiva -> Negociacion. Trazabilidad
+    // queda con ambos eventos.
+    const pasaNeg = $('gPasaNegociacion') && $('gPasaNegociacion').checked && !$('gPasaNegociacion').closest('.campoCheckNeg').classList.contains('oculto');
+    if (pasaNeg) {
+      await api('/api/gestiones', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: gCodigo,
+          canal: $('gCanal').value,
+          resultado: 'En negociacion',
+          comentario: 'Pasa a negociación tras reunión efectiva.',
+          proximaAccion: 'Enviar propuesta',
+          fechaProxAccion: null,
+          fechaCierreEstimada: $('gFechaCierre').value || null,
+          closer: gLead.asesor || null
+        })
+      });
+    }
     cerrar('ovGestion');
     cargarLeads();
   } catch (e) {

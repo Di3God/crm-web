@@ -15,7 +15,22 @@ const fs = require('fs');
 const L = require('./logic');
 const mailer = require('./mailer');
 
-const db = new DatabaseSync(path.join(__dirname, 'crm.db'));
+// Ruta de la base de datos:
+//  - Si existe la variable de entorno DB_PATH (p.ej. en Railway con Volume montado),
+//    se usa esa ruta y se crea su carpeta automaticamente si no existe.
+//  - Si no existe DB_PATH, se mantiene el comportamiento actual: crm.db junto al server.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'crm.db');
+const DB_DIR = path.dirname(DB_PATH);
+try {
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+    console.log('Directorio de base creado:', DB_DIR);
+  }
+} catch (e) {
+  console.error('No se pudo crear el directorio de la base:', DB_DIR, e.message);
+}
+console.log('Usando base de datos en:', DB_PATH);
+const db = new DatabaseSync(DB_PATH);
 db.exec(`
   CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,7 +282,7 @@ function veTodo(user) {
 
 // ---------- Helpers de leads ----------
 function gestionesDeLead(codigo) {
-  return db.prepare('SELECT * FROM gestiones WHERE codigo = ? ORDER BY fecha ASC').all(codigo);
+  return db.prepare('SELECT * FROM gestiones WHERE codigo = ? ORDER BY fecha ASC, id ASC').all(codigo);
 }
 function leadConsolidado(lead, gestiones) {
   const g = Array.isArray(gestiones) ? gestiones : gestionesDeLead(lead.codigo);
@@ -756,6 +771,11 @@ function tituloResultado(r) {
     'No contesto': 'No contestó', 'Buzon / apagado': 'Buzón / apagado',
     'WhatsApp enviado sin respuesta': 'WhatsApp sin respuesta',
     'Respondio - no pudo hablar': 'Respondió · no pudo hablar',
+    'Respondio - sin calificar': 'Respondió · sin calificar',
+    'Respondio - calificado': 'Respondió · calificado',
+    'Evaluando': 'Evaluando',
+    'En negociacion': 'En negociación',
+    'Desistio': 'Desistió',
     'Respondio - pidio informacion': 'Respondió · pidió información',
     'Respondio - interesado': 'Respondió · interesado',
     'Respondio - no interesado': 'Respondió · no interesado',
@@ -820,13 +840,12 @@ app.get('/api/auditoria', soloAdmin, (req, res) => {
   res.json(filas);
 });
 
-// Backup: descarga el archivo crm.db completo (solo admin).
+// Backup: descarga el archivo de base de datos completo (solo admin).
 app.get('/api/backup', soloAdmin, (req, res) => {
-  const dbPath = path.join(__dirname, 'crm.db');
-  if (!fs.existsSync(dbPath)) return res.status(404).json({ error: 'Base no encontrada' });
+  if (!fs.existsSync(DB_PATH)) return res.status(404).json({ error: 'Base no encontrada' });
   const fecha = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   auditar(req, 'descargar backup', '-', 'backup manual');
-  res.download(dbPath, `crm-backup-${fecha}.db`);
+  res.download(DB_PATH, `crm-backup-${fecha}.db`);
 });
 
 // Analisis de cohortes (solo admin): leads agrupados por mes de asignacion
@@ -946,4 +965,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.38 (registro + forecast) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.44 (volume + db_path) corriendo en puerto ${PORT}`));

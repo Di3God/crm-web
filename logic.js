@@ -17,11 +17,12 @@ const FUENTES = ['Meta Ads', 'Google Ads', 'Referido', 'Organico', 'LinkedIn', '
 
 const RESULTADOS = [
   'No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta',
-  'Respondio - no pudo hablar', 'Respondio - pidio informacion',
-  'Respondio - interesado', 'Respondio - no interesado', 'Respondio - no califica',
+  'Respondio - sin calificar', 'Respondio - calificado',
+  'Respondio - no interesado', 'Respondio - no califica',
   'Seguimiento post contacto',
   'Agendo reunion', 'Confirmo reunion', 'No asistio a reunion', 'Reprogramo reunion',
   'Reunion efectiva', 'Seguimiento post reunion', 'Cierre pendiente',
+  'Evaluando', 'En negociacion', 'Desistio',
   'Venta ganada', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'
 ];
 
@@ -30,16 +31,16 @@ const RESULTADOS = [
 const RESULTADOS_POR_ETAPA = {
   'Contactabilidad 3x5': [
     ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
-    ['Converso', ['Respondio - no pudo hablar', 'Respondio - pidio informacion', 'Respondio - interesado', 'Agendo reunion']],
+    ['Contacto', ['Respondio - sin calificar', 'Respondio - calificado', 'Agendo reunion']],
     ['Descarte', ['Numero equivocado', 'Numero invalido', 'Respondio - no interesado']]
   ],
   'Contactado - por calificar': [
-    ['Avanza', ['Respondio - pidio informacion', 'Respondio - interesado', 'Agendo reunion']],
+    ['Avanza', ['Respondio - calificado', 'Agendo reunion']],
     ['Cierra', ['Respondio - no interesado', 'Respondio - no califica']]
   ],
   'Calificado - pendiente agendar': [
     ['Avanza', ['Agendo reunion']],
-    ['Se mantiene', ['Respondio - interesado', 'Seguimiento post contacto']],
+    ['Se mantiene', ['Respondio - calificado', 'Seguimiento post contacto']],
     ['Cierra', ['Respondio - no interesado', 'Respondio - no califica']]
   ],
   'Agendado - pendiente reunion': [
@@ -48,18 +49,22 @@ const RESULTADOS_POR_ETAPA = {
     ['Cierra', ['No asistio a reunion', 'Respondio - no interesado']]
   ],
   'Reunion efectiva - seguimiento': [
-    ['Se mantiene', ['Seguimiento post reunion']],
-    ['Avanza', ['Cierre pendiente']],
-    ['Cierra', ['Venta ganada', 'Respondio - no interesado', 'Respondio - no califica']]
+    ['Se mantiene', ['Evaluando']],
+    ['Avanza', ['En negociacion']]
   ],
   'Cierre pendiente': [
-    ['Se mantiene', ['Seguimiento post reunion', 'Cierre pendiente']],
+    ['Se mantiene', ['Seguimiento post reunion']],
     ['Cierra', ['Venta ganada', 'Respondio - no interesado']]
   ]
 };
 
 const PROXIMAS_ACCIONES = [
   'Llamar intento 3x5', 'Enviar WhatsApp de apoyo', 'Calificar lead',
+  'Llamar para calificar', 'WhatsApp para calificar',
+  'Agendar reunion (llamar)', 'Agendar reunion (whatsapp)',
+  'Confirmar reunion (llamar)', 'Confirmar reunion (whatsapp)',
+  'Seguimiento post reunion (llamada)', 'Seguimiento post reunion (whatsapp)',
+  'Cerrar venta (llamada)', 'Cerrar venta (whatsapp)',
   'Agendar reunion', 'Confirmar asistencia', 'Reprogramar reunion',
   'Seguimiento post reunion', 'Enviar informacion', 'Enviar propuesta',
   'Cerrar venta', 'Desestimar'
@@ -71,17 +76,20 @@ const ACCIONES_POR_RESULTADO = {
   'No contesto': ['Llamar intento 3x5', 'Enviar WhatsApp de apoyo'],
   'Buzon / apagado': ['Llamar intento 3x5', 'Enviar WhatsApp de apoyo'],
   'WhatsApp enviado sin respuesta': ['Llamar intento 3x5', 'Enviar WhatsApp de apoyo'],
-  'Respondio - no pudo hablar': ['Llamar intento 3x5', 'Enviar WhatsApp de apoyo'],
-  'Respondio - pidio informacion': ['Enviar informacion', 'Calificar lead'],
-  'Respondio - interesado': ['Agendar reunion', 'Enviar informacion'],
-  'Agendo reunion': ['Confirmar asistencia'],
+  'Respondio - sin calificar': ['Llamar para calificar', 'WhatsApp para calificar'],
+  'Respondio - calificado': ['Agendar reunion (llamar)', 'Agendar reunion (whatsapp)'],
+  'Agendo reunion': ['Confirmar reunion (llamar)', 'Confirmar reunion (whatsapp)'],
   'Confirmo reunion': ['Confirmar asistencia', 'Reprogramar reunion'],
   'Reprogramo reunion': ['Confirmar asistencia', 'Reprogramar reunion'],
   'No asistio a reunion': ['Reprogramar reunion', 'Seguimiento post reunion'],
-  'Reunion efectiva': ['Seguimiento post reunion', 'Enviar propuesta'],
+  'Reunion efectiva': ['Seguimiento post reunion (llamada)', 'Seguimiento post reunion (whatsapp)'],
+  'Evaluando': ['Seguimiento post reunion (llamada)', 'Seguimiento post reunion (whatsapp)'],
+  'En negociacion': ['Cerrar venta (llamada)', 'Cerrar venta (whatsapp)'],
+  'Desistio': ['Desestimar'],
   'Seguimiento post contacto': ['Seguimiento post reunion', 'Agendar reunion', 'Enviar propuesta'],
   'Seguimiento post reunion': ['Seguimiento post reunion', 'Enviar propuesta'],
-  'Cierre pendiente': ['Cerrar venta', 'Seguimiento post reunion'],
+  'Cierre pendiente': ['Cerrar venta (llamada)', 'Cerrar venta (whatsapp)'],
+  'Seguimiento post reunion': ['Cerrar venta (llamada)', 'Cerrar venta (whatsapp)'],
   'Respondio - no interesado': ['Desestimar'],
   'Respondio - no califica': ['Desestimar'],
   'Numero invalido': ['Desestimar'],
@@ -107,11 +115,11 @@ const KANBAN_COLUMNAS = [
 
 // Al soltar una tarjeta en una columna, este es el resultado de gestion sugerido.
 const KANBAN_RESULTADO_DESTINO = {
-  contactado: 'Respondio - interesado',
-  calificado: 'Respondio - interesado',
+  contactado: 'Respondio - sin calificar',
+  calificado: 'Respondio - calificado',
   agendado: 'Agendo reunion',
   reunido: 'Reunion efectiva',
-  negociacion: 'Cierre pendiente'
+  negociacion: 'En negociacion'
 };
 
 // Columna a la que pertenece una etapa dada.
@@ -120,14 +128,28 @@ function columnaDeEtapa(etapa) {
   return c ? c.id : 'contactar';
 }
 
-// True si se puede arrastrar de la etapa actual a la columna destino:
-// el resultado sugerido debe estar permitido desde esa etapa (misma logica que la tabla).
+// Transiciones permitidas en el Kanban (sin retroceso). Reglas de negocio:
+//  - contactar -> contactado, calificado, agendado
+//  - contactado -> calificado, agendado
+//  - calificado -> agendado, reunido, negociacion
+//  - agendado   -> reunido
+//  - reunido    -> negociacion
+//  Prohibido: cualquier retroceso, y saltos no listados
+//  (p.ej. contactar/contactado -> reunido, contactar -> negociacion).
+const KANBAN_TRANSICIONES = {
+  contactar:   ['contactado', 'calificado', 'agendado'],
+  contactado:  ['calificado', 'agendado'],
+  calificado:  ['agendado'],
+  agendado:    ['reunido'],
+  reunido:     ['negociacion'],
+  negociacion: []
+};
+
 function transicionKanbanValida(etapaActual, columnaDestino) {
-  if (columnaDeEtapa(etapaActual) === columnaDestino) return false; // misma columna
-  const resultado = KANBAN_RESULTADO_DESTINO[columnaDestino];
-  if (!resultado) return false;
-  const permitidos = obtenerResultadosPermitidos(etapaActual).map(g => g[1]).flat();
-  return permitidos.includes(resultado);
+  const origen = columnaDeEtapa(etapaActual);
+  if (origen === columnaDestino) return false; // misma columna
+  const permitidas = KANBAN_TRANSICIONES[origen] || [];
+  return permitidas.includes(columnaDestino);
 }
 
 const NIVEL_INTERES = ['Muy interesado', 'Interesado', 'Solo averigua', 'Poco interes'];
@@ -146,12 +168,13 @@ const HORA_MIN = 9, HORA_MAX = 18, HORA_DEFAULT = 9;
 // ---------- Grupo limpio (clasificacion del resultado) ----------
 function grupoLimpio(resultado) {
   if (['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta'].includes(resultado)) return 'No_respondio';
-  if (['Respondio - no pudo hablar', 'Respondio - pidio informacion', 'Respondio - interesado'].includes(resultado)) return 'Respondio_sin_agendar';
+  if (['Respondio - sin calificar', 'Respondio - calificado',
+       'Respondio - pidio informacion', 'Respondio - interesado'].includes(resultado)) return 'Respondio_sin_agendar';
   if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'].includes(resultado)) return 'Agendo_reunion';
-  if (resultado === 'Reunion efectiva') return 'Reunion_efectiva';
-  if (resultado === 'Cierre pendiente') return 'Cierre';
+  if (resultado === 'Reunion efectiva' || resultado === 'Evaluando') return 'Reunion_efectiva';
+  if (resultado === 'Cierre pendiente' || resultado === 'En negociacion') return 'Cierre';
   if (resultado === 'Venta ganada') return 'Ganado';
-  if (['Respondio - no interesado', 'Respondio - no califica'].includes(resultado)) return 'Cierre_negativo';
+  if (['Respondio - no interesado', 'Respondio - no califica', 'Desistio'].includes(resultado)) return 'Cierre_negativo';
   if (resultado === 'Numero invalido' || resultado === 'Numero equivocado') return 'Dato_invalido';
   if (resultado === 'Pidio no contactar') return 'No_contactar';
   return resultado || '';
@@ -179,15 +202,16 @@ function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
   const r = ultimoResultado;
   if (!r || r === 'Sin gestion') return 'Contactabilidad 3x5';
   if (r === 'Venta ganada') return 'Cerrado ganado';
-  if (['Respondio - no interesado', 'Respondio - no califica', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(r)) return 'Cerrado perdido';
-  if (r === 'Cierre pendiente') return 'Cierre pendiente';
-  if (r === 'Reunion efectiva' || r === 'Seguimiento post reunion' || estadoReunion === 'Efectiva') return 'Reunion efectiva - seguimiento';
+  if (['Respondio - no interesado', 'Respondio - no califica', 'Desistio', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(r)) return 'Cerrado perdido';
+  if (r === 'Cierre pendiente' || r === 'En negociacion') return 'Cierre pendiente';
+  if (r === 'Reunion efectiva' || r === 'Seguimiento post reunion' || r === 'Evaluando' || estadoReunion === 'Efectiva') return 'Reunion efectiva - seguimiento';
   if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(r) ||
       ['Agendada', 'Confirmada', 'Reprogramada'].includes(estadoReunion)) return 'Agendado - pendiente reunion';
   // Seguimiento post contacto: aun no hay reunion, se mantiene en calificado.
   if (r === 'Seguimiento post contacto') return 'Calificado - pendiente agendar';
   if (tieneCalificacion) return 'Calificado - pendiente agendar';
-  if (['Respondio - no pudo hablar', 'Respondio - pidio informacion', 'Respondio - interesado'].includes(r)) return 'Contactado - por calificar';
+  if (['Respondio - sin calificar', 'Respondio - calificado',
+       'Respondio - pidio informacion', 'Respondio - interesado'].includes(r)) return 'Contactado - por calificar';
   return 'Contactabilidad 3x5';
 }
 
@@ -260,11 +284,10 @@ function validarGestion(g) {
   if (!g.canal) return 'Falta canal';
   if (!g.resultado) return 'Falta resultado';
 
-  // Factores: se exigen al calificar (pidio info / interesado) y tambien al
-  // "Agendo reunion" cuando el lead AUN no fue calificado (viene de 3x5/contactado),
-  // para forzar la captura de datos en esa misma gestion. Si ya estaba calificado
-  // (g.yaCalificado = true), no se vuelven a pedir.
-  const exigeSiempre = ['Respondio - pidio informacion', 'Respondio - interesado'].includes(g.resultado);
+  // La calificacion (4 factores) se exige cuando el resultado es "Respondio - calificado"
+  // y al "Agendo reunion" si el lead aun no fue calificado. En "no pudo hablar" y
+  // "sin calificar" NO se exige (el lead conversó pero todavia no califica).
+  const exigeSiempre = ['Respondio - calificado', 'Respondio - interesado', 'Respondio - pidio informacion'].includes(g.resultado);
   const exigeEnAgenda = g.resultado === 'Agendo reunion' && !g.yaCalificado;
   if ((exigeSiempre || exigeEnAgenda) && (!g.ticket || !g.tiempo || !g.nivelInteres || !g.experiencia)) {
     return 'Falta calificacion (ticket, tiempo, interes y experiencia)';
@@ -319,14 +342,24 @@ function autocalcularFechaProxAccion(proximaAccion, fechaReunion, ahora) {
     'Llamar intento 3x5': { dias: 1, hora: 9 },
     'Enviar WhatsApp de apoyo': { mas2h: true },
     'Calificar lead': { dias: 1, hora: 9 },
+    'Llamar para calificar': { dias: 1, hora: 9 },
+    'WhatsApp para calificar': { dias: 1, hora: 9 },
     'Agendar reunion': { dias: 1, hora: 9 },
+    'Agendar reunion (llamar)': { dias: 1, hora: 9 },
+    'Agendar reunion (whatsapp)': { dias: 1, hora: 9 },
     'Confirmar asistencia': { reunionMenos2h: true },
+    'Confirmar reunion (llamar)': { reunionMenos2h: true },
+    'Confirmar reunion (whatsapp)': { reunionMenos2h: true },
     'Reprogramar reunion': { dias: 1, hora: 9 },
     'Seguimiento post reunion': { dias: 2, hora: 9 },
+    'Seguimiento post reunion (llamada)': { dias: 2, hora: 9 },
+    'Seguimiento post reunion (whatsapp)': { dias: 2, hora: 9 },
     'Seguimiento post contacto': { dias: 2, hora: 9 },
     'Enviar informacion': { dias: 1, hora: 9 },
     'Enviar propuesta': { dias: 1, hora: 9 },
     'Cerrar venta': { dias: 1, hora: 9 },
+    'Cerrar venta (llamada)': { dias: 1, hora: 9 },
+    'Cerrar venta (whatsapp)': { dias: 1, hora: 9 },
     'Desestimar': { limpiar: true }
   };
   const regla = reglas[proximaAccion];
@@ -506,11 +539,13 @@ function analizarCohortes(registros) {
 // ---------- Trazabilidad ----------
 function etapaDeGestion(resultado) {
   if (resultado === 'Venta ganada') return 'Cerrado ganado';
-  if (['Respondio - no interesado', 'Respondio - no califica', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(resultado)) return 'Cerrado perdido';
-  if (resultado === 'Cierre pendiente') return 'Cierre pendiente';
-  if (resultado === 'Reunion efectiva' || resultado === 'Seguimiento post reunion') return 'Reunion efectiva - seguimiento';
+  if (['Respondio - no interesado', 'Respondio - no califica', 'Desistio', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(resultado)) return 'Cerrado perdido';
+  if (resultado === 'Cierre pendiente' || resultado === 'En negociacion') return 'Cierre pendiente';
+  if (resultado === 'Reunion efectiva' || resultado === 'Seguimiento post reunion' || resultado === 'Evaluando') return 'Reunion efectiva - seguimiento';
   if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(resultado)) return 'Agendado - pendiente reunion';
-  if (['Respondio - no pudo hablar', 'Respondio - pidio informacion', 'Respondio - interesado'].includes(resultado)) return 'Contactado - por calificar';
+  if (['Respondio - calificado', 'Respondio - interesado'].includes(resultado)) return 'Calificado - pendiente agendar';
+  if (['Respondio - no pudo hablar', 'Respondio - sin calificar',
+       'Respondio - pidio informacion'].includes(resultado)) return 'Contactado - por calificar';
   return 'Contactabilidad 3x5';
 }
 
