@@ -83,16 +83,16 @@
   /* Toggle Tabla / Kanban */
   .vista-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .vista-toggle button { background: #fff; border: none; padding: 6px 12px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
-  .vista-toggle button.act { background: var(--azul); color: #fff; }
+  .vista-toggle button.act { background: var(--navy-2); color: #fff; }
   /* Kanban estilo HubSpot - columnas uniformes */
   .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
   .kcol { display: flex; flex-direction: column; max-height: 72vh; min-width: 175px; background: #F7F9FB; border: 1px solid var(--line); border-radius: 12px; }
-  .kcol-head { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 11px 12px 8px; font-size: 11.5px; font-weight: 800; color: var(--navy-2); text-transform: uppercase; letter-spacing: .3px; border-bottom: 2px solid var(--azul); }
-  .kcol-head .kcnt { color: var(--muted); font-weight: 600; }
-  .kcol-metricas { display: flex; justify-content: center; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .kcol-head { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px 8px; }
+  .kcol-head .ktit { background: var(--azul); color: #fff; font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; padding: 5px 12px; border-radius: 7px; }
+  .kcol-head .kcnt { color: var(--azul); font-weight: 800; font-size: 13px; }
+  .kcol-metricas { display: flex; justify-content: center; padding: 6px 12px 9px; border-bottom: 1px solid var(--line); }
   .kcol-metricas .km { display: flex; flex-direction: column; align-items: center; }
-  .kcol-metricas .km-v { font-size: 14px; font-weight: 800; color: var(--navy-2); }
-  .kcol-metricas .km-l { font-size: 9px; color: var(--gris); text-transform: uppercase; letter-spacing: .2px; }
+  .kcol-metricas .km-v { font-size: 16px; font-weight: 800; color: var(--navy-2); }
   .kcol-body { padding: 9px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 9px; min-height: 80px; }
   .kcol-body.drop { background: #DDEBFB; outline: 2px dashed var(--azul); outline-offset: -4px; border-radius: 8px; }
   .kvacio { color: var(--gris); text-align: center; padding: 26px 0; font-size: 13px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -119,6 +119,7 @@
   .kcard .kacc.venc .kacc-txt { color: var(--rojo); }
   .kbadge-venc { display: inline-block; background: #FCE4E4; color: var(--rojo); border: 1px solid #F2C4C4; font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 8px; }
   .kchips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .kdot-exp { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 7px; vertical-align: middle; flex: none; }
   .kchip { background: #EAF3EA; color: #2E7D32; font-size: 10px; font-weight: 600; padding: 1px 8px; border-radius: 9px; }
   .kestado { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
   .kestado.porcal { background: #FFF3E0; color: #C77700; }
@@ -336,8 +337,19 @@
   .calif-bloq .mg-calif-aviso { color: var(--gris); }
   .calif-oblig .mg-calif-aviso { color: #C77700; }
   .calif-bloq .mg-preguntas { opacity: .5; pointer-events: none; }
-  .mg-preguntas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  .mg-preg { background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 11px; }
+  .mg-monto-wrap { display: flex; align-items: center; gap: 5px; }
+  .mg-monto-sol { font-weight: 700; color: var(--muted); font-size: 12px; }
+  .mg-monto-wrap input { flex: 1; min-width: 0; padding: 7px 8px; border: 1.5px solid var(--line); border-radius: 7px; font-size: 12px; }
+  .mg-monto-wrap input:disabled { background: #F0F2F5; color: var(--gris); }
+  .mg-monto-spin { display: flex; flex-direction: column; gap: 2px; }
+  .mg-monto-spin button { width: 18px; height: 13px; line-height: 1; padding: 0; border: 1px solid var(--line); background: #fff; border-radius: 3px; font-size: 7px; color: var(--muted); cursor: pointer; }
+  .mg-monto-spin button:hover { background: var(--azul); color: #fff; border-color: var(--azul); }
+  .mg-nodef { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11.5px; color: var(--muted); font-weight: 500; cursor: pointer; }
+  .mg-nodef input { width: auto; }
+  .mg-preguntas { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+  .mg-preg { background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 9px; }
+  .mg-preg select, .mg-preg input { font-size: 12px; }
+  .mg-preg-tit { font-size: 11px; }
   .mg-preg-tit { font-size: 12px; font-weight: 700; color: var(--navy-2); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; line-height: 1.2; }
   .mg-pnum { width: 18px; height: 18px; border-radius: 50%; background: var(--azul); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; flex: none; }
   .mg-pts { display: inline-block; margin-top: 8px; background: #E8EEF6; color: var(--navy-2); font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 9px; }
@@ -357,6 +369,7 @@
   .modal-traza { max-width: 1040px; width: 95vw; }
   .tz-resumen { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
   .tz-card { display: flex; gap: 11px; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: 13px; }
+  .tz-cal-tit { font-size: 12px; font-weight: 700; color: var(--azul); margin-bottom: 7px; display: flex; align-items: center; gap: 7px; }
   .tz-ic { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 17px; flex: none; }
   .tz-ic.azul { background: #E4ECF7; } .tz-ic.naranja { background: #FCEEE0; }
   .tz-ic.verde { background: #E3F4E8; } .tz-ic.morado { background: #EEE8F7; color: #7B5EA7; font-weight: 800; }
@@ -698,19 +711,28 @@
       </div>
     </div>
 
-    <!-- Bloque 3: Calificacion del lead -->
+    <!-- Bloque 3: Calificacion del lead (5 variables) -->
     <div class="mg-bloque b-calif" id="secCalif">
       <div class="mg-tit b-azul" style="margin-bottom:3px"><span class="mg-num">3</span> Calificación del lead</div>
-      <div class="mg-calif-sub">Actualiza las 4 variables para recalcular el score y la probabilidad de cierre.</div>
+      <div class="mg-calif-sub">Actualiza las 5 variables para recalcular el score y la probabilidad de cierre.</div>
       <div class="mg-calif-aviso" id="califAviso"></div>
       <div class="mg-preguntas">
-        <div class="mg-preg campoCalif">
-          <div class="mg-preg-tit"><span class="mg-pnum">1</span> ¿Cuánto quiere invertir?</div>
-          <select id="gTicket" onchange="ajustarCampos()"></select>
+        <div class="mg-preg campoCalif mg-preg-monto">
+          <div class="mg-preg-tit"><span class="mg-pnum">1</span> ¿Monto a invertir?</div>
+          <div class="mg-monto-wrap">
+            <span class="mg-monto-sol">S/</span>
+            <input type="text" inputmode="numeric" id="gMonto" placeholder="Ej. 120,000"
+              oninput="fmtMontoInput('g')" onblur="fmtMontoInput('g')">
+            <span class="mg-monto-spin">
+              <button type="button" onclick="stepMonto('g',10000)">▲</button>
+              <button type="button" onclick="stepMonto('g',-10000)">▼</button>
+            </span>
+          </div>
+          <label class="mg-nodef"><input type="checkbox" id="gNoDefineMonto" onchange="toggleNoDefine('g')"> No define monto</label>
           <span class="mg-pts" id="ptsTicket">0 pts</span>
         </div>
         <div class="mg-preg campoCalif">
-          <div class="mg-preg-tit"><span class="mg-pnum">2</span> ¿Quiere una propuesta?</div>
+          <div class="mg-preg-tit"><span class="mg-pnum">2</span> ¿Nivel de interés?</div>
           <select id="gInteres" onchange="ajustarCampos()"></select>
           <span class="mg-pts" id="ptsInteres">0 pts</span>
         </div>
@@ -720,15 +742,71 @@
           <span class="mg-pts" id="ptsTiempo">0 pts</span>
         </div>
         <div class="mg-preg campoCalif">
-          <div class="mg-preg-tit"><span class="mg-pnum">4</span> ¿Puede avanzar?</div>
+          <div class="mg-preg-tit"><span class="mg-pnum">4</span> ¿Puede decidir?</div>
           <select id="gExperiencia" onchange="ajustarCampos()"></select>
           <span class="mg-pts" id="ptsAvance">0 pts</span>
         </div>
+        <div class="mg-preg campoCalif">
+          <div class="mg-preg-tit"><span class="mg-pnum">5</span> ¿Experiencia invirtiendo?</div>
+          <select id="gExperienciaInv" onchange="ajustarCampos()"></select>
+          <span class="mg-pts" id="ptsExpInv">0 pts</span>
+        </div>
       </div>
+    </div>
+
+    <!-- Bloque 3B: Score de cierre (negociacion) — 5 variables, aparece en Negociacion/check -->
+    <div class="mg-bloque b-cierre oculto" id="secCierre">
+      <div class="mg-tit" style="margin-bottom:3px;color:#8E44AD;display:flex;align-items:center;gap:10px">
+        <span><span class="mg-num" style="background:#8E44AD">$</span> Calificación de cierre</span>
+        <button type="button" id="btnEditarCierre" class="oculto" onclick="editarCierre()"
+          style="font-size:11px;padding:3px 10px;border:1px solid #8E44AD;color:#8E44AD;background:#fff;border-radius:6px;cursor:pointer;font-weight:600">✎ Editar</button>
+      </div>
+      <div class="mg-calif-sub">Tras la reunión, sincera las expectativas reales del lead. Recalcula el score y la probabilidad.</div>
+      <div class="mg-preguntas">
+        <div class="mg-preg">
+          <div class="mg-preg-tit"><span class="mg-pnum" style="background:#8E44AD">1</span> ¿Fondos disponibles?</div>
+          <select id="cFondos" onchange="recalcularScore()"></select>
+          <span class="mg-pts" id="ptsFondos">0 pts</span>
+        </div>
+        <div class="mg-preg mg-preg-monto">
+          <div class="mg-preg-tit"><span class="mg-pnum" style="background:#8E44AD">2</span> ¿Monto a invertir?</div>
+          <div class="mg-monto-wrap">
+            <span class="mg-monto-sol">S/</span>
+            <input type="text" inputmode="numeric" id="cMontoNum" placeholder="Ej. 150,000"
+              oninput="fmtMontoInput('c')" onblur="fmtMontoInput('c')">
+            <span class="mg-monto-spin">
+              <button type="button" onclick="stepMonto('c',10000)">▲</button>
+              <button type="button" onclick="stepMonto('c',-10000)">▼</button>
+            </span>
+          </div>
+          <label class="mg-nodef"><input type="checkbox" id="cNoDefineMonto" onchange="toggleNoDefine('c')"> No define monto</label>
+          <span class="mg-pts" id="ptsCMonto">0 pts</span>
+        </div>
+        <div class="mg-preg">
+          <div class="mg-preg-tit"><span class="mg-pnum" style="background:#8E44AD">3</span> ¿Qué prioriza? <span style="font-weight:400;color:var(--muted);font-size:10px">(informativo)</span></div>
+          <select id="cPrioriza" onchange="recalcularScore()"></select>
+          <div class="campoPlazo oculto" style="margin-top:6px"><select id="cPlazo"></select></div>
+          <span class="mg-pts" id="ptsCriterio" style="opacity:.5">0 pts</span>
+        </div>
+        <div class="mg-preg">
+          <div class="mg-preg-tit"><span class="mg-pnum" style="background:#8E44AD">4</span> ¿Compara alternativas?</div>
+          <select id="cCompetencia" onchange="recalcularScore()"></select>
+          <span class="mg-pts" id="ptsCompet">0 pts</span>
+        </div>
+        <div class="mg-preg">
+          <div class="mg-preg-tit"><span class="mg-pnum" style="background:#8E44AD">5</span> ¿Próximo paso?</div>
+          <select id="cProximoPaso" onchange="recalcularScore()"></select>
+          <span class="mg-pts" id="ptsCPaso">0 pts</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resultado de score y probabilidad (compartido) -->
+    <div class="mg-bloque" id="secScore" style="padding-top:6px">
       <div class="mg-resultado">
         <div class="mg-res-item">
           <span class="mg-res-ico score">◎</span>
-          <div><div class="mg-res-lbl">Score calculado</div><div class="mg-res-val" id="gScoreVal">0<span>/100</span></div></div>
+          <div><div class="mg-res-lbl" id="gScoreLbl">Score calculado</div><div class="mg-res-val" id="gScoreVal">0<span>/100</span></div></div>
         </div>
         <div class="mg-res-sep"></div>
         <div class="mg-res-item">
@@ -938,6 +1016,7 @@ const ES = {
   'Seguimiento post reunion (llamada)': 'Seguimiento post reunión (llamada)',
   'Seguimiento post reunion (whatsapp)': 'Seguimiento post reunión (WhatsApp)',
   'Evaluando': 'Evaluando', 'En negociacion': 'En negociación', 'Desistio': 'Desistió',
+  'Menor a 1 ano': 'Menor a 1 año', 'Mayor a 1 ano': 'Mayor a 1 año',
   'Cerrar venta (llamada)': 'Cerrar venta (llamada)', 'Cerrar venta (whatsapp)': 'Cerrar venta (WhatsApp)',
   'Agendar reunion (llamar)': 'Agendar reunión (llamar)', 'Agendar reunion (whatsapp)': 'Agendar reunión (WhatsApp)',
   'Confirmar reunion (llamar)': 'Confirmar reunión (llamar)', 'Confirmar reunion (whatsapp)': 'Confirmar reunión (WhatsApp)',
@@ -976,9 +1055,11 @@ async function api(url, opts) {
   return data;
 }
 
-function llenarSelect(id, valores, conVacio) {
+function llenarSelect(id, valores, conVacio, placeholder) {
   const s = $(id); s.innerHTML = '';
-  if (conVacio) s.add(new Option('—', ''));
+  if (placeholder) {
+    const o = new Option(placeholder, ''); o.disabled = true; o.selected = true; s.add(o);
+  } else if (conVacio) s.add(new Option('—', ''));
   (valores || []).forEach(v => s.add(new Option(tr(v), v)));
 }
 
@@ -1092,10 +1173,15 @@ async function arrancar() {
   sel.add(new Option('Todas las GP', ''));
   CAT.asesores.forEach(a => sel.add(new Option(a, a)));
   llenarSelect('gCanal', CAT.canales);
-  llenarSelect('gTicket', CAT.ticketRango, true);
   llenarSelect('gTiempo', CAT.tiempo, true);
   llenarSelect('gInteres', CAT.nivelInteres, true);
   llenarSelect('gExperiencia', CAT.avance || CAT.experiencia, true);
+  llenarSelect('gExperienciaInv', CAT.experienciaInv, true);
+  llenarSelect('cFondos', CAT.cFondos, false, 'Seleccionar…');
+  llenarSelect('cPrioriza', CAT.cPrioriza, false, 'Seleccionar…');
+  llenarSelect('cPlazo', CAT.cPlazo, false, 'Seleccionar…');
+  llenarSelect('cCompetencia', CAT.cCompetencia, false, 'Seleccionar…');
+  llenarSelect('cProximoPaso', CAT.cProximoPaso, false, 'Seleccionar…');
   llenarSelect('nFuente', CAT.fuentes, true);
   llenarSelect('nAsesor', CAT.asesores, true);
   llenarSelect('aAsesor', CAT.asesores);
@@ -1208,6 +1294,7 @@ function fmtSoles(n) {
 
 let VISTA_LEADS = 'tabla';
 let modoPerdido = false;
+let cierreEnEdicion = false; // true cuando el usuario pulsa "Editar" el cierre en Negociacion
 let modoCalifForzado = null;
 let PAG_SIZE = 25, PAG_ACTUAL = 1;
 function cambiarPagina(d) { PAG_ACTUAL += d; render(); }
@@ -1246,7 +1333,7 @@ function renderKanban() {
     return '<div class="kcol">' +
       '<div class="kcol-head"><span class="ktit">' + trEtapa2(c) + '</span><span class="kcnt">· ' + items.length + '</span></div>' +
       '<div class="kcol-metricas">' +
-        '<div class="km"><span class="km-v">' + fmtM(total) + '</span><span class="km-l">Total</span></div>' +
+        '<div class="km"><span class="km-v">' + fmtM(total) + '</span></div>' +
       '</div>' +
       '<div class="kcol-body" data-col="' + c.id + '" ondragover="kDragOver(event)" ondragleave="kDragLeave(event)" ondrop="kDrop(event)">' +
         (tarjetas || '<div class="kvacio"><div class="kvacio-ic">⊟</div>Sin leads<small>Arrastra los leads<br>a esta etapa</small></div>') +
@@ -1262,14 +1349,33 @@ function trEtapa2(col) {
 }
 
 // Construye una tarjeta del Kanban estilo imagen 5.
+// Punto de color segun "¿Experiencia invirtiendo?" — orienta el tenor de preparacion.
+function dotExperiencia(exp) {
+  if (!exp) return '';
+  const map = {
+    'Ya invirtio en Tasatop': ['#2D7FF9', 'Ya invirtió en Tasatop'],
+    'Productos similares': ['#8E44AD', 'Productos similares'],
+    'Productos tradicionales': ['#9AA3AD', 'Productos tradicionales'],
+    'Primera inversion': ['#9AA3AD', 'Primera inversión']
+  };
+  const m = map[exp]; if (!m) return '';
+  return '<span class="kdot-exp" style="background:' + m[0] + '" title="Experiencia: ' + m[1] + '"></span>';
+}
+
 function kanbanCard(l) {
   const vencida = l.fechaProxAccion && new Date(l.fechaProxAccion) < new Date();
   const calif = (l.ticket || l.tiempo || l.nivelInteres || l.avance || l.experiencia);
   const prioCls = PRIO_CLASE[l.prioridad] || 'p-Baja';
   const tel = (l.telefono || '').replace(/[^0-9]/g, '');
-  // Chips del score (interes + tiempo) si esta calificado
+  // Chips del score. En Reunion efectiva/Negociacion, si ya hay calificacion de cierre,
+  // muestran "Proximo paso" + "Fondos disponibles" (mas relevantes en esa fase);
+  // si aun no, mantienen interes/tiempo de la calificacion inicial.
   let chips = '';
-  if (calif) {
+  const etapaAvanzada = ['Reunion efectiva - seguimiento', 'Cierre pendiente'].includes(l.etapa);
+  if (etapaAvanzada && (l.cProximoPaso || l.cFondos)) {
+    if (l.cProximoPaso) chips += '<span class="kchip">' + tr(l.cProximoPaso) + '</span>';
+    if (l.cFondos) chips += '<span class="kchip">' + tr(l.cFondos) + '</span>';
+  } else if (calif) {
     if (l.nivelInteres) chips += '<span class="kchip">' + tr(l.nivelInteres) + '</span>';
     if (l.tiempo) chips += '<span class="kchip">' + tr(l.tiempo) + '</span>';
   }
@@ -1289,7 +1395,8 @@ function kanbanCard(l) {
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
-    '<div class="knom" onclick="abrirGestion(\'' + l.codigo + '\')">' + (l.nombre || '—') + '</div>' +
+    '<div class="knom" onclick="abrirGestion(\'' + l.codigo + '\')">' +
+      (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') + '</div>' +
     lineaAccion +
@@ -1491,7 +1598,7 @@ function celdaLead(l) {
     else estadoHtml = '<div class="lead-estado">Sin contacto</div>';
   }
   return '<div class="lead-cell">' +
-    '<div class="lead-nom">' + (l.nombre || '—') + '</div>' +
+    '<div class="lead-nom">' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
     (fuente ? '<div class="lead-fuente">' + fuente + '</div>' : '') +
     estadoHtml +
@@ -1699,21 +1806,32 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     `<span class="sep">·</span><span class="dato"><b>Score ${gLead.score}/100</b></span>` +
     `<span class="sep">·</span><span class="dato">Prob. <b>${gLead.probabilidad}%</b></span>` +
     `<span class="sep">·</span><span class="dato">GP ${gLead.asesor || 'sin asignar'}</span>`;
-  ['gResultado','gProxAccion','gFechaProx','gTicket','gTiempo','gInteres',
-   'gExperiencia','gFechaReunion','gResumen','gFechaCierre']
+  ['gResultado','gProxAccion','gFechaProx','gTiempo','gInteres',
+   'gExperiencia','gExperienciaInv','gFechaReunion','gResumen','gFechaCierre',
+   'gMonto','cMontoNum','cFondos','cPrioriza','cPlazo','cCompetencia','cProximoPaso']
     .forEach(id => { if ($(id)) $(id).value = ''; });
   if ($('gPasaNegociacion')) $('gPasaNegociacion').checked = false;
+  if ($('gNoDefineMonto')) { $('gNoDefineMonto').checked = false; $('gMonto').disabled = false; }
+  if ($('cNoDefineMonto')) { $('cNoDefineMonto').checked = false; $('cMontoNum').disabled = false; }
   $('gResumenCount').textContent = '0';
   $('gError').classList.remove('act');
   modoPerdido = false;
+  cierreEnEdicion = false;
   califObligatoria = false;
   $('gResultado').disabled = false;
-  ['gTicket','gTiempo','gInteres','gExperiencia'].forEach(id => { if ($(id)) $(id).disabled = false; });
+  ['gMonto','gTiempo','gInteres','gExperiencia','gExperienciaInv'].forEach(id => { if ($(id)) $(id).disabled = false; });
   // Prefill de calificacion si el lead ya tiene datos (para que el score se vea de una)
-  if (gLead.ticket) $('gTicket').value = gLead.ticket;
+  if (gLead.montoReal != null) $('gMonto').value = Number(gLead.montoReal).toLocaleString('en-US');
   if (gLead.tiempo) $('gTiempo').value = gLead.tiempo;
   if (gLead.nivelInteres) $('gInteres').value = gLead.nivelInteres;
   if (gLead.avance || gLead.experiencia) $('gExperiencia').value = gLead.avance || gLead.experiencia;
+  if (gLead.experienciaInv) $('gExperienciaInv').value = gLead.experienciaInv;
+  if (gLead.montoReal != null) $('cMontoNum').value = Number(gLead.montoReal).toLocaleString('en-US');
+  if (gLead.cFondos) $('cFondos').value = gLead.cFondos;
+  if (gLead.cPrioriza) $('cPrioriza').value = gLead.cPrioriza;
+  if (gLead.cPlazo) $('cPlazo').value = gLead.cPlazo;
+  if (gLead.cCompetencia) $('cCompetencia').value = gLead.cCompetencia;
+  if (gLead.cProximoPaso) $('cProximoPaso').value = gLead.cProximoPaso;
   if (gLead.fechaCierreEstimada) $('gFechaCierre').value = gLead.fechaCierreEstimada.slice(0,10);
 
   // Cargar SOLO los resultados permitidos para la etapa del lead, agrupados y coloreados
@@ -1775,23 +1893,42 @@ function ajustarCampos() {
   // Fecha estimada de cierre: si el resultado es "En negociacion", si el lead YA esta en
   // Negociacion, o si se marco el check que lo lleva a Negociacion desde Agendado.
   const enNegociacion = (gLead && gLead.etapa === 'Cierre pendiente') || r === 'En negociacion' || pasaNegociacion;
+  const esSinContacto = ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta'].includes(r);
   document.querySelectorAll('.campoCierre').forEach(e => e.classList.toggle('oculto', !enNegociacion));
+  // En "sin contacto" la fecha de cierre se bloquea (mantiene la ya marcada). En
+  // "Seguimiento post reunion" sigue editable. En el resto de negociacion, editable.
+  if ($('gFechaCierre')) $('gFechaCierre').disabled = esSinContacto;
 
-  // Modo "perdido": activado por la bandera. Oculta proximo paso y calificacion, exige comentario.
-  // Descarte (numero equivocado/invalido, no interesado, no califica) = misma dinamica
-  // que la bandera de perdido: solo Gestion realizada + motivo obligatorio.
+  // Venta ganada (cierre): solo el bloque 1 (Gestion realizada) + comentario obligatorio.
+  const esVentaGanada = r === 'Venta ganada';
+  // Modo "solo gestion": bandera de perdido, descarte o venta ganada.
   const esDescarte = ['Numero invalido', 'Numero equivocado', 'Respondio - no interesado', 'Respondio - no califica', 'Desistio'].includes(r);
-  const modoSoloGestion = modoPerdido || esDescarte;
+  const modoSoloGestion = modoPerdido || esDescarte || esVentaGanada;
+
+  // Bloque de Calificacion de cierre (5 variables): visible en negociacion (salvo solo-gestion).
+  // En Negociacion ya esta calificado: se muestra en SOLO LECTURA con boton "Editar".
+  const cierreVisible = enNegociacion && !modoSoloGestion;
+  $('secCierre').classList.toggle('oculto', !cierreVisible);
+  $('secScore').classList.toggle('oculto', modoSoloGestion);
+  // Bloqueo del cierre: si el lead YA esta en Negociacion (no es la 1a vez que entra),
+  // el cierre va en solo lectura salvo que el usuario pulse "Editar" o sea seguimiento.
+  if (cierreVisible) {
+    const yaEnNegociacion = gLead && gLead.etapa === 'Cierre pendiente';
+    const permitirEdicion = !yaEnNegociacion || cierreEnEdicion || r === 'Seguimiento post reunion';
+    bloquearCierre(!permitirEdicion);
+  }
+
   if (modoSoloGestion) {
     $('bloquePaso').classList.add('oculto');
     $('secCalif').classList.add('oculto');
+    $('secCierre').classList.add('oculto');
     $('gResumenReq').classList.remove('oculto');
     califObligatoria = false;
     recalcularScore();
     return;
   } else {
     $('bloquePaso').classList.remove('oculto');
-    $('secCalif').classList.remove('oculto');
+    $('secCalif').classList.toggle('oculto', enNegociacion);
     $('gResumenReq').classList.add('oculto');
   }
 
@@ -1831,41 +1968,146 @@ function aplicarReglaCalificacion(r) {
   const obliga = !bloquear && (modoCalifForzado === 'obligatorio' || obligaPorResultado);
 
   // Habilitar/deshabilitar los 4 selects y atenuar la seccion
-  ['gTicket','gTiempo','gInteres','gExperiencia'].forEach(id => { if ($(id)) $(id).disabled = bloquear; });
+  ['gMonto','gTiempo','gInteres','gExperiencia','gExperienciaInv'].forEach(id => { if ($(id)) $(id).disabled = bloquear; });
   $('secCalif').classList.toggle('calif-bloq', bloquear);
   // Marca de obligatorio
   $('secCalif').classList.toggle('calif-oblig', obliga);
   let aviso = $('califAviso');
   if (aviso) aviso.textContent = bloquear
     ? 'Calificación no disponible: el lead aún no fue calificado en esta gestión.'
-    : (obliga ? 'Completa las 4 variables para poder guardar esta gestión.' : '');
+    : (obliga ? 'Completa las 5 variables para poder guardar esta gestión.' : '');
   califObligatoria = obliga;
 }
 let califObligatoria = false;
 
 // Puntajes por variable + score total + probabilidad, todo en vivo.
 const PTS_TICKET = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
-const PTS_INTERES = { 'Muy interesado': 30, 'Interesado': 20, 'Solo averigua': 10, 'Poco interes': 5 };
+const PTS_INTERES = { 'Muy interesado': 25, 'Interesado': 18, 'Solo consulta': 10, 'Bajo interes': 5 };
 const PTS_TIEMPO = { '0 a 7 dias': 20, '8 a 15 dias': 15, '16 a 30 dias': 10, '> 30 dias': 5 };
-const PTS_AVANCE = { 'Decide solo': 20, 'Decide acompanado': 15, 'Debe consultar': 10, 'No avanza': 5 };
+const PTS_AVANCE = { 'Decide solo': 15, 'Decide acompanado': 11, 'Debe consultar': 7, 'No avanza': 3 };
+const PTS_EXPINV = { 'Ya invirtio en Tasatop': 10, 'Productos similares': 8, 'Productos tradicionales': 5, 'Primera inversion': 3 };
+// Score de cierre (optimizado)
+const PTS_FONDOS = { 'Listo hoy': 25, 'En 7 dias': 18, 'Mas de 7 dias': 7, 'Sin fecha': 0 };
+const PTS_CMONTO = { 'S/ 200,000 a mas': 20, 'S/ 100,000 - 199,999': 15, 'S/ 50,000 - 99,999': 8, 'S/ 10,000 - 49,999': 3 };
+const PTS_COMPET = { 'No compara': 20, 'Tradicionales': 13, 'Similares': 8, 'Tiene propuesta': 3 };
+const PTS_CPASO = { 'Invierte hoy': 35, 'Decide esta semana': 25, 'Enviar info': 8, 'Sin paso': 0 };
+// Score inicial del monto numerico (1a calif): mismos pesos del ticket
+const PTS_TICKET_INI = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
+
+// Numero -> rango (espejo del backend)
+function montoARangoJS(n) {
+  n = Number(n);
+  if (!isFinite(n) || n < 10000) return null;
+  if (n >= 200000) return 'S/ 200,000 a mas';
+  if (n >= 100000) return 'S/ 100,000 - 199,999';
+  if (n >= 50000) return 'S/ 50,000 - 99,999';
+  return 'S/ 10,000 - 49,999';
+}
+
+// Lee el valor numerico de un campo de monto (quitando comas).
+function montoVal(pref) {
+  const input = pref === 'g' ? $('gMonto') : $('cMontoNum');
+  const n = Number(String(input.value || '').replace(/[^\d]/g, ''));
+  return isFinite(n) ? n : 0;
+}
+
+// Formatea el input con comas de miles mientras se escribe.
+function fmtMontoInput(pref) {
+  const input = pref === 'g' ? $('gMonto') : $('cMontoNum');
+  const n = Number(String(input.value || '').replace(/[^\d]/g, ''));
+  input.value = n ? n.toLocaleString('en-US') : '';
+  recalcularScore();
+}
+
+// Sube/baja el monto en pasos (10,000), respetando min 10k y max 1M.
+function stepMonto(pref, paso) {
+  const input = pref === 'g' ? $('gMonto') : $('cMontoNum');
+  if (input.disabled) return;
+  let n = Number(String(input.value || '').replace(/[^\d]/g, '')) || 0;
+  if (n === 0 && paso > 0) n = 10000; else n = n + paso;
+  if (n < 10000) n = 10000;
+  if (n > 1000000) n = 1000000;
+  input.value = n.toLocaleString('en-US');
+  recalcularScore();
+}
+
+// Bloquea/limpia el campo de monto al marcar "No define monto" (prefijo 'g' o 'c').
+function toggleNoDefine(pref) {
+  const input = pref === 'g' ? $('gMonto') : $('cMontoNum');
+  const chk = pref === 'g' ? $('gNoDefineMonto') : $('cNoDefineMonto');
+  if (chk.checked) { input.value = ''; input.disabled = true; }
+  else input.disabled = false;
+  recalcularScore();
+}
+
+// Bloquea o habilita los campos del bloque de cierre. Cuando esta bloqueado muestra
+// un boton "Editar" para permitir ajustes (lead sigue vivo).
+function bloquearCierre(bloquear) {
+  ['cFondos','cMontoNum','cPrioriza','cPlazo','cCompetencia','cProximoPaso'].forEach(id => {
+    const el = $(id); if (el) el.disabled = bloquear;
+  });
+  const chk = $('cNoDefineMonto'); if (chk) chk.disabled = bloquear;
+  document.querySelectorAll('#secCierre .mg-monto-spin button').forEach(b => b.disabled = bloquear);
+  const btn = $('btnEditarCierre');
+  if (btn) btn.classList.toggle('oculto', !bloquear);
+}
+function editarCierre() {
+  cierreEnEdicion = true;
+  ajustarCampos();
+}
+
 function recalcularScore() {
-  const t = PTS_TICKET[$('gTicket').value] || 0;
+  // --- Score inicial (5 variables); la 1a es monto numerico ---
+  const montoIni = $('gNoDefineMonto') && $('gNoDefineMonto').checked ? null : montoVal('g');
+  const rangoIni = montoIni ? montoARangoJS(montoIni) : null;
+  const t = rangoIni ? (PTS_TICKET_INI[rangoIni] || 0) : 0;
   const i = PTS_INTERES[$('gInteres').value] || 0;
   const ti = PTS_TIEMPO[$('gTiempo').value] || 0;
   const a = PTS_AVANCE[$('gExperiencia').value] || 0;
+  const e = PTS_EXPINV[$('gExperienciaInv').value] || 0;
   $('ptsTicket').textContent = t + ' pts';
   $('ptsInteres').textContent = i + ' pts';
   $('ptsTiempo').textContent = ti + ' pts';
   $('ptsAvance').textContent = a + ' pts';
-  const score = Math.min(100, t + i + ti + a);
+  $('ptsExpInv').textContent = e + ' pts';
+  const scoreInicial = Math.min(100, t + i + ti + a + e);
+
+  // --- Score de cierre (si el bloque esta visible) ---
+  const cierreVisible = !$('secCierre').classList.contains('oculto');
+  let scoreCierre = 0, cierreCompleto = false;
+  if (cierreVisible) {
+    const montoC = $('cNoDefineMonto') && $('cNoDefineMonto').checked ? null : montoVal('c');
+    const rangoC = montoC ? montoARangoJS(montoC) : null;
+    const f = PTS_FONDOS[$('cFondos').value] || 0;
+    const m = rangoC ? (PTS_CMONTO[rangoC] || 0) : 0;
+    const co = PTS_COMPET[$('cCompetencia').value] || 0;
+    const pa = PTS_CPASO[$('cProximoPaso').value] || 0;
+    // Subpregunta de plazo: aparece si prioriza "Plazo"
+    const esPlazo = $('cPrioriza').value === 'Plazo';
+    document.querySelectorAll('.campoPlazo').forEach(el => el.classList.toggle('oculto', !esPlazo));
+    $('ptsFondos').textContent = f + ' pts';
+    $('ptsCMonto').textContent = m + ' pts';
+    $('ptsCompet').textContent = co + ' pts';
+    $('ptsCPaso').textContent = pa + ' pts';
+    scoreCierre = Math.min(100, f + m + co + pa); // prioriza no suma
+    const montoOk = (montoC && montoARangoJS(montoC)) || ($('cNoDefineMonto') && $('cNoDefineMonto').checked);
+    cierreCompleto = !!($('cFondos').value && montoOk && $('cPrioriza').value && $('cCompetencia').value && $('cProximoPaso').value);
+  }
+
+  const score = cierreVisible ? scoreCierre : scoreInicial;
   $('gScoreVal').innerHTML = score + '<span>/100</span>';
-  // Probabilidad: si los 4 estan llenos, el lead esta (al menos) Calificado -> tramo 25-55.
-  // Si no, usamos la etapa actual del lead para una estimacion.
-  const completo = t && i && ti && a;
+  $('gScoreLbl').textContent = cierreVisible ? 'Score de cierre' : 'Score calculado';
+
+  // Probabilidad: cierre apunta a Negociacion (tramo 50-90).
   let prob;
-  if (completo) prob = Math.round(25 + (55 - 25) * score / 100);
-  else prob = gLead ? gLead.probabilidad : 0;
-  $('gProbVal').textContent = (completo || gLead) ? prob + '%' : '—';
+  if (cierreVisible && cierreCompleto) {
+    prob = Math.round(50 + (90 - 50) * scoreCierre / 100);
+  } else {
+    const completo = t && i && ti && a && e;
+    if (completo) prob = Math.round(25 + (55 - 25) * scoreInicial / 100);
+    else prob = gLead ? gLead.probabilidad : 0;
+  }
+  $('gProbVal').textContent = (cierreVisible || gLead) ? prob + '%' : '—';
 }
 
 function colorEtapa(etapa) {
@@ -1894,9 +2136,47 @@ function marcarPerdido() {
   $('gResumen').focus();
 }
 
-// True si los 4 campos de calificacion estan llenos en el modal ahora mismo.
+// True si las 5 variables de calificacion estan llenas en el modal ahora mismo.
 function camposCalifLlenos() {
-  return !!($('gTicket').value && $('gTiempo').value && $('gInteres').value && $('gExperiencia').value);
+  const montoOk = ($('gNoDefineMonto') && $('gNoDefineMonto').checked) ||
+    (montoARangoJS(montoVal('g')));
+  return !!(montoOk && $('gTiempo').value && $('gInteres').value && $('gExperiencia').value && $('gExperienciaInv').value);
+}
+
+// True si las 5 preguntas del cierre estan respondidas (monto puede ser "No define").
+function cierreCompleto() {
+  const montoOk = ($('cNoDefineMonto') && $('cNoDefineMonto').checked) || montoARangoJS(montoVal('c'));
+  return !!($('cFondos').value && montoOk && $('cPrioriza').value && $('cCompetencia').value && $('cProximoPaso').value);
+}
+
+// El monto numerico activo del bloque visible (1a calif o cierre). null si "No define".
+function montoGestionActivo() {
+  const cierreVisible = !$('secCierre').classList.contains('oculto');
+  if (cierreVisible) {
+    if ($('cNoDefineMonto').checked) return null;
+    const v = montoVal('c');
+    return v ? Math.round(v) : null;
+  }
+  if ($('gNoDefineMonto').checked) return null;
+  const v = montoVal('g');
+  return v ? Math.round(v) : null;
+}
+function noDefineActivo() {
+  const cierreVisible = !$('secCierre').classList.contains('oculto');
+  return cierreVisible ? $('cNoDefineMonto').checked : $('gNoDefineMonto').checked;
+}
+// Valida el monto del bloque visible. Devuelve mensaje de error o null si esta ok.
+function validarMonto() {
+  const cierreVisible = !$('secCierre').classList.contains('oculto');
+  const input = cierreVisible ? $('cMontoNum') : $('gMonto');
+  const chk = cierreVisible ? $('cNoDefineMonto') : $('gNoDefineMonto');
+  // En modo solo gestion (perdido/descarte) o bloque calif oculto, no se valida.
+  if (input.disabled || chk.checked) return null;
+  if (!input.value || !input.offsetParent) return null; // vacio o no visible: no obliga aqui
+  const n = montoVal(cierreVisible ? 'c' : 'g'); // lee sin comas
+  if (!isFinite(n) || n < 10000) return 'El monto mínimo es S/ 10,000 (o marca "No define monto").';
+  if (n > 1000000) return 'El monto máximo es S/ 1,000,000.';
+  return null;
 }
 
 // Botones rapidos de fecha proxima accion.
@@ -1946,9 +2226,31 @@ async function guardarGestion() {
     $('gResumen').focus();
     return;
   }
+  // En Venta ganada, el comentario (como se cerro) es obligatorio.
+  if (r === 'Venta ganada' && !$('gResumen').value.trim()) {
+    $('gError').textContent = 'Escribe un comentario de cómo se cerró la venta para poder guardar.';
+    $('gError').classList.add('act');
+    $('gResumen').focus();
+    return;
+  }
   // Calificacion obligatoria (Respondió calificado / Agendó / modo kanban obligatorio).
   if (califObligatoria && !camposCalifLlenos()) {
-    $('gError').textContent = 'Completa las 4 variables de Calificación del lead para poder guardar.';
+    $('gError').textContent = 'Completa las 5 variables de Calificación del lead para poder guardar.';
+    $('gError').classList.add('act');
+    return;
+  }
+  // Validacion del monto numerico (1a calif y cierre): si hay valor, debe estar en rango.
+  const errMonto = validarMonto();
+  if (errMonto) {
+    $('gError').textContent = errMonto;
+    $('gError').classList.add('act');
+    return;
+  }
+  // Si pasa a Negociacion (resultado En negociacion o check marcado), el cierre es obligatorio.
+  const vaANegociacion = r === 'En negociacion' ||
+    ($('gPasaNegociacion') && $('gPasaNegociacion').checked && !$('gPasaNegociacion').closest('.campoCheckNeg').classList.contains('oculto'));
+  if (vaANegociacion && !cierreCompleto()) {
+    $('gError').textContent = 'Completa las 5 preguntas de Calificación de cierre para pasar a Negociación.';
     $('gError').classList.add('act');
     return;
   }
@@ -1962,10 +2264,18 @@ async function guardarGestion() {
       comentario: $('gResumen') ? ($('gResumen').value || null) : null,
       proximaAccion: $('gProxAccion').value || null,
       fechaProxAccion: $('gFechaProx').value ? new Date($('gFechaProx').value).toISOString() : null,
-      ticket: $('gTicket').value || null,
+      ticket: (montoGestionActivo() ? montoARangoJS(montoGestionActivo()) : null),
       tiempo: $('gTiempo').value || null,
       nivelInteres: $('gInteres').value || null,
       experiencia: $('gExperiencia').value || null,
+      experienciaInv: $('gExperienciaInv').value || null,
+      montoGestion: montoGestionActivo(),
+      noDefineMonto: noDefineActivo() ? 1 : 0,
+      cFondos: $('cFondos').value || null,
+      cPrioriza: $('cPrioriza').value || null,
+      cPlazo: ($('cPrioriza').value === 'Plazo' ? ($('cPlazo').value || null) : null),
+      cCompetencia: $('cCompetencia').value || null,
+      cProximoPaso: $('cProximoPaso').value || null,
       fechaReunion: $('gFechaReunion').value ? new Date($('gFechaReunion').value).toISOString() : null,
       fechaCierreEstimada: $('gFechaCierre').value || null,
       tipoReunion: null,
@@ -2032,7 +2342,7 @@ async function verTrazabilidad(codigo) {
     <div class="tz-card"><span class="tz-ic azul">🕐</span><div><div class="tz-lbl">Última gestión</div><div class="tz-val">${r.ultimaGestion ? fmtFecha(r.ultimaGestion) : '—'}</div><div class="tz-sub">${tr(r.ultimoResultado || '')}</div></div></div>
     <div class="tz-card"><span class="tz-ic naranja">📅</span><div><div class="tz-lbl">Próxima acción</div><div class="tz-val">${r.proximaAccion || '—'}</div><div class="tz-sub">${r.fechaProxAccion ? fmtFecha(r.fechaProxAccion) : ''} ${venc ? '<span class="tz-pill rojo">Vencido</span>' : (hoy ? '<span class="tz-pill rosa">Hoy</span>' : '')}</div></div></div>
     <div class="tz-card"><span class="tz-ic verde">📞</span><div><div class="tz-lbl">Intentos</div><div class="tz-val">${r.intentos}</div><div class="tz-sub">${r.contactado ? 'Contacto logrado' : 'Sin contacto'}</div></div></div>
-    <div class="tz-card"><span class="tz-ic morado">💰</span><div><div class="tz-lbl">Monto estimado</div><div class="tz-val">${fmtSoles(r.monto)}</div><div class="tz-sub">${r.ticket ? tr(r.ticket) : ''}</div></div></div>`;
+    <div class="tz-card"><span class="tz-ic morado">💰</span><div><div class="tz-lbl">Monto registrado</div><div class="tz-val">${fmtSoles(r.monto)}</div><div class="tz-sub">${r.ticket ? tr(r.ticket) : ''}</div></div></div>`;
 
   // Timeline
   const icoTipo = { creado: '👤', gestion: '📞', cambio: '⚑', proxima: '📅', llamada: '📞' };
@@ -2072,10 +2382,18 @@ async function verTrazabilidad(codigo) {
     <div class="tz-evo"><span>Score</span><span class="tz-pill azulito">${ev.score[0]}</span><span class="tz-arrow">→</span><span class="tz-pill azulito">${ev.score[1]}</span></div>
     <div class="tz-evo"><span>Probabilidad</span><span class="tz-pill azulito">${ev.probabilidad[0]}%</span><span class="tz-arrow">→</span><span class="tz-pill azulito">${ev.probabilidad[1]}%</span></div>`;
 
-  // Calificacion actual
-  $('tCalif').innerHTML = t.calificacion.map(c =>
-    `<div class="tz-cal"><span class="tz-cal-ic">${c.ico}</span><span class="tz-cal-lbl">${c.etiqueta}</span><span class="tz-cal-val">${c.valor ? tr(c.valor) : '—'}</span><span class="tz-pill ${c.pts ? 'verdecito' : 'gris'}">${c.pts} pts</span></div>`
-  ).join('');
+  // Calificacion actual (inicial)
+  const renderCal = c =>
+    `<div class="tz-cal"><span class="tz-cal-ic">${c.ico}</span><span class="tz-cal-lbl">${c.etiqueta}</span><span class="tz-cal-val">${c.valor ? (c.crudo ? c.valor : tr(c.valor)) : '—'}</span><span class="tz-pill ${c.info ? 'gris' : (c.pts ? 'verdecito' : 'gris')}">${c.info ? 'info' : c.pts + ' pts'}</span></div>`;
+  let calHtml = '<div class="tz-cal-tit">Calificación inicial' +
+    (t.scores && t.scores.inicial != null ? ' <span class="tz-pill azulito">Score ' + t.scores.inicial + '</span>' : '') + '</div>' +
+    t.calificacion.map(renderCal).join('');
+  if (t.calificacionCierre) {
+    calHtml += '<div class="tz-cal-tit" style="margin-top:12px;color:#8E44AD">Calificación de cierre' +
+      (t.scores && t.scores.cierre != null ? ' <span class="tz-pill" style="background:#EEE0F5;color:#8E44AD">Score ' + t.scores.cierre + '</span>' : '') + '</div>' +
+      t.calificacionCierre.map(renderCal).join('');
+  }
+  $('tCalif').innerHTML = calHtml;
 
   $('ovTraza').classList.add('act');
 }

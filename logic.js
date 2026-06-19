@@ -35,28 +35,37 @@ const RESULTADOS_POR_ETAPA = {
     ['Descarte', ['Numero equivocado', 'Numero invalido', 'Respondio - no interesado']]
   ],
   'Contactado - por calificar': [
-    ['Avanza', ['Respondio - calificado', 'Agendo reunion']],
+    ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
+    ['Avanza', ['Respondio - sin calificar', 'Respondio - calificado', 'Agendo reunion']],
     ['Cierra', ['Respondio - no interesado', 'Respondio - no califica']]
   ],
   'Calificado - pendiente agendar': [
+    ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
     ['Avanza', ['Agendo reunion']],
     ['Se mantiene', ['Respondio - calificado', 'Seguimiento post contacto']],
     ['Cierra', ['Respondio - no interesado', 'Respondio - no califica']]
   ],
   'Agendado - pendiente reunion': [
+    ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
     ['Se mantiene', ['Confirmo reunion', 'Reprogramo reunion']],
     ['Avanza', ['Reunion efectiva']],
     ['Cierra', ['No asistio a reunion', 'Respondio - no interesado']]
   ],
   'Reunion efectiva - seguimiento': [
+    ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
     ['Se mantiene', ['Evaluando']],
     ['Avanza', ['En negociacion']]
   ],
   'Cierre pendiente': [
+    ['Sin contacto', ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta']],
     ['Se mantiene', ['Seguimiento post reunion']],
-    ['Cierra', ['Venta ganada', 'Respondio - no interesado']]
+    ['Cierra', ['Venta ganada']]
   ]
 };
+
+// Resultados de "sin contacto" que NO deben hacer retroceder la etapa del lead:
+// se registran como intento fallido pero el lead mantiene su avance maximo.
+const RESULTADOS_SIN_CONTACTO = ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta'];
 
 const PROXIMAS_ACCIONES = [
   'Llamar intento 3x5', 'Enviar WhatsApp de apoyo', 'Calificar lead',
@@ -152,12 +161,20 @@ function transicionKanbanValida(etapaActual, columnaDestino) {
   return permitidas.includes(columnaDestino);
 }
 
-const NIVEL_INTERES = ['Muy interesado', 'Interesado', 'Solo averigua', 'Poco interes'];
+const NIVEL_INTERES = ['Muy interesado', 'Interesado', 'Solo consulta', 'Bajo interes'];
 const TICKET_RANGO = ['S/ 200,000 a mas', 'S/ 100,000 - 199,999', 'S/ 50,000 - 99,999', 'S/ 10,000 - 49,999'];
 const TIEMPO = ['0 a 7 dias', '8 a 15 dias', '16 a 30 dias', '> 30 dias'];
-// "¿Puede avanzar?" reemplaza a Experiencia en el score
+// "¿Puede decidir?" (antes "¿Puede avanzar?")
 const AVANCE = ['Decide solo', 'Decide acompanado', 'Debe consultar', 'No avanza'];
-const EXPERIENCIA = AVANCE; // alias de compatibilidad (codigo viejo que aun referencie EXPERIENCIA)
+const EXPERIENCIA = AVANCE; // alias de compatibilidad
+// 5a variable de calificacion: ¿Experiencia invirtiendo?
+const EXPERIENCIA_INV = ['Ya invirtio en Tasatop', 'Productos similares', 'Productos tradicionales', 'Primera inversion'];
+// Variables del score de CIERRE (negociacion) — version optimizada
+const C_FONDOS = ['Listo hoy', 'En 7 dias', 'Mas de 7 dias', 'Sin fecha'];
+const C_PRIORIZA = ['Tasa', 'Garantia', 'Plazo', 'Solidez de la empresa']; // informativo (0 pts)
+const C_PLAZO = ['Menor a 1 ano', 'Mayor a 1 ano']; // subpregunta si elige Plazo
+const C_COMPETENCIA = ['No compara', 'Tradicionales', 'Similares', 'Tiene propuesta'];
+const C_PROXIMO_PASO = ['Invierte hoy', 'Decide esta semana', 'Enviar info', 'Sin paso'];
 const TIPO_REUNION = ['Zoom', 'Google Meet', 'Presencial oficina', 'Llamada telefonica'];
 const ESTADO_REUNION = ['No aplica', 'Agendada', 'Confirmada', 'No asistio', 'Reprogramada', 'Efectiva'];
 const OBJECIONES = ['Tasa', 'Confianza', 'Garantia', 'Liquidez', 'Monto', 'Tiempo', 'Ya consiguio financiamiento', 'No necesita ahora', 'Otro'];
@@ -182,18 +199,38 @@ function grupoLimpio(resultado) {
 
 // ---------- Score de calificacion 0-100 ----------
 // 4 variables: Ticket (30) + Interes (30) + Tiempo (20) + Avance (20) = 100.
-// El parametro 'experiencia' se mantiene por compatibilidad y se trata como 'avance'.
-function calcularScore({ nivelInteres, ticket, tiempo, avance, experiencia }) {
-  const av = avance || experiencia; // compatibilidad con codigo/datos viejos
+// Score de CALIFICACION inicial (0-100) con 5 variables.
+// Pesos: monto 30, interes 25, tiempo 20, decision 15, experiencia 10.
+// Se mantienen labels viejos por compatibilidad con datos historicos.
+function calcularScore({ nivelInteres, ticket, tiempo, avance, experiencia, decision, experienciaInv }) {
+  const dec = decision || avance || experiencia; // ¿Puede decidir? (antes "avance")
   let p = 0;
-  // Ticket - "¿Cuanto quiere invertir?"
+  // 1. ¿Monto a invertir? (30)
   p += { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 }[ticket] || 0;
-  // Interes - "¿Quiere una propuesta?"
-  p += { 'Muy interesado': 30, 'Interesado': 20, 'Solo averigua': 10, 'Poco interes': 5 }[nivelInteres] || 0;
-  // Tiempo - "¿Cuando invertiria?"
+  // 2. ¿Nivel de interes? (25)
+  p += { 'Muy interesado': 25, 'Interesado': 18, 'Solo consulta': 10, 'Solo averigua': 10, 'Bajo interes': 5, 'Poco interes': 5 }[nivelInteres] || 0;
+  // 3. ¿Cuando invertiria? (20)
   p += { '0 a 7 dias': 20, '8 a 15 dias': 15, '16 a 30 dias': 10, '> 30 dias': 5 }[tiempo] || 0;
-  // Avance - "¿Puede avanzar?"
-  p += { 'Decide solo': 20, 'Decide acompanado': 15, 'Debe consultar': 10, 'No avanza': 5 }[av] || 0;
+  // 4. ¿Puede decidir? (15)
+  p += { 'Decide solo': 15, 'Decide acompanado': 11, 'Debe consultar': 7, 'No avanza': 3 }[dec] || 0;
+  // 5. ¿Experiencia invirtiendo? (10)
+  p += { 'Ya invirtio en Tasatop': 10, 'Productos similares': 8, 'Productos tradicionales': 5, 'Primera inversion': 3 }[experienciaInv] || 0;
+  return Math.min(100, p);
+}
+
+// Score de CIERRE (0-100) con las 5 variables de negociacion (version optimizada).
+// Pesos: fondos 25, monto 20, prioriza 0 (solo tag), compara 20, proximo paso 35.
+function calcularScoreCierre({ fondos, montoConfirmadoRango, criterio, competencia, proximoPaso }) {
+  let p = 0;
+  // 1. ¿Fondos disponibles? (25)
+  p += { 'Listo hoy': 25, 'En 7 dias': 18, 'Mas de 7 dias': 7, 'Sin fecha': 0 }[fondos] || 0;
+  // 2. ¿Monto a invertir? (20) — segun rango calculado del valor numerico
+  p += { 'S/ 200,000 a mas': 20, 'S/ 100,000 - 199,999': 15, 'S/ 50,000 - 99,999': 8, 'S/ 10,000 - 49,999': 3 }[montoConfirmadoRango] || 0;
+  // 3. ¿Que prioriza? (0 — informativo, solo tag; no suma)
+  // 4. ¿Compara alternativas? (20)
+  p += { 'No compara': 20, 'Tradicionales': 13, 'Similares': 8, 'Tiene propuesta': 3 }[competencia] || 0;
+  // 5. ¿Proximo paso? (35)
+  p += { 'Invierte hoy': 35, 'Decide esta semana': 25, 'Enviar info': 8, 'Sin paso': 0 }[proximoPaso] || 0;
   return Math.min(100, p);
 }
 
@@ -209,9 +246,11 @@ function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
       ['Agendada', 'Confirmada', 'Reprogramada'].includes(estadoReunion)) return 'Agendado - pendiente reunion';
   // Seguimiento post contacto: aun no hay reunion, se mantiene en calificado.
   if (r === 'Seguimiento post contacto') return 'Calificado - pendiente agendar';
+  // Si el ultimo resultado significativo es "respondio sin calificar", el lead esta
+  // en Contactado aunque arrastre algun dato suelto de calificacion (no debe saltar a Calificado).
+  if (r === 'Respondio - sin calificar') return 'Contactado - por calificar';
   if (tieneCalificacion) return 'Calificado - pendiente agendar';
-  if (['Respondio - sin calificar', 'Respondio - calificado',
-       'Respondio - pidio informacion', 'Respondio - interesado'].includes(r)) return 'Contactado - por calificar';
+  if (['Respondio - calificado', 'Respondio - pidio informacion', 'Respondio - interesado'].includes(r)) return 'Contactado - por calificar';
   return 'Contactabilidad 3x5';
 }
 
@@ -226,7 +265,7 @@ function calcularProbabilidad({ etapa, score, intentos }) {
   switch (etapa) {
     case 'Cerrado ganado': return 100;
     case 'Cerrado perdido': return 0;
-    case 'Cierre pendiente': return tramo(85, 95);
+    case 'Cierre pendiente': return tramo(50, 90);
     case 'Reunion efectiva - seguimiento': return tramo(60, 85);
     case 'Agendado - pendiente reunion': return tramo(45, 70);
     case 'Calificado - pendiente agendar': return tramo(25, 55);
@@ -297,6 +336,14 @@ function validarGestion(g) {
   }
   if (g.resultado === 'Reunion efectiva' && g.estadoReunion !== 'Efectiva') {
     return 'Falta marcar estado de reunion = Efectiva';
+  }
+  // Al pasar a Negociacion (resultado "En negociacion") la calificacion de cierre
+  // es obligatoria: las 5 variables (monto puede ser "No define").
+  if (g.resultado === 'En negociacion') {
+    const montoOk = (g.montoGestion != null) || g.noDefineMonto;
+    if (!g.cFondos || !montoOk || !g.cPrioriza || !g.cCompetencia || !g.cProximoPaso) {
+      return 'Completa la calificacion de cierre (5 preguntas) para pasar a Negociacion';
+    }
   }
   if (g.resultado === 'Respondio - no interesado' && !g.motivoPerdida) {
     return 'Falta motivo de perdida';
@@ -404,18 +451,51 @@ function consolidarLead(lead, gestiones) {
   const ticket = ultNV('ticket');
   const tiempo = ultNV('tiempo');
   const nivelInteres = ultNV('nivelInteres');
-  // El campo 'experiencia' en BD ahora almacena el "avance" (¿Puede avanzar?).
+  // El campo 'experiencia' en BD almacena el "decision" (¿Puede decidir?).
   const avance = ultNV('experiencia');
+  const experienciaInv = ultNV('experienciaInv'); // 5a variable: ¿Experiencia invirtiendo?
   const estadoReunion = ultNV('estadoReunion');
   const fechaReunion = ultNV('fechaReunion');
   const objecion = ultNV('objecion');
   const closer = ultNV('closer');
   const motivoPerdida = ult ? ult.motivoPerdida : null;
 
-  const score = calcularScore({ nivelInteres, ticket, tiempo, avance });
-  const tieneCalificacion = !!(ticket || tiempo || nivelInteres || avance);
+  // Variables del score de CIERRE (negociacion)
+  const cFondos = ultNV('cFondos');
+  const cPrioriza = ultNV('cPrioriza');
+  const cPlazo = ultNV('cPlazo');
+  const cCompetencia = ultNV('cCompetencia');
+  const cProximoPaso = ultNV('cProximoPaso');
+  const tieneScoreCierre = !!(cFondos || cPrioriza || cCompetencia || cProximoPaso);
+
+  // El monto vigente del lead (numerico) define el rango/ticket para el score.
+  // Si el lead aun no tiene monto numerico, se usa el rango de carga (montoRango/ticket).
+  const rangoVigente = (lead.montoReal != null ? montoARango(lead.montoReal) : null) || lead.montoRango || ticket;
+
+  // Score inicial (calificacion) — usa el rango del monto vigente
+  const scoreInicial = calcularScore({ nivelInteres, ticket: rangoVigente, tiempo, decision: avance, experienciaInv });
+  // Score de cierre (negociacion, version optimizada)
+  const scoreCierre = tieneScoreCierre ? calcularScoreCierre({
+    fondos: cFondos, montoConfirmadoRango: rangoVigente,
+    competencia: cCompetencia, proximoPaso: cProximoPaso
+  }) : null;
+  // El score VISIBLE es el de cierre si existe; si no, el inicial.
+  const score = tieneScoreCierre ? scoreCierre : scoreInicial;
+  // "tieneCalificacion" = el lead fue realmente calificado: existe una gestion con
+  // resultado "Respondio - calificado" (o avanzo mas alla). Datos sueltos arrastrados
+  // en una gestion de "sin contacto" NO cuentan como calificacion.
+  const fueCalificado = gestiones.some(g => ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion',
+    'Reprogramo reunion', 'Reunion efectiva', 'Evaluando', 'En negociacion', 'Seguimiento post contacto'].includes(g.resultado));
+  const tieneCalificacion = fueCalificado && !!(ticket || tiempo || nivelInteres || avance);
+  // Para la ETAPA usamos el ultimo resultado que NO sea "sin contacto": un intento
+  // fallido (no contesto/buzon) no debe hacer retroceder al lead a Por contactar.
+  // El lead mantiene su avance maximo; el "sin contacto" solo cuenta como reintento.
+  let ultSignificativo = ult;
+  for (let i = gestiones.length - 1; i >= 0; i--) {
+    if (!RESULTADOS_SIN_CONTACTO.includes(gestiones[i].resultado)) { ultSignificativo = gestiones[i]; break; }
+  }
   const etapa = calcularEtapa({
-    ultimoResultado: ult ? ult.resultado : 'Sin gestion',
+    ultimoResultado: ultSignificativo ? ultSignificativo.resultado : (ult ? ult.resultado : 'Sin gestion'),
     estadoReunion, tieneCalificacion
   });
   const probabilidad = calcularProbabilidad({ etapa, score, intentos });
@@ -441,16 +521,19 @@ function consolidarLead(lead, gestiones) {
   return {
     ...lead,
     intentos, intentosHoy, diasDesdeAsignacion,
-    score, etapa, probabilidad, prioridad,
+    score, scoreInicial, scoreCierre, tieneScoreCierre,
+    etapa, probabilidad, prioridad,
     ordenSort: ORDEN_PRIORIDAD[prioridad] || 4,
     ultimoResultado: ult ? ult.resultado : 'Sin gestion',
     ultimoCanal: ult ? ult.canal : null,
     ultimaGestion: ult ? ult.fecha : null,
     proximaAccion, fechaProxAccion,
-    ticket, tiempo, nivelInteres, experiencia: avance, avance,
+    ticket, tiempo, nivelInteres, experiencia: avance, avance, experienciaInv,
+    cFondos, cPrioriza, cPlazo, cCompetencia, cProximoPaso,
+    rangoVigente,
     estadoReunion, fechaReunion, objecion, closer, motivoPerdida,
     totalGestiones: gestiones.length,
-    pipelineEstimado: montoTicket(ticket),
+    pipelineEstimado: (lead.montoReal != null ? lead.montoReal : montoTicket(rangoVigente)),
     fechaCierreEstimada: lead.fechaCierreEstimada || null
   };
 }
@@ -588,8 +671,10 @@ function obtenerResultadosPermitidos(etapa) {
 }
 
 module.exports = {
-  ASESORES, CANALES, FUENTES, RESULTADOS, RESULTADOS_POR_ETAPA, PROXIMAS_ACCIONES, ACCIONES_POR_RESULTADO,
+  ASESORES, CANALES, FUENTES, RESULTADOS, RESULTADOS_POR_ETAPA, RESULTADOS_SIN_CONTACTO, PROXIMAS_ACCIONES, ACCIONES_POR_RESULTADO,
   NIVEL_INTERES, TICKET_RANGO, TIEMPO, EXPERIENCIA, AVANCE,
+  EXPERIENCIA_INV, C_FONDOS, C_PRIORIZA, C_PLAZO, C_COMPETENCIA, C_PROXIMO_PASO,
+  calcularScoreCierre,
   TIPO_REUNION, ESTADO_REUNION, OBJECIONES, MOTIVOS_PERDIDA,
   grupoLimpio, calcularScore, calcularEtapa, calcularProbabilidad,
   calcularPrioridad, validarGestion, autocalcularFechaProxAccion,

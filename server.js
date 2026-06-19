@@ -94,6 +94,18 @@ try { db.exec('ALTER TABLE leads ADD COLUMN montoReal INTEGER'); } catch (e) {}
 try { db.exec('ALTER TABLE leads ADD COLUMN montoRango TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE leads ADD COLUMN archivado INTEGER DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE leads ADD COLUMN fechaCierreEstimada TEXT'); } catch (e) {}
+// v1.45: 5a variable de calificacion (experiencia invirtiendo) + 5 variables de cierre (negociacion)
+try { db.exec('ALTER TABLE gestiones ADD COLUMN experienciaInv TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cFondos TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cMonto TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cCriterio TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cCompetencia TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cProximoPaso TEXT'); } catch (e) {}
+// v1.46: monto numerico ingresado en la gestion (1a calif o negociacion) + prioriza/plazo
+try { db.exec('ALTER TABLE gestiones ADD COLUMN montoGestion INTEGER'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN noDefineMonto INTEGER'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cPrioriza TEXT'); } catch (e) {}
+try { db.exec('ALTER TABLE gestiones ADD COLUMN cPlazo TEXT'); } catch (e) {}
 db.exec(`
   CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -302,6 +314,9 @@ app.get('/api/catalogos', (req, res) => {
     resultados: L.RESULTADOS, proximasAcciones: L.PROXIMAS_ACCIONES,
     nivelInteres: L.NIVEL_INTERES, ticketRango: L.TICKET_RANGO,
     tiempo: L.TIEMPO, experiencia: L.EXPERIENCIA, avance: L.AVANCE,
+    experienciaInv: L.EXPERIENCIA_INV,
+    cFondos: L.C_FONDOS, cPrioriza: L.C_PRIORIZA, cPlazo: L.C_PLAZO,
+    cCompetencia: L.C_COMPETENCIA, cProximoPaso: L.C_PROXIMO_PASO,
     tipoReunion: L.TIPO_REUNION, estadoReunion: L.ESTADO_REUNION,
     objeciones: L.OBJECIONES, motivosPerdida: L.MOTIVOS_PERDIDA,
     accionesPorResultado: require('./logic').ACCIONES_POR_RESULTADO || {},
@@ -311,18 +326,20 @@ app.get('/api/catalogos', (req, res) => {
 
 // ---------- Leads ----------
 app.post('/api/leads', soloAdmin, (req, res) => {
-  const { nombre, telefono, email, fuente, campana, asesor, montoReal } = req.body;
+  const { nombre, telefono, email, fuente, campana, asesor, montoReal, montoPotencial } = req.body;
   if (!nombre) return res.status(400).json({ error: 'Falta nombre del lead' });
   if (asesor && !L.ASESORES.includes(asesor)) {
     return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + L.ASESORES.join(', ') });
   }
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
-  const monto = montoReal ? Number(montoReal) : null;
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+  const montoIn = montoReal != null ? montoReal : (montoPotencial != null ? montoPotencial : null);
+  const monto = (montoIn != null && String(montoIn).trim() !== '') ? Number(String(montoIn).replace(/[^\d.]/g, '')) : null;
+  const rango = (monto != null && isFinite(monto)) ? L.montoARango(monto) : null;
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, nombre, L.normalizarCelular(telefono) || telefono || null, email || null,
-         fuente || null, campana || null, asesor || null, monto, monto, ahora, asesor ? ahora : null);
+         fuente || null, campana || null, asesor || null, monto, monto, rango, ahora, asesor ? ahora : null);
   res.json(leadConsolidado(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo)));
 });
 
@@ -602,15 +619,30 @@ app.post('/api/gestiones', (req, res) => {
 
   db.prepare(`INSERT INTO gestiones
     (codigo,fecha,asesor,canal,resultado,grupoLimpio,proximaAccion,comentario,fechaProxAccion,
-     ticket,tiempo,nivelInteres,experiencia,objecion,fechaReunion,tipoReunion,estadoReunion,closer,motivoPerdida)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+     ticket,tiempo,nivelInteres,experiencia,objecion,fechaReunion,tipoReunion,estadoReunion,closer,motivoPerdida,
+     experienciaInv,cFondos,cMonto,cCriterio,cCompetencia,cProximoPaso,
+     montoGestion,noDefineMonto,cPrioriza,cPlazo)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
       g.codigo, new Date().toISOString(), g.asesor, g.canal, g.resultado,
       L.grupoLimpio(g.resultado), g.proximaAccion || null, g.comentario || null, fechaProx,
       g.ticket || null, g.tiempo || null, g.nivelInteres || null, g.experiencia || null,
       g.objecion || null, g.fechaReunion || null, g.tipoReunion || null,
-      g.estadoReunion || null, g.closer || null, g.motivoPerdida || null
+      g.estadoReunion || null, g.closer || null, g.motivoPerdida || null,
+      g.experienciaInv || null, g.cFondos || null, g.cMonto || null,
+      g.cCriterio || null, g.cCompetencia || null, g.cProximoPaso || null,
+      (g.montoGestion != null ? Math.round(g.montoGestion) : null),
+      (g.noDefineMonto ? 1 : 0), g.cPrioriza || null, g.cPlazo || null
     );
+
+  // Si la gestion trae un monto numerico, ese pasa a ser el monto vigente del lead
+  // (se muestra en tarjeta/tabla). Si marca "No define monto", no se toca el monto actual.
+  if (g.montoGestion != null && !g.noDefineMonto) {
+    const m = Math.round(g.montoGestion);
+    const rango = L.montoARango(m);
+    db.prepare('UPDATE leads SET montoReal = ?, montoRango = ? WHERE codigo = ?')
+      .run(m, rango, g.codigo);
+  }
 
   // Fecha estimada de cierre: se guarda en el lead (proyeccion). null la limpia.
   if (g.fechaCierreEstimada !== undefined) {
@@ -706,18 +738,35 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   const primeraGest = gestiones[0];
   const evoInicial = primeraGest ? leadConsolidado(lead, [primeraGest]) : { score: 0, probabilidad: probPrev, etapa: 'Contactabilidad 3x5' };
 
-  // --- Calificacion actual con puntos ---
-  const ptsTicket = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
-  const ptsInteres = { 'Muy interesado': 30, 'Interesado': 20, 'Solo averigua': 10, 'Poco interes': 5 };
+  // --- Calificacion actual con puntos (modelo v1.46/47) ---
+  const ptsInteres = { 'Muy interesado': 25, 'Interesado': 18, 'Solo consulta': 10, 'Bajo interes': 5 };
   const ptsTiempo = { '0 a 7 dias': 20, '8 a 15 dias': 15, '16 a 30 dias': 10, '> 30 dias': 5 };
-  const ptsAvance = { 'Decide solo': 20, 'Decide acompanado': 15, 'Debe consultar': 10, 'No avanza': 5 };
+  const ptsAvance = { 'Decide solo': 15, 'Decide acompanado': 11, 'Debe consultar': 7, 'No avanza': 3 };
+  const ptsExpInv = { 'Ya invirtio en Tasatop': 10, 'Productos similares': 8, 'Productos tradicionales': 5, 'Primera inversion': 3 };
+  const ptsTicketIni = { 'S/ 200,000 a mas': 30, 'S/ 100,000 - 199,999': 25, 'S/ 50,000 - 99,999': 20, 'S/ 10,000 - 49,999': 10 };
+  const ptsFondos = { 'Listo hoy': 25, 'En 7 dias': 18, 'Mas de 7 dias': 7, 'Sin fecha': 0 };
+  const ptsCMonto = { 'S/ 200,000 a mas': 20, 'S/ 100,000 - 199,999': 15, 'S/ 50,000 - 99,999': 8, 'S/ 10,000 - 49,999': 3 };
+  const ptsCompet = { 'No compara': 20, 'Tradicionales': 13, 'Similares': 8, 'Tiene propuesta': 3 };
+  const ptsCPaso = { 'Invierte hoy': 35, 'Decide esta semana': 25, 'Enviar info': 8, 'Sin paso': 0 };
   const av = cons.avance || cons.experiencia;
+  const montoTxt = cons.montoReal != null ? ('S/ ' + Number(cons.montoReal).toLocaleString('en-US')) : '—';
+  const rangoVig = cons.rangoVigente;
+  // Bloque inicial (siempre)
   const calificacion = [
-    { ico: '$', etiqueta: 'Monto', valor: cons.ticket, pts: ptsTicket[cons.ticket] || 0 },
+    { ico: '$', etiqueta: 'Monto', valor: montoTxt, pts: ptsTicketIni[rangoVig] || 0, crudo: true },
     { ico: '♥', etiqueta: 'Interés', valor: cons.nivelInteres, pts: ptsInteres[cons.nivelInteres] || 0 },
-    { ico: '◷', etiqueta: 'Plazo', valor: cons.tiempo, pts: ptsTiempo[cons.tiempo] || 0 },
-    { ico: '👤', etiqueta: 'Avance', valor: av, pts: ptsAvance[av] || 0 }
+    { ico: '◷', etiqueta: 'Cuándo', valor: cons.tiempo, pts: ptsTiempo[cons.tiempo] || 0 },
+    { ico: '👤', etiqueta: 'Decide', valor: av, pts: ptsAvance[av] || 0 },
+    { ico: '★', etiqueta: 'Experiencia', valor: cons.experienciaInv, pts: ptsExpInv[cons.experienciaInv] || 0 }
   ];
+  // Bloque de cierre (solo si el lead lo tiene)
+  const calificacionCierre = cons.tieneScoreCierre ? [
+    { ico: '💵', etiqueta: 'Fondos', valor: cons.cFondos, pts: ptsFondos[cons.cFondos] || 0 },
+    { ico: '$', etiqueta: 'Monto', valor: montoTxt, pts: ptsCMonto[rangoVig] || 0, crudo: true },
+    { ico: '◎', etiqueta: 'Prioriza', valor: cons.cPrioriza, pts: 0, info: true },
+    { ico: '⚖', etiqueta: 'Compara', valor: cons.cCompetencia, pts: ptsCompet[cons.cCompetencia] || 0 },
+    { ico: '→', etiqueta: 'Próx. paso', valor: cons.cProximoPaso, pts: ptsCPaso[cons.cProximoPaso] || 0 }
+  ] : null;
 
   const intentosContacto = gestiones.filter(g => L.grupoLimpio(g.resultado) === 'No_respondio').length;
   const contactado = gestiones.some(g => !['No_respondio'].includes(L.grupoLimpio(g.resultado)) && g.resultado !== 'Sin gestion');
@@ -732,7 +781,7 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
       proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : null,
       fechaProxAccion: cons.fechaProxAccion,
       intentos: intentosContacto, contactado,
-      monto: cons.montoReal || cons.montoPotencial, ticket: cons.ticket
+      monto: cons.montoReal != null ? cons.montoReal : cons.montoPotencial, ticket: cons.rangoVigente
     },
     estadoActual: {
       etapa: trEtapaServer(cons.etapa), prioridad: cons.prioridad,
@@ -743,7 +792,8 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
       score: [evoInicial.score, cons.score],
       probabilidad: [evoInicial.probabilidad, cons.probabilidad]
     },
-    calificacion,
+    scores: { inicial: cons.scoreInicial, cierre: cons.scoreCierre, visible: cons.score },
+    calificacion, calificacionCierre,
     eventos
   });
 });
@@ -965,4 +1015,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.44 (volume + db_path) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.48 (cierre bloqueado + venta ganada + cabecera kanban) corriendo en puerto ${PORT}`));
