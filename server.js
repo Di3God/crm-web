@@ -449,6 +449,11 @@ app.get('/api/marketing/ingresos', soloAdminOJefa, (req, res) => {
   let filas;
   if (estado) filas = db.prepare('SELECT * FROM marketing_ingresos WHERE estado = ? ORDER BY id DESC LIMIT 500').all(estado);
   else filas = db.prepare('SELECT * FROM marketing_ingresos ORDER BY id DESC LIMIT 500').all();
+  // Deriva el monto traducido (texto recibido -> numero + rango) para la vista.
+  filas = filas.map(f => {
+    const num = L.montoEtiquetaANumero(f.montoRecibido);
+    return { ...f, montoNumerico: num, montoRangoCalc: num != null ? L.montoARango(num) : null };
+  });
   // Resumen por estado para los contadores de la vista
   const resumen = {};
   db.prepare('SELECT estado, COUNT(*) AS c FROM marketing_ingresos GROUP BY estado').all()
@@ -1229,4 +1234,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.50 (fase 2: normalizacion robusta landing + dedupe nombre) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.51 (fase 2: columna monto en leads brutos) corriendo en puerto ${PORT}`));

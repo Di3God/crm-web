@@ -854,5 +854,6 @@ function validarFilaImport(fila) {
 module.exports.normalizarCelular = normalizarCelular;
 module.exports.normalizarNombre = normalizarNombre;
 module.exports.montoARango = montoARango;
+module.exports.montoEtiquetaANumero = montoEtiquetaANumero;
 module.exports.normalizarLeadMarketing = normalizarLeadMarketing;
 module.exports.validarFilaImport = validarFilaImport;

@@ -1509,6 +1509,15 @@ async function cargarBrutos() {
         '<td>' + (i.nombreRecibido || '<span class="sub">—</span>') + '</td>' +
         '<td>' + (i.telefonoRecibido || '<span class="sub">—</span>') + '</td>' +
         '<td>' + (i.emailRecibido || '<span class="sub">—</span>') + '</td>' +
+        '<td>' + (function(){
+          var mTxt = i.montoRecibido || '';
+          var mNum = (i.montoNumerico != null)
+            ? 'S/ ' + Number(i.montoNumerico).toLocaleString('en-US') + (i.montoRangoCalc ? ' · ' + i.montoRangoCalc : '')
+            : '';
+          if (!mTxt && !mNum) return '<span class="sub">—</span>';
+          return (mTxt ? '<div class="sub" style="font-size:11px">' + mTxt + '</div>' : '') +
+                 (mNum ? '<div>' + mNum + '</div>' : '');
+        })() + '</td>' +
         '<td>' + (i.campana || '<span class="sub">—</span>') + '</td>' +
         '<td><span class="bestado" style="background:' + meta[1] + '">' + meta[0] + '</span>' +
           (i.mensajeError ? '<div class="berror">' + i.mensajeError + '</div>' : '') + '</td>' +
@@ -1518,7 +1527,7 @@ async function cargarBrutos() {
     }).join('');
 
     $('brutosCont').innerHTML = '<table class="tabla btabla"><thead><tr>' +
-      '<th>Fecha</th><th>Origen</th><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Campaña</th><th>Estado</th><th>Lead</th><th>Acciones</th>' +
+      '<th>Fecha</th><th>Origen</th><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Monto</th><th>Campaña</th><th>Estado</th><th>Lead</th><th>Acciones</th>' +
       '</tr></thead><tbody>' + filas + '</tbody></table>';
   } catch (e) {
     $('brutosCont').innerHTML = '<div class="vacio">Error al cargar: ' + e.message + '</div>';
