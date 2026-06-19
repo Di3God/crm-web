@@ -370,26 +370,41 @@ function procesarLeadMarketing(norm) {
     return { estado: 'incompleto', mensajeError: 'Celular ausente o invalido' };
   }
 
-  // Dedupe por celular normalizado (identificador principal).
+  const nombreNorm = L.normalizarNombre(norm.nombre);
+
+  // 1) Llave dura: telefono normalizado. Si coincide, es duplicado (el telefono manda).
   const existente = db.prepare('SELECT * FROM leads WHERE telefono = ?').get(norm.telefonoNormalizado);
   if (existente) {
     const cons = leadConsolidado(existente);
-    if (cons.etapa === 'Cerrado perdido') return { estado: 'duplicado_perdido', codigoLead: existente.codigo, mensajeError: 'Lead existente cerrado perdido — revision manual' };
-    if (cons.etapa === 'Cerrado ganado') return { estado: 'duplicado_ganado', codigoLead: existente.codigo, mensajeError: 'Lead existente ganado — revision manual' };
-    return { estado: 'duplicado_activo', codigoLead: existente.codigo, mensajeError: null };
+    // Validador: si el nombre completo NO coincide, se avisa (pero sigue siendo duplicado).
+    const mismoNombre = nombreNorm && L.normalizarNombre(existente.nombre) === nombreNorm;
+    const avisoNombre = (nombreNorm && !mismoNombre)
+      ? `\u26a0 Mismo tel., nombre distinto (recibido: ${norm.nombre || '?'} / existente: ${existente.nombre || '?'}) \u2014 revisar`
+      : null;
+    const suf = avisoNombre ? ' | ' + avisoNombre : '';
+    if (cons.etapa === 'Cerrado perdido') return { estado: 'duplicado_perdido', codigoLead: existente.codigo, mensajeError: 'Lead existente cerrado perdido — revision manual' + suf };
+    if (cons.etapa === 'Cerrado ganado') return { estado: 'duplicado_ganado', codigoLead: existente.codigo, mensajeError: 'Lead existente ganado — revision manual' + suf };
+    return { estado: 'duplicado_activo', codigoLead: existente.codigo, mensajeError: avisoNombre };
   }
 
-  // Lead nuevo limpio: se crea operativo, en etapa inicial 3x5, sin asesor.
+  // 2) Sin match de telefono: validar por nombre completo normalizado (avisa, no bloquea).
+  let avisoMismoNombre = null;
+  if (nombreNorm) {
+    const todos = db.prepare('SELECT codigo, nombre FROM leads').all();
+    const gemelo = todos.find(l => L.normalizarNombre(l.nombre) === nombreNorm);
+    if (gemelo) avisoMismoNombre = `\u26a0 Mismo nombre que ${gemelo.codigo} (tel. distinto) \u2014 revisar`;
+  }
+
+  // 3) Lead nuevo: se crea operativo, en etapa inicial 3x5, sin asesor.
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
-  const montoNum = norm.monto ? Number(String(norm.monto).replace(/[^\d.]/g, '')) : null;
-  const monto = (montoNum != null && isFinite(montoNum)) ? montoNum : null;
+  const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
   db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
          norm.fuente || null, norm.campana || null, null, monto, monto, rango, ahora, null);
-  return { estado: 'creado', codigoLead: codigo, mensajeError: null };
+  return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre };
 }
 
 // Webhook universal de recepcion de leads. Valida token por env MARKETING_WEBHOOK_TOKEN.
@@ -1214,4 +1229,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.49 (fase 2 leads brutos marketing) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.50 (fase 2: normalizacion robusta landing + dedupe nombre) corriendo en puerto ${PORT}`));

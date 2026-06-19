@@ -716,27 +716,93 @@ function montoARango(v) {
 // estructura estandar comun. Cada fuente nombra sus campos distinto; esta
 // funcion mapea esos nombres a las columnas del CRM.
 //
+// Quita tildes/diacriticos de un texto (para comparaciones tolerantes).
+function _quitarTildes(s) {
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// Normaliza una clave de campo: sin tildes, minusculas, sin espacios/_/-/.
+// Asi "Telefono", "Teléfono", "telefono_celular", "Monto disponible" colapsan.
+function _normClave(s) {
+  return _quitarTildes(String(s)).toLowerCase().replace(/[\s_\-.]+/g, '');
+}
+
 // pick(obj, claves...) devuelve el primer valor no vacio entre varias claves
-// posibles (asi toleramos variaciones de nombre entre formularios).
+// posibles. Compara claves de forma TOLERANTE (ignora mayusculas, tildes,
+// espacios, guiones y guiones bajos), asi un mismo campo entra venga como
+// "Teléfono", "telefono" o "phone_number" sin necesidad de mapear en Make.
 function _pick(obj, ...claves) {
-  for (const k of claves) {
-    if (obj && obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim();
+  if (!obj) return null;
+  const idx = {};
+  for (const k of Object.keys(obj)) {
+    const nk = _normClave(k);
+    if (!(nk in idx)) {
+      const v = obj[k];
+      if (v != null && String(v).trim() !== '') idx[nk] = String(v).trim();
+    }
+  }
+  for (const c of claves) {
+    const nc = _normClave(c);
+    if (nc in idx) return idx[nc];
   }
   return null;
+}
+
+// Traduce el monto a un numero. Soporta:
+//  - etiquetas de rango del landing ("De S/20,000 a S/ 50,000." -> 20000,
+//    "Más de S/100,000." -> 100000) usando el LIMITE INFERIOR del bucket;
+//  - numeros sueltos ("50000", "S/ 50,000" -> 50000).
+// Devuelve null para "Seleccionar...", vacio o sin digitos.
+function montoEtiquetaANumero(txt) {
+  if (txt == null) return null;
+  const t = _quitarTildes(String(txt)).toLowerCase().trim();
+  if (!t || t.startsWith('seleccionar')) return null;
+  const nums = (t.match(/\d[\d,]*\d|\d/g) || [])
+    .map(s => parseInt(s.replace(/,/g, ''), 10))
+    .filter(n => Number.isFinite(n) && n > 0);
+  if (!nums.length) return null;
+  return Math.min(...nums); // limite inferior del rango
+}
+
+// Normaliza un nombre completo (Nombre + Apellido) para el match secundario:
+// sin tildes, minusculas, solo letras/numeros, palabras ordenadas alfabetica-
+// mente (asi "Morales Chumbes Javier" == "Javier Morales Chumbes").
+function normalizarNombre(v) {
+  if (!v) return '';
+  const limpio = _quitarTildes(String(v)).toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!limpio) return '';
+  return limpio.split(' ').sort().join(' ');
 }
 
 function normalizarLeadMarketing(origen, payload) {
   const p = payload || {};
   const o = String(origen || '').toLowerCase();
 
+  // UTMs (se calculan primero: sirven de respaldo para fuente/campana)
+  const utmSource = _pick(p, 'utm_source', 'utmSource');
+  const utmMedium = _pick(p, 'utm_medium', 'utmMedium');
+  const utmCampaign = _pick(p, 'utm_campaign', 'utmCampaign');
+  const utmContent = _pick(p, 'utm_content', 'utmContent');
+
   // Campos comunes con tolerancia a distintos nombres por fuente.
   // Landing usa nombres en espanol; Meta/TikTok suelen venir en ingles.
-  const nombre = _pick(p, 'nombre', 'name', 'full_name', 'fullname', 'nombre_completo');
+  // El nombre operativo es Nombre + Apellido concatenados.
+  const nombrePila = _pick(p, 'nombre', 'name', 'full_name', 'fullname', 'nombre_completo', 'first_name', 'firstname');
+  const apellido = _pick(p, 'apellido', 'apellidos', 'last_name', 'lastname', 'surname');
+  const nombre = [nombrePila, apellido].filter(Boolean).join(' ') || null;
+
   const telefonoRaw = _pick(p, 'telefono', 'phone', 'phone_number', 'celular', 'mobile', 'telefono_celular');
   const email = _pick(p, 'email', 'correo', 'mail', 'e-mail');
-  const monto = _pick(p, 'monto', 'amount', 'monto_inversion', 'inversion', 'presupuesto');
-  const fuente = _pick(p, 'fuente', 'source', 'lead_source') || (o === 'landing' ? 'Landing Page' : o === 'meta' ? 'Meta Lead Ads' : o === 'tiktok' ? 'TikTok Lead' : origen);
-  const campana = _pick(p, 'campana', 'campaign', 'campaign_name', 'campana_nombre');
+
+  // monto: se guarda el TEXTO original (trazabilidad en Leads Brutos) y se
+  // deriva un numero (etiqueta de rango -> limite inferior, o numero suelto).
+  const monto = _pick(p, 'monto', 'amount', 'monto_inversion', 'inversion', 'presupuesto', 'monto disponible', 'monto_disponible');
+  const montoNumerico = montoEtiquetaANumero(monto);
+
+  // fuente/campana: explicitas si vienen; si no, se respaldan con UTMs.
+  const fuente = _pick(p, 'fuente', 'source', 'lead_source') || utmSource || (o === 'landing' ? 'Landing Page' : o === 'meta' ? 'Meta Lead Ads' : o === 'tiktok' ? 'TikTok Lead' : origen);
+  const campana = _pick(p, 'campana', 'campaign', 'campaign_name', 'campana_nombre') || utmCampaign;
   const formulario = _pick(p, 'formulario', 'form', 'form_name', 'form_id', 'instant_form');
 
   // Identificadores de campana/anuncio (para reporteria)
@@ -744,12 +810,6 @@ function normalizarLeadMarketing(origen, payload) {
   const adsetId = _pick(p, 'adset_id', 'adsetId', 'adgroup_id', 'ad_group_id');
   const adId = _pick(p, 'ad_id', 'adId', 'creative_id');
   const leadIdExterno = _pick(p, 'leadgen_id', 'lead_id', 'leadId', 'id');
-
-  // UTMs
-  const utmSource = _pick(p, 'utm_source', 'utmSource');
-  const utmMedium = _pick(p, 'utm_medium', 'utmMedium');
-  const utmCampaign = _pick(p, 'utm_campaign', 'utmCampaign');
-  const utmContent = _pick(p, 'utm_content', 'utmContent');
 
   const telefonoNormalizado = telefonoRaw ? normalizarCelular(telefonoRaw) : null;
 
@@ -759,7 +819,7 @@ function normalizarLeadMarketing(origen, payload) {
     fuente, campana, formulario,
     campaignId, adsetId, adId, leadIdExterno,
     utmSource, utmMedium, utmCampaign, utmContent,
-    monto,
+    monto, montoNumerico,
     rawJson: JSON.stringify(p)
   };
 }
@@ -792,6 +852,7 @@ function validarFilaImport(fila) {
 }
 
 module.exports.normalizarCelular = normalizarCelular;
+module.exports.normalizarNombre = normalizarNombre;
 module.exports.montoARango = montoARango;
 module.exports.normalizarLeadMarketing = normalizarLeadMarketing;
 module.exports.validarFilaImport = validarFilaImport;
