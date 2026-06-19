@@ -106,6 +106,37 @@ try { db.exec('ALTER TABLE gestiones ADD COLUMN montoGestion INTEGER'); } catch 
 try { db.exec('ALTER TABLE gestiones ADD COLUMN noDefineMonto INTEGER'); } catch (e) {}
 try { db.exec('ALTER TABLE gestiones ADD COLUMN cPrioriza TEXT'); } catch (e) {}
 try { db.exec('ALTER TABLE gestiones ADD COLUMN cPlazo TEXT'); } catch (e) {}
+// v1.49 (fase 2): bandeja de leads brutos de marketing. Guarda TODO lo que llega,
+// nada se pierde, con raw_json completo para reprocesar.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS marketing_ingresos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fechaRecepcion TEXT NOT NULL,
+    origen TEXT NOT NULL,
+    estado TEXT NOT NULL,
+    nombreRecibido TEXT,
+    telefonoRecibido TEXT,
+    telefonoNormalizado TEXT,
+    emailRecibido TEXT,
+    fuente TEXT,
+    campana TEXT,
+    formulario TEXT,
+    campaignId TEXT,
+    adsetId TEXT,
+    adId TEXT,
+    leadIdExterno TEXT,
+    utmSource TEXT,
+    utmMedium TEXT,
+    utmCampaign TEXT,
+    utmContent TEXT,
+    montoRecibido TEXT,
+    codigoLead TEXT,
+    mensajeError TEXT,
+    rawJson TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_mktg_estado ON marketing_ingresos(estado);
+  CREATE INDEX IF NOT EXISTS idx_mktg_tel ON marketing_ingresos(telefonoNormalizado);
+`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,9 +299,11 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
   }
 });
 
-// Middleware: toda la API (salvo login) requiere sesion.
+// Middleware: toda la API (salvo login y webhooks publicos) requiere sesion.
 app.use('/api', (req, res, next) => {
   if (req.path === '/login') return next();
+  // Los webhooks de marketing se autentican por token en la URL, no por sesion.
+  if (req.path.startsWith('/webhooks/leads/')) return next();
   const u = usuarioDeSesion(req);
   if (!u) return res.status(401).json({ error: 'Sin sesion. Inicia sesion.' });
   req.user = u;
@@ -306,6 +339,172 @@ function generarCodigo() {
   const n = db.prepare('SELECT COUNT(*) AS c FROM leads WHERE codigo LIKE ?').get(pref + '%').c;
   return pref + String(n + 1).padStart(6, '0');
 }
+
+// =============================================================
+// FASE 2: RECEPCION Y PROCESAMIENTO DE LEADS DE MARKETING
+// =============================================================
+
+// Inserta el ingreso bruto en la bandeja (nada se pierde) y devuelve su id.
+function guardarIngresoBruto(norm, estado, mensajeError, codigoLead) {
+  const r = db.prepare(`INSERT INTO marketing_ingresos
+    (fechaRecepcion,origen,estado,nombreRecibido,telefonoRecibido,telefonoNormalizado,emailRecibido,
+     fuente,campana,formulario,campaignId,adsetId,adId,leadIdExterno,
+     utmSource,utmMedium,utmCampaign,utmContent,montoRecibido,codigoLead,mensajeError,rawJson)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(
+      new Date().toISOString(), norm.origen, estado,
+      norm.nombre, norm.telefonoRecibido, norm.telefonoNormalizado, norm.email,
+      norm.fuente, norm.campana, norm.formulario,
+      norm.campaignId, norm.adsetId, norm.adId, norm.leadIdExterno,
+      norm.utmSource, norm.utmMedium, norm.utmCampaign, norm.utmContent,
+      norm.monto || null, codigoLead || null, mensajeError || null, norm.rawJson
+    );
+  return r.lastInsertRowid;
+}
+
+// Procesa un lead normalizado: aplica dedupe y crea o asocia segun corresponda.
+// Devuelve { estado, codigoLead, mensajeError }.
+function procesarLeadMarketing(norm) {
+  // Incompleto: sin celular valido -> no se crea lead operativo, queda en revision.
+  if (!norm.telefonoNormalizado || norm.telefonoNormalizado.length < 9) {
+    return { estado: 'incompleto', mensajeError: 'Celular ausente o invalido' };
+  }
+
+  // Dedupe por celular normalizado (identificador principal).
+  const existente = db.prepare('SELECT * FROM leads WHERE telefono = ?').get(norm.telefonoNormalizado);
+  if (existente) {
+    const cons = leadConsolidado(existente);
+    if (cons.etapa === 'Cerrado perdido') return { estado: 'duplicado_perdido', codigoLead: existente.codigo, mensajeError: 'Lead existente cerrado perdido — revision manual' };
+    if (cons.etapa === 'Cerrado ganado') return { estado: 'duplicado_ganado', codigoLead: existente.codigo, mensajeError: 'Lead existente ganado — revision manual' };
+    return { estado: 'duplicado_activo', codigoLead: existente.codigo, mensajeError: null };
+  }
+
+  // Lead nuevo limpio: se crea operativo, en etapa inicial 3x5, sin asesor.
+  const codigo = generarCodigo();
+  const ahora = new Date().toISOString();
+  const montoNum = norm.monto ? Number(String(norm.monto).replace(/[^\d.]/g, '')) : null;
+  const monto = (montoNum != null && isFinite(montoNum)) ? montoNum : null;
+  const rango = monto != null ? L.montoARango(monto) : null;
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
+         norm.fuente || null, norm.campana || null, null, monto, monto, rango, ahora, null);
+  return { estado: 'creado', codigoLead: codigo, mensajeError: null };
+}
+
+// Webhook universal de recepcion de leads. Valida token por env MARKETING_WEBHOOK_TOKEN.
+// :origen = landing | meta | tiktok | test
+app.post('/api/webhooks/leads/:origen/:token', (req, res) => {
+  const tokenOk = process.env.MARKETING_WEBHOOK_TOKEN && req.params.token === process.env.MARKETING_WEBHOOK_TOKEN;
+  if (!tokenOk) return res.status(403).json({ error: 'Token invalido' });
+
+  let norm;
+  try {
+    norm = L.normalizarLeadMarketing(req.params.origen, req.body || {});
+  } catch (e) {
+    // Aunque falle la normalizacion, guardamos el bruto para reprocesar.
+    const bruto = { origen: String(req.params.origen||'').toLowerCase(), rawJson: JSON.stringify(req.body||{}) };
+    guardarIngresoBruto({ ...bruto }, 'error_validacion', 'Error al normalizar: ' + e.message, null);
+    return res.status(200).json({ ok: true, estado: 'error_validacion' });
+  }
+
+  let resultado;
+  try {
+    resultado = procesarLeadMarketing(norm);
+  } catch (e) {
+    guardarIngresoBruto(norm, 'error_validacion', 'Error al procesar: ' + e.message, null);
+    return res.status(200).json({ ok: true, estado: 'error_validacion' });
+  }
+
+  const idIngreso = guardarIngresoBruto(norm, resultado.estado, resultado.mensajeError, resultado.codigoLead);
+  // Respuesta 200 siempre que el token sea valido (el lead quedo guardado pase lo que pase).
+  res.json({ ok: true, estado: resultado.estado, ingresoId: idIngreso, codigoLead: resultado.codigoLead || null });
+});
+
+// ---------- Administracion de ingresos de marketing (admin/jefa) ----------
+function soloAdminOJefa(req, res, next) {
+  const rol = req.user && req.user.rol;
+  if (rol === 'admin' || rol === 'jefa') return next();
+  return res.status(403).json({ error: 'No autorizado' });
+}
+
+// Lista ingresos con filtro opcional por estado.
+app.get('/api/marketing/ingresos', soloAdminOJefa, (req, res) => {
+  const { estado } = req.query;
+  let filas;
+  if (estado) filas = db.prepare('SELECT * FROM marketing_ingresos WHERE estado = ? ORDER BY id DESC LIMIT 500').all(estado);
+  else filas = db.prepare('SELECT * FROM marketing_ingresos ORDER BY id DESC LIMIT 500').all();
+  // Resumen por estado para los contadores de la vista
+  const resumen = {};
+  db.prepare('SELECT estado, COUNT(*) AS c FROM marketing_ingresos GROUP BY estado').all()
+    .forEach(r => { resumen[r.estado] = r.c; });
+  res.json({ ingresos: filas, resumen });
+});
+
+// Detalle de un ingreso (incluye raw_json).
+app.get('/api/marketing/ingresos/:id', soloAdminOJefa, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  res.json(ing);
+});
+
+// Reprocesar: reintenta el dedupe/creacion a partir del raw_json guardado.
+app.post('/api/marketing/ingresos/:id/reprocesar', soloAdminOJefa, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  let norm;
+  try { norm = L.normalizarLeadMarketing(ing.origen, JSON.parse(ing.rawJson || '{}')); }
+  catch (e) { return res.status(422).json({ error: 'Raw JSON invalido: ' + e.message }); }
+  const resultado = procesarLeadMarketing(norm);
+  db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=?, telefonoNormalizado=? WHERE id=?')
+    .run(resultado.estado, resultado.codigoLead || null, resultado.mensajeError || null, norm.telefonoNormalizado, req.params.id);
+  auditar(req, 'reprocesar ingreso marketing', ing.id, resultado.estado);
+  res.json({ ok: true, estado: resultado.estado, codigoLead: resultado.codigoLead || null });
+});
+
+// Descartar un ingreso (no crea lead).
+app.post('/api/marketing/ingresos/:id/descartar', soloAdminOJefa, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare('UPDATE marketing_ingresos SET estado=?, mensajeError=? WHERE id=?')
+    .run('descartado', req.body && req.body.motivo ? String(req.body.motivo) : 'Descartado manualmente', req.params.id);
+  auditar(req, 'descartar ingreso marketing', ing.id, '-');
+  res.json({ ok: true });
+});
+
+// Crear lead manual desde un ingreso bruto (forzar creacion).
+app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  const codigo = generarCodigo();
+  const ahora = new Date().toISOString();
+  const montoNum = ing.montoRecibido ? Number(String(ing.montoRecibido).replace(/[^\d.]/g, '')) : null;
+  const monto = (montoNum != null && isFinite(montoNum)) ? montoNum : null;
+  const rango = monto != null ? L.montoARango(monto) : null;
+  const tel = ing.telefonoNormalizado || L.normalizarCelular(ing.telefonoRecibido) || null;
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(codigo, ing.nombreRecibido || 'Sin nombre', tel, ing.emailRecibido || null,
+         ing.fuente || null, ing.campana || null, null, monto, monto, rango, ahora, null);
+  db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=? WHERE id=?')
+    .run('creado', codigo, 'Creado manualmente', req.params.id);
+  auditar(req, 'crear lead desde ingreso marketing', codigo, '-');
+  res.json({ ok: true, codigoLead: codigo });
+});
+
+// Asociar un ingreso a un lead existente.
+app.post('/api/marketing/ingresos/:id/asociar', soloAdminOJefa, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  const codigo = req.body && req.body.codigoLead;
+  if (!codigo) return res.status(400).json({ error: 'Falta codigoLead' });
+  const lead = db.prepare('SELECT codigo FROM leads WHERE codigo = ?').get(codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no existe' });
+  db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=? WHERE id=?')
+    .run('duplicado_activo', codigo, 'Asociado manualmente', req.params.id);
+  auditar(req, 'asociar ingreso marketing', ing.id, codigo);
+  res.json({ ok: true, codigoLead: codigo });
+});
 
 // ---------- Catalogos ----------
 app.get('/api/catalogos', (req, res) => {
@@ -1015,4 +1214,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.48 (cierre bloqueado + venta ganada + cabecera kanban) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.49 (fase 2 leads brutos marketing) corriendo en puerto ${PORT}`));

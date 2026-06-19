@@ -709,6 +709,61 @@ function montoARango(v) {
   return 'S/ 10,000 - 49,999';
 }
 
+// =============================================================
+// FASE 2: NORMALIZACION DE LEADS DE MARKETING
+// =============================================================
+// Traduce el payload de cualquier fuente (landing / meta / tiktok) a una
+// estructura estandar comun. Cada fuente nombra sus campos distinto; esta
+// funcion mapea esos nombres a las columnas del CRM.
+//
+// pick(obj, claves...) devuelve el primer valor no vacio entre varias claves
+// posibles (asi toleramos variaciones de nombre entre formularios).
+function _pick(obj, ...claves) {
+  for (const k of claves) {
+    if (obj && obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim();
+  }
+  return null;
+}
+
+function normalizarLeadMarketing(origen, payload) {
+  const p = payload || {};
+  const o = String(origen || '').toLowerCase();
+
+  // Campos comunes con tolerancia a distintos nombres por fuente.
+  // Landing usa nombres en espanol; Meta/TikTok suelen venir en ingles.
+  const nombre = _pick(p, 'nombre', 'name', 'full_name', 'fullname', 'nombre_completo');
+  const telefonoRaw = _pick(p, 'telefono', 'phone', 'phone_number', 'celular', 'mobile', 'telefono_celular');
+  const email = _pick(p, 'email', 'correo', 'mail', 'e-mail');
+  const monto = _pick(p, 'monto', 'amount', 'monto_inversion', 'inversion', 'presupuesto');
+  const fuente = _pick(p, 'fuente', 'source', 'lead_source') || (o === 'landing' ? 'Landing Page' : o === 'meta' ? 'Meta Lead Ads' : o === 'tiktok' ? 'TikTok Lead' : origen);
+  const campana = _pick(p, 'campana', 'campaign', 'campaign_name', 'campana_nombre');
+  const formulario = _pick(p, 'formulario', 'form', 'form_name', 'form_id', 'instant_form');
+
+  // Identificadores de campana/anuncio (para reporteria)
+  const campaignId = _pick(p, 'campaign_id', 'campaignId', 'campaignID');
+  const adsetId = _pick(p, 'adset_id', 'adsetId', 'adgroup_id', 'ad_group_id');
+  const adId = _pick(p, 'ad_id', 'adId', 'creative_id');
+  const leadIdExterno = _pick(p, 'leadgen_id', 'lead_id', 'leadId', 'id');
+
+  // UTMs
+  const utmSource = _pick(p, 'utm_source', 'utmSource');
+  const utmMedium = _pick(p, 'utm_medium', 'utmMedium');
+  const utmCampaign = _pick(p, 'utm_campaign', 'utmCampaign');
+  const utmContent = _pick(p, 'utm_content', 'utmContent');
+
+  const telefonoNormalizado = telefonoRaw ? normalizarCelular(telefonoRaw) : null;
+
+  return {
+    origen: o,
+    nombre, telefonoRecibido: telefonoRaw, telefonoNormalizado, email,
+    fuente, campana, formulario,
+    campaignId, adsetId, adId, leadIdExterno,
+    utmSource, utmMedium, utmCampaign, utmContent,
+    monto,
+    rawJson: JSON.stringify(p)
+  };
+}
+
 // Valida una fila del import. Devuelve { ok, errores[], datos }
 function validarFilaImport(fila) {
   const errores = [];
@@ -738,4 +793,5 @@ function validarFilaImport(fila) {
 
 module.exports.normalizarCelular = normalizarCelular;
 module.exports.montoARango = montoARango;
+module.exports.normalizarLeadMarketing = normalizarLeadMarketing;
 module.exports.validarFilaImport = validarFilaImport;
