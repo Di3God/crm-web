@@ -1509,15 +1509,9 @@ async function cargarBrutos() {
         '<td>' + (i.nombreRecibido || '<span class="sub">—</span>') + '</td>' +
         '<td>' + (i.telefonoRecibido || '<span class="sub">—</span>') + '</td>' +
         '<td>' + (i.emailRecibido || '<span class="sub">—</span>') + '</td>' +
-        '<td>' + (function(){
-          var mTxt = i.montoRecibido || '';
-          var mNum = (i.montoNumerico != null)
-            ? 'S/ ' + Number(i.montoNumerico).toLocaleString('en-US') + (i.montoRangoCalc ? ' · ' + i.montoRangoCalc : '')
-            : '';
-          if (!mTxt && !mNum) return '<span class="sub">—</span>';
-          return (mTxt ? '<div class="sub" style="font-size:11px">' + mTxt + '</div>' : '') +
-                 (mNum ? '<div>' + mNum + '</div>' : '');
-        })() + '</td>' +
+        '<td>' + ((i.montoNumerico != null)
+          ? 'S/ ' + Number(i.montoNumerico).toLocaleString('en-US') + (i.montoRangoCalc ? ' · ' + i.montoRangoCalc : '')
+          : '<span class="sub">—</span>') + '</td>' +
         '<td>' + (i.campana || '<span class="sub">—</span>') + '</td>' +
         '<td><span class="bestado" style="background:' + meta[1] + '">' + meta[0] + '</span>' +
           (i.mensajeError ? '<div class="berror">' + i.mensajeError + '</div>' : '') + '</td>' +

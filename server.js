@@ -1234,4 +1234,4 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.51 (fase 2: columna monto en leads brutos) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.52 (fase 2: monto convertido en leads brutos) corriendo en puerto ${PORT}`));
