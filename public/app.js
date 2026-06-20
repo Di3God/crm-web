@@ -959,7 +959,7 @@ function ajustarCampos() {
   // En Negociacion ya esta calificado: se muestra en SOLO LECTURA con boton "Editar".
   const cierreVisible = (enNegociacion || enReunionEfectiva) && !modoSoloGestion;
   $('secCierre').classList.toggle('oculto', !cierreVisible);
-  $('secScore').classList.toggle('oculto', modoSoloGestion);
+  $('secScore').classList.add('oculto');  // barra score/probabilidad oculta (modal mas corto)
   // Bloqueo del cierre: si el lead YA esta en Negociacion (no es la 1a vez que entra),
   // el cierre va en solo lectura salvo que el usuario pulse "Editar" o sea seguimiento.
   if (cierreVisible) {
@@ -978,7 +978,7 @@ function ajustarCampos() {
     return;
   } else {
     $('bloquePaso').classList.remove('oculto');
-    $('secCalif').classList.toggle('oculto', enNegociacion);
+    $('secCalif').classList.toggle('oculto', enNegociacion || enReunionEfectiva);
     $('gResumenReq').classList.add('oculto');
   }
 
@@ -1016,9 +1016,9 @@ function aplicarReglaCalificacion(r) {
   const obligaPorResultado = ['Respondio - calificado','Agendo reunion'].includes(r);
   // Bloqueo por ETAPA: si el lead ya esta Calificado o mas adelante, la calificacion
   // INICIAL queda en solo lectura (ya fue calificado; no se re-edita).
-  const ORD_ETAPAS = ['Contactabilidad 3x5','Contactado','Calificado','Agendado - pendiente reunion',
-    'Reunion efectiva - seguimiento','Cierre pendiente','Cerrado ganado','Cerrado perdido'];
-  const bloquearPorEtapa = gLead && ORD_ETAPAS.indexOf(gLead.etapa) >= ORD_ETAPAS.indexOf('Calificado');
+  const ORD_ETAPAS = ['Contactabilidad 3x5','Contactado - por calificar','Calificado - pendiente agendar',
+    'Agendado - pendiente reunion','Reunion efectiva - seguimiento','Cierre pendiente','Cerrado ganado','Cerrado perdido'];
+  const bloquearPorEtapa = gLead && ORD_ETAPAS.indexOf(gLead.etapa) >= ORD_ETAPAS.indexOf('Calificado - pendiente agendar');
   const bloquear = modoCalifForzado === 'bloqueado' || bloquearPorResultado || bloquearPorEtapa;
   const obliga = !bloquear && (modoCalifForzado === 'obligatorio' || obligaPorResultado);
 

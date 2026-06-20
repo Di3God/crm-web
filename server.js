@@ -1425,4 +1425,4 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.64 (Pasada B: bloqueo calif inicial, cierre en reunion efectiva, intentos en por contactar) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.65 (fix bloqueo por etapa real, cierre reemplaza inicial, ocultar barra score) corriendo en puerto ${PORT}`));
