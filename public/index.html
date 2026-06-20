@@ -10,11 +10,19 @@
 <header class="topbar" id="rolBox" style="display:none">
   <span class="top-logo">Mi<span>Tasatop</span></span>
   <nav class="top-nav">
-    <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads</button>
-    <button id="nv-dash" onclick="ir('dash')">Dashboard</button>
-    <button id="nv-brutos" class="soloAdminJefa oculto" onclick="ir('brutos')">Leads Brutos</button>
-    <button id="nv-releads" class="soloAdminJefa oculto" onclick="ir('releads')">Base de Releads</button>
-    <button id="nv-cohortes" class="soloAdmin oculto" onclick="ir('cohortes')">Cohortes</button>
+    <div class="nav-item">
+      <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads<span class="nv-car soloAdminJefa oculto">▾</span></button>
+      <div class="subnav soloAdminJefa oculto">
+        <button id="nv-brutos" onclick="ir('brutos')">Ingresos</button>
+        <button id="nv-releads" onclick="ir('releads')">Base de Releads</button>
+      </div>
+    </div>
+    <div class="nav-item">
+      <button id="nv-dash" onclick="ir('dash')">Dashboard<span class="nv-car soloAdmin oculto">▾</span></button>
+      <div class="subnav soloAdmin oculto">
+        <button id="nv-cohortes" onclick="ir('cohortes')">Cohortes</button>
+      </div>
+    </div>
     <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoría</button>
   </nav>
   <div class="top-user">
@@ -51,13 +59,13 @@
         <select id="fEtapa" onchange="PAG_ACTUAL=1;render()" style="width:auto;padding:7px 9px">
           <option value="">Toda etapa</option>
         </select>
-        <button class="btn accion asignador oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar seleccionados</button>
+        <button class="btn accion asignador oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar</button>
         <button class="btn accion soloAdmin oculto" onclick="abrirImport()">Importar</button>
         <div class="vista-toggle" style="margin-left:auto">
           <button id="tg-tabla" class="act" onclick="setVista('tabla')" title="Vista tabla">☰ Tabla</button>
           <button id="tg-kanban" onclick="setVista('kanban')" title="Vista kanban">▦ Kanban</button>
         </div>
-        <button class="btn ico-btn" onclick="exportarExcel()" title="Exportar a Excel">⬇</button>
+        <button class="btn ico-btn soloAdminJefa oculto" onclick="exportarExcel()" title="Exportar a Excel">⬇</button>
         <button class="btn ico-btn" onclick="cargarLeads()" title="Actualizar">⟳</button>
       </div>
     </div>

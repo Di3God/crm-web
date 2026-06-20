@@ -481,3 +481,18 @@
   .rl-selall { display:flex; align-items:center; gap:6px; font-size:13px; }
   .rl-pag { display:flex; gap:12px; align-items:center; justify-content:center; margin:12px 0; }
   .rl-pag button[disabled] { opacity:.45; cursor:default; }
+
+  /* Submenús del top-nav */
+  .top-nav .nav-item { position: relative; display: flex; align-items: stretch; height: 100%; }
+  .nv-car { margin-left: 4px; font-size: 10px; opacity: .6; }
+  .subnav { position: absolute; top: 100%; left: 0; min-width: 175px; background: #fff; border: 1px solid var(--line); border-radius: 0 0 10px 10px; box-shadow: 0 10px 28px rgba(0,0,0,.16); padding: 5px; flex-direction: column; gap: 2px; display: none; z-index: 60; }
+  .top-nav .nav-item:hover .subnav:not(.oculto) { display: flex; }
+  .top-nav .subnav button { width: 100%; text-align: left; white-space: nowrap; padding: 9px 12px; border: none; border-bottom: none; border-radius: 6px; background: transparent; color: var(--navy); font-size: 13px; height: auto; cursor: pointer; }
+  .top-nav .subnav button:hover { background: #EEF3F8; color: var(--azul); }
+  .subnav.oculto { display: none !important; }
+
+  /* Punto de experiencia: siempre al costado del nombre, sin saltar de línea */
+  .kcard .knom { display: flex; align-items: center; gap: 5px; }
+  .kcard .knom .kdot-exp { flex: 0 0 auto; }
+  .lead-nom { display: flex; align-items: center; gap: 5px; }
+  .lead-nom .kdot-exp { flex: 0 0 auto; }

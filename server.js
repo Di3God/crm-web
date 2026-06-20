@@ -403,14 +403,19 @@ function procesarLeadMarketing(norm) {
     return { estado: 'duplicado_activo', codigoLead: existente.codigo, mensajeError: avisoNombre };
   }
 
-  // 1b) No esta en leads activos: revisar el historial pre-lanzamiento (Excel viejo).
-  //     Mismo trato que un duplicado: va a Leads Brutos con aviso, no se crea lead.
+  // 1b) No esta en leads activos: revisar la Base de Releads (historicos).
+  //     Mismo trato que un duplicado: va a Leads Brutos para que la jefa decida.
+  //     Distingue si ademas coincide el nombre (duplicado seguro) o no.
   const hist = db.prepare('SELECT * FROM marketing_historial WHERE telefono = ?').get(norm.telefonoNormalizado);
   if (hist) {
     const f = hist.fechaRegistro ? ` el ${hist.fechaRegistro}` : '';
     const og = hist.origen ? ` por ${hist.origen}` : '';
-    const nm = hist.nombre ? ` como "${hist.nombre}"` : '';
-    return { estado: 'duplicado_historial', codigoLead: null, mensajeError: `\u26a0 Ya registrado${f}${og}${nm} \u2014 seguimiento manual` };
+    const mismoNombreHist = nombreNorm && L.normalizarNombre(hist.nombre) === nombreNorm;
+    const etiqueta = mismoNombreHist ? 'Duplicado seguro (tel. + nombre)' : 'Mismo tel., nombre distinto';
+    const detalle = mismoNombreHist
+      ? ` como "${hist.nombre}"`
+      : ` (releads: "${hist.nombre || '?'}" / nuevo: "${norm.nombre || '?'}")`;
+    return { estado: 'duplicado_historial', codigoLead: null, mensajeError: `\u26a0 ${etiqueta}: ya en releads${f}${og}${detalle} \u2014 la jefa decide` };
   }
 
   // 2) Sin match de telefono: validar por nombre completo normalizado (avisa, no bloquea).
@@ -524,8 +529,7 @@ app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) =>
   if (!ing) return res.status(404).json({ error: 'No encontrado' });
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
-  const montoNum = ing.montoRecibido ? Number(String(ing.montoRecibido).replace(/[^\d.]/g, '')) : null;
-  const monto = (montoNum != null && isFinite(montoNum)) ? montoNum : null;
+  const monto = L.montoEtiquetaANumero(ing.montoRecibido);
   const rango = monto != null ? L.montoARango(monto) : null;
   const tel = ing.telefonoNormalizado || L.normalizarCelular(ing.telefonoRecibido) || null;
   db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
@@ -534,6 +538,11 @@ app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) =>
          ing.fuente || null, ing.campana || null, null, monto, monto, rango, ahora, null);
   db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=? WHERE id=?')
     .run('creado', codigo, 'Creado manualmente', req.params.id);
+  // Si correspondia a un relead, marcarlo como usado para que no se reasigne.
+  if (tel) {
+    db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=? AND estado='pendiente'")
+      .run(codigo, (req.user && req.user.nombre) ? req.user.nombre + ' (manual)' : 'manual', ahora, tel);
+  }
   auditar(req, 'crear lead desde ingreso marketing', codigo, '-');
   res.json({ ok: true, codigoLead: codigo });
 });
@@ -1389,4 +1398,4 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.60 (Base de Releads: filtros, paginacion, asignacion por lote) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.62 (UI: submenus, Asignar, ocultar descarga GP, punto pegado al nombre) corriendo en puerto ${PORT}`));

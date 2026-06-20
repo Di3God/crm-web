@@ -1537,6 +1537,9 @@ function accionesBruto(i) {
     btns += '<button class="bbtn azul" onclick="reprocesarBruto(' + i.id + ')">Reprocesar</button>';
     btns += '<button class="bbtn verde" onclick="crearLeadBruto(' + i.id + ')">Crear lead</button>';
   }
+  if (i.estado === 'duplicado_historial') {
+    btns += '<button class="bbtn verde" onclick="crearLeadBruto(' + i.id + ')" title="Crear el lead igual, pese a estar en releads">Crear igual</button>';
+  }
   if (i.estado !== 'descartado') {
     btns += '<button class="bbtn gris" onclick="descartarBruto(' + i.id + ')">Descartar</button>';
   }
