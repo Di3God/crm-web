@@ -1285,4 +1285,31 @@ app.post('/api/marketing/sheets/reset', soloAdmin, (req, res) => {
   res.json(sheetsSync.reset());
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.57 (fase 2: historial pre-lanzamiento + duplicado_historial) corriendo en puerto ${PORT}`));
+// Purga los leads creados por error desde las hojas Meta/TikTok (y limpia su
+// bandeja). NO toca leads de landing/test ni leads manuales. Solo admin.
+// Sin confirmar=1 devuelve solo la vista previa (cuantos borraria).
+app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
+  const SEL = "SELECT codigoLead FROM marketing_ingresos WHERE origen IN ('meta','tiktok') AND estado='creado' AND codigoLead IS NOT NULL";
+  const leadsN = db.prepare(`SELECT COUNT(*) AS n FROM leads WHERE codigo IN (${SEL})`).get().n;
+  const ingN = db.prepare("SELECT COUNT(*) AS n FROM marketing_ingresos WHERE origen IN ('meta','tiktok')").get().n;
+  const confirmar = req.query.confirmar === '1' || (req.body && req.body.confirmar === true);
+  if (!confirmar) {
+    return res.json({ ok: true, preview: true, leadsABorrar: leadsN, ingresosABorrar: ingN, nota: 'Agrega ?confirmar=1 para ejecutar el borrado.' });
+  }
+  db.exec('BEGIN');
+  try {
+    db.exec(`DELETE FROM gestiones WHERE codigo IN (${SEL})`);
+    db.exec(`DELETE FROM llamadas WHERE codigo IN (${SEL})`);
+    db.exec(`DELETE FROM leads WHERE codigo IN (${SEL})`);
+    db.exec("DELETE FROM marketing_ingresos WHERE origen IN ('meta','tiktok')");
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+  sheetsSync.reset();
+  auditar(req, 'purgar-sheets', null, `${leadsN} leads + ${ingN} ingresos meta/tiktok`);
+  res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
+});
+
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.58 (fase 2: corte por fecha + purga importados) corriendo en puerto ${PORT}`));

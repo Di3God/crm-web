@@ -37,6 +37,27 @@ const HOJAS = [
   { origen: 'tiktok', url: resolverUrl('SHEETS_TIKTOK_CSV', GID_TIKTOK) },
 ];
 
+// Fecha de corte: filas con Fecha ANTERIOR al corte son historial (nunca se
+// crean como lead); de la fecha de corte en adelante son leads nuevos.
+// Configurable con SHEETS_FECHA_CORTE (yyyy-mm-dd); por defecto, el dia de hoy.
+const CORTE = (() => {
+  const env = process.env.SHEETS_FECHA_CORTE;
+  if (env) { const d = new Date(env + 'T00:00:00'); if (!isNaN(d.getTime())) return d; }
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+})();
+
+// Parsea "dd/mm/yyyy" (o d/m/yyyy con / o -). Devuelve Date o null.
+function parseFecha(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (!m) return null;
+  const d = +m[1], mo = +m[2], y = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, mo - 1, d);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
 // ---------- Utilidades ----------
 // Normaliza un texto a clave comparable (sin tildes, sin signos, minuscula).
 function _nk(s) {
@@ -149,59 +170,59 @@ function crearSheetsSync(deps) {
 
   async function sincronizarOrigen(hoja) {
     const ahora = new Date().toISOString();
-    const est = qEstadoGet.get(hoja.origen) || { origen: hoja.origen, inicializado: 0, totalProcesados: 0 };
+    const est = qEstadoGet.get(hoja.origen) || { origen: hoja.origen, totalProcesados: 0 };
     let texto;
     try {
       texto = await fetchCSV(hoja.url);
     } catch (e) {
-      qEstadoUp.run({ origen: hoja.origen, inicializado: est.inicializado, ultimaSync: est.ultimaSync || null, ultimoError: String(e.message || e), totalProcesados: est.totalProcesados || 0 });
+      qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: est.ultimaSync || null, ultimoError: String(e.message || e), totalProcesados: est.totalProcesados || 0 });
       return { origen: hoja.origen, error: String(e.message || e) };
     }
     const filas = parseCSV(texto);
 
-    // Primer arranque: baseline. Marca filas como vistas (evita reprocesar la
-    // misma fila) y llena el HISTORIAL pre-lanzamiento para comparar duplicados.
-    if (!est.inicializado) {
-      let enHistorial = 0;
-      db.exec('BEGIN');
-      try {
-        for (const f of filas) {
-          qSeenIns.run(huella(hoja.origen, f), hoja.origen, col(f, 'fecha') || '', ahora);
+    // Clasificacion por FECHA (no por "foto"):
+    //  - Fecha < corte (o sin fecha valida)  -> HISTORIAL: nunca se crea lead.
+    //  - Fecha >= corte                       -> NUEVO: pasa al pipeline.
+    // La huella evita reprocesar la misma fila en cada ciclo.
+    let nuevos = 0, creados = 0, duplicados = 0, incompletos = 0, historico = 0;
+    db.exec('BEGIN');
+    try {
+      for (const f of filas) {
+        const h = huella(hoja.origen, f);
+        if (qSeenHas.get(h)) continue;
+
+        const fechaRow = parseFecha(col(f, 'fecha'));
+        const esNuevo = fechaRow && fechaRow.getTime() >= CORTE.getTime();
+
+        if (!esNuevo) {
+          // Historial: solo se recuerda para comparar duplicados. No se crea.
           const tel = normalizarCelular(col(f, 'celular', 'telefono') || '');
           if (tel && tel.length >= 9) {
-            const r = qHistIns.run(tel, col(f, 'nombres', 'nombre') || '', col(f, 'fecha') || '', hoja.origen, col(f, 'campana') || '', ahora);
-            if (r.changes) enHistorial++;
+            qHistIns.run(tel, col(f, 'nombres', 'nombre') || '', col(f, 'fecha') || '', hoja.origen, col(f, 'campana') || '', ahora);
           }
+          historico++;
+        } else {
+          // Nuevo: pasa por el pipeline (puede crear o marcar duplicado).
+          try {
+            const norm = normalizarLeadMarketing(hoja.origen, mapearFila(hoja.origen, f));
+            const res = procesarLeadMarketing(norm);
+            guardarIngresoBruto(norm, res.estado, res.mensajeError, res.codigoLead);
+            if (res.estado === 'creado') creados++;
+            else if (res.estado === 'incompleto') incompletos++;
+            else duplicados++;
+          } catch (e) { /* no frena el lote por una fila mala */ }
+          nuevos++;
         }
-        db.exec('COMMIT');
-      } catch (e) {
-        db.exec('ROLLBACK');
-        throw e;
+        qSeenIns.run(h, hoja.origen, col(f, 'fecha') || '', ahora);
       }
-      qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: ahora, ultimoError: null, totalProcesados: 0 });
-      return { origen: hoja.origen, baseline: filas.length, enHistorial, nuevos: 0, creados: 0 };
-    }
-
-    // Ciclos siguientes: procesa solo filas nuevas.
-    let nuevos = 0, creados = 0, duplicados = 0, incompletos = 0;
-    for (const f of filas) {
-      const h = huella(hoja.origen, f);
-      if (qSeenHas.get(h)) continue;
-      nuevos++;
-      try {
-        const norm = normalizarLeadMarketing(hoja.origen, mapearFila(hoja.origen, f));
-        const res = procesarLeadMarketing(norm);
-        guardarIngresoBruto(norm, res.estado, res.mensajeError, res.codigoLead);
-        if (res.estado === 'creado') creados++;
-        else if (res.estado === 'incompleto') incompletos++;
-        else duplicados++;
-      } catch (e) {
-        // No frena el lote por una fila mala.
-      }
-      qSeenIns.run(h, hoja.origen, col(f, 'fecha') || '', ahora);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: est.ultimaSync || null, ultimoError: String(e.message || e), totalProcesados: est.totalProcesados || 0 });
+      return { origen: hoja.origen, error: String(e.message || e) };
     }
     qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: ahora, ultimoError: null, totalProcesados: (est.totalProcesados || 0) + creados });
-    return { origen: hoja.origen, nuevos, creados, duplicados, incompletos };
+    return { origen: hoja.origen, total: filas.length, nuevos, creados, duplicados, incompletos, historico };
   }
 
   let corriendo = false;
@@ -225,15 +246,17 @@ function crearSheetsSync(deps) {
 
   function estado() {
     return {
+      fechaCorte: CORTE.toISOString().slice(0, 10),
       fuentes: HOJAS.map(h => ({ origen: h.origen, url: h.url, modo: DOC_ID || process.env.SHEETS_META_CSV ? 'export-en-vivo' : 'pub-cacheado' })),
       origenes: db.prepare('SELECT * FROM marketing_sheet_estado').all(),
+      enHistorial: db.prepare('SELECT COUNT(*) AS n FROM marketing_historial').get().n,
     };
   }
 
-  // Reinicia el control: borra "vistos" y estado. En la proxima sync se hace
-  // baseline de nuevo (vuelve a IGNORAR el historial actual). No borra leads.
+  // Reinicia el control: borra "vistos", estado e historial. En la proxima
+  // sync se reclasifica todo por fecha. No borra leads ni Leads Brutos.
   function reset() {
-    db.exec('DELETE FROM marketing_sheet_seen; DELETE FROM marketing_sheet_estado;');
+    db.exec('DELETE FROM marketing_sheet_seen; DELETE FROM marketing_sheet_estado; DELETE FROM marketing_historial;');
     return { ok: true };
   }
 
