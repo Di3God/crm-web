@@ -31,6 +31,7 @@
   <div class="top-user">
     <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
     <button class="top-icon soloAdmin oculto" onclick="abrirClave()" title="Contraseñas">🔑</button>
+    <button class="top-icon soloAdminJefa oculto" onclick="abrirAutoasig()" title="Auto-asignación de leads">🔀</button>
     <button class="top-icon" onclick="logout()" title="Salir">↩</button>
   </div>
 </header>
@@ -539,6 +540,18 @@
   </div>
 </div>
 
+<!-- ===== MODAL: AUTO-ASIGNACIÓN ===== -->
+<div class="overlay" id="ovAutoasig">
+  <div class="modal" style="max-width:460px">
+    <h3>Auto-asignación de leads (round-robin)</h3>
+    <div class="sub">Los leads nuevos se reparten por turnos entre las GP activas. Apaga el interruptor de una GP para que no reciba leads automáticos (vacaciones, descanso, etc.). La jefa siempre puede reasignar a mano.</div>
+    <div id="autoasigLista"><div class="vacio">Cargando...</div></div>
+    <div class="acciones">
+      <button class="btn sec" onclick="cerrar('ovAutoasig')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MODAL: CAMBIAR CLAVE ===== -->
 <div class="overlay" id="ovClave">
   <div class="modal" style="max-width:420px">
@@ -550,6 +563,7 @@
     </div>
     <div class="error" id="cError"></div>
     <div class="acciones">
+      <button class="btn sec" onclick="desbloquearLogin()" title="Quita el bloqueo por intentos fallidos del usuario seleccionado">Desbloquear accesos</button>
       <button class="btn sec" onclick="cerrar('ovClave')">Cancelar</button>
       <button class="btn" onclick="cambiarClave()">Guardar</button>
     </div>

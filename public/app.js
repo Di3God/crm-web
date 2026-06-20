@@ -181,6 +181,40 @@ async function cambiarClave() {
     cerrar('ovClave'); alert('Contrasena actualizada.');
   } catch (e) { $('cError').textContent = e.message; $('cError').classList.add('act'); }
 }
+async function desbloquearLogin() {
+  const usuario = $('cUsuario').value;
+  if (!usuario) return;
+  try {
+    const r = await api('/api/desbloquear-login', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ usuario }) });
+    alert('Accesos desbloqueados para ' + usuario + (r.registros ? '' : ' (no tenía bloqueos activos).'));
+  } catch (e) { $('cError').textContent = e.message; $('cError').classList.add('act'); }
+}
+
+async function abrirAutoasig() {
+  $('ovAutoasig').classList.add('act');
+  $('autoasigLista').innerHTML = '<div class="vacio">Cargando...</div>';
+  try {
+    const d = await api('/api/gestoras');
+    $('autoasigLista').innerHTML = d.gestoras.map(g => {
+      const on = Number(g.autoasignar) === 1;
+      const inact = Number(g.activo) !== 1 ? ' <span class="sub">(cuenta inactiva)</span>' : '';
+      return '<div class="aa-row">' +
+        '<div><b>' + g.nombre + '</b>' + inact + '<div class="sub">' + g.usuario + '</div></div>' +
+        '<button class="aa-toggle ' + (on ? 'on' : 'off') + '" onclick="toggleAutoasig(\'' + g.usuario + '\',' + (on ? 0 : 1) + ')">' +
+        (on ? 'Recibe leads' : 'En pausa') + '</button>' +
+      '</div>';
+    }).join('') +
+    (d.ultimoAsignado ? '<div class="sub" style="margin-top:10px">Último lead asignado a: <b>' + d.ultimoAsignado + '</b></div>' : '');
+  } catch (e) { $('autoasigLista').innerHTML = '<div class="vacio">Error al cargar.</div>'; }
+}
+async function toggleAutoasig(usuario, val) {
+  try {
+    await api('/api/gestoras/' + encodeURIComponent(usuario) + '/autoasignar',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valor: val }) });
+    abrirAutoasig();
+  } catch (e) { alert('Error al actualizar.'); }
+}
 
 // ---------- Inicio ----------
 async function init() {
@@ -260,7 +294,7 @@ function ir(v) {
 function cerrar(id) { $(id).classList.remove('act'); }
 
 // ---------- Mis Leads ----------
-let LEADS = [], ordenCampo = '', ordenDir = 1;
+let LEADS = [], ordenCampo = 'prioridad', ordenDir = 1;
 
 async function cargarLeads() {
   let q = [];
@@ -326,8 +360,15 @@ function leadsVisibles(incluirCerrados) {
   if (fe) arr = arr.filter(l => l.etapa === fe);
   if (ordenCampo) {
     arr.sort((a, b) => {
+      // Orden por prioridad: desempate por frescura (asignado mas reciente arriba),
+      // para que un lead nuevo suba al tope de su nivel y no se hunda al fondo.
+      if (ordenCampo === 'prioridad') {
+        if (a.ordenSort !== b.ordenSort) return (a.ordenSort - b.ordenSort) * ordenDir;
+        const fa = new Date(a.fechaAsignacion || a.fechaCarga || 0).getTime();
+        const fb = new Date(b.fechaAsignacion || b.fechaCarga || 0).getTime();
+        return fb - fa;
+      }
       let va = a[ordenCampo], vb = b[ordenCampo];
-      if (ordenCampo === 'prioridad') { va = a.ordenSort; vb = b.ordenSort; }
       return (va > vb ? 1 : va < vb ? -1 : 0) * ordenDir;
     });
   }
@@ -417,6 +458,14 @@ function dotExperiencia(exp) {
   return '<span class="kdot-exp" style="background:' + m[0] + '" title="Experiencia: ' + m[1] + '"></span>';
 }
 
+// Lead "Nuevo": asignado HOY y aun sin contactar (en Por contactar, 0 intentos).
+function esLeadNuevo(l) {
+  if (!l.fechaAsignacion) return false;
+  const h = new Date(), fa = new Date(l.fechaAsignacion);
+  const hoy = fa.getFullYear() === h.getFullYear() && fa.getMonth() === h.getMonth() && fa.getDate() === h.getDate();
+  return hoy && (l.intentos || 0) === 0 && l.etapa === 'Contactabilidad 3x5';
+}
+
 function kanbanCard(l) {
   const vencida = l.fechaProxAccion && new Date(l.fechaProxAccion) < new Date();
   const calif = (l.ticket || l.tiempo || l.nivelInteres || l.avance || l.experiencia);
@@ -453,6 +502,7 @@ function kanbanCard(l) {
     ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)">' +
     '<div class="kcard-top">' +
       '<span class="kprio ' + prioCls + '">' + l.prioridad + '</span>' +
+      (esLeadNuevo(l) ? '<span class="kbadge-nuevo">Nuevo</span>' : '') +
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
@@ -660,7 +710,8 @@ function celdaLead(l) {
     else estadoHtml = '<div class="lead-estado">Sin contacto</div>';
   }
   return '<div class="lead-cell">' +
-    '<div class="lead-nom">' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
+    '<div class="lead-nom">' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
+      (esLeadNuevo(l) ? '<span class="badge-nuevo">Nuevo</span>' : '') + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
     (fuente ? '<div class="lead-fuente">' + fuente + '</div>' : '') +
     estadoHtml +
@@ -1263,9 +1314,6 @@ function setFecha(tipo, val) {
   else if (tipo === 'man') { d.setDate(d.getDate() + 1); d.setHours(val, 0, 0, 0); }
   else if (tipo === 'h') { d.setHours(d.getHours() + val, 0, 0, 0); }
   else if (tipo === 'd') { d.setDate(d.getDate() + val); d.setHours(9, 0, 0, 0); }
-  // Saltar fin de semana
-  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
-  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
   // Volcar a input datetime-local (formato YYYY-MM-DDTHH:MM en hora local)
   const p = n => String(n).padStart(2, '0');
   $('gFechaProx').value = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -1280,8 +1328,6 @@ function setFechaReu(tipo, val) {
   const d = new Date();
   if (tipo === 'man') { d.setDate(d.getDate() + 1); d.setHours(val, 0, 0, 0); }
   else if (tipo === 'd') { d.setDate(d.getDate() + val); d.setHours(9, 0, 0, 0); }
-  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
-  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
   const p = n => String(n).padStart(2, '0');
   $('gFechaReunion').value = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   if (FP.gFechaReunion) FP.gFechaReunion.setDate($('gFechaReunion').value, false);

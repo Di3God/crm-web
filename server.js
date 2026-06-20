@@ -73,6 +73,13 @@ db.exec(`
     usuario TEXT NOT NULL,
     creada TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS login_intentos (
+    clave TEXT PRIMARY KEY,
+    usuario TEXT,
+    fallos INTEGER DEFAULT 0,
+    primer_fallo TEXT,
+    bloqueado_hasta TEXT
+  );
   CREATE TABLE IF NOT EXISTS llamadas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aircall_id TEXT UNIQUE,
@@ -193,6 +200,13 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
   crearUsuario('lvillavicencio@tasatop.com', 'Lourdes Villavicencio', 'gestora', '12345678');
   console.log('Usuarios creados (clave inicial 12345678): 2 admin, 1 jefa, 3 GP');
 }
+// Alta idempotente de GP nuevas (no recrea ni pisa las existentes).
+crearUsuario('dbarreto@tasatop.com', 'Dora Barreto', 'gestora', '12345678');
+
+// Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
+try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
+// Estado del round-robin (clave/valor).
+db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
 const app = express();
 app.use(express.json({ limit: '4mb' }));
@@ -212,17 +226,57 @@ function usuarioDeSesion(req) {
   return db.prepare('SELECT usuario,nombre,rol FROM usuarios WHERE usuario = ? AND activo = 1').get(s.usuario) || null;
 }
 
+// Control de intentos de login: 5 fallos -> bloqueo 15 min (por usuario+IP).
+const LOGIN_MAX_FALLOS = 5;
+const LOGIN_BLOQUEO_MS = 15 * 60 * 1000;
+function ipDe(req) {
+  return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'desconocida';
+}
+
 app.post('/api/login', (req, res) => {
   const { usuario, clave } = req.body || {};
-  const u = db.prepare('SELECT * FROM usuarios WHERE usuario = ? AND activo = 1').get(String(usuario || '').toLowerCase());
+  const userLower = String(usuario || '').toLowerCase();
+  const claveCtrl = userLower + '|' + ipDe(req);
+  const ahora = Date.now();
+
+  // ¿Esta bloqueado?
+  const ctrl = db.prepare('SELECT * FROM login_intentos WHERE clave = ?').get(claveCtrl);
+  if (ctrl && ctrl.bloqueado_hasta && new Date(ctrl.bloqueado_hasta).getTime() > ahora) {
+    const min = Math.ceil((new Date(ctrl.bloqueado_hasta).getTime() - ahora) / 60000);
+    return res.status(429).json({ error: `Demasiados intentos. Espera ${min} min e intenta de nuevo.` });
+  }
+
+  const u = db.prepare('SELECT * FROM usuarios WHERE usuario = ? AND activo = 1').get(userLower);
   if (!u || hashClave(clave || '', u.sal) !== u.hash) {
+    // Cuenta el fallo. Si la ventana de 15 min expiro, reinicia el contador.
+    let fallos = 1, primer = new Date(ahora).toISOString();
+    if (ctrl && ctrl.primer_fallo && (ahora - new Date(ctrl.primer_fallo).getTime()) < LOGIN_BLOQUEO_MS) {
+      fallos = (ctrl.fallos || 0) + 1; primer = ctrl.primer_fallo;
+    }
+    const bloqueo = fallos >= LOGIN_MAX_FALLOS ? new Date(ahora + LOGIN_BLOQUEO_MS).toISOString() : null;
+    db.prepare(`INSERT INTO login_intentos (clave,usuario,fallos,primer_fallo,bloqueado_hasta) VALUES (?,?,?,?,?)
+      ON CONFLICT(clave) DO UPDATE SET usuario=excluded.usuario, fallos=excluded.fallos, primer_fallo=excluded.primer_fallo, bloqueado_hasta=excluded.bloqueado_hasta`)
+      .run(claveCtrl, userLower, fallos, primer, bloqueo);
+    if (bloqueo) return res.status(429).json({ error: 'Demasiados intentos. Espera 15 min e intenta de nuevo.' });
     return res.status(401).json({ error: 'Usuario o contrasena incorrectos' });
   }
+
+  // Login correcto: limpia el contador de ese usuario+IP.
+  db.prepare('DELETE FROM login_intentos WHERE clave = ?').run(claveCtrl);
   const token = crypto.randomBytes(24).toString('hex');
   db.prepare('INSERT INTO sesiones (token,usuario,creada) VALUES (?,?,?)')
     .run(token, u.usuario, new Date().toISOString());
   res.setHeader('Set-Cookie', `sesion=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
   res.json({ usuario: u.usuario, nombre: u.nombre, rol: u.rol });
+});
+
+// Desbloqueo manual por el admin (limpia los intentos de un usuario en toda IP).
+app.post('/api/desbloquear-login', soloAdmin, (req, res) => {
+  const objetivo = String((req.body && req.body.usuario) || '').toLowerCase();
+  if (!objetivo) return res.status(400).json({ error: 'Falta el usuario' });
+  const r = db.prepare('DELETE FROM login_intentos WHERE usuario = ?').run(objetivo);
+  auditar(req, 'desbloquear login', objetivo, `${r.changes} registro(s)`);
+  res.json({ ok: true, desbloqueado: objetivo, registros: r.changes });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -362,6 +416,36 @@ function generarCodigo() {
   return codigo;
 }
 
+// GPs activas y habilitadas para auto-asignacion, en orden estable.
+function gpsParaAuto() {
+  return db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND activo=1 AND COALESCE(autoasignar,1)=1 ORDER BY id")
+    .all().map(r => r.nombre);
+}
+// Elige la siguiente GP por round-robin (rotacion equitativa). null si no hay activas.
+function elegirGPRoundRobin() {
+  const gps = gpsParaAuto();
+  if (!gps.length) return null;
+  const row = db.prepare("SELECT valor FROM app_config WHERE clave='rr_ultimo'").get();
+  const idx = row ? gps.indexOf(row.valor) : -1;
+  const siguiente = gps[(idx + 1) % gps.length];
+  db.prepare("INSERT INTO app_config (clave,valor) VALUES ('rr_ultimo',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor")
+    .run(siguiente);
+  return siguiente;
+}
+
+// El correo de una GP ES su propio usuario en la tabla usuarios.
+function correoDeAsesor(nombre) {
+  if (!nombre) return null;
+  const u = db.prepare("SELECT usuario FROM usuarios WHERE nombre = ? AND rol='gestora'").get(nombre);
+  return u ? u.usuario : null;
+}
+// Avisa por correo a la GP que se le asigno un lead (no bloquea la respuesta).
+function notificarAsignacion(lead, asesorNombre) {
+  if (!mailer.activo() || !lead || !asesorNombre) return;
+  const correo = correoDeAsesor(asesorNombre);
+  if (correo) mailer.correoLeadAsignado(lead, correo).catch(() => {});
+}
+
 // =============================================================
 // FASE 2: RECEPCION Y PROCESAMIENTO DE LEADS DE MARKETING
 // =============================================================
@@ -450,16 +534,20 @@ function procesarLeadMarketing(norm) {
     return { estado: 'sin_nombre', codigoLead: null, mensajeError: `\u26a0 Lead sin nombre (tel. ${norm.telefonoNormalizado}) \u2014 completar y crear, o descartar` };
   }
 
-  // 3) Lead nuevo: se crea operativo, en etapa inicial 3x5, sin asesor.
+  // 3) Lead nuevo: se crea operativo, en etapa inicial 3x5.
+  //    Auto-asignacion round-robin: si hay GP activa, entra ya asignado (sin esperar
+  //    a la jefa). Si no hay ninguna activa, queda sin asesor para asignacion manual.
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
   const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
+  const gp = elegirGPRoundRobin();
   db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
-         norm.fuente || null, norm.campana || null, null, monto, monto, rango, ahora, null);
-  return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre };
+         norm.fuente || null, norm.campana || null, gp || null, monto, monto, rango, ahora, gp ? ahora : null);
+  if (gp) notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
+  return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
 }
 
 // Webhook universal de recepcion de leads. Valida token por env MARKETING_WEBHOOK_TOKEN.
@@ -704,21 +792,11 @@ app.put('/api/leads/asignar', puedeAsignar, (req, res) => {
   codigos.forEach(c => { if (st.run(asesor, ahora, c).changes) n++; });
   auditar(req, 'asignar', codigos.length === 1 ? codigos[0] : `${n} leads`, 'Asignados a ' + asesor);
 
-  // Notificacion por correo a la GP (en modo prueba va a CORREO_PRUEBA).
-  // Correos por GP via env: CORREOS_GP='Mafer:mafer@...,Lourdes:lourdes@...'
-  if (mailer.activo()) {
-    const mapa = {};
-    (process.env.CORREOS_GP || '').split(',').forEach(par => {
-      const [nombre, mail] = par.split(':');
-      if (nombre && mail) mapa[nombre.trim()] = mail.trim();
-    });
-    const correoGP = mapa[asesor] || null;
-    // Enviar un correo por cada lead asignado (sin bloquear la respuesta)
-    codigos.forEach(c => {
-      const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(c);
-      if (lead) mailer.correoLeadAsignado(lead, correoGP).catch(() => {});
-    });
-  }
+  // Notificacion por correo a la GP. Su correo es su propio usuario en la base.
+  codigos.forEach(c => {
+    const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(c);
+    notificarAsignacion(lead, asesor);
+  });
 
   res.json({ asignados: n, asesor });
 });
@@ -1323,6 +1401,21 @@ app.get('/api/marketing/sheets/estado', soloAdminOJefa, (req, res) => {
   res.json({ estado: sheetsSync.estado() });
 });
 
+// ---------- Auto-asignacion: interruptor por GP (round-robin) ----------
+app.get('/api/gestoras', soloAdminOJefa, (req, res) => {
+  const gestoras = db.prepare("SELECT usuario, nombre, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol='gestora' ORDER BY id").all();
+  const rr = db.prepare("SELECT valor FROM app_config WHERE clave='rr_ultimo'").get();
+  res.json({ gestoras, ultimoAsignado: rr ? rr.valor : null });
+});
+app.post('/api/gestoras/:usuario/autoasignar', soloAdminOJefa, (req, res) => {
+  const val = (req.body && (req.body.valor === 1 || req.body.valor === true)) ? 1 : 0;
+  const u = db.prepare("SELECT usuario FROM usuarios WHERE usuario=? AND rol='gestora'").get(String(req.params.usuario).toLowerCase());
+  if (!u) return res.status(404).json({ error: 'GP no encontrada' });
+  db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(val, u.usuario);
+  auditar(req, 'toggle autoasignar', u.usuario, 'valor=' + val);
+  res.json({ ok: true, usuario: u.usuario, autoasignar: val });
+});
+
 // ---------- Base de Releads (historicos para segunda barrida) ----------
 // Lista con filtros (origen, rango de fechas, busqueda) y paginacion.
 app.get('/api/releads', soloAdminOJefa, (req, res) => {
@@ -1359,6 +1452,7 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   const updRe = db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=?");
   let creados = 0, yaExistian = 0, noEncontrados = 0;
+  const nuevosCods = [];
   db.exec('BEGIN');
   try {
     for (const tel of telefonos) {
@@ -1371,7 +1465,7 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
         codigo = generarCodigo();
         insLead.run(codigo, re.nombre || 'Sin nombre', re.telefono, re.email || null, re.origen || null, re.campana || null,
           asesor, re.montoReal, re.montoReal, re.montoRango, ahora, ahora);
-        creados++;
+        creados++; nuevosCods.push(codigo);
       }
       updRe.run(codigo, asesor, ahora, tel);
     }
@@ -1380,6 +1474,8 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
     db.exec('ROLLBACK');
     return res.status(500).json({ error: String(e.message || e) });
   }
+  // Aviso por correo a la GP por cada lead nuevo creado desde releads.
+  nuevosCods.forEach(c => notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(c), asesor));
   auditar(req, 'asignar-relead', `${creados + yaExistian} releads`, 'a ' + asesor);
   res.json({ ok: true, creados, yaExistian, noEncontrados, asesor });
 });
@@ -1425,4 +1521,4 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.66 (Comentario + Flatpickr en todas las fechas) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.71 (seguridad: rate limiting login 5/15min + desbloqueo admin) corriendo en puerto ${PORT}`));

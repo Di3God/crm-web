@@ -10,7 +10,7 @@
 //  - Cadencia: autocalculo de fecha proxima accion (9am-18, dias habiles)
 // =============================================================
 
-const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio'];
+const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'];
 
 const CANALES = ['Llamada', 'WhatsApp', 'Correo'];
 const FUENTES = ['Meta Ads', 'Google Ads', 'Referido', 'Organico', 'LinkedIn', 'Otro'];
@@ -281,18 +281,24 @@ function calcularProbabilidad({ etapa, score, intentos }) {
 // ---------- Prioridad operativa ----------
 // Orden (gana la primera que se cumple):
 //  1. Cerrado -> Baja (sin gestion)
-//  2. Proxima accion vencida -> Muy alta
+//  2. Proxima accion vencida o vence en <=1h -> Muy alta
 //  3. Negociacion (Cierre pendiente) -> Muy alta
 //  4. Reunion en <=24h -> Muy alta
-//  5. Lead nuevo creado hoy sin contactar -> Alta
-//  6. En "Por contactar" -> segun intentos (1-3 Alta, 4-7 Media, 8-12 Baja, 13+ Muy baja)
-//  7. Otras etapas -> segun probabilidad (>=75 MuyAlta, 50-74 Alta, 25-49 Media, <25 Baja)
+//  5. Proxima accion vence en <=2h -> Alta
+//  6. Lead nuevo creado hoy sin contactar -> Alta
+//  7. En "Por contactar" -> segun intentos (1-3 Alta, 4-7 Media, 8-12 Baja, 13+ Muy baja)
+//  8. Otras etapas -> segun probabilidad (>=75 MuyAlta, 50-74 Alta, 25-49 Media, <25 Baja)
 function calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, fechaAsignacion, ahora }) {
   const now = ahora || new Date();
   if (etapa === 'Cerrado ganado' || etapa === 'Cerrado perdido') return 'Baja';
-  if (fechaProxAccion && new Date(fechaProxAccion) < now) return 'Muy alta';
+  // Minutos hasta la proxima accion (negativo = ya vencida).
+  const minProx = fechaProxAccion ? (new Date(fechaProxAccion) - now) / 60000 : null;
+  // Muy alta: vencida o inminente (<=1h), negociacion, o reunion <=24h.
+  if (minProx !== null && minProx <= 60) return 'Muy alta';
   if (etapa === 'Cierre pendiente') return 'Muy alta';
   if (fechaReunion && new Date(fechaReunion) <= new Date(now.getTime() + 24 * 3600 * 1000)) return 'Muy alta';
+  // Alta: proxima accion vence dentro de 2h (no degrada los casos Muy alta de arriba).
+  if (minProx !== null && minProx <= 120) return 'Alta';
   if (etapa === 'Contactabilidad 3x5') {
     const ints = intentos || 0;
     // Lead nuevo creado hoy y aun sin intentos -> Alta
@@ -363,22 +369,20 @@ function validarGestion(g) {
 }
 
 // ---------- Cadencia: autocalculo de fecha proxima accion ----------
+// Solo el domingo es dia no habil; el sabado SI cuenta como dia laborable.
 function diaHabilDesde(base, n) {
   const d = new Date(base.getTime());
   let agregados = 0;
   while (agregados < n) {
     d.setDate(d.getDate() + 1);
-    const dia = d.getDay();
-    if (dia !== 0 && dia !== 6) agregados++;
+    if (d.getDay() !== 0) agregados++;
   }
   return d;
 }
 
 function setHora(fecha, hora) {
   fecha.setHours(hora, 0, 0, 0);
-  const dia = fecha.getDay();
-  if (dia === 6) fecha.setDate(fecha.getDate() + 2);
-  if (dia === 0) fecha.setDate(fecha.getDate() + 1);
+  if (fecha.getDay() === 0) fecha.setDate(fecha.getDate() + 1);
   return fecha;
 }
 
