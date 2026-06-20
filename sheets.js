@@ -12,10 +12,29 @@ const crypto = require('node:crypto');
 const INTERVALO_MS = 5 * 60 * 1000; // 5 minutos
 const BASE_PUB = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSA6LJ1mZVPnB6-LgF9GZe5wrSYh3Cnvn8K5-Ub3aKK-B02o6y2XdHbTDgVfDNhLgyqTLOE0tk6d5zf/pub';
 
-// URLs configurables por env; si no, usa las publicadas conocidas.
+// gid de cada hoja (la pestaña dentro del archivo). Override por env si cambian.
+const GID_META = process.env.SHEETS_META_GID || '1888750850';
+const GID_TIKTOK = process.env.SHEETS_TIKTOK_GID || '596579722';
+// ID real del documento (de la URL normal /d/ID/edit). Si esta, se usa el
+// endpoint de exportacion EN VIVO (refleja el Sheets al instante).
+const DOC_ID = process.env.SHEETS_DOC_ID || '';
+
+// CSV publicado: CACHEADO por Google, puede ir con retraso. Fallback.
+const urlPub = (gid) => `${BASE_PUB}?gid=${gid}&single=true&output=csv`;
+// CSV de exportacion: EN VIVO. Requiere documento compartido como
+// "cualquiera con el enlace: lector".
+const urlExport = (gid) => `https://docs.google.com/spreadsheets/d/${DOC_ID}/export?format=csv&gid=${gid}`;
+
+// Resuelve la URL a usar: override total por env > export en vivo > pub cacheado.
+function resolverUrl(envFull, gid) {
+  if (process.env[envFull]) return process.env[envFull];
+  if (DOC_ID) return urlExport(gid);
+  return urlPub(gid);
+}
+
 const HOJAS = [
-  { origen: 'meta',   url: process.env.SHEETS_META_CSV   || `${BASE_PUB}?gid=1888750850&single=true&output=csv` },
-  { origen: 'tiktok', url: process.env.SHEETS_TIKTOK_CSV || `${BASE_PUB}?gid=596579722&single=true&output=csv` },
+  { origen: 'meta',   url: resolverUrl('SHEETS_META_CSV', GID_META) },
+  { origen: 'tiktok', url: resolverUrl('SHEETS_TIKTOK_CSV', GID_TIKTOK) },
 ];
 
 // ---------- Utilidades ----------
@@ -82,7 +101,7 @@ function mapearFila(origen, fila) {
 // Descarga el CSV con timeout (Railway si alcanza Google; el sandbox no).
 async function fetchCSV(url) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 15000);
+  const t = setTimeout(() => ctrl.abort(), 45000);
   try {
     const r = await fetch(url, { signal: ctrl.signal, redirect: 'follow' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -106,6 +125,9 @@ function crearSheetsSync(deps) {
       origen TEXT PRIMARY KEY, inicializado INTEGER DEFAULT 0,
       ultimaSync TEXT, ultimoError TEXT, totalProcesados INTEGER DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS marketing_historial (
+      telefono TEXT PRIMARY KEY, nombre TEXT, fechaRegistro TEXT, origen TEXT, campana TEXT, creado TEXT
+    );
   `);
 
   const qSeenHas = db.prepare('SELECT 1 FROM marketing_sheet_seen WHERE huella = ?');
@@ -114,6 +136,8 @@ function crearSheetsSync(deps) {
   const qEstadoUp = db.prepare(`INSERT INTO marketing_sheet_estado (origen,inicializado,ultimaSync,ultimoError,totalProcesados)
     VALUES (@origen,@inicializado,@ultimaSync,@ultimoError,@totalProcesados)
     ON CONFLICT(origen) DO UPDATE SET inicializado=@inicializado, ultimaSync=@ultimaSync, ultimoError=@ultimoError, totalProcesados=@totalProcesados`);
+  // Historial pre-lanzamiento (lista liviana para comparar duplicados). 1ra vez gana.
+  const qHistIns = db.prepare('INSERT OR IGNORE INTO marketing_historial (telefono,nombre,fechaRegistro,origen,campana,creado) VALUES (?,?,?,?,?,?)');
 
   function huella(origen, fila) {
     const tel = normalizarCelular(col(fila, 'celular', 'telefono') || '');
@@ -135,18 +159,27 @@ function crearSheetsSync(deps) {
     }
     const filas = parseCSV(texto);
 
-    // Primer arranque: baseline. Marca todo como visto, no crea leads.
+    // Primer arranque: baseline. Marca filas como vistas (evita reprocesar la
+    // misma fila) y llena el HISTORIAL pre-lanzamiento para comparar duplicados.
     if (!est.inicializado) {
+      let enHistorial = 0;
       db.exec('BEGIN');
       try {
-        for (const f of filas) qSeenIns.run(huella(hoja.origen, f), hoja.origen, col(f, 'fecha') || '', ahora);
+        for (const f of filas) {
+          qSeenIns.run(huella(hoja.origen, f), hoja.origen, col(f, 'fecha') || '', ahora);
+          const tel = normalizarCelular(col(f, 'celular', 'telefono') || '');
+          if (tel && tel.length >= 9) {
+            const r = qHistIns.run(tel, col(f, 'nombres', 'nombre') || '', col(f, 'fecha') || '', hoja.origen, col(f, 'campana') || '', ahora);
+            if (r.changes) enHistorial++;
+          }
+        }
         db.exec('COMMIT');
       } catch (e) {
         db.exec('ROLLBACK');
         throw e;
       }
       qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: ahora, ultimoError: null, totalProcesados: 0 });
-      return { origen: hoja.origen, baseline: filas.length, nuevos: 0, creados: 0 };
+      return { origen: hoja.origen, baseline: filas.length, enHistorial, nuevos: 0, creados: 0 };
     }
 
     // Ciclos siguientes: procesa solo filas nuevas.
@@ -191,10 +224,20 @@ function crearSheetsSync(deps) {
   }
 
   function estado() {
-    return db.prepare('SELECT * FROM marketing_sheet_estado').all();
+    return {
+      fuentes: HOJAS.map(h => ({ origen: h.origen, url: h.url, modo: DOC_ID || process.env.SHEETS_META_CSV ? 'export-en-vivo' : 'pub-cacheado' })),
+      origenes: db.prepare('SELECT * FROM marketing_sheet_estado').all(),
+    };
   }
 
-  return { sincronizarTodo, iniciarScheduler, estado };
+  // Reinicia el control: borra "vistos" y estado. En la proxima sync se hace
+  // baseline de nuevo (vuelve a IGNORAR el historial actual). No borra leads.
+  function reset() {
+    db.exec('DELETE FROM marketing_sheet_seen; DELETE FROM marketing_sheet_estado;');
+    return { ok: true };
+  }
+
+  return { sincronizarTodo, iniciarScheduler, estado, reset };
 }
 
 module.exports = { crearSheetsSync, parseCSV, mapearFila, col };

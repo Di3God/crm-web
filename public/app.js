@@ -1478,6 +1478,7 @@ async function crearLead() {
 const ESTADO_BRUTO = {
   creado: ['Creado', '#1EBE57'],
   duplicado_activo: ['Duplicado activo', '#2D7FF9'],
+  duplicado_historial: ['Duplicado (historial)', '#C2611F'],
   duplicado_perdido: ['Duplicado perdido', '#E6A100'],
   duplicado_ganado: ['Duplicado ganado', '#8E44AD'],
   incompleto: ['Incompleto', '#E6A100'],

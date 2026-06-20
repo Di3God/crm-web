@@ -138,6 +138,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_mktg_tel ON marketing_ingresos(telefonoNormalizado);
 `);
 db.exec(`
+  CREATE TABLE IF NOT EXISTS marketing_historial (
+    telefono TEXT PRIMARY KEY,
+    nombre TEXT,
+    fechaRegistro TEXT,
+    origen TEXT,
+    campana TEXT,
+    creado TEXT
+  );
+`);
+db.exec(`
   CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fecha TEXT NOT NULL,
@@ -385,6 +395,16 @@ function procesarLeadMarketing(norm) {
     if (cons.etapa === 'Cerrado perdido') return { estado: 'duplicado_perdido', codigoLead: existente.codigo, mensajeError: 'Lead existente cerrado perdido — revision manual' + suf };
     if (cons.etapa === 'Cerrado ganado') return { estado: 'duplicado_ganado', codigoLead: existente.codigo, mensajeError: 'Lead existente ganado — revision manual' + suf };
     return { estado: 'duplicado_activo', codigoLead: existente.codigo, mensajeError: avisoNombre };
+  }
+
+  // 1b) No esta en leads activos: revisar el historial pre-lanzamiento (Excel viejo).
+  //     Mismo trato que un duplicado: va a Leads Brutos con aviso, no se crea lead.
+  const hist = db.prepare('SELECT * FROM marketing_historial WHERE telefono = ?').get(norm.telefonoNormalizado);
+  if (hist) {
+    const f = hist.fechaRegistro ? ` el ${hist.fechaRegistro}` : '';
+    const og = hist.origen ? ` por ${hist.origen}` : '';
+    const nm = hist.nombre ? ` como "${hist.nombre}"` : '';
+    return { estado: 'duplicado_historial', codigoLead: null, mensajeError: `\u26a0 Ya registrado${f}${og}${nm} \u2014 seguimiento manual` };
   }
 
   // 2) Sin match de telefono: validar por nombre completo normalizado (avisa, no bloquea).
@@ -1260,4 +1280,9 @@ app.get('/api/marketing/sheets/estado', soloAdminOJefa, (req, res) => {
   res.json({ estado: sheetsSync.estado() });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.54 (fase 2: sync leads Meta/TikTok desde Sheets) corriendo en puerto ${PORT}`));
+// Reinicia el control de sincronizacion (re-baseline). Solo admin.
+app.post('/api/marketing/sheets/reset', soloAdmin, (req, res) => {
+  res.json(sheetsSync.reset());
+});
+
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.57 (fase 2: historial pre-lanzamiento + duplicado_historial) corriendo en puerto ${PORT}`));
