@@ -147,6 +147,12 @@ db.exec(`
     creado TEXT
   );
 `);
+// Columnas extra para que el historial sea "Base de Releads" (idempotente).
+['email TEXT', 'montoReal INTEGER', 'montoRango TEXT', 'fechaISO TEXT',
+ "estado TEXT DEFAULT 'pendiente'", 'codigoLead TEXT', 'asignadoA TEXT', 'fechaAsignado TEXT'
+].forEach(col => { try { db.exec(`ALTER TABLE marketing_historial ADD COLUMN ${col}`); } catch (e) { /* ya existe */ } });
+db.exec('CREATE INDEX IF NOT EXISTS idx_hist_estado ON marketing_historial(estado);');
+db.exec('CREATE INDEX IF NOT EXISTS idx_hist_fechaiso ON marketing_historial(fechaISO);');
 db.exec(`
   CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1262,6 +1268,7 @@ const sheetsSync = crearSheetsSync({
   procesarLeadMarketing,
   guardarIngresoBruto,
   normalizarCelular: L.normalizarCelular,
+  montoARango: L.montoARango,
 });
 sheetsSync.iniciarScheduler();
 
@@ -1278,6 +1285,76 @@ app.post('/api/marketing/sheets/sync', soloAdminOJefa, async (req, res) => {
 // Estado de la sincronizacion por origen.
 app.get('/api/marketing/sheets/estado', soloAdminOJefa, (req, res) => {
   res.json({ estado: sheetsSync.estado() });
+});
+
+// ---------- Base de Releads (historicos para segunda barrida) ----------
+// Lista con filtros (origen, rango de fechas, busqueda) y paginacion.
+app.get('/api/releads', soloAdminOJefa, (req, res) => {
+  const { origen, desde, hasta, q, estado, limit, offset } = req.query;
+  const where = ['estado = ?'];
+  const params = [estado || 'pendiente'];
+  if (origen) { where.push('origen = ?'); params.push(origen); }
+  if (desde) { where.push('fechaISO >= ?'); params.push(desde); }
+  if (hasta) { where.push('fechaISO <= ?'); params.push(hasta); }
+  if (q) { where.push('(nombre LIKE ? OR telefono LIKE ?)'); params.push('%' + q + '%', '%' + q + '%'); }
+  const W = 'WHERE ' + where.join(' AND ');
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM marketing_historial ${W}`).get(...params).n;
+  const lim = Math.min(Number(limit) || 50, 200);
+  const off = Number(offset) || 0;
+  const releads = db.prepare(`SELECT telefono,nombre,fechaRegistro,fechaISO,origen,campana,email,montoReal,montoRango,estado,codigoLead,asignadoA,fechaAsignado
+    FROM marketing_historial ${W}
+    ORDER BY (montoReal IS NULL), montoReal DESC, fechaISO DESC
+    LIMIT ? OFFSET ?`).all(...params, lim, off);
+  const resumen = {};
+  db.prepare('SELECT estado, COUNT(*) AS c FROM marketing_historial GROUP BY estado').all()
+    .forEach(r => { resumen[r.estado || 'pendiente'] = r.c; });
+  res.json({ total, releads, resumen, limit: lim, offset: off });
+});
+
+// Asigna releads seleccionados a una GP: crea los leads y entran al Kanban.
+app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
+  const { telefonos, asesor } = req.body;
+  if (!Array.isArray(telefonos) || !telefonos.length) return res.status(400).json({ error: 'Faltan telefonos' });
+  if (!L.ASESORES.includes(asesor)) return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + L.ASESORES.join(', ') });
+  const ahora = new Date().toISOString();
+  const getRe = db.prepare("SELECT * FROM marketing_historial WHERE telefono = ? AND estado = 'pendiente'");
+  const existeLead = db.prepare('SELECT codigo FROM leads WHERE telefono = ?');
+  const insLead = db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const updRe = db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=?");
+  let creados = 0, yaExistian = 0, noEncontrados = 0;
+  db.exec('BEGIN');
+  try {
+    for (const tel of telefonos) {
+      const re = getRe.get(tel);
+      if (!re) { noEncontrados++; continue; }
+      const ya = existeLead.get(tel);
+      let codigo;
+      if (ya) { codigo = ya.codigo; yaExistian++; }
+      else {
+        codigo = generarCodigo();
+        insLead.run(codigo, re.nombre || 'Sin nombre', re.telefono, re.email || null, re.origen || null, re.campana || null,
+          asesor, re.montoReal, re.montoReal, re.montoRango, ahora, ahora);
+        creados++;
+      }
+      updRe.run(codigo, asesor, ahora, tel);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    return res.status(500).json({ error: String(e.message || e) });
+  }
+  auditar(req, 'asignar-relead', `${creados + yaExistian} releads`, 'a ' + asesor);
+  res.json({ ok: true, creados, yaExistian, noEncontrados, asesor });
+});
+
+// Descarta releads (no se trabajaran).
+app.post('/api/releads/descartar', soloAdminOJefa, (req, res) => {
+  const { telefonos } = req.body;
+  if (!Array.isArray(telefonos) || !telefonos.length) return res.status(400).json({ error: 'Faltan telefonos' });
+  const st = db.prepare("UPDATE marketing_historial SET estado='descartado' WHERE telefono=? AND estado='pendiente'");
+  let n = 0; telefonos.forEach(t => { if (st.run(t).changes) n++; });
+  res.json({ ok: true, descartados: n });
 });
 
 // Reinicia el control de sincronizacion (re-baseline). Solo admin.
@@ -1312,4 +1389,4 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.58 (fase 2: corte por fecha + purga importados) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.60 (Base de Releads: filtros, paginacion, asignacion por lote) corriendo en puerto ${PORT}`));

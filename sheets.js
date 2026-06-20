@@ -122,7 +122,7 @@ function mapearFila(origen, fila) {
 // Descarga el CSV con timeout (Railway si alcanza Google; el sandbox no).
 async function fetchCSV(url) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 45000);
+  const t = setTimeout(() => ctrl.abort(), 90000);
   try {
     const r = await fetch(url, { signal: ctrl.signal, redirect: 'follow' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -135,7 +135,7 @@ async function fetchCSV(url) {
 // ---------- Fabrica del sincronizador ----------
 // deps: { db, normalizarLeadMarketing, procesarLeadMarketing, guardarIngresoBruto, normalizarCelular }
 function crearSheetsSync(deps) {
-  const { db, normalizarLeadMarketing, procesarLeadMarketing, guardarIngresoBruto, normalizarCelular } = deps;
+  const { db, normalizarLeadMarketing, procesarLeadMarketing, guardarIngresoBruto, normalizarCelular, montoARango } = deps;
 
   // Tablas de control (idempotente).
   db.exec(`
@@ -157,8 +157,10 @@ function crearSheetsSync(deps) {
   const qEstadoUp = db.prepare(`INSERT INTO marketing_sheet_estado (origen,inicializado,ultimaSync,ultimoError,totalProcesados)
     VALUES (@origen,@inicializado,@ultimaSync,@ultimoError,@totalProcesados)
     ON CONFLICT(origen) DO UPDATE SET inicializado=@inicializado, ultimaSync=@ultimaSync, ultimoError=@ultimoError, totalProcesados=@totalProcesados`);
-  // Historial pre-lanzamiento (lista liviana para comparar duplicados). 1ra vez gana.
-  const qHistIns = db.prepare('INSERT OR IGNORE INTO marketing_historial (telefono,nombre,fechaRegistro,origen,campana,creado) VALUES (?,?,?,?,?,?)');
+  // Historial / Base de Releads (lista para comparar duplicados y reasignar).
+  const qHistIns = db.prepare(`INSERT OR IGNORE INTO marketing_historial
+    (telefono,nombre,fechaRegistro,origen,campana,email,montoReal,montoRango,fechaISO,estado,creado)
+    VALUES (?,?,?,?,?,?,?,?,?,'pendiente',?)`);
 
   function huella(origen, fila) {
     const tel = normalizarCelular(col(fila, 'celular', 'telefono') || '');
@@ -184,21 +186,25 @@ function crearSheetsSync(deps) {
     //  - Fecha < corte (o sin fecha valida)  -> HISTORIAL: nunca se crea lead.
     //  - Fecha >= corte                       -> NUEVO: pasa al pipeline.
     // La huella evita reprocesar la misma fila en cada ciclo.
-    let nuevos = 0, creados = 0, duplicados = 0, incompletos = 0, historico = 0;
+    let nuevos = 0, creados = 0, duplicados = 0, incompletos = 0, historico = 0, yaVistas = 0;
     db.exec('BEGIN');
     try {
       for (const f of filas) {
         const h = huella(hoja.origen, f);
-        if (qSeenHas.get(h)) continue;
+        if (qSeenHas.get(h)) { yaVistas++; continue; }
 
         const fechaRow = parseFecha(col(f, 'fecha'));
         const esNuevo = fechaRow && fechaRow.getTime() >= CORTE.getTime();
 
         if (!esNuevo) {
-          // Historial: solo se recuerda para comparar duplicados. No se crea.
-          const tel = normalizarCelular(col(f, 'celular', 'telefono') || '');
-          if (tel && tel.length >= 9) {
-            qHistIns.run(tel, col(f, 'nombres', 'nombre') || '', col(f, 'fecha') || '', hoja.origen, col(f, 'campana') || '', ahora);
+          // Historial / Base de Releads: se recuerda con sus datos. No crea lead.
+          const norm = normalizarLeadMarketing(hoja.origen, mapearFila(hoja.origen, f));
+          if (norm.telefonoNormalizado && norm.telefonoNormalizado.length >= 9) {
+            const montoN = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
+            const rango = (montoN != null && montoARango) ? montoARango(montoN) : null;
+            const fISO = fechaRow ? fechaRow.toISOString().slice(0, 10) : null;
+            qHistIns.run(norm.telefonoNormalizado, norm.nombre || '', col(f, 'fecha') || '', hoja.origen,
+              norm.campana || '', norm.email || null, montoN, rango, fISO, ahora);
           }
           historico++;
         } else {
@@ -222,7 +228,7 @@ function crearSheetsSync(deps) {
       return { origen: hoja.origen, error: String(e.message || e) };
     }
     qEstadoUp.run({ origen: hoja.origen, inicializado: 1, ultimaSync: ahora, ultimoError: null, totalProcesados: (est.totalProcesados || 0) + creados });
-    return { origen: hoja.origen, total: filas.length, nuevos, creados, duplicados, incompletos, historico };
+    return { origen: hoja.origen, total: filas.length, nuevos, creados, duplicados, incompletos, historico, yaVistas };
   }
 
   let corriendo = false;

@@ -471,3 +471,13 @@
 .bbtn.azul { border-color: var(--azul); color: var(--azul); }
 .bbtn.verde { border-color: #1EBE57; color: #1EBE57; }
 .bbtn.gris { border-color: #9AA3AD; color: #9AA3AD; }
+
+  /* Base de Releads */
+  .rl-filtros { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0; }
+  .rl-filtros select, .rl-filtros input { padding:7px 9px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+  .rl-filtros input[type="text"] { min-width:220px; }
+  .rl-acciones { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; background:#F7F9FB; border:1px solid var(--line); border-radius:8px; }
+  .rl-acciones select { padding:7px 9px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+  .rl-selall { display:flex; align-items:center; gap:6px; font-size:13px; }
+  .rl-pag { display:flex; gap:12px; align-items:center; justify-content:center; margin:12px 0; }
+  .rl-pag button[disabled] { opacity:.45; cursor:default; }

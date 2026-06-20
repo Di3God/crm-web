@@ -240,6 +240,7 @@ function ir(v) {
   if (v === 'audit') cargarAuditoria();
   if (v === 'cohortes') cargarCohortes();
   if (v === 'brutos') cargarBrutos();
+  if (v === 'releads') cargarReleads();
   if (v === 'leads') cargarLeads();
 }
 
@@ -1540,6 +1541,103 @@ function accionesBruto(i) {
     btns += '<button class="bbtn gris" onclick="descartarBruto(' + i.id + ')">Descartar</button>';
   }
   return btns;
+}
+
+// ---------- Base de Releads ----------
+let RL_PAG = 0, RL_LIM = 50, RL_TOTAL = 0, RL_SEL = new Set(), RL_BUSCA_T = null;
+
+function releadsFiltros() {
+  return {
+    origen: $('rlOrigen').value,
+    desde: $('rlDesde').value,
+    hasta: $('rlHasta').value,
+    q: $('rlQ').value.trim(),
+    estado: $('rlEstado').value,
+  };
+}
+function releadsFiltrar() { RL_PAG = 0; cargarReleads(); }
+function releadsBuscarDebounce() { clearTimeout(RL_BUSCA_T); RL_BUSCA_T = setTimeout(() => { RL_PAG = 0; cargarReleads(); }, 350); }
+function releadsPagina(d) {
+  const max = Math.max(0, Math.ceil(RL_TOTAL / RL_LIM) - 1);
+  RL_PAG = Math.min(max, Math.max(0, RL_PAG + d));
+  cargarReleads();
+}
+
+async function cargarReleads() {
+  // Lista de GP en el selector
+  if ($('rlAsesor') && !$('rlAsesor').options.length) llenarSelect('rlAsesor', CAT.asesores, false, 'Elegir GP');
+  const f = releadsFiltros();
+  const qs = new URLSearchParams({ ...f, limit: RL_LIM, offset: RL_PAG * RL_LIM }).toString();
+  $('releadsCont').innerHTML = '<div class="vacio">Cargando...</div>';
+  let d;
+  try { d = await api('/api/releads?' + qs); } catch (e) { $('releadsCont').innerHTML = '<div class="vacio">Error al cargar.</div>'; return; }
+  RL_TOTAL = d.total;
+  RL_SEL.clear(); actualizarSelCount(); if ($('rlSelAll')) $('rlSelAll').checked = false;
+
+  // Resumen por estado
+  const r = d.resumen || {};
+  $('releadsResumen').innerHTML =
+    '<span class="bchip" style="border-color:#C2611F;color:#C2611F">Pendientes: <b>' + (r.pendiente || 0) + '</b></span>' +
+    '<span class="bchip" style="border-color:#1EBE57;color:#1EBE57">Asignados: <b>' + (r.asignado || 0) + '</b></span>' +
+    '<span class="bchip" style="border-color:#9AA3AD;color:#9AA3AD">Descartados: <b>' + (r.descartado || 0) + '</b></span>';
+
+  if (!d.releads.length) { $('releadsCont').innerHTML = '<div class="vacio">Sin releads con esos filtros.</div>'; renderPag(); return; }
+
+  const filas = d.releads.map(re => {
+    const monto = re.montoReal != null ? 'S/ ' + Number(re.montoReal).toLocaleString('en-US') + (re.montoRango ? ' · ' + re.montoRango : '') : '<span class="sub">—</span>';
+    const asign = re.estado === 'asignado' ? '<div class="sub">→ ' + (re.asignadoA || '') + (re.codigoLead ? ' (' + re.codigoLead + ')' : '') + '</div>' : '';
+    const chk = re.estado === 'pendiente' ? '<input type="checkbox" class="rl-chk" data-tel="' + re.telefono + '" onchange="releadsToggle(this)">' : '';
+    return '<tr>' +
+      '<td>' + chk + '</td>' +
+      '<td><span class="borigen">' + (re.origen || '') + '</span></td>' +
+      '<td>' + (re.nombre || '<span class="sub">—</span>') + asign + '</td>' +
+      '<td>' + (re.telefono || '') + '</td>' +
+      '<td>' + (re.email || '<span class="sub">—</span>') + '</td>' +
+      '<td>' + monto + '</td>' +
+      '<td>' + (re.fechaRegistro || '<span class="sub">—</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+  $('releadsCont').innerHTML = '<table class="tabla btabla"><thead><tr>' +
+    '<th></th><th>Origen</th><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Monto</th><th>Fecha registro</th>' +
+    '</tr></thead><tbody>' + filas + '</tbody></table>';
+  renderPag();
+}
+
+function renderPag() {
+  const totalPag = Math.max(1, Math.ceil(RL_TOTAL / RL_LIM));
+  $('rlPagInfo').textContent = 'Página ' + (RL_PAG + 1) + ' de ' + totalPag + ' · ' + RL_TOTAL + ' releads';
+  $('rlPrev').disabled = RL_PAG <= 0;
+  $('rlNext').disabled = RL_PAG >= totalPag - 1;
+}
+
+function releadsToggle(chk) {
+  if (chk.checked) RL_SEL.add(chk.dataset.tel); else RL_SEL.delete(chk.dataset.tel);
+  actualizarSelCount();
+}
+function releadsSelAll(on) {
+  document.querySelectorAll('.rl-chk').forEach(c => { c.checked = on; if (on) RL_SEL.add(c.dataset.tel); else RL_SEL.delete(c.dataset.tel); });
+  actualizarSelCount();
+}
+function actualizarSelCount() { if ($('rlSelCount')) $('rlSelCount').textContent = RL_SEL.size + ' seleccionados'; }
+
+async function releadsAsignar() {
+  if (!RL_SEL.size) return alert('Selecciona al menos un relead.');
+  const asesor = $('rlAsesor').value;
+  if (!asesor) return alert('Elige una GP.');
+  if (!confirm('¿Asignar ' + RL_SEL.size + ' relead(s) a ' + asesor + '? Entrarán al Kanban.')) return;
+  try {
+    const r = await api('/api/releads/asignar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telefonos: [...RL_SEL], asesor }) });
+    alert('Asignados: ' + (r.creados + r.yaExistian) + ' (nuevos: ' + r.creados + ', ya existían: ' + r.yaExistian + ')');
+    cargarReleads();
+  } catch (e) { alert('Error al asignar.'); }
+}
+async function releadsDescartar() {
+  if (!RL_SEL.size) return alert('Selecciona al menos un relead.');
+  if (!confirm('¿Descartar ' + RL_SEL.size + ' relead(s)? No se trabajarán.')) return;
+  try {
+    await api('/api/releads/descartar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telefonos: [...RL_SEL] }) });
+    cargarReleads();
+  } catch (e) { alert('Error al descartar.'); }
 }
 
 async function verRawBruto(id) {
