@@ -1234,4 +1234,30 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.52 (fase 2: monto convertido en leads brutos) corriendo en puerto ${PORT}`));
+// ---------- Sincronizacion de leads desde Google Sheets (Meta / TikTok) ----------
+const { crearSheetsSync } = require('./sheets');
+const sheetsSync = crearSheetsSync({
+  db,
+  normalizarLeadMarketing: L.normalizarLeadMarketing,
+  procesarLeadMarketing,
+  guardarIngresoBruto,
+  normalizarCelular: L.normalizarCelular,
+});
+sheetsSync.iniciarScheduler();
+
+// Forzar una lectura manual (sin esperar los 5 min). Admin/jefa.
+app.post('/api/marketing/sheets/sync', soloAdminOJefa, async (req, res) => {
+  try {
+    const resultado = await sheetsSync.sincronizarTodo();
+    res.json({ ok: true, resultado });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// Estado de la sincronizacion por origen.
+app.get('/api/marketing/sheets/estado', soloAdminOJefa, (req, res) => {
+  res.json({ estado: sheetsSync.estado() });
+});
+
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.54 (fase 2: sync leads Meta/TikTok desde Sheets) corriendo en puerto ${PORT}`));

@@ -371,7 +371,7 @@ function renderKanban() {
     const prom = items.length ? Math.round(sumaProb / items.length) : 0;
     const tarjetas = items.map(l => kanbanCard(l)).join('');
     return '<div class="kcol">' +
-      '<div class="kcol-head"><span class="ktit">' + trEtapa2(c) + '</span><span class="kcnt">· ' + items.length + '</span></div>' +
+      '<div class="kcol-head"><span class="ktit">' + trEtapa2(c) + '</span><span class="kcnt">• ' + items.length + '</span></div>' +
       '<div class="kcol-metricas">' +
         '<div class="km"><span class="km-v">' + fmtM(total) + '</span></div>' +
       '</div>' +
@@ -435,10 +435,11 @@ function kanbanCard(l) {
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
-    '<div class="knom" onclick="abrirGestion(\'' + l.codigo + '\')">' +
+    '<div class="knom" onclick="verTrazabilidad(\'' + l.codigo + '\')">' +
       (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
-      (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') + '</div>' +
+      (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
+      (l.telefono ? ' · <span class="ktel">' + l.telefono + '</span>' : '') + '</div>' +
     lineaAccion +
     (chips ? '<div class="kchips">' + chips + '</div>' : (estadoCalif ? '<div class="kchips">' + estadoCalif + '</div>' : '')) +
     '<div class="kbtns">' +
