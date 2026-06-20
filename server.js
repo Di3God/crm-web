@@ -352,8 +352,14 @@ function leadConsolidado(lead, gestiones) {
 function generarCodigo() {
   const hoy = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const pref = `TST-${hoy}-`;
-  const n = db.prepare('SELECT COUNT(*) AS c FROM leads WHERE codigo LIKE ?').get(pref + '%').c;
-  return pref + String(n + 1).padStart(6, '0');
+  // Mayor correlativo del dia (no COUNT: asi no se reciclan numeros si se borran leads).
+  const row = db.prepare('SELECT codigo FROM leads WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1').get(pref + '%');
+  let n = row ? (parseInt(row.codigo.slice(pref.length), 10) || 0) : 0;
+  // Blindaje ante choques/concurrencia: incrementa hasta encontrar uno libre.
+  const existe = db.prepare('SELECT 1 FROM leads WHERE codigo = ?');
+  let codigo;
+  do { n++; codigo = pref + String(n).padStart(6, '0'); } while (existe.get(codigo));
+  return codigo;
 }
 
 // =============================================================
@@ -424,6 +430,24 @@ function procesarLeadMarketing(norm) {
     const todos = db.prepare('SELECT codigo, nombre FROM leads').all();
     const gemelo = todos.find(l => L.normalizarNombre(l.nombre) === nombreNorm);
     if (gemelo) avisoMismoNombre = `\u26a0 Mismo nombre que ${gemelo.codigo} (tel. distinto) \u2014 revisar`;
+  }
+
+  // Sin nombre: no se crea automaticamente. Va a Ingresos como ALERTA para
+  // que la jefa complete el nombre y cree, o descarte.
+  if (!norm.nombre || !String(norm.nombre).trim()) {
+    return { estado: 'sin_nombre', codigoLead: null, mensajeError: `\u26a0 Lead sin nombre (tel. ${norm.telefonoNormalizado}) \u2014 completar y crear, o descartar` };
+  }
+
+  // 2b) Sin nombre: NO se crea. Va a Ingresos como alerta para que la jefa
+  //     complete el nombre y cree, o descarte. (El telefono si es valido.)
+  if (!norm.nombre || !String(norm.nombre).trim()) {
+    return { estado: 'sin_nombre', codigoLead: null, mensajeError: `\u26a0 Lead sin nombre (tel. ${norm.telefonoNormalizado}) \u2014 completar y crear, o descartar` };
+  }
+
+  // Sin nombre: NO se crea automaticamente. Va a Ingresos como alerta para que la
+  // jefa complete el nombre y cree, o lo descarte.
+  if (!norm.nombre || !String(norm.nombre).trim()) {
+    return { estado: 'sin_nombre', codigoLead: null, mensajeError: `\u26a0 Lead sin nombre (tel. ${norm.telefonoNormalizado}) \u2014 completar y crear, o descartar` };
   }
 
   // 3) Lead nuevo: se crea operativo, en etapa inicial 3x5, sin asesor.
@@ -527,6 +551,9 @@ app.post('/api/marketing/ingresos/:id/descartar', soloAdminOJefa, (req, res) => 
 app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) => {
   const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
   if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  // Nombre: el recibido, o uno que envie la jefa para completar (caso sin_nombre).
+  const nombreFinal = (req.body && req.body.nombre && String(req.body.nombre).trim())
+    ? String(req.body.nombre).trim() : (ing.nombreRecibido || 'Sin nombre');
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
   const monto = L.montoEtiquetaANumero(ing.montoRecibido);
@@ -534,7 +561,7 @@ app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) =>
   const tel = ing.telefonoNormalizado || L.normalizarCelular(ing.telefonoRecibido) || null;
   db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(codigo, ing.nombreRecibido || 'Sin nombre', tel, ing.emailRecibido || null,
+    .run(codigo, nombreFinal, tel, ing.emailRecibido || null,
          ing.fuente || null, ing.campana || null, null, monto, monto, rango, ahora, null);
   db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=? WHERE id=?')
     .run('creado', codigo, 'Creado manualmente', req.params.id);
@@ -1398,4 +1425,4 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.62 (UI: submenus, Asignar, ocultar descarga GP, punto pegado al nombre) corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.64 (Pasada B: bloqueo calif inicial, cierre en reunion efectiva, intentos en por contactar) corriendo en puerto ${PORT}`));

@@ -420,7 +420,13 @@ function kanbanCard(l) {
     if (l.nivelInteres) chips += '<span class="kchip">' + tr(l.nivelInteres) + '</span>';
     if (l.tiempo) chips += '<span class="kchip">' + tr(l.tiempo) + '</span>';
   }
-  const estadoCalif = calif ? '' : '<span class="kestado porcal">○ Por calificar</span>';
+  let estadoCalif = '';
+  if (!calif) {
+    const intxt = (l.intentos > 0)
+      ? l.intentos + (l.intentos === 1 ? ' intento' : ' intentos')
+      : 'sin contacto';
+    estadoCalif = '<span class="kestado porcal">○ Por calificar · ' + intxt + '</span>';
+  }
   const fechaCorta = l.fechaProxAccion ? fmtFechaHoraCorta(l.fechaProxAccion) : '';
   const lineaAccion = l.proximaAccion
     ? '<div class="kacc' + (vencida ? ' venc' : '') + '">' +
@@ -935,6 +941,8 @@ function ajustarCampos() {
   // Fecha estimada de cierre: si el resultado es "En negociacion", si el lead YA esta en
   // Negociacion, o si se marco el check que lo lleva a Negociacion desde Agendado.
   const enNegociacion = (gLead && gLead.etapa === 'Cierre pendiente') || r === 'En negociacion' || pasaNegociacion;
+  // Al entrar a Reunión efectiva (o ya estar en seguimiento) se RE-CALIFICA: el cierre aparece.
+  const enReunionEfectiva = (gLead && gLead.etapa === 'Reunion efectiva - seguimiento') || r === 'Reunion efectiva';
   const esSinContacto = ['No contesto', 'Buzon / apagado', 'WhatsApp enviado sin respuesta'].includes(r);
   document.querySelectorAll('.campoCierre').forEach(e => e.classList.toggle('oculto', !enNegociacion));
   // En "sin contacto" la fecha de cierre se bloquea (mantiene la ya marcada). En
@@ -949,7 +957,7 @@ function ajustarCampos() {
 
   // Bloque de Calificacion de cierre (5 variables): visible en negociacion (salvo solo-gestion).
   // En Negociacion ya esta calificado: se muestra en SOLO LECTURA con boton "Editar".
-  const cierreVisible = enNegociacion && !modoSoloGestion;
+  const cierreVisible = (enNegociacion || enReunionEfectiva) && !modoSoloGestion;
   $('secCierre').classList.toggle('oculto', !cierreVisible);
   $('secScore').classList.toggle('oculto', modoSoloGestion);
   // Bloqueo del cierre: si el lead YA esta en Negociacion (no es la 1a vez que entra),
@@ -1006,7 +1014,12 @@ function aplicarReglaCalificacion(r) {
   const bloquearPorResultado = ['No contesto','Buzon / apagado','WhatsApp enviado sin respuesta',
     'Respondio - sin calificar'].includes(r);
   const obligaPorResultado = ['Respondio - calificado','Agendo reunion'].includes(r);
-  const bloquear = modoCalifForzado === 'bloqueado' || bloquearPorResultado;
+  // Bloqueo por ETAPA: si el lead ya esta Calificado o mas adelante, la calificacion
+  // INICIAL queda en solo lectura (ya fue calificado; no se re-edita).
+  const ORD_ETAPAS = ['Contactabilidad 3x5','Contactado','Calificado','Agendado - pendiente reunion',
+    'Reunion efectiva - seguimiento','Cierre pendiente','Cerrado ganado','Cerrado perdido'];
+  const bloquearPorEtapa = gLead && ORD_ETAPAS.indexOf(gLead.etapa) >= ORD_ETAPAS.indexOf('Calificado');
+  const bloquear = modoCalifForzado === 'bloqueado' || bloquearPorResultado || bloquearPorEtapa;
   const obliga = !bloquear && (modoCalifForzado === 'obligatorio' || obligaPorResultado);
 
   // Habilitar/deshabilitar los 4 selects y atenuar la seccion
@@ -1016,7 +1029,7 @@ function aplicarReglaCalificacion(r) {
   $('secCalif').classList.toggle('calif-oblig', obliga);
   let aviso = $('califAviso');
   if (aviso) aviso.textContent = bloquear
-    ? 'Calificación no disponible: el lead aún no fue calificado en esta gestión.'
+    ? (bloquearPorEtapa ? 'Calificación inicial bloqueada: el lead ya fue calificado.' : 'Calificación no disponible: el lead aún no fue calificado en esta gestión.')
     : (obliga ? 'Completa las 5 variables para poder guardar esta gestión.' : '');
   califObligatoria = obliga;
 }
@@ -1296,6 +1309,12 @@ async function guardarGestion() {
     $('gError').classList.add('act');
     return;
   }
+  // Al entrar a Reunión efectiva hay que RE-CALIFICAR: el cierre es obligatorio.
+  if (r === 'Reunion efectiva' && !cierreCompleto()) {
+    $('gError').textContent = 'La reunión ya se dio: completa la Calificación de cierre para guardar.';
+    $('gError').classList.add('act');
+    return;
+  }
   $('gGuardar').disabled = true;
   $('gError').classList.remove('act');
   try {
@@ -1483,6 +1502,7 @@ const ESTADO_BRUTO = {
   duplicado_perdido: ['Duplicado perdido', '#E6A100'],
   duplicado_ganado: ['Duplicado ganado', '#8E44AD'],
   incompleto: ['Incompleto', '#E6A100'],
+  sin_nombre: ['Sin nombre', '#D81B8C'],
   error_validacion: ['Error', '#E14B4B'],
   error_api: ['Error API', '#E14B4B'],
   descartado: ['Descartado', '#9AA3AD']
@@ -1539,6 +1559,9 @@ function accionesBruto(i) {
   }
   if (i.estado === 'duplicado_historial') {
     btns += '<button class="bbtn verde" onclick="crearLeadBruto(' + i.id + ')" title="Crear el lead igual, pese a estar en releads">Crear igual</button>';
+  }
+  if (i.estado === 'sin_nombre') {
+    btns += '<button class="bbtn verde" onclick="completarYCrear(' + i.id + ')" title="Escribir el nombre y crear el lead">Completar y crear</button>';
   }
   if (i.estado !== 'descartado') {
     btns += '<button class="bbtn gris" onclick="descartarBruto(' + i.id + ')">Descartar</button>';
@@ -1669,6 +1692,20 @@ async function crearLeadBruto(id) {
   if (!confirm('¿Crear un lead operativo desde este ingreso?')) return;
   try {
     const r = await api('/api/marketing/ingresos/' + id + '/crear-lead', { method: 'POST' });
+    alert('Lead creado: ' + r.codigoLead);
+    cargarBrutos();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function completarYCrear(id) {
+  const nombre = prompt('Escribe el nombre del lead (obligatorio):', '');
+  if (nombre === null) return;               // canceló
+  if (!nombre.trim()) { alert('Debes escribir un nombre para crear el lead.'); return; }
+  try {
+    const r = await api('/api/marketing/ingresos/' + id + '/crear-lead', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: nombre.trim() })
+    });
     alert('Lead creado: ' + r.codigoLead);
     cargarBrutos();
   } catch (e) { alert('Error: ' + e.message); }
