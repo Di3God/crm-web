@@ -228,7 +228,20 @@ async function arrancar() {
   if ($('gResumen')) $('gResumen').addEventListener('input', () => {
     $('gResumenCount').textContent = $('gResumen').value.length;
   });
+  initFlatpickr();
   cargarLeads();
+}
+
+// Inicializa los selectores de fecha/hora (Flatpickr) en español. Se ejecuta 1 vez.
+let FP = {};
+function initFlatpickr() {
+  if (typeof flatpickr === 'undefined' || FP._done) return;
+  if (flatpickr.l10ns && flatpickr.l10ns.es) flatpickr.localize(flatpickr.l10ns.es);
+  const dOpts  = { dateFormat: 'Y-m-d', altInput: true, altFormat: 'd/m/Y', allowInput: true };
+  const dtOpts = { enableTime: true, time_24hr: true, dateFormat: 'Y-m-d\\TH:i', altInput: true, altFormat: 'd/m/Y H:i', allowInput: true };
+  ['fDesde','fHasta','rlDesde','rlHasta','gFechaCierre'].forEach(id => { if ($(id)) FP[id] = flatpickr('#' + id, dOpts); });
+  ['gFechaReunion','gFechaProx'].forEach(id => { if ($(id)) FP[id] = flatpickr('#' + id, dtOpts); });
+  FP._done = true;
 }
 
 function ir(v) {
@@ -296,7 +309,8 @@ const ICO_HL = {
 };
 
 function limpiarFechas() {
-  $('fDesde').value = ''; $('fHasta').value = '';
+  if (FP.fDesde) FP.fDesde.clear(); else $('fDesde').value = '';
+  if (FP.fHasta) FP.fHasta.clear(); else $('fHasta').value = '';
   cargarLeads();
 }
 
@@ -881,6 +895,13 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
   if (gLead.cCompetencia) $('cCompetencia').value = gLead.cCompetencia;
   if (gLead.cProximoPaso) $('cProximoPaso').value = gLead.cProximoPaso;
   if (gLead.fechaCierreEstimada) $('gFechaCierre').value = gLead.fechaCierreEstimada.slice(0,10);
+  // Sincroniza los selectores Flatpickr con los valores reci\u00e9n seteados/limpiados.
+  if (FP.gFechaReunion) FP.gFechaReunion.clear();
+  if (FP.gFechaProx) FP.gFechaProx.clear();
+  if (FP.gFechaCierre) {
+    if (gLead.fechaCierreEstimada) FP.gFechaCierre.setDate(gLead.fechaCierreEstimada.slice(0,10), false);
+    else FP.gFechaCierre.clear();
+  }
 
   // Cargar SOLO los resultados permitidos para la etapa del lead, agrupados y coloreados
   const permit = await api('/api/leads/' + codigo + '/resultados-permitidos');
@@ -1248,6 +1269,7 @@ function setFecha(tipo, val) {
   // Volcar a input datetime-local (formato YYYY-MM-DDTHH:MM en hora local)
   const p = n => String(n).padStart(2, '0');
   $('gFechaProx').value = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (FP.gFechaProx) FP.gFechaProx.setDate($('gFechaProx').value, false);
   // Marcar visualmente el boton activo
   document.querySelectorAll('#gFechaRapida .chipf').forEach(b => b.classList.remove('act'));
   if (event && event.target) event.target.classList.add('act');
@@ -1262,6 +1284,7 @@ function setFechaReu(tipo, val) {
   if (d.getDay() === 0) d.setDate(d.getDate() + 1);
   const p = n => String(n).padStart(2, '0');
   $('gFechaReunion').value = `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (FP.gFechaReunion) FP.gFechaReunion.setDate($('gFechaReunion').value, false);
   document.querySelectorAll('#gFechaReuRapida .chipf').forEach(b => b.classList.remove('act'));
   if (event && event.target) event.target.classList.add('act');
 }

@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiTasatop</title>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
 </head>
 <body>
 <header class="topbar" id="rolBox" style="display:none">
@@ -270,7 +273,7 @@
         <div class="campoReu" style="margin-top:10px"><label>Fecha y hora de la reunión</label>
           <input type="datetime-local" id="gFechaReunion">
         </div>
-        <label style="margin-top:10px">Resumen de la conversación <span id="gResumenReq" class="req oculto">*</span></label>
+        <label style="margin-top:10px">Comentario <span id="gResumenReq" class="req oculto">*</span></label>
         <textarea id="gResumen" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea>
         <div style="text-align:right;font-size:10.5px;color:var(--gris)"><span id="gResumenCount">0</span>/300</div>
       </div>
