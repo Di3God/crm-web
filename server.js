@@ -1553,4 +1553,18 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.74 (favicon t estilo tasatop) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.75 (apagado limpio en deploys) corriendo en puerto ${PORT}`));
+
+// Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
+// ordenado y salimos con codigo 0 para que NO se marque como "crashed".
+function apagarLimpio(sig) {
+  console.log(`Recibido ${sig}: cerrando servidor de forma limpia...`);
+  server.close(() => {
+    try { db.close(); } catch (e) {}
+    process.exit(0);
+  });
+  // Red de seguridad: si algo no cierra en 8s, salimos igual con codigo 0.
+  setTimeout(() => process.exit(0), 8000).unref();
+}
+process.on('SIGTERM', () => apagarLimpio('SIGTERM'));
+process.on('SIGINT', () => apagarLimpio('SIGINT'));
