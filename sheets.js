@@ -47,6 +47,12 @@ const CORTE = (() => {
   return new Date(n.getFullYear(), n.getMonth(), n.getDate());
 })();
 
+// Ventana de gracia: un lead con fecha dentro de los ultimos N dias cuenta como
+// NUEVO aunque sea anterior al corte (Meta a veces arrastra la fecha un dia atras).
+// Por defecto 1 dia (solo ayer): conservador, cubre el desfase tipico sin traer
+// leads mas viejos. Los historicos quedan fuera de la ventana -> siguen en Releads.
+const GRACIA_DIAS = (() => { const n = parseInt(process.env.SHEETS_DIAS_GRACIA || '1', 10); return isNaN(n) ? 1 : n; })();
+
 // Parsea "dd/mm/yyyy" (o d/m/yyyy con / o -). Devuelve Date o null.
 function parseFecha(s) {
   if (!s) return null;
@@ -194,7 +200,9 @@ function crearSheetsSync(deps) {
         if (qSeenHas.get(h)) { yaVistas++; continue; }
 
         const fechaRow = parseFecha(col(f, 'fecha'));
-        const esNuevo = fechaRow && fechaRow.getTime() >= CORTE.getTime();
+        const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
+        const limiteReciente = hoy0.getTime() - GRACIA_DIAS * 86400000; // medianoche de (hoy - N dias)
+        const esNuevo = fechaRow && (fechaRow.getTime() >= CORTE.getTime() || fechaRow.getTime() >= limiteReciente);
 
         if (!esNuevo) {
           // Historial / Base de Releads: se recuerda con sus datos. No crea lead.

@@ -80,6 +80,15 @@ db.exec(`
     primer_fallo TEXT,
     bloqueado_hasta TEXT
   );
+  CREATE TABLE IF NOT EXISTS transiciones_etapa (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo TEXT NOT NULL,
+    etapa_origen TEXT,
+    etapa_destino TEXT NOT NULL,
+    fecha TEXT NOT NULL,
+    asesor TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_trans_codigo ON transiciones_etapa(codigo);
   CREATE TABLE IF NOT EXISTS llamadas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aircall_id TEXT UNIQUE,
@@ -960,6 +969,7 @@ app.post('/api/gestiones', (req, res) => {
   // yaCalificado: si el lead ya tiene calificacion previa, no re-exigir factores en "Agendo reunion".
   const estadoActual = leadConsolidado(lead);
   g.yaCalificado = !!(estadoActual.ticket || estadoActual.tiempo || estadoActual.nivelInteres || estadoActual.experiencia);
+  const etapaAntes = estadoActual.etapa;  // para el sello de transicion (se compara con la etapa despues)
 
   const validacion = L.validarGestion(g);
   if (validacion !== 'OK') return res.status(422).json({ error: validacion });
@@ -980,6 +990,7 @@ app.post('/api/gestiones', (req, res) => {
     fechaProx = auto ? auto.toISOString() : null;
   }
 
+  const ahoraISO = new Date().toISOString();
   db.prepare(`INSERT INTO gestiones
     (codigo,fecha,asesor,canal,resultado,grupoLimpio,proximaAccion,comentario,fechaProxAccion,
      ticket,tiempo,nivelInteres,experiencia,objecion,fechaReunion,tipoReunion,estadoReunion,closer,motivoPerdida,
@@ -987,7 +998,7 @@ app.post('/api/gestiones', (req, res) => {
      montoGestion,noDefineMonto,cPrioriza,cPlazo)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
-      g.codigo, new Date().toISOString(), g.asesor, g.canal, g.resultado,
+      g.codigo, ahoraISO, g.asesor, g.canal, g.resultado,
       L.grupoLimpio(g.resultado), g.proximaAccion || null, g.comentario || null, fechaProx,
       g.ticket || null, g.tiempo || null, g.nivelInteres || null, g.experiencia || null,
       g.objecion || null, g.fechaReunion || null, g.tipoReunion || null,
@@ -1013,7 +1024,14 @@ app.post('/api/gestiones', (req, res) => {
       .run(g.fechaCierreEstimada || null, g.codigo);
   }
 
-  res.json(leadConsolidado(lead));
+  // SELLO automatico: si esta gestion movio al lead de etapa, registra la transicion.
+  const estadoFinal = leadConsolidado(lead);
+  if (estadoFinal.etapa !== etapaAntes) {
+    db.prepare('INSERT INTO transiciones_etapa (codigo,etapa_origen,etapa_destino,fecha,asesor) VALUES (?,?,?,?,?)')
+      .run(g.codigo, etapaAntes || null, estadoFinal.etapa, ahoraISO, g.asesor);
+  }
+
+  res.json(estadoFinal);
 });
 
 // ---------- Trazabilidad ----------
@@ -1533,6 +1551,40 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
+// ---------- Migracion unica: sello de transiciones historicas ----------
+// Reconstruye, a partir de las gestiones ya existentes, cuando cada lead entro
+// a cada etapa. Idempotente: solo corre una vez (flag en app_config).
+function migrarTransicionesHistoricas() {
+  try {
+    const hecho = db.prepare("SELECT valor FROM app_config WHERE clave='migracion_transiciones'").get();
+    if (hecho && hecho.valor === 'ok') return;
+    const leads = db.prepare('SELECT * FROM leads').all();
+    const insT = db.prepare('INSERT INTO transiciones_etapa (codigo,etapa_origen,etapa_destino,fecha,asesor) VALUES (?,?,?,?,?)');
+    let total = 0;
+    db.exec('BEGIN');
+    for (const lead of leads) {
+      const gs = gestionesDeLead(lead.codigo); // ordenadas por fecha
+      if (!gs.length) continue;
+      let etapaPrev = L.consolidarLead(lead, []).etapa; // etapa inicial sin gestiones
+      for (let i = 0; i < gs.length; i++) {
+        const etapaAct = L.consolidarLead(lead, gs.slice(0, i + 1)).etapa;
+        if (etapaAct !== etapaPrev) {
+          insT.run(lead.codigo, etapaPrev, etapaAct, gs[i].fecha, gs[i].asesor);
+          etapaPrev = etapaAct;
+          total++;
+        }
+      }
+    }
+    db.prepare("INSERT INTO app_config (clave,valor) VALUES ('migracion_transiciones','ok') ON CONFLICT(clave) DO UPDATE SET valor='ok'").run();
+    db.exec('COMMIT');
+    console.log(`[migracion] transiciones historicas reconstruidas: ${total}`);
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    console.error('[migracion] error en transiciones historicas:', e.message);
+  }
+}
+migrarTransicionesHistoricas();
+
 // ---------- Respaldo automatico diario (snapshot local con rotacion) ----------
 // Protege ante corrupcion o datos mal escritos. Conserva los ultimos 7 dias.
 // NOTA: vive en el mismo volumen; para proteger ante perdida del volumen,
@@ -1553,7 +1605,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.75 (apagado limpio en deploys) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.78 (ventana de gracia conservadora: solo hoy y ayer cuentan como nuevos) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
