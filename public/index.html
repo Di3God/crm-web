@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiTasatop</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="apple-touch-icon" href="favicon.svg">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
@@ -31,6 +33,7 @@
   <div class="top-user">
     <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
     <button class="top-icon soloAdmin oculto" onclick="abrirClave()" title="Contraseñas">🔑</button>
+    <button class="top-icon soloAdmin oculto" onclick="descargarBackup()" title="Descargar respaldo de la base">💾</button>
     <button class="top-icon soloAdminJefa oculto" onclick="abrirAutoasig()" title="Auto-asignación de leads">🔀</button>
     <button class="top-icon" onclick="logout()" title="Salir">↩</button>
   </div>

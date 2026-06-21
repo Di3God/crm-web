@@ -233,6 +233,10 @@ function ipDe(req) {
   return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'desconocida';
 }
 
+// Healthcheck para Railway: responde 200 apenas el servidor esta arriba.
+// Configurar en Railway -> Settings -> Healthcheck Path: /health
+app.get('/health', (req, res) => res.status(200).json({ ok: true, uptime: Math.round(process.uptime()) }));
+
 app.post('/api/login', (req, res) => {
   const { usuario, clave } = req.body || {};
   const userLower = String(usuario || '').toLowerCase();
@@ -1249,12 +1253,20 @@ app.get('/api/auditoria', soloAdmin, (req, res) => {
   res.json(filas);
 });
 
-// Backup: descarga el archivo de base de datos completo (solo admin).
+// Backup: descarga una copia CONSISTENTE de la base (solo admin).
 app.get('/api/backup', soloAdmin, (req, res) => {
   if (!fs.existsSync(DB_PATH)) return res.status(404).json({ error: 'Base no encontrada' });
   const fecha = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  auditar(req, 'descargar backup', '-', 'backup manual');
-  res.download(DB_PATH, `crm-backup-${fecha}.db`);
+  const tmp = path.join(require('os').tmpdir(), `crm-backup-${fecha}.db`);
+  try {
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);  // snapshot consistente
+    auditar(req, 'descargar backup', '-', 'snapshot consistente');
+    res.download(tmp, `crm-backup-${fecha}.db`, () => { try { fs.unlinkSync(tmp); } catch (e) {} });
+  } catch (e) {
+    auditar(req, 'descargar backup', '-', 'directo (fallback)');
+    res.download(DB_PATH, `crm-backup-${fecha}.db`);
+  }
 });
 
 // Analisis de cohortes (solo admin): leads agrupados por mes de asignacion
@@ -1521,4 +1533,24 @@ app.post('/api/marketing/sheets/purgar', soloAdmin, (req, res) => {
   res.json({ ok: true, leadsBorrados: leadsN, ingresosBorrados: ingN, controlReiniciado: true });
 });
 
-app.listen(PORT, () => console.log(`CRM Tasatop Web v1.71 (seguridad: rate limiting login 5/15min + desbloqueo admin) corriendo en puerto ${PORT}`));
+// ---------- Respaldo automatico diario (snapshot local con rotacion) ----------
+// Protege ante corrupcion o datos mal escritos. Conserva los ultimos 7 dias.
+// NOTA: vive en el mismo volumen; para proteger ante perdida del volumen,
+// descarga el backup manual periodicamente o usa snapshots del volumen en Railway.
+function snapshotDiario() {
+  try {
+    const dir = path.join(DB_DIR, 'backups');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const fecha = new Date().toISOString().slice(0, 10);
+    const destino = path.join(dir, `crm-${fecha}.db`);
+    if (fs.existsSync(destino)) fs.unlinkSync(destino);
+    db.exec(`VACUUM INTO '${destino.replace(/'/g, "''")}'`);
+    const files = fs.readdirSync(dir).filter(f => /^crm-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort();
+    while (files.length > 7) { try { fs.unlinkSync(path.join(dir, files.shift())); } catch (e) {} }
+    console.log('[backup] snapshot diario OK:', destino);
+  } catch (e) { console.error('[backup] error en snapshot:', e.message); }
+}
+setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
+setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
+
+app.listen(PORT, () => console.log(`CRM Tasatop Web v1.74 (favicon t estilo tasatop) corriendo en puerto ${PORT}`));
