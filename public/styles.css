@@ -638,3 +638,11 @@
   /* date inputs mas angostos + placeholder plomo */
   .fechas input[type=date] { width: 112px; }
   .fechas input[type=date]::placeholder { color: var(--muted); }
+
+  /* "Hoy vs meta": panel sobrio separado */
+  .md-fila2 { background: #F7F8FA; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; margin-top: 12px; }
+  .md-fila2 .md-chip { background: #fff; border: 1px solid var(--line); }
+  .md-fila2 .md-chip.md-ok { background: #E8F6EC; border-color: #BFE3C8; }
+  /* kanban: estado de contacto en texto plano (como la tabla) */
+  .kestado-sc { font-size: 11px; color: var(--rojo); font-weight: 600; }
+  .kestado-int { font-size: 10px; color: var(--azul); font-weight: 600; }

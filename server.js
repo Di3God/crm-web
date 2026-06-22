@@ -405,6 +405,18 @@ function soloAdmin(req, res, next) {
   if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   next();
 }
+// Limpieza de datos de prueba (solo admin): borra todo el historial de gestiones y
+// transiciones, y resetea los campos derivados de gestion en los leads. Los leads
+// NO se eliminan: vuelven a "Por contactar". Requiere confirmar:'BORRAR' en el body.
+app.post('/api/admin/limpiar-pruebas', soloAdmin, (req, res) => {
+  if (!req.body || req.body.confirmar !== 'BORRAR') return res.status(400).json({ error: 'Confirmación requerida' });
+  const g = db.prepare('SELECT COUNT(*) c FROM gestiones').get().c;
+  let t = 0; try { t = db.prepare('SELECT COUNT(*) c FROM transiciones_etapa').get().c; } catch (e) {}
+  db.exec('DELETE FROM gestiones');
+  try { db.exec('DELETE FROM transiciones_etapa'); } catch (e) {}
+  const upd = db.prepare('UPDATE leads SET montoReal=NULL, fechaCierreEstimada=NULL WHERE COALESCE(archivado,0)=0').run();
+  res.json({ ok: true, gestiones: g, transiciones: t, leadsReset: upd.changes });
+});
 // Admin y Jefa de Ventas pueden asignar/reasignar leads.
 function puedeAsignar(req, res, next) {
   if (req.user.rol !== 'admin' && req.user.rol !== 'jefa') {
@@ -1833,7 +1845,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.94 (Mi dia: numero centrado entre los 2 textos; Dashboard oculto para GP, visible solo admin/jefa) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.95 (chips meta redondeados min 1 con panel sobrio; kanban Sin contacto texto plano + chip Por calificar; filtro etapa sin cerrados ordenado por funnel y con nombres visibles) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

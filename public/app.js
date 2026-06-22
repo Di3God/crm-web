@@ -19,7 +19,7 @@ const PRIO_CLASE = { 'Muy alta': 'p-Muyalta', 'Alta': 'p-Alta', 'Media': 'p-Medi
 // sin tildes por estabilidad; aqui solo se traduce lo que ve el usuario.
 const ES = {
   // Etapas
-  'Contactabilidad 3x5': 'Contactabilidad 3x5',
+  'Contactabilidad 3x5': 'Por contactar',
   'Contactado - por calificar': 'Contactado · por calificar',
   'Calificado - pendiente agendar': 'Calificado · pendiente agendar',
   'Agendado - pendiente reunion': 'Agendado · pendiente reunión',
@@ -583,8 +583,10 @@ async function cargarLeads() {
   q.push('activos=0');
   LEADS = await api('/api/leads' + (q.length ? '?' + q.join('&') : ''));
   const fe = $('fEtapa'); const sel = fe.value;
-  const etapas = [...new Set(LEADS.map(l => l.etapa))];
-  fe.innerHTML = '<option value="">Toda etapa</option>' + etapas.map(e => '<option>' + e + '</option>').join('');
+  const ORDEN_FE = ['Contactabilidad 3x5', 'Contactado - por calificar', 'Calificado - pendiente agendar', 'Agendado - pendiente reunion', 'Reunion efectiva - seguimiento', 'Cierre pendiente', 'Cerrado ganado', 'Cerrado perdido'];
+  const etapas = [...new Set(LEADS.map(l => l.etapa))]
+    .sort((a, b) => ORDEN_FE.indexOf(a) - ORDEN_FE.indexOf(b));
+  fe.innerHTML = '<option value="">Toda etapa</option>' + etapas.map(e => '<option value="' + e + '">' + trEtapa(e) + '</option>').join('');
   fe.value = sel;
   render();
   cargarTarjetas();
@@ -768,9 +770,9 @@ function kanbanCard(l) {
   let estadoCalif = '';
   if (!calif) {
     const intxt = (l.intentos > 0)
-      ? l.intentos + (l.intentos === 1 ? ' intento' : ' intentos')
-      : 'sin contacto';
-    estadoCalif = '<span class="kestado porcal">○ Por calificar · ' + intxt + '</span>';
+      ? '<span class="kestado-int">' + l.intentos + (l.intentos === 1 ? ' intento' : ' intentos') + '</span>'
+      : '<span class="kestado-sc">Sin contacto</span>';
+    estadoCalif = intxt + '<span class="kestado porcal">Por calificar</span>';
   }
   const fechaCorta = l.fechaProxAccion ? fmtFechaHoraCorta(l.fechaProxAccion) : '';
   const lineaAccion = l.proximaAccion
@@ -2200,6 +2202,17 @@ async function archivarLead(codigo, nombre) {
 function descargarBackup() {
   window.location.href = '/api/backup';
 }
+// Limpieza de datos de prueba (solo admin). Doble confirmación por ser destructivo.
+async function limpiarPruebas() {
+  if (!confirm('Esto BORRARÁ todas las gestiones y transiciones (historial de prueba) y reseteará los leads a "Por contactar".\n\nLos leads NO se eliminan. Esta acción no se puede deshacer.\n\n¿Continuar?')) return;
+  const t = prompt('Para confirmar, escribe en mayúsculas: BORRAR');
+  if (t !== 'BORRAR') { alert('Cancelado. No se borró nada.'); return; }
+  try {
+    const r = await api('/api/admin/limpiar-pruebas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmar: 'BORRAR' }) });
+    alert('Listo. Gestiones borradas: ' + r.gestiones + ' · Transiciones: ' + r.transiciones + ' · Leads reseteados: ' + r.leadsReset);
+    cargarLeads();
+  } catch (e) { alert(e.message); }
+}
 
 async function cargarAuditoria() {
   // Archivados
@@ -2407,8 +2420,9 @@ function renderMiDia(d) {
   const tieneMeta = ['calificados', 'agendados', 'reuniones', 'cierres'].some(k => mh[k] != null);
   const chip = (lbl, k) => {
     const real = rh[k] || 0, meta = mh[k];
+    const metaDisp = (meta == null) ? null : (meta === 0 ? 0 : Math.max(1, Math.round(meta)));
     const ok = (meta != null && real >= meta);
-    return '<span class="md-chip' + (ok ? ' md-ok' : '') + '">' + lbl + ': <b>' + real + (meta != null ? '/' + meta : '') + '</b>' + (ok ? ' ✓' : '') + '</span>';
+    return '<span class="md-chip' + (ok ? ' md-ok' : '') + '">' + lbl + ': <b>' + real + (metaDisp != null ? '/' + metaDisp : '') + '</b>' + (ok ? ' ✓' : '') + '</span>';
   };
   h += '<div class="md-fila2"><span class="md-fila2-tit">Hoy vs meta</span>';
   h += chip('Calif', 'calificados') + chip('Agend', 'agendados') + chip('Reun', 'reuniones') + chip('Cierres', 'cierres');
