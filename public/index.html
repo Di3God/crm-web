@@ -23,7 +23,7 @@
       </div>
     </div>
     <div class="nav-item">
-      <button id="nv-dash" onclick="ir('dash')">Dashboard<span class="nv-car soloAdmin oculto">▾</span></button>
+      <button id="nv-dash" class="soloAdminJefa oculto" onclick="ir('dash')">Dashboard<span class="nv-car soloAdmin oculto">▾</span></button>
       <div class="subnav soloAdmin oculto">
         <button id="nv-cohortes" onclick="ir('cohortes')">Cohortes</button>
       </div>
@@ -31,17 +31,26 @@
     <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoría</button>
   </nav>
   <div class="top-user">
-    <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
-    <button class="top-icon soloAdmin oculto" onclick="abrirClave()" title="Contraseñas">🔑</button>
-    <button class="top-icon soloAdmin oculto" onclick="descargarBackup()" title="Descargar respaldo de la base">💾</button>
-    <button class="top-icon soloAdminJefa oculto" onclick="abrirAutoasig()" title="Auto-asignación de leads">🔀</button>
-    <button class="top-icon" onclick="logout()" title="Salir">↩</button>
+    <button class="tu-btn" id="tuBtn" onclick="toggleMenuUsuario(event)">
+      <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
+      <span class="tu-caret">▾</span>
+    </button>
+    <div class="tu-menu oculto" id="tuMenu">
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetas()">🎯 Asignar metas</button>
+      <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirVerMetas()">📊 Ver metas cargadas</button>
+      <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirAutoasig()">🔀 Auto-asignación</button>
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirClave()">🔑 Contraseñas</button>
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();descargarBackup()">💾 Descargar respaldo</button>
+      <div class="tu-sep"></div>
+      <button class="tu-item" onclick="cerrarMenuUsuario();logout()">↩ Cerrar sesión</button>
+    </div>
   </div>
 </header>
 
 <div class="content" id="content">
   <!-- ===== MIS LEADS ===== -->
   <section id="v-leads" class="vista act">
+    <div id="miDia" class="midia oculto"></div>
     <div id="tarjetas" class="tarjetas"></div>
     <div class="barra barra-leads">
       <h2>Gestión de oportunidades</h2>
@@ -49,9 +58,9 @@
       <div class="filtros-row">
         <div class="fechas">
           <span class="cal-ico">📅</span>
-          <input type="date" id="fDesde" onchange="cargarLeads()" title="Desde (fecha de asignación)">
+          <input type="date" id="fDesde" placeholder="desde" onchange="cargarLeads()" title="Desde (fecha de asignación)">
           <span class="fechas-sep">—</span>
-          <input type="date" id="fHasta" onchange="cargarLeads()" title="Hasta (fecha de asignación)">
+          <input type="date" id="fHasta" placeholder="hasta" onchange="cargarLeads()" title="Hasta (fecha de asignación)">
           <button class="fechas-x" onclick="limpiarFechas()" title="Limpiar fechas">✕</button>
         </div>
         <select id="selFiltro" class="asignador oculto" onchange="cargarLeads()" style="width:auto;padding:7px 9px">
@@ -118,6 +127,31 @@
     <div class="barra">
       <h2>Dashboard comercial</h2>
       <button class="btn sec" style="margin-left:auto" onclick="cargarDashboard()">⟳ Actualizar</button>
+    </div>
+    <!-- Avance vs meta del mes -->
+    <div class="db-bloque">
+      <div class="db-tit">Avance vs meta del mes <span id="dbAvMes" class="db-sub-inline"></span></div>
+      <div class="av-filtros">
+        <div id="avScope" class="av-scope"></div>
+        <span class="av-vista">
+          <button id="avVistaSem" class="av-chip act" onclick="avSetVista('semanas')">Semanas</button>
+          <button id="avVistaMes" class="av-chip" onclick="avSetVista('meses')">Meses</button>
+        </span>
+        <input type="month" id="avMes" onchange="avCambiarMes()">
+      </div>
+      <div class="av-sub2">Meta del mes</div>
+      <div id="avMeta"></div>
+      <div class="av-sub2">Real · avance por semana</div>
+      <div id="avReal"></div>
+      <div class="av-sub2">Proyección a fin de mes
+        <span class="av-proy-sel">
+          <button id="avProySimple" class="av-chip act" onclick="avSetProy('simple')">Ritmo simple</button>
+          <button id="avProyEmbudo" class="av-chip" onclick="avSetProy('embudo')">Embudo real</button>
+        </span>
+      </div>
+      <div id="avProy"></div>
+      <div class="av-sub2">Proyección por pipeline · negociación con cierre este mes</div>
+      <div id="avPipeline"></div>
     </div>
     <!-- Salud del dia -->
     <div class="db-bloque">
@@ -540,6 +574,53 @@
       <button class="btn sec" onclick="cerrar('ovAsignar')">Cancelar</button>
       <button class="btn" onclick="confirmarAsignar()">Asignar</button>
     </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: VER METAS CARGADAS ===== -->
+<div class="overlay" id="ovVerMetas">
+  <div class="modal" style="max-width:640px">
+    <h3>Metas cargadas</h3>
+    <div class="sub">Resumen de las metas mensuales por gestor y equipo. Cambia el mes para ver otros periodos.</div>
+    <div style="margin-bottom:10px;"><label>Mes</label><input type="month" id="vmMes" onchange="verMetas()" style="width:170px"></div>
+    <div id="vmTabla"></div>
+    <div class="error" id="vmError"></div>
+    <div class="acciones" style="margin-top:10px;">
+      <button class="btn sec" onclick="cerrar('ovVerMetas')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: METAS COMERCIALES ===== -->
+<div class="overlay" id="ovMetas">
+  <div class="modal" style="max-width:600px">
+    <div class="mt-head">
+      <h3 style="margin:0">Metas comerciales</h3>
+      <div class="mt-head-btns">
+        <button class="btn sec" onclick="cerrar('ovMetas')">Cerrar</button>
+        <button class="btn" onclick="guardarMetas()">Guardar metas</button>
+      </div>
+    </div>
+    <div class="sub">Define la meta mensual por etapa; las metas por día y semana se calculan solas (días hábiles lun-sáb). Abajo puedes fijar metas diarias para el mes.</div>
+    <div class="grid" style="grid-template-columns:1fr 160px; gap:10px; margin-bottom:6px;">
+      <div><label>Gestor</label><select id="mtAsesor" onchange="cargarMetas()"></select></div>
+      <div><label>Mes</label><input type="month" id="mtMes" onchange="cargarMetas()"></div>
+    </div>
+
+    <div class="mt-sec">Meta mensual</div>
+    <div id="mtMensual"></div>
+    <div class="acciones" style="margin-top:8px;">
+      <button class="btn sec" onclick="copiarMesAnterior()">Copiar mes anterior</button>
+    </div>
+
+    <div class="mt-sec" style="margin-top:16px;">Metas diarias</div>
+    <div class="sub" style="margin-top:0;">El botón aplica el prorrateo por día (meta mensual ÷ días hábiles que faltan). Toca una semana para abrir sus días y ajustar.</div>
+    <div id="mtSemana"></div>
+    <div class="acciones" style="margin-top:8px;">
+      <button class="btn sec" onclick="aplicarBaseSemana()">Aplicar prorrateo del mes</button>
+    </div>
+
+    <div class="error" id="mtError"></div>
   </div>
 </div>
 

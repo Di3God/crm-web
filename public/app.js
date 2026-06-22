@@ -216,6 +216,278 @@ async function toggleAutoasig(usuario, val) {
   } catch (e) { alert('Error al actualizar.'); }
 }
 
+// ---------- Metas comerciales ----------
+const MT_METRICAS = [
+  { k: 'asignados',   lbl: 'Leads asignados',     corto: 'Asign.' },
+  { k: 'calificados', lbl: 'Calificados',         corto: 'Calif.' },
+  { k: 'agendados',   lbl: 'Agendados',           corto: 'Agend.' },
+  { k: 'reuniones',   lbl: 'Reuniones efectivas', corto: 'Reun.' },
+  { k: 'cierres',     lbl: 'Cierres ganados',     corto: 'Cierres' },
+];
+let MT_DH_MES = 26;
+
+function mtISO(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function mtLabelDia(d) { const n = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; return n[d.getDay()] + ' ' + String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0'); }
+// Dias habiles (lun-sab) desde manana hasta el sabado de esa semana.
+function mtDiasSemana() {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const manana = new Date(hoy); manana.setDate(manana.getDate() + 1);
+  const fin = new Date(manana); fin.setDate(fin.getDate() + ((6 - manana.getDay() + 7) % 7));
+  const dias = []; const d = new Date(manana);
+  while (d <= fin) { if (d.getDay() !== 0) dias.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return dias;
+}
+
+function abrirMetas() {
+  const sel = $('mtAsesor');
+  sel.innerHTML = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto']
+    .map(g => '<option>' + g + '</option>').join('');
+  const now = new Date();
+  $('mtMes').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  $('mtError').classList.remove('act');
+  $('ovMetas').classList.add('act');
+  cargarMetas();
+}
+
+async function cargarMetas() {
+  const asesor = $('mtAsesor').value, mes = $('mtMes').value;
+  if (!asesor || !mes) return;
+  try {
+    const d = await api('/api/metas?asesor=' + encodeURIComponent(asesor) + '&mes=' + encodeURIComponent(mes));
+    MT_DH_MES = d.diasHabilesMes || 26;
+    renderMensual(d.mensual);
+    renderSemana(d.diario);
+  } catch (e) { $('mtError').textContent = e.message; $('mtError').classList.add('act'); }
+}
+
+function renderMensual(mensual) {
+  mensual = mensual || {};
+  let h = '';
+  MT_METRICAS.forEach((m, i) => {
+    const v = mensual[m.k] != null ? mensual[m.k] : '';
+    h += '<div class="mt-row"><span class="mt-lbl">' + m.lbl + '</span>' +
+      '<input type="number" min="0" id="mtm_' + m.k + '" value="' + v + '" oninput="mtNumEdit(\'' + m.k + '\')" style="width:84px">';
+    if (i === 0) {
+      h += '<span style="width:118px"></span>';
+    } else {
+      h += '<input type="number" min="0" max="100" id="mtp_' + m.k + '" class="mt-pct" placeholder="%" oninput="mtPctEdit(\'' + m.k + '\')">' +
+        '<span class="mt-pct-lbl"> % de ' + MT_METRICAS[i - 1].corto.replace('.', '').toLowerCase() + '</span>';
+    }
+    h += '<span class="mt-prorr" id="mtpr_' + m.k + '" style="margin-left:10px"></span></div>';
+  });
+  const vm = mensual.monto != null ? mensual.monto : '';
+  h += '<div class="mt-row"><span class="mt-lbl">Monto de cierre (S/)</span>' +
+    '<input type="number" min="0" id="mtm_monto" value="' + vm + '" style="width:120px"></div>';
+  $('mtMensual').innerHTML = h;
+  MT_METRICAS.forEach(m => mtProrr(m.k));
+}
+// Cascada: cada % se aplica sobre el NÚMERO de la etapa anterior (no sobre el total).
+function mtCascada() {
+  let prev = Number($('mtm_asignados').value) || 0;
+  mtProrr('asignados');
+  for (let i = 1; i < MT_METRICAS.length; i++) {
+    const k = MT_METRICAS[i].k;
+    const pctEl = $('mtp_' + k);
+    const pct = pctEl ? pctEl.value : '';
+    if (pct !== '') {
+      const num = Math.round(prev * (Number(pct) || 0) / 100);
+      $('mtm_' + k).value = num;
+      prev = num;
+    } else {
+      prev = Number($('mtm_' + k).value) || 0;
+    }
+    mtProrr(k);
+  }
+}
+function mtPctEdit(k) { mtCascada(); }
+function mtNumEdit(k) { const p = $('mtp_' + k); if (p) p.value = ''; mtCascada(); }
+function mtProrr(k) {
+  const el = $('mtm_' + k); if (!el) return;
+  const v = Number(el.value) || 0, dh = MT_DH_MES || 26;
+  const dia = v > 0 ? Math.max(1, Math.round(v / dh)) : 0;
+  const sem = v > 0 ? Math.max(1, Math.round(v / dh * 6)) : 0;
+  const sp = $('mtpr_' + k); if (sp) sp.textContent = v > 0 ? ('≈ ' + dia + ' / día · ' + sem + ' / semana') : '';
+}
+
+let MT_VAL = {};      // { iso: { etapa: valor } } fuente de verdad de la grilla diaria
+let MT_EXP = {};      // { semanaIdx: bool } semanas expandidas
+let MT_SEMANAS = [];  // semanas del periodo restante
+
+function mtLabelCorto(d) { return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0'); }
+
+// Dias habiles (lun-sab) desde manana (o dia 1 si el mes es futuro) hasta fin de mes.
+function mtDiasRestantes(mes) {
+  const [y, m] = mes.split('-').map(Number);
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const manana = new Date(hoy); manana.setDate(manana.getDate() + 1);
+  const ini = new Date(y, m - 1, 1);
+  const desde = manana > ini ? manana : ini;
+  const fin = new Date(y, m, 0);
+  const dias = []; const d = new Date(desde);
+  while (d <= fin) { if (d.getDay() !== 0) dias.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return dias;
+}
+function mtAgruparSemanas(dias) {
+  const semanas = [], byKey = {};
+  dias.forEach(d => {
+    const lunes = new Date(d); lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
+    const key = mtISO(lunes);
+    if (byKey[key] == null) { byKey[key] = semanas.length; semanas.push({ idx: semanas.length, dias: [] }); }
+    semanas[byKey[key]].dias.push(d);
+  });
+  semanas.forEach((s, i) => { s.label = 'Sem ' + (i + 1); s.rango = mtLabelCorto(s.dias[0]) + '–' + mtLabelCorto(s.dias[s.dias.length - 1]); });
+  return semanas;
+}
+// Prorrateo por dia = meta mensual / dias habiles restantes (min 1).
+// Prorrateo EXACTO por dia = meta mensual / dias habiles restantes (sin redondear).
+function mtProrrateoDia(k) {
+  const nDias = mtDiasRestantes($('mtMes').value).length || 1;
+  const meta = Number(($('mtm_' + k) || {}).value) || 0;
+  return meta > 0 ? meta / nDias : 0;
+}
+// Display: minimo 1 visual cuando hay valor; vacio si 0.
+function mtMostrar(v) { v = Number(v) || 0; return v > 0 ? Math.max(1, Math.round(v)) : ''; }
+
+function renderSemana(diario) {
+  diario = diario || {};
+  MT_VAL = {}; MT_EXP = {};
+  Object.keys(diario).forEach(iso => { MT_VAL[iso] = Object.assign({}, diario[iso]); });
+  MT_SEMANAS = mtAgruparSemanas(mtDiasRestantes($('mtMes').value));
+  $('mtSemana').innerHTML = '<div id="mtGrid"></div>';
+  renderGridSemanas();
+}
+
+function renderGridSemanas() {
+  let h = '<div style="overflow-x:auto"><table class="mt-tabla"><thead><tr><th>Etapa</th>';
+  MT_SEMANAS.forEach(s => {
+    const flecha = MT_EXP[s.idx] ? ' ▾' : ' ▸';
+    const span = MT_EXP[s.idx] ? ' colspan="' + s.dias.length + '"' : '';
+    h += '<th' + span + '><button class="mt-wk" onclick="mtToggleSemana(' + s.idx + ')">' + s.label + flecha + '</button></th>';
+  });
+  h += '</tr><tr><th></th>';
+  MT_SEMANAS.forEach(s => {
+    if (MT_EXP[s.idx]) s.dias.forEach(d => h += '<th class="mt-sub">' + mtLabelCorto(d) + '</th>');
+    else h += '<th class="mt-sub">' + s.rango + '</th>';
+  });
+  h += '</tr></thead><tbody>';
+  MT_METRICAS.forEach(m => {
+    h += '<tr><td>' + m.lbl + '</td>';
+    MT_SEMANAS.forEach(s => {
+      if (MT_EXP[s.idx]) {
+        s.dias.forEach(d => {
+          const iso = mtISO(d);
+          const v = (MT_VAL[iso] && MT_VAL[iso][m.k] != null) ? mtMostrar(MT_VAL[iso][m.k]) : '';
+          h += '<td><input type="number" min="0" value="' + v + '" oninput="mtSetDia(\'' + iso + '\',\'' + m.k + '\',this.value)" style="width:48px"></td>';
+        });
+      } else {
+        let sum = 0; s.dias.forEach(d => { sum += Number((MT_VAL[mtISO(d)] || {})[m.k]) || 0; });
+        h += '<td style="color:var(--muted)">' + (sum > 0 ? Math.round(sum) : '·') + '</td>';
+      }
+    });
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  $('mtGrid').innerHTML = h;
+}
+function mtSetDia(iso, k, val) { MT_VAL[iso] = MT_VAL[iso] || {}; if (val === '') delete MT_VAL[iso][k]; else MT_VAL[iso][k] = Number(val) || 0; }
+function mtToggleSemana(idx) { MT_EXP[idx] = !MT_EXP[idx]; renderGridSemanas(); }
+
+function aplicarBaseSemana() {
+  const dias = mtDiasRestantes($('mtMes').value);
+  MT_METRICAS.forEach(m => {
+    const base = mtProrrateoDia(m.k);
+    if (!base) return;
+    dias.forEach(d => { const iso = mtISO(d); (MT_VAL[iso] = MT_VAL[iso] || {})[m.k] = base; });
+  });
+  renderGridSemanas();
+}
+
+async function mtPost(asesor, filas, okMsg) {
+  $('mtError').classList.remove('act');
+  try {
+    const r = await api('/api/metas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesor, filas }) });
+    alert(okMsg + (r && r.guardadas != null ? ' (' + r.guardadas + ')' : ''));
+  } catch (e) { $('mtError').textContent = e.message; $('mtError').classList.add('act'); }
+}
+function mtMensualCompleta() {
+  for (const m of MT_METRICAS) { if (!(Number($('mtm_' + m.k).value) > 0)) return false; }
+  return Number($('mtm_monto').value) > 0;
+}
+function mtDiariaCompleta() {
+  const dias = mtDiasRestantes($('mtMes').value);
+  if (!dias.length) return true;
+  for (const d of dias) {
+    const iso = mtISO(d);
+    for (const m of MT_METRICAS) { if ((MT_VAL[iso] || {})[m.k] == null) return false; }
+  }
+  return true;
+}
+function mtAviso(msg) { $('mtError').textContent = msg; $('mtError').classList.add('act'); }
+
+async function guardarMetas() {
+  const asesor = $('mtAsesor').value, mes = $('mtMes').value;
+  if (!asesor || !mes) return;
+  $('mtError').classList.remove('act');
+  if (!mtMensualCompleta()) { mtAviso('Completa todas las metas mensuales (incluido el monto) antes de guardar.'); return; }
+  if (!mtDiariaCompleta()) { mtAviso('Faltan metas diarias. Usa "Aplicar prorrateo del mes" o llena los días pendientes.'); return; }
+  const filas = MT_METRICAS.map(m => ({ ambito: 'mensual', periodo: mes, metrica: m.k, valor: Number($('mtm_' + m.k).value) || 0 }));
+  filas.push({ ambito: 'mensual', periodo: mes, metrica: 'monto', valor: Number($('mtm_monto').value) || 0 });
+  Object.keys(MT_VAL).forEach(iso => {
+    MT_METRICAS.forEach(m => { if (MT_VAL[iso][m.k] != null) filas.push({ ambito: 'diario', periodo: iso, metrica: m.k, valor: Number(MT_VAL[iso][m.k]) || 0 }); });
+  });
+  mtPost(asesor, filas, 'Metas guardadas.');
+}
+async function copiarMesAnterior() {
+  const asesor = $('mtAsesor').value, mes = $('mtMes').value; if (!asesor || !mes) return;
+  const [y, m] = mes.split('-').map(Number);
+  const prev = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+  try {
+    const d = await api('/api/metas?asesor=' + encodeURIComponent(asesor) + '&mes=' + prev);
+    renderMensual(d.mensual);
+    alert('Metas de ' + prev + ' copiadas. Revisa y guarda.');
+  } catch (e) { $('mtError').textContent = e.message; $('mtError').classList.add('act'); }
+}
+
+// ---------- Menú desplegable del usuario ----------
+function toggleMenuUsuario(e) { if (e) e.stopPropagation(); $('tuMenu').classList.toggle('oculto'); }
+function cerrarMenuUsuario() { $('tuMenu').classList.add('oculto'); }
+document.addEventListener('click', function (e) {
+  const menu = $('tuMenu'), btn = $('tuBtn');
+  if (menu && !menu.classList.contains('oculto') && !menu.contains(e.target) && btn && !btn.contains(e.target)) menu.classList.add('oculto');
+});
+
+// ---------- Ver metas cargadas (vista de consulta) ----------
+function abrirVerMetas() {
+  const now = new Date();
+  $('vmMes').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  $('vmError').classList.remove('act');
+  $('ovVerMetas').classList.add('act');
+  verMetas();
+}
+async function verMetas() {
+  const mes = $('vmMes').value; if (!mes) return;
+  try {
+    const d = await api('/api/metas/resumen?mes=' + encodeURIComponent(mes));
+    const gps = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'];
+    const cols = MT_METRICAS.concat([{ k: 'monto', corto: 'Monto' }]);
+    const fmt = (c, v) => v == null ? '·' : (c.k === 'monto' ? 'S/ ' + Number(v).toLocaleString('es-PE') : v);
+    let h = '<div style="overflow-x:auto"><table class="mt-tabla"><thead><tr><th>Gestor</th>';
+    cols.forEach(c => h += '<th class="mt-sub">' + c.corto + '</th>');
+    h += '</tr></thead><tbody>';
+    const suma = {};
+    gps.forEach(a => {
+      const m = d.asesores[a] || {};
+      h += '<tr><td>' + a + '</td>';
+      cols.forEach(c => { if (m[c.k] != null) suma[c.k] = (suma[c.k] || 0) + Number(m[c.k]); h += '<td>' + fmt(c, m[c.k]) + '</td>'; });
+      h += '</tr>';
+    });
+    h += '<tr class="mt-suma"><td>Equipo (jefa)</td>';
+    cols.forEach(c => h += '<td>' + fmt(c, suma[c.k]) + '</td>');
+    h += '</tr></tbody></table></div>';
+    $('vmTabla').innerHTML = h;
+  } catch (e) { $('vmError').textContent = e.message; $('vmError').classList.add('act'); }
+}
+
 // ---------- Inicio ----------
 async function init() {
   try { YO = await api('/api/me'); cerrar('ovLogin'); await arrancar(); }
@@ -297,6 +569,7 @@ function cerrar(id) { $(id).classList.remove('act'); }
 let LEADS = [], ordenCampo = 'prioridad', ordenDir = 1;
 
 async function cargarLeads() {
+  cargarMiDia();
   let q = [];
   if (veTodoJS()) {
     const filtro = $('selFiltro').value;
@@ -318,6 +591,7 @@ async function cargarLeads() {
 }
 
 async function cargarTarjetas() {
+  if (!veTodoJS()) { const t = $('tarjetas'); if (t) t.innerHTML = ''; return; }  // GP usa "Mi día"
   let q = [];
   const desde = $('fDesde').value, hasta = $('fHasta').value;
   if (desde) q.push('desde=' + desde);
@@ -358,6 +632,14 @@ function leadsVisibles(incluirCerrados) {
   const fp = $('fPrioridad').value, fe = $('fEtapa').value;
   if (fp) arr = arr.filter(l => l.prioridad === fp);
   if (fe) arr = arr.filter(l => l.etapa === fe);
+  if (typeof MD_FILTRO !== 'undefined' && MD_FILTRO) {
+    const h0 = new Date(); h0.setHours(0, 0, 0, 0);
+    const mn = new Date(h0); mn.setDate(mn.getDate() + 1);
+    const act = l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido';
+    if (MD_FILTRO === 'sincontactar') arr = arr.filter(l => l.etapa === 'Contactabilidad 3x5');
+    else if (MD_FILTRO === 'vencidos') arr = arr.filter(l => act(l) && l.fechaProxAccion && new Date(l.fechaProxAccion) < h0);
+    else if (MD_FILTRO === 'parahoy') arr = arr.filter(l => act(l) && l.fechaProxAccion && new Date(l.fechaProxAccion) >= h0 && new Date(l.fechaProxAccion) < mn);
+  }
   if (ordenCampo) {
     arr.sort((a, b) => {
       // Orden por prioridad: desempate por frescura (asignado mas reciente arriba),
@@ -1817,6 +2099,7 @@ async function cargarCohortes() {
 }
 
 async function cargarDashboard() {
+  cargarAvance();
   const d = await api('/api/dashboard');
   const fmtS = n => 'S/ ' + Math.round(n || 0).toLocaleString('es-PE');
 
@@ -1970,3 +2253,181 @@ window.addEventListener('scroll', () => {
 });
 
 init();
+
+// ---------- Avance vs meta del mes (embudo semanal + proyeccion) ----------
+let AV_MES = '', AV_SCOPE = 'EQUIPO', AV_PROY = 'simple', AV_VISTA = 'semanas', AV_DATA = null;
+const AV_FILAS = [
+  { t: 'num', k: 'asignados', lbl: 'Asign.' },
+  { t: 'num', k: 'calificados', lbl: 'Calif.' },
+  { t: 'pct', num: 'calificados', den: 'asignados', lbl: '%Calif/Asign' },
+  { t: 'num', k: 'agendados', lbl: 'Agend.' },
+  { t: 'pct', num: 'agendados', den: 'calificados', lbl: '%Agend/Calif' },
+  { t: 'num', k: 'reuniones', lbl: 'Reun.' },
+  { t: 'pct', num: 'reuniones', den: 'agendados', lbl: '%Reun/Agend' },
+  { t: 'num', k: 'negociacion', lbl: 'En negociación', soloReal: true },
+  { t: 'num', k: 'cierres', lbl: 'Cierres' },
+  { t: 'pct', num: 'cierres', den: 'reuniones', lbl: '%Cierres/Reun' },
+  { t: 'monto', k: 'monto', lbl: 'Monto' }
+];
+async function cargarAvance() {
+  if (!AV_MES) { const n = new Date(); AV_MES = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); }
+  if ($('avMes')) $('avMes').value = AV_MES;
+  try {
+    AV_DATA = await api('/api/dashboard/avance?mes=' + AV_MES + '&scope=' + encodeURIComponent(AV_SCOPE) + '&vista=' + AV_VISTA);
+    if (!AV_DATA || !AV_DATA.semanas || !AV_DATA.meta) {
+      if ($('avMeta')) $('avMeta').innerHTML = '<div class="sub">El servidor está corriendo una versión anterior. Reinicia Node (server.js v1.85+) y recarga la página.</div>';
+      if ($('avReal')) $('avReal').innerHTML = '';
+      if ($('avProy')) $('avProy').innerHTML = '';
+      return;
+    }
+    renderScopeAv();
+    renderAvance();
+  } catch (e) { if ($('avMeta')) $('avMeta').innerHTML = '<div class="sub">No se pudo cargar el avance.</div>'; }
+}
+function avCambiarMes() { AV_MES = $('avMes').value; cargarAvance(); }
+function avSetScope(s) { AV_SCOPE = s; cargarAvance(); }
+function avSetVista(v) { AV_VISTA = v; $('avVistaSem').classList.toggle('act', v === 'semanas'); $('avVistaMes').classList.toggle('act', v === 'meses'); cargarAvance(); }
+function avSetProy(p) { AV_PROY = p; $('avProySimple').classList.toggle('act', p === 'simple'); $('avProyEmbudo').classList.toggle('act', p === 'embudo'); renderProy(); }
+function renderScopeAv() {
+  const cont = $('avScope'); if (!cont) return;
+  if (!veTodoJS()) { cont.innerHTML = ''; return; }
+  const opts = [['EQUIPO', 'Equipo']].concat(['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'].map(g => [g, g.split(' ')[0]]));
+  cont.innerHTML = opts.map(([v, l]) => '<button class="av-chip' + (AV_DATA.scope === v ? ' act' : '') + '" onclick="avSetScope(\'' + v + '\')">' + l + '</button>').join('');
+}
+function avPct(num, den) { return den > 0 ? Math.round(num / den * 100) + '%' : '\u2014'; }
+function avMontoCompacto(v) { v = Number(v || 0); if (v >= 1e6) return 'S/ ' + (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M'; if (v >= 1000) return 'S/ ' + Math.round(v / 1000) + 'k'; return 'S/ ' + v; }
+function avNum(v, esMonto) { return esMonto ? avMontoCompacto(v) : (v || 0); }
+function avTabla(data, esMeta) {
+  const sem = AV_DATA.semanas;
+  let h = '<div style="overflow-x:auto"><table class="mt-tabla av-funnel"><thead><tr><th></th>';
+  sem.forEach(s => h += '<th>' + s.label + '</th>');
+  h += '<th class="av-total">Total</th></tr></thead><tbody>';
+  AV_FILAS.forEach(f => {
+    if (esMeta && f.soloReal) return;
+    h += '<tr class="' + (f.t === 'pct' ? 'av-rpct' : '') + '"><td>' + f.lbl + '</td>';
+    sem.forEach((s, i) => {
+      if (f.t === 'num') h += '<td>' + Math.round(data[f.k].sem[i] || 0) + '</td>';
+      else if (f.t === 'monto') h += '<td>' + ((esMeta && AV_VISTA === 'semanas') ? '—' : avNum(data[f.k].sem[i], true)) + '</td>';
+      else h += '<td>' + avPct(data[f.num].sem[i], data[f.den].sem[i]) + '</td>';
+    });
+    if (f.t === 'num') h += '<td class="av-total">' + Math.round(data[f.k].total || 0) + '</td>';
+    else if (f.t === 'monto') h += '<td class="av-total">' + avNum(data[f.k].total, true) + '</td>';
+    else h += '<td class="av-total">' + avPct(data[f.num].total, data[f.den].total) + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+  return h;
+}
+function renderAvance() {
+  const d = AV_DATA; if (!d) return;
+  const mesEl = $('dbAvMes'); if (mesEl) mesEl.textContent = '\u00b7 ' + d.mes + ' \u00b7 d\u00eda h\u00e1bil ' + d.dhTrans + ' de ' + d.dhMes;
+  $('avMeta').innerHTML = avTabla(d.meta, true);
+  $('avReal').innerHTML = avTabla(d.real, false);
+  renderProy();
+  renderPipeline();
+}
+function renderPipeline() {
+  const d = AV_DATA; const cont = $('avPipeline'); if (!cont || !d || !d.pipeline) return;
+  const p = d.pipeline; const m = v => avMontoCompacto(v);
+  const cmp = p.metaMonto > 0 ? Math.round(p.proyeccionMes / p.metaMonto * 100) : null;
+  const cmpCls = cmp == null ? '' : (cmp >= 100 ? 'av-ok' : (cmp >= 85 ? '' : 'av-low'));
+  let h = '<table class="mt-tabla av-pipe"><tbody>';
+  h += '<tr><td>Ganado del mes</td><td>' + m(p.ganadoMes) + '</td></tr>';
+  h += '<tr><td>En negociación · por vencer (' + p.nVencer + ')</td><td>' + m(p.porVencer) + '</td></tr>';
+  h += '<tr><td>En negociación · vencidas, en riesgo (' + p.nVencida + ')</td><td class="' + (p.vencida > 0 ? 'av-low' : '') + '">' + m(p.vencida) + '</td></tr>';
+  h += '<tr class="mt-suma"><td>Proyección de monto (pipeline)</td><td>' + m(p.proyeccionMes) + '</td></tr>';
+  h += '<tr><td>Meta de monto</td><td>' + m(p.metaMonto) + '</td></tr>';
+  h += '<tr><td>Cumplimiento</td><td class="' + cmpCls + '">' + (cmp == null ? '—' : cmp + '%') + '</td></tr>';
+  h += '</tbody></table>';
+  cont.innerHTML = h;
+}
+function renderProy() {
+  const d = AV_DATA; const cont = $('avProy'); if (!cont || !d) return;
+  const factor = d.dhTrans > 0 ? d.dhMes / d.dhTrans : 0;
+  const sr = d.selReal || {}, sm = d.selMeta || {};
+  const METR = [{ k: 'asignados', l: 'Asign.' }, { k: 'calificados', l: 'Calif.' }, { k: 'agendados', l: 'Agend.' }, { k: 'reuniones', l: 'Reun.' }, { k: 'cierres', l: 'Cierres' }, { k: 'monto', l: 'Monto', monto: true }];
+  const proy = {};
+  if (AV_PROY === 'simple') {
+    METR.forEach(m => { proy[m.k] = Math.round((sr[m.k] || 0) * factor); });
+  } else {
+    proy.asignados = Math.round((sr.asignados || 0) * factor);
+    const conv = (a, b) => (sr[b] > 0 ? sr[a] / sr[b] : 0);
+    proy.calificados = Math.round(proy.asignados * conv('calificados', 'asignados'));
+    proy.agendados = Math.round(proy.calificados * conv('agendados', 'calificados'));
+    proy.reuniones = Math.round(proy.agendados * conv('reuniones', 'agendados'));
+    proy.cierres = Math.round(proy.reuniones * conv('cierres', 'reuniones'));
+    const ticket = sr.cierres > 0 ? sr.monto / sr.cierres : 0;
+    proy.monto = Math.round(proy.cierres * ticket);
+  }
+  let h = '<div style="overflow-x:auto"><table class="mt-tabla av-funnel"><thead><tr><th></th>';
+  METR.forEach(m => h += '<th>' + m.l + '</th>'); h += '</tr></thead><tbody>';
+  h += '<tr><td>Real a hoy</td>' + METR.map(m => '<td>' + avNum(sr[m.k], m.monto) + '</td>').join('') + '</tr>';
+  h += '<tr><td>Proyectado fin de mes</td>' + METR.map(m => '<td>' + avNum(proy[m.k], m.monto) + '</td>').join('') + '</tr>';
+  h += '<tr><td>Meta</td>' + METR.map(m => '<td>' + avNum(sm[m.k], m.monto) + '</td>').join('') + '</tr>';
+  h += '<tr class="mt-suma"><td>Cumplimiento proy.</td>' + METR.map(m => {
+    const meta = sm[m.k]; const cmp = meta > 0 ? Math.round(proy[m.k] / meta * 100) : null;
+    const cls = cmp == null ? '' : (cmp >= 100 ? 'av-ok' : (cmp >= 85 ? '' : 'av-low'));
+    return '<td class="' + cls + '">' + (cmp == null ? '\u2014' : cmp + '%') + '</td>';
+  }).join('') + '</tr>';
+  h += '</tbody></table></div>';
+  cont.innerHTML = h;
+}
+
+// ---------- "Mi día": cabecera de pulso del GP en Mis Leads ----------
+async function cargarMiDia() {
+  const cont = $('miDia'); if (!cont) return;
+  if (veTodoJS()) { cont.classList.add('oculto'); return; }  // solo gestoras
+  try {
+    const d = await api('/api/midia');
+    renderMiDia(d);
+    cont.classList.remove('oculto');
+  } catch (e) { cont.classList.add('oculto'); }
+}
+function renderMiDia(d) {
+  const u = d.urgencias || {};
+  const speed = (d.speedMin == null) ? '—' : (d.speedMin < 60 ? d.speedMin + ' min' : (d.speedMin < 1440 ? (d.speedMin / 60).toFixed(1) + ' h' : (d.speedMin / 1440).toFixed(1) + ' d'));
+  const card = (ico, tono, etiqueta, valor, sub, filtro) => {
+    const act = (filtro && MD_FILTRO === filtro) ? ' md-activo' : '';
+    const onclick = filtro ? ' onclick="filtroRapido(\'' + filtro + '\')" role="button" tabindex="0"' : '';
+    return '<div class="md-card2 ' + tono + act + '"' + onclick + '>' +
+      '<span class="md-ico">' + (ICO_HL[ico] || '') + '</span>' +
+      '<div class="md-txt"><div class="md-et">' + etiqueta + '</div>' +
+      '<div class="md-v">' + valor + '</div>' +
+      (sub ? '<div class="md-sub">' + sub + '</div>' : '') + '</div></div>';
+  };
+  let h = '<div class="md-fila">';
+  h += card('user', u.nuevosSinContactar > 0 ? 'azul' : '', 'Nuevos sin contactar', u.nuevosSinContactar || 0, (d.asignadosHoy || 0) + ' asignados hoy', 'sincontactar');
+  h += card('reloj', u.vencidos > 0 ? 'rojo' : '', 'Vencidos', u.vencidos || 0, 'Requieren atención', 'vencidos');
+  h += card('cal', '', 'Para hoy', u.paraHoy || 0, 'Acciones programadas', 'parahoy');
+  h += card('grafico', '', 'Speed-to-call', speed, 'Asignación → 1er contacto', null);
+  h += card('trofeo', 'verde', 'Ganados hoy', d.ganadosHoy || 0, 'Cierres del día', null);
+  h += '</div>';
+  // chips pequeños: hoy vs meta por etapa
+  const mh = d.metaHoy || {}, rh = d.realHoy || {};
+  const tieneMeta = ['calificados', 'agendados', 'reuniones', 'cierres'].some(k => mh[k] != null);
+  const chip = (lbl, k) => {
+    const real = rh[k] || 0, meta = mh[k];
+    const ok = (meta != null && real >= meta);
+    return '<span class="md-chip' + (ok ? ' md-ok' : '') + '">' + lbl + ': <b>' + real + (meta != null ? '/' + meta : '') + '</b>' + (ok ? ' ✓' : '') + '</span>';
+  };
+  h += '<div class="md-fila2"><span class="md-fila2-tit">Hoy vs meta</span>';
+  h += chip('Calif', 'calificados') + chip('Agend', 'agendados') + chip('Reun', 'reuniones') + chip('Cierres', 'cierres');
+  if (!tieneMeta) h += '<span class="md-nometa">· sin meta diaria cargada</span>';
+  h += '</div>';
+  $('miDia').innerHTML = h;
+}
+let MD_FILTRO = '';
+function filtroRapido(tipo) {
+  ir('leads');
+  MD_FILTRO = (MD_FILTRO === tipo) ? '' : tipo;
+  const fp = $('fPrioridad'), fe = $('fEtapa'); if (fp) fp.value = ''; if (fe) fe.value = '';
+  render();
+  if ($('miDia') && !$('miDia').classList.contains('oculto')) { try { renderMiDiaActivo(); } catch (e) {} }
+}
+function renderMiDiaActivo() {
+  document.querySelectorAll('#miDia .md-card2').forEach(el => {
+    const oc = el.getAttribute('onclick') || '';
+    const m = oc.match(/filtroRapido\('([^']+)'\)/);
+    el.classList.toggle('md-activo', !!(m && m[1] === MD_FILTRO));
+  });
+}

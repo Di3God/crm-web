@@ -386,6 +386,27 @@ function setHora(fecha, hora) {
   return fecha;
 }
 
+// ---------- Dias habiles para prorrateo de metas (lun-sab; domingo no cuenta) ----------
+function esDiaHabil(fecha) { return new Date(fecha).getDay() !== 0; }
+// Cuenta dias habiles inclusivos entre 'desde' y 'hasta'.
+function contarDiasHabiles(desde, hasta) {
+  const d = new Date(desde); d.setHours(0, 0, 0, 0);
+  const fin = new Date(hasta); fin.setHours(0, 0, 0, 0);
+  let n = 0;
+  while (d <= fin) { if (d.getDay() !== 0) n++; d.setDate(d.getDate() + 1); }
+  return n;
+}
+// Dias habiles del mes (mes0: 0=enero).
+function diasHabilesMes(anio, mes0) {
+  return contarDiasHabiles(new Date(anio, mes0, 1), new Date(anio, mes0 + 1, 0));
+}
+// Dias habiles transcurridos del mes hasta 'hasta' (inclusive).
+function diasHabilesTranscurridos(anio, mes0, hasta) {
+  const finMes = new Date(anio, mes0 + 1, 0);
+  const tope = new Date(hasta) < finMes ? new Date(hasta) : finMes;
+  return contarDiasHabiles(new Date(anio, mes0, 1), tope);
+}
+
 // Devuelve Date o null (Desestimar limpia, otras acciones sin regla -> null)
 function autocalcularFechaProxAccion(proximaAccion, fechaReunion, ahora) {
   const now = ahora || new Date();
@@ -861,3 +882,7 @@ module.exports.montoARango = montoARango;
 module.exports.montoEtiquetaANumero = montoEtiquetaANumero;
 module.exports.normalizarLeadMarketing = normalizarLeadMarketing;
 module.exports.validarFilaImport = validarFilaImport;
+module.exports.esDiaHabil = esDiaHabil;
+module.exports.contarDiasHabiles = contarDiasHabiles;
+module.exports.diasHabilesMes = diasHabilesMes;
+module.exports.diasHabilesTranscurridos = diasHabilesTranscurridos;

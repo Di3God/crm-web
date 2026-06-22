@@ -89,6 +89,15 @@ db.exec(`
     asesor TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_trans_codigo ON transiciones_etapa(codigo);
+  CREATE TABLE IF NOT EXISTS metas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asesor TEXT NOT NULL,
+    ambito TEXT NOT NULL,
+    periodo TEXT NOT NULL,
+    metrica TEXT NOT NULL,
+    valor REAL NOT NULL,
+    UNIQUE(asesor, ambito, periodo, metrica)
+  );
   CREATE TABLE IF NOT EXISTS llamadas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     aircall_id TEXT UNIQUE,
@@ -1298,6 +1307,43 @@ app.get('/api/cohortes', soloAdmin, (req, res) => {
 });
 
 // ---------- Dashboard ----------
+// "Mi día": pulso del GP para la cabecera de Mis Leads (urgencias + avance de hoy vs meta diaria).
+app.get('/api/midia', (req, res) => {
+  const asesor = req.user.nombre;
+  const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND asesor=?').all(asesor).map(leadConsolidado);
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const man = new Date(hoy); man.setDate(man.getDate() + 1);
+  const ahora = new Date();
+  const esCerrado = e => e === 'Cerrado ganado' || e === 'Cerrado perdido';
+  const ord = { 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6 };
+  const activos = leads.filter(l => !esCerrado(l.etapa));
+  const paraHoy = activos.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) >= hoy && new Date(l.fechaProxAccion) < man).length;
+  const vencidos = activos.filter(l => l.fechaProxAccion && new Date(l.fechaProxAccion) < hoy).length;
+  const nuevosSinContactar = leads.filter(l => l.etapa === 'Contactabilidad 3x5').length;
+  const calificadosMas = activos.filter(l => (ord[l.etapa] || 0) >= 2).length;
+
+  const isoHoy = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+  const metaHoy = {}; db.prepare("SELECT metrica,valor FROM metas WHERE asesor=? AND ambito='diario' AND periodo=?").all(asesor, isoHoy).forEach(r => metaHoy[r.metrica] = r.valor);
+  const agg = agregarRealBuckets([asesor], [{ ini: hoy, fin: ahora }]);
+  const realHoy = { calificados: agg.calificados.total, agendados: agg.agendados.total, reuniones: agg.reuniones.total, cierres: agg.cierres.total };
+
+  // asignados hoy
+  const asignadosHoy = leads.filter(l => l.fechaAsignacion && new Date(l.fechaAsignacion) >= hoy && new Date(l.fechaAsignacion) < man).length;
+
+  // speed-to-call: promedio de (primer gestion - fechaAsignacion) en minutos
+  let speedMin = null;
+  const codigos = leads.map(l => l.codigo);
+  if (codigos.length) {
+    const phc = codigos.map(() => '?').join(',');
+    const prim = db.prepare(`SELECT codigo, MIN(fecha) f FROM gestiones WHERE codigo IN (${phc}) GROUP BY codigo`).all(...codigos);
+    const fAsig = {}; leads.forEach(l => { if (l.fechaAsignacion) fAsig[l.codigo] = new Date(l.fechaAsignacion); });
+    let suma = 0, n = 0;
+    prim.forEach(g => { const fa = fAsig[g.codigo]; if (fa && g.f) { const d = (new Date(g.f) - fa) / 60000; if (d >= 0) { suma += d; n++; } } });
+    speedMin = n ? Math.round(suma / n) : null;
+  }
+
+  res.json({ asesor, urgencias: { paraHoy, vencidos, nuevosSinContactar, calificadosMas }, asignadosHoy, ganadosHoy: realHoy.cierres, speedMin, metaHoy, realHoy });
+});
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
@@ -1403,6 +1449,138 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
+// ---------- Avance vs meta (conecta metas con la realidad) ----------
+const ORDEN_ETAPA = {
+  'Contactabilidad 3x5': 0, 'Contactado - por calificar': 1,
+  'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3,
+  'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6
+};
+// Semanas calendario del mes (lun-dom), recortadas a los bordes del mes.
+// Fusiona tramos con 0 dias habiles (ej. un domingo suelto al inicio) para no generar semanas fantasma.
+function semanasDelMes(y, m0) {
+  const ini = new Date(y, m0, 1); const fin = new Date(y, m0 + 1, 0, 23, 59, 59);
+  const crudas = []; let cur = new Date(y, m0, 1);
+  while (cur <= fin) {
+    const lunes = new Date(cur); lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
+    const finSem = new Date(lunes); finSem.setDate(finSem.getDate() + 6); finSem.setHours(23, 59, 59, 999);
+    const wIni = cur < ini ? new Date(ini) : new Date(cur); wIni.setHours(0, 0, 0, 0);
+    const wFin = finSem > fin ? new Date(fin) : new Date(finSem);
+    crudas.push({ ini: wIni, fin: wFin });
+    cur = new Date(finSem); cur.setDate(cur.getDate() + 1); cur.setHours(0, 0, 0, 0);
+  }
+  const out = [];
+  for (let i = 0; i < crudas.length; i++) {
+    const wd = L.contarDiasHabiles(crudas[i].ini, crudas[i].fin);
+    if (wd === 0) {
+      if (i + 1 < crudas.length) { crudas[i + 1].ini = crudas[i].ini; continue; } // fusiona con la siguiente
+      if (out.length) { out[out.length - 1].fin = crudas[i].fin; continue; }       // o con la anterior
+    }
+    out.push(crudas[i]);
+  }
+  out.forEach((s, i) => s.idx = i);
+  return out;
+}
+// Agrega lo real por buckets (cada bucket {ini,fin}). Devuelve {metrica:{sem:[...], total}}.
+function agregarRealBuckets(asesores, buckets) {
+  const METR = ['asignados', 'calificados', 'agendados', 'reuniones', 'negociacion', 'cierres', 'monto'];
+  const res = {}; METR.forEach(k => res[k] = { sem: buckets.map(() => 0), total: 0 });
+  const idxDe = f => { for (let i = 0; i < buckets.length; i++) { if (f >= buckets[i].ini && f <= buckets[i].fin) return i; } return -1; };
+  const sumar = (k, f, v) => { const i = idxDe(f); if (i < 0) return; res[k].sem[i] += v; res[k].total += v; };
+  const ph = asesores.map(() => '?').join(',');
+  db.prepare(`SELECT fechaAsignacion FROM leads WHERE asesor IN (${ph}) AND COALESCE(archivado,0)=0 AND fechaAsignacion IS NOT NULL`).all(...asesores)
+    .forEach(l => sumar('asignados', new Date(l.fechaAsignacion), 1));
+  const trans = db.prepare(`SELECT t.codigo, t.etapa_destino, t.fecha, l.montoReal
+    FROM transiciones_etapa t JOIN leads l ON l.codigo = t.codigo
+    WHERE l.asesor IN (${ph}) AND COALESCE(l.archivado,0)=0`).all(...asesores);
+  const porLead = {}; trans.forEach(t => { (porLead[t.codigo] = porLead[t.codigo] || { ts: [], montoReal: t.montoReal }).ts.push(t); });
+  const TH = { calificados: 2, agendados: 3, reuniones: 4, negociacion: 5 };
+  const primera = (ts, thr) => { let min = null; ts.forEach(t => { const o = ORDEN_ETAPA[t.etapa_destino]; if (o != null && o >= thr) { const f = new Date(t.fecha); if (!min || f < min) min = f; } }); return min; };
+  Object.values(porLead).forEach(L0 => {
+    ['calificados', 'agendados', 'reuniones', 'negociacion'].forEach(k => { const f = primera(L0.ts, TH[k]); if (f) sumar(k, f, 1); });
+    let fGan = null; L0.ts.forEach(t => { if (t.etapa_destino === 'Cerrado ganado') { const f = new Date(t.fecha); if (!fGan || f < fGan) fGan = f; } });
+    if (fGan) { sumar('cierres', fGan, 1); sumar('monto', fGan, (L0.montoReal || 0)); }
+  });
+  return res;
+}
+const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+app.get('/api/dashboard/avance', (req, res) => {
+  const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
+  const [y, m] = mes.split('-').map(Number); const m0 = m - 1;
+  const vista = (req.query.vista === 'meses') ? 'meses' : 'semanas';
+  const scopeReq = String(req.query.scope || 'EQUIPO');
+  let asesores, scope;
+  if (!veTodo(req.user)) { asesores = [req.user.nombre]; scope = req.user.nombre; }
+  else if (scopeReq !== 'EQUIPO' && L.ASESORES.includes(scopeReq)) { asesores = [scopeReq]; scope = scopeReq; }
+  else { asesores = L.ASESORES; scope = 'EQUIPO'; }
+  const METR = ['asignados', 'calificados', 'agendados', 'reuniones', 'cierres', 'monto'];
+  const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
+  const dhMes = L.diasHabilesMes(y, m0);
+  const dhTrans = L.diasHabilesTranscurridos(y, m0, hoy0);
+  const metaMensualDe = (per) => { const o = {}; asesores.forEach(a => db.prepare("SELECT metrica,valor FROM metas WHERE asesor=? AND ambito='mensual' AND periodo=?").all(a, per).forEach(r => { o[r.metrica] = (o[r.metrica] || 0) + r.valor; })); return o; };
+
+  let buckets, labels, meta;
+  meta = {}; METR.forEach(k => meta[k] = { sem: [], total: 0 });
+
+  if (vista === 'semanas') {
+    const semanas = semanasDelMes(y, m0);
+    buckets = semanas;
+    labels = semanas.map((s, i) => ({ label: 'Sem ' + (i + 1) }));
+    METR.forEach(k => meta[k].sem = semanas.map(() => 0));
+    const semIdxDe = f => { for (const s of semanas) { if (f >= s.ini && f <= s.fin) return s.idx; } return -1; };
+    asesores.forEach(a => {
+      db.prepare("SELECT metrica,valor FROM metas WHERE asesor=? AND ambito='mensual' AND periodo=?").all(a, mes)
+        .forEach(r => { if (meta[r.metrica]) meta[r.metrica].total += r.valor; });
+      db.prepare("SELECT periodo,metrica,valor FROM metas WHERE asesor=? AND ambito='diario' AND periodo LIKE ?").all(a, mes + '-%')
+        .forEach(r => { if (!meta[r.metrica]) return; const i = semIdxDe(new Date(r.periodo + 'T12:00:00')); if (i >= 0) meta[r.metrica].sem[i] += r.valor; });
+    });
+  } else {
+    const meses = []; for (let k = 5; k >= 0; k--) { const d = new Date(y, m0 - k, 1); meses.push({ y: d.getFullYear(), m0: d.getMonth() }); }
+    buckets = meses.map(mm => ({ ini: new Date(mm.y, mm.m0, 1), fin: new Date(mm.y, mm.m0 + 1, 0, 23, 59, 59) }));
+    labels = meses.map(mm => ({ label: NOMBRES_MES[mm.m0] + ' ' + String(mm.y).slice(2) }));
+    METR.forEach(k => meta[k].sem = meses.map(() => 0));
+    meses.forEach((mm, i) => {
+      const per = mm.y + '-' + String(mm.m0 + 1).padStart(2, '0');
+      const mm2 = metaMensualDe(per);
+      METR.forEach(k => { if (mm2[k] != null) { meta[k].sem[i] = mm2[k]; meta[k].total += mm2[k]; } });
+    });
+  }
+
+  const real = agregarRealBuckets(asesores, buckets);
+
+  // Base de proyeccion: SIEMPRE el mes seleccionado
+  const selReal = {}; const selAgg = agregarRealBuckets(asesores, [{ ini: new Date(y, m0, 1), fin: new Date(y, m0 + 1, 0, 23, 59, 59) }]);
+  METR.forEach(k => selReal[k] = selAgg[k].total);
+  const selMeta = metaMensualDe(mes);
+
+  // Pipeline de negociacion del mes seleccionado: leads en 'Cierre pendiente' (ultima transicion)
+  // con fechaCierreEstimada dentro del mes. Separa por-vencer (fecha futura) vs vencida (fecha pasada).
+  const iniMesSel = new Date(y, m0, 1); const finMesSel = new Date(y, m0 + 1, 0, 23, 59, 59);
+  const phP = asesores.map(() => '?').join(',');
+  const leadsNeg = db.prepare(`SELECT l.codigo, l.montoReal, l.montoPotencial, l.fechaCierreEstimada,
+      (SELECT t2.etapa_destino FROM transiciones_etapa t2 WHERE t2.codigo=l.codigo ORDER BY t2.fecha DESC LIMIT 1) AS ult
+    FROM leads l WHERE l.asesor IN (${phP}) AND COALESCE(l.archivado,0)=0`).all(...asesores)
+    .filter(r => r.ult === 'Cierre pendiente');
+  let pVencer = 0, pVencida = 0, nVencer = 0, nVencida = 0;
+  leadsNeg.forEach(r => {
+    if (!r.fechaCierreEstimada) return;
+    const fc = new Date(r.fechaCierreEstimada);
+    if (fc < iniMesSel || fc > finMesSel) return;
+    const monto = (r.montoReal > 0 ? r.montoReal : (r.montoPotencial || 0));
+    if (fc >= hoy0) { pVencer += monto; nVencer++; } else { pVencida += monto; nVencida++; }
+  });
+  const ganadoMes = selReal.monto || 0;
+  const pipeline = {
+    ganadoMes, porVencer: pVencer, vencida: pVencida, nVencer, nVencida,
+    proyeccionMes: ganadoMes + pVencer + pVencida, metaMonto: selMeta.monto || 0
+  };
+
+  res.json({ vista, mes, scope, semanas: labels, dhMes, dhTrans, metricas: METR, meta, real, selReal, selMeta, pipeline });
+});
+
+
+
+
 const PORT = process.env.PORT || 3000;
 // ---------- Sincronizacion de leads desde Google Sheets (Meta / TikTok) ----------
 const { crearSheetsSync } = require('./sheets');
@@ -1444,6 +1622,56 @@ app.post('/api/gestoras/:usuario/autoasignar', soloAdminOJefa, (req, res) => {
   db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(val, u.usuario);
   auditar(req, 'toggle autoasignar', u.usuario, 'valor=' + val);
   res.json({ ok: true, usuario: u.usuario, autoasignar: val });
+});
+
+// ---------- Metas comerciales ----------
+const METRICAS_META = ['asignados', 'calificados', 'agendados', 'reuniones', 'cierres', 'monto'];
+
+// Lee las metas de un asesor (o EQUIPO) para un mes: la mensual + las diarias de ese mes.
+app.get('/api/metas', soloAdminOJefa, (req, res) => {
+  const asesor = String(req.query.asesor || '').trim();
+  const mes = String(req.query.mes || '').trim();
+  if (!asesor || !/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'Falta asesor o mes (YYYY-MM)' });
+  const mensualRows = db.prepare("SELECT metrica, valor FROM metas WHERE asesor=? AND ambito='mensual' AND periodo=?").all(asesor, mes);
+  const diarioRows = db.prepare("SELECT periodo, metrica, valor FROM metas WHERE asesor=? AND ambito='diario' AND periodo LIKE ?").all(asesor, mes + '-%');
+  const mensual = {}; mensualRows.forEach(r => { mensual[r.metrica] = r.valor; });
+  const diario = {}; diarioRows.forEach(r => { (diario[r.periodo] = diario[r.periodo] || {})[r.metrica] = r.valor; });
+  const [y, m] = mes.split('-').map(Number);
+  res.json({ asesor, mes, mensual, diario, diasHabilesMes: L.diasHabilesMes(y, m - 1) });
+});
+
+// Guarda metas (solo admin). filas: [{ambito:'mensual'|'diario', periodo, metrica, valor}].
+app.post('/api/metas', soloAdmin, (req, res) => {
+  const { asesor, filas } = req.body || {};
+  if (!asesor || !Array.isArray(filas)) return res.status(400).json({ error: 'Falta asesor o filas' });
+  const up = db.prepare(`INSERT INTO metas (asesor,ambito,periodo,metrica,valor) VALUES (?,?,?,?,?)
+    ON CONFLICT(asesor,ambito,periodo,metrica) DO UPDATE SET valor=excluded.valor`);
+  let n = 0;
+  db.exec('BEGIN');
+  try {
+    for (const f of (filas || [])) {
+      if (!f || !['mensual', 'diario'].includes(f.ambito)) continue;
+      if (!METRICAS_META.includes(f.metrica)) continue;
+      if (!f.periodo) continue;
+      const val = Number(f.valor);
+      if (!isFinite(val) || val < 0) continue;
+      up.run(asesor, f.ambito, String(f.periodo), f.metrica, val);
+      n++;
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: String(e.message || e) }); }
+  auditar(req, 'guardar metas', asesor, n + ' filas');
+  res.json({ ok: true, guardadas: n });
+});
+
+// Resumen de metas mensuales de todos los asesores (+ EQUIPO) para un mes.
+app.get('/api/metas/resumen', soloAdminOJefa, (req, res) => {
+  const mes = String(req.query.mes || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
+  const rows = db.prepare("SELECT asesor, metrica, valor FROM metas WHERE ambito='mensual' AND periodo=?").all(mes);
+  const asesores = {};
+  rows.forEach(r => { (asesores[r.asesor] = asesores[r.asesor] || {})[r.metrica] = r.valor; });
+  res.json({ mes, asesores });
 });
 
 // ---------- Base de Releads (historicos para segunda barrida) ----------
@@ -1605,7 +1833,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.78 (ventana de gracia conservadora: solo hoy y ayer cuentan como nuevos) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.94 (Mi dia: numero centrado entre los 2 textos; Dashboard oculto para GP, visible solo admin/jefa) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

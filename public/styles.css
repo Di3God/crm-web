@@ -510,3 +510,131 @@
   .aa-toggle { border: none; border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
   .aa-toggle.on { background: #DFF5E8; color: #168F47; }
   .aa-toggle.off { background: #F0E2E2; color: #B0413E; }
+
+  /* Metas comerciales */
+  .mt-sec { font-weight: 700; font-size: 14px; margin: 6px 0 8px; color: var(--ink); }
+  .mt-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .mt-lbl { min-width: 180px; font-size: 14px; }
+  .mt-prorr { font-size: 12.5px; color: var(--muted); }
+  .mt-base { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+  .mt-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .mt-tabla th { text-align: center; font-weight: 600; color: var(--muted); padding: 4px 6px; font-size: 12px; }
+  .mt-tabla td { padding: 3px 6px; text-align: center; }
+  .mt-tabla td:first-child, .mt-tabla th:first-child { text-align: left; white-space: nowrap; }
+
+  /* Metas: semanas expandibles */
+  .mt-wk { background: var(--soft, #eef2ff); border: none; border-radius: 6px; padding: 4px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--ink); }
+  .mt-tabla th.mt-sub { font-weight: 400; font-size: 11px; color: var(--muted); }
+
+  /* Quitar flechas (spinners) de los number inputs */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+  /* Sub-encabezado de semanas: texto legible sobre el navy */
+  .mt-tabla th.mt-sub { color: rgba(255,255,255,.82); font-weight: 400; font-size: 11px; }
+  .mt-tabla td { color: var(--ink); }
+  .mt-pct { width: 52px; }
+  .mt-pct-lbl { font-size: 11px; color: var(--muted); }
+
+  /* Menú desplegable del usuario */
+  .top-user { position: relative; }
+  .tu-btn { display: flex; align-items: center; gap: 7px; background: none; border: none; cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+  .tu-btn:hover { background: #F4F6F9; }
+  .tu-caret { font-size: 10px; color: var(--muted); }
+  .tu-menu { position: absolute; right: 0; top: 46px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 212px; padding: 6px; z-index: 50; }
+  .tu-item { display: block; width: 100%; text-align: left; background: none; border: none; padding: 9px 12px; border-radius: 7px; font-size: 13px; color: var(--ink); cursor: pointer; }
+  .tu-item:hover { background: #F0F5FB; }
+  .tu-sep { height: 1px; background: var(--line); margin: 5px 6px; }
+
+  /* Metas: valores centrados y fila de suma (equipo) */
+  .mt-row input, .mt-pct, .mt-tabla input { text-align: center; }
+  .mt-tabla tr.mt-suma td { font-weight: 700; border-top: 2px solid var(--line); color: var(--ink); }
+
+  /* Metas: cabecera con botones a la derecha */
+  .mt-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .mt-head-btns { display: flex; gap: 8px; }
+
+  /* Avance vs meta */
+  .db-sub-inline { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .av-tabla td { text-align: center; }
+  .av-tabla td:first-child { text-align: left; }
+  .av-meta { font-size: 11px; color: var(--muted); }
+  .av-tabla td.av-ok { background: #E8F6EC; }
+  .av-tabla td.av-low { background: #FDEEE6; }
+  .av-leyenda { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+  .av-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; }
+  .av-dot.ok { background: #34A853; } .av-dot.low { background: var(--naranja); }
+
+  /* Avance vs meta: embudo semanal + proyeccion */
+  .av-filtros { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .av-scope { display: flex; gap: 6px; flex-wrap: wrap; }
+  .av-chip { background: var(--soft, #eef2ff); border: none; border-radius: 999px; padding: 5px 13px; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+  .av-chip.act { background: var(--navy); color: #fff; font-weight: 600; }
+  .av-sub2 { font-weight: 700; font-size: 13px; margin: 14px 0 6px; color: var(--ink); }
+  .av-proy-sel { margin-left: 10px; font-weight: 400; }
+  .av-funnel td, .av-funnel th { text-align: center; padding: 5px 8px; }
+  .av-funnel td:first-child, .av-funnel th:first-child { text-align: left; white-space: nowrap; }
+  .av-funnel tr.av-rpct td { color: var(--muted); font-size: 12px; background: #FAFBFC; }
+  .av-funnel .av-total { background: #EAF0FB; font-weight: 700; }
+  .av-funnel td.av-ok { background: #E8F6EC; } .av-funnel td.av-low { background: #FDEEE6; }
+
+  /* Avance: ajustes de cabecera, total y alineacion fija */
+  .av-filtros { justify-content: space-between; }
+  .av-funnel { table-layout: fixed; width: 100%; }
+  .av-funnel th, .av-funnel td { color: var(--ink); }
+  .av-funnel thead th { color: #fff; }                 /* texto blanco sobre el navy */
+  .av-funnel th:first-child, .av-funnel td:first-child { width: 130px; }
+  .av-funnel .av-total { background: #2E7D32; color: #fff; font-weight: 700; }  /* total verde, letra blanca */
+
+  /* Avance: total verde suave, columnas angostas, tabla centrada, mes a la derecha */
+  .av-funnel { width: auto; margin: 0 auto; }
+  .av-funnel th, .av-funnel td { width: 62px; padding: 5px 6px; }
+  .av-funnel th:first-child, .av-funnel td:first-child { width: 116px; }
+  .av-funnel .av-total { background: #EAF4EC; color: #256B3A; font-weight: 700; }
+  #avMes { margin-left: auto; }
+
+  /* Avance: toggle de vista semanas/meses */
+  .av-vista { display: flex; gap: 6px; }
+
+  /* Proyeccion por pipeline */
+  .av-pipe { width: auto; margin: 0; max-width: 440px; }
+  .av-pipe td { padding: 6px 10px; }
+  .av-pipe td:first-child { text-align: left; }
+  .av-pipe td:last-child { text-align: right; font-weight: 600; width: 130px; }
+  .av-pipe td.av-low { background: #FDEEE6; color: #C0392B; }
+  .av-pipe td.av-ok { background: #E8F6EC; color: #256B3A; }
+  .av-pipe tr.mt-suma td { border-top: 2px solid var(--line); }
+
+  /* "Mi día" - cabecera del GP en Mis Leads */
+  .midia { margin-bottom: 14px; }
+  .md-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .md-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .md-card.md-rojo { background: #FDECEA; border-color: #F5C6BE; }
+  .md-card.md-azul { background: #EAF1FB; border-color: #C7DAF5; }
+  .md-num { font-size: 26px; font-weight: 700; line-height: 1; color: var(--ink); }
+  .md-card.md-rojo .md-num { color: #C0392B; }
+  .md-card.md-azul .md-num { color: var(--navy); }
+  .md-lbl { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .md-fila2 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .md-fila2-tit { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .md-chip { font-size: 13px; background: #F4F6F9; border-radius: 999px; padding: 5px 12px; }
+  .md-chip.md-ok { background: #E8F6EC; color: #256B3A; }
+  .md-chip-lbl { color: var(--muted); }
+  .md-nometa { font-size: 12px; color: var(--muted); }
+
+  /* "Mi día" v2: 5 tarjetas con icono */
+  .md-card2 { display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
+  .md-card2[role="button"] { cursor: pointer; }
+  .md-card2[role="button"]:hover { border-color: var(--navy); }
+  .md-card2.md-activo { border-color: var(--navy); box-shadow: 0 0 0 2px rgba(29,66,137,.15); }
+  .md-card2 .md-ico { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: #F0F3F8; color: var(--navy); flex: none; }
+  .md-card2.rojo .md-ico { background: #FDECEA; color: #C0392B; }
+  .md-card2.azul .md-ico { background: #EAF1FB; color: var(--navy); }
+  .md-card2.verde .md-ico { background: #E8F6EC; color: #256B3A; }
+  .md-v { font-size: 21px; font-weight: 700; line-height: 1.05; color: var(--ink); }
+  .md-card2.rojo .md-v { color: #C0392B; }
+  .md-et { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .md-sub { font-size: 11px; color: var(--muted); }
+  /* date inputs mas angostos + placeholder plomo */
+  .fechas input[type=date] { width: 112px; }
+  .fechas input[type=date]::placeholder { color: var(--muted); }
