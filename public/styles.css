@@ -646,3 +646,28 @@
   /* kanban: estado de contacto en texto plano (como la tabla) */
   .kestado-sc { font-size: 11px; color: var(--rojo); font-weight: 600; }
   .kestado-int { font-size: 10px; color: var(--azul); font-weight: 600; }
+
+  /* "Reparto por GP" - panel de la jefa */
+  .reparto { margin-bottom: 14px; }
+  .rp-head { margin-bottom: 8px; }
+  .rp-tit { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .rp-sub { font-size: 12px; color: var(--muted); }
+  .rp-wrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .rp-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .rp-tabla thead tr { background: var(--navy); color: #fff; }
+  .rp-tabla th { padding: 8px 10px; text-align: center; font-weight: 600; }
+  .rp-tabla th.rp-gp { text-align: left; }
+  .rp-tabla th.rp-monto { text-align: right; }
+  .rp-tabla td { padding: 9px 10px; text-align: center; border-top: 1px solid var(--line); }
+  .rp-tabla td.rp-gp { text-align: left; color: var(--navy); font-weight: 600; }
+  .rp-tabla td.rp-monto { text-align: right; font-weight: 600; }
+  .rp-row { cursor: pointer; }
+  .rp-row:hover td { background: #F4F6F9; }
+  .rp-activa td { background: #EAF1FB; }
+  .rp-activa td.rp-gp { box-shadow: inset 3px 0 0 var(--navy); }
+  .rp-eq td { background: #F7F8FA; font-weight: 700; border-top: 2px solid var(--line); }
+  .rp-sin td { background: #FFF7E6; }
+  .rp-sin td.rp-gp { color: #B26A00; }
+  .rp-sin:hover td { background: #FFF1D6; }
+  .rp-venc { color: #C0392B; font-weight: 700; }
+  .rp-cero { color: var(--muted); }

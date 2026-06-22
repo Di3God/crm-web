@@ -590,6 +590,7 @@ async function cargarLeads() {
   render();
   cargarTarjetas();
   cargarMiDia();
+  cargarReparto();
 }
 
 async function cargarTarjetas() {
@@ -798,7 +799,7 @@ function kanbanCard(l) {
     lineaAccion +
     (chips ? '<div class="kchips">' + chips + '</div>' : (estadoCalif ? '<div class="kchips">' + estadoCalif + '</div>' : '')) +
     '<div class="kbtns">' +
-      '<button class="kbtn rg" onclick="event.stopPropagation();accionRegistrar(\'' + l.codigo + '\')">Registrar</button>' +
+      '<button class="kbtn rg" onclick="event.stopPropagation();accionRegistrar(\'' + l.codigo + '\')">Gestionar</button>' +
       '<button class="kbtn-ic ll" title="Llamar" onclick="event.stopPropagation();accionLlamar(\'' + l.codigo + '\')">' + ICO_TEL + '</button>' +
       '<button class="kbtn-ic wa" title="WhatsApp" onclick="event.stopPropagation();accionWhatsApp(\'' + l.codigo + '\')">' + ICO_WA + '</button>' +
     '</div>' +
@@ -961,7 +962,7 @@ function render() {
       // Columna de accion: Registrar + Llamar + WhatsApp (solo abren registro)
       '<td class="colAccion" onclick="event.stopPropagation()">' +
         '<div class="acc-btns">' +
-          '<button class="acc-reg" onclick="accionRegistrar(\'' + l.codigo + '\')">Registrar</button>' +
+          '<button class="acc-reg" onclick="accionRegistrar(\'' + l.codigo + '\')">Gestionar</button>' +
           '<button class="acc-ic ll" title="Llamar" onclick="accionLlamar(\'' + l.codigo + '\')">' + ICO_TEL + '</button>' +
           '<button class="acc-ic wa" title="WhatsApp" onclick="accionWhatsApp(\'' + l.codigo + '\')">' + ICO_WA + '</button>' +
         '</div>' +
@@ -1200,8 +1201,8 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     `<span class="dato">${codigo}</span><span class="sep">·</span>` +
     `<span class="chip-est" style="background:${bg};color:${fg}">${trEtapa(gLead.etapa)}</span>` +
     `<span class="chip-est" style="background:#EEF1F5;color:#555">Prioridad ${gLead.prioridad}</span>` +
-    `<span class="sep">·</span><span class="dato"><b>Score ${gLead.score}/100</b></span>` +
-    `<span class="sep">·</span><span class="dato">Prob. <b>${gLead.probabilidad}%</b></span>` +
+    `<span class="sep">·</span><span class="dato"><b id="gSubScore">Score ${gLead.score}/100</b></span>` +
+    `<span class="sep">·</span><span class="dato">Prob. <b id="gSubProb">${gLead.probabilidad}%</b></span>` +
     `<span class="sep">·</span><span class="dato">GP ${gLead.asesor || 'sin asignar'}</span>`;
   ['gResultado','gProxAccion','gFechaProx','gTiempo','gInteres',
    'gExperiencia','gExperienciaInv','gFechaReunion','gResumen','gFechaCierre',
@@ -1519,6 +1520,10 @@ function recalcularScore() {
     else prob = gLead ? gLead.probabilidad : 0;
   }
   $('gProbVal').textContent = (cierreVisible || gLead) ? prob + '%' : '—';
+
+  // Espeja el score/probabilidad EN VIVO en los chips de la cabecera (antes estáticos).
+  if ($('gSubScore')) $('gSubScore').textContent = 'Score ' + score + '/100';
+  if ($('gSubProb')) $('gSubProb').textContent = ((cierreVisible || gLead) ? prob + '%' : '—');
 }
 
 function colorEtapa(etapa) {
@@ -2447,4 +2452,52 @@ function renderMiDiaActivo() {
     const m = oc.match(/filtroRapido\('([^']+)'\)/);
     el.classList.toggle('md-activo', !!(m && m[1] === MD_FILTRO));
   });
+}
+
+// ---------- "Reparto por GP": panel de la jefa en Mis Leads ----------
+async function cargarReparto() {
+  const cont = $('reparto'); if (!cont) return;
+  if (!veTodoJS()) { cont.classList.add('oculto'); return; }  // solo jefa/admin
+  try {
+    const d = await api('/api/reparto');
+    renderReparto(d);
+    cont.classList.remove('oculto');
+  } catch (e) { cont.classList.add('oculto'); }
+}
+function renderReparto(d) {
+  const selA = ($('selAsesor') || {}).value || '';
+  const selF = ($('selFiltro') || {}).value || '';
+  const num = n => Number(n || 0).toLocaleString('es-PE');
+  const venc = v => v > 0 ? '<span class="rp-venc">' + v + '</span>' : '<span class="rp-cero">0</span>';
+  let h = '<div class="rp-head"><div class="rp-tit">Reparto por GP</div><div class="rp-sub">Click en una GP para filtrar la tabla y reasignar</div></div>';
+  h += '<div class="rp-wrap"><table class="rp-tabla"><thead><tr>' +
+    '<th class="rp-gp">GP</th><th>Asig. hoy</th><th>Cartera</th><th>Sin contactar</th><th>Vencidos</th><th class="rp-monto">Monto potencial</th>' +
+    '</tr></thead><tbody>';
+  d.filas.forEach(f => {
+    const activa = selA === f.asesor && selF !== 'sin-asignar';
+    h += '<tr class="rp-row' + (activa ? ' rp-activa' : '') + '" onclick="repartoFiltrar(\'' + f.asesor.replace(/'/g, "\\'") + '\')">' +
+      '<td class="rp-gp">' + f.asesor + '</td><td>' + f.asignadosHoy + '</td><td>' + f.cartera + '</td>' +
+      '<td>' + f.sinContactar + '</td><td>' + venc(f.vencidos) + '</td><td class="rp-monto">S/ ' + num(f.monto) + '</td></tr>';
+  });
+  const eq = d.equipo;
+  h += '<tr class="rp-eq"><td class="rp-gp">Equipo</td><td>' + eq.asignadosHoy + '</td><td>' + eq.cartera + '</td>' +
+    '<td>' + eq.sinContactar + '</td><td>' + (eq.vencidos > 0 ? '<span class="rp-venc">' + eq.vencidos + '</span>' : '0') + '</td><td class="rp-monto">S/ ' + num(eq.monto) + '</td></tr>';
+  const s = d.sinAsignar; const sinAct = selF === 'sin-asignar';
+  h += '<tr class="rp-row rp-sin' + (sinAct ? ' rp-activa' : '') + '" onclick="repartoSinAsignar()">' +
+    '<td class="rp-gp">Sin asignar</td><td>—</td><td>' + s.cartera + '</td><td>' + s.sinContactar + '</td><td>—</td>' +
+    '<td class="rp-monto">S/ ' + num(s.monto) + '</td></tr>';
+  h += '</tbody></table></div>';
+  $('reparto').innerHTML = h;
+}
+function repartoFiltrar(asesor) {
+  const selA = $('selAsesor'), selF = $('selFiltro');
+  if (selF) selF.value = '';
+  if (selA) selA.value = (selA.value === asesor) ? '' : asesor;
+  cargarLeads();
+}
+function repartoSinAsignar() {
+  const selA = $('selAsesor'), selF = $('selFiltro');
+  if (selA) selA.value = '';
+  if (selF) selF.value = (selF.value === 'sin-asignar') ? '' : 'sin-asignar';
+  cargarLeads();
 }

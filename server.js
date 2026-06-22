@@ -1356,6 +1356,40 @@ app.get('/api/midia', (req, res) => {
 
   res.json({ asesor, urgencias: { paraHoy, vencidos, nuevosSinContactar, calificadosMas }, asignadosHoy, ganadosHoy: realHoy.cierres, speedMin, metaHoy, realHoy });
 });
+// Fecha (YYYY-MM-DD) en hora Perú (UTC-5) para una Date dada. Evita desfase con el server UTC.
+function fechaPeruISO(d) {
+  const p = new Date(d.getTime() - 5 * 3600 * 1000);
+  return p.getUTCFullYear() + '-' + String(p.getUTCMonth() + 1).padStart(2, '0') + '-' + String(p.getUTCDate()).padStart(2, '0');
+}
+// Reparto por GP (solo jefa/admin): distribución de carga para gestionar y reasignar el día.
+app.get('/api/reparto', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'No autorizado' });
+  const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l));
+  const ahora = new Date();
+  const hoyP = fechaPeruISO(ahora);
+  const esCerrado = e => e === 'Cerrado ganado' || e === 'Cerrado perdido';
+  const antesDeCalificar = e => e === 'Contactabilidad 3x5' || e === 'Contactado - por calificar';
+  const num = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
+  const init = () => ({ asignadosHoy: 0, cartera: 0, sinContactar: 0, vencidos: 0, monto: 0 });
+  const porGP = {}; L.ASESORES.forEach(a => porGP[a] = init());
+  const sinAsig = init();
+  leads.forEach(l => {
+    const dest = (l.asesor && porGP[l.asesor]) ? porGP[l.asesor] : sinAsig;
+    const activo = !esCerrado(l.etapa);
+    if (activo) dest.cartera++;
+    if (l.etapa === 'Contactabilidad 3x5') dest.sinContactar++;
+    if (activo && l.fechaProxAccion && new Date(l.fechaProxAccion) < ahora) dest.vencidos++;
+    if (antesDeCalificar(l.etapa)) dest.monto += num(l.montoPotencial);
+    if (l.asesor && porGP[l.asesor]) {
+      const asignadoHoy = l.fechaAsignacion && fechaPeruISO(new Date(l.fechaAsignacion)) === hoyP;
+      if (asignadoHoy && (l.intentos || 0) === 0 && l.etapa === 'Contactabilidad 3x5') dest.asignadosHoy++;
+    }
+  });
+  const filas = L.ASESORES.map(a => Object.assign({ asesor: a }, porGP[a]));
+  const equipo = init();
+  filas.forEach(f => { equipo.asignadosHoy += f.asignadosHoy; equipo.cartera += f.cartera; equipo.sinContactar += f.sinContactar; equipo.vencidos += f.vencidos; equipo.monto += f.monto; });
+  res.json({ filas, equipo, sinAsignar: sinAsig });
+});
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
