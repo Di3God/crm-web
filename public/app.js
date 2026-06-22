@@ -704,9 +704,11 @@ function renderKanban() {
   cont.innerHTML = '<div class="kanban">' + cols.map((c, idx) => {
     const items = porCol[c.id] || [];
     let total = 0, ponderado = 0, sumaProb = 0;
+    const montoNum = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
     items.forEach(l => {
-      total += (l.montoReal || 0);
-      ponderado += (l.montoReal || 0) * (l.probabilidad || 0) / 100;
+      const mv = montoNum(l.montoReal || l.montoPotencial); // monto vigente, igual que la tarjeta
+      total += mv;
+      ponderado += mv * (l.probabilidad || 0) / 100;
       sumaProb += (l.probabilidad || 0);
     });
     const prom = items.length ? Math.round(sumaProb / items.length) : 0;
