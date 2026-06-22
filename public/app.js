@@ -569,7 +569,6 @@ function cerrar(id) { $(id).classList.remove('act'); }
 let LEADS = [], ordenCampo = 'prioridad', ordenDir = 1;
 
 async function cargarLeads() {
-  cargarMiDia();
   let q = [];
   if (veTodoJS()) {
     const filtro = $('selFiltro').value;
@@ -590,6 +589,7 @@ async function cargarLeads() {
   fe.value = sel;
   render();
   cargarTarjetas();
+  cargarMiDia();
 }
 
 async function cargarTarjetas() {
@@ -2409,7 +2409,10 @@ function renderMiDia(d) {
       (sub ? '<div class="md-sub">' + sub + '</div>' : '') + '</div></div>';
   };
   let h = '<div class="md-fila">';
-  h += card('user', u.nuevosSinContactar > 0 ? 'azul' : '', 'Nuevos sin contactar', u.nuevosSinContactar || 0, (d.asignadosHoy || 0) + ' asignados hoy', 'sincontactar');
+  // "asignados hoy" = misma lógica del badge "Nuevo" (esLeadNuevo) para que SIEMPRE
+  // coincida con cuántos "Nuevo" se ven en la tabla (evita desfase de zona horaria).
+  const nuevosHoy = (typeof LEADS !== 'undefined' && Array.isArray(LEADS)) ? LEADS.filter(esLeadNuevo).length : (d.asignadosHoy || 0);
+  h += card('user', u.nuevosSinContactar > 0 ? 'azul' : '', 'Nuevos sin contactar', u.nuevosSinContactar || 0, nuevosHoy + ' asignados hoy', 'sincontactar');
   h += card('reloj', u.vencidos > 0 ? 'rojo' : '', 'Vencidos', u.vencidos || 0, 'Requieren atención', 'vencidos');
   h += card('cal', '', 'Para hoy', u.paraHoy || 0, 'Acciones programadas', 'parahoy');
   h += card('grafico', '', 'Speed-to-call', speed, 'Asignación → 1er contacto', null);
