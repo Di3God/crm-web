@@ -1005,13 +1005,16 @@ app.post('/api/gestiones', (req, res) => {
   if (validacion !== 'OK') return res.status(422).json({ error: validacion });
 
   // #13 Anti-registro masivo: maximo de gestiones por asesor en la ultima hora.
-  const LIMITE_HORA = 12;
-  const haceUnaHora = new Date(Date.now() - 3600 * 1000).toISOString();
-  const enUltimaHora = db.prepare(
-    'SELECT COUNT(*) AS c FROM gestiones WHERE asesor = ? AND fecha >= ?'
-  ).get(g.asesor, haceUnaHora).c;
-  if (enUltimaHora >= LIMITE_HORA) {
-    return res.status(422).json({ error: `Demasiadas gestiones en poco tiempo (${LIMITE_HORA}/hora). Revisa y reintenta en unos minutos.` });
+  // 0 = ilimitado (por defecto). Configurable con GESTIONES_LIMITE_HORA en Railway.
+  const LIMITE_HORA = parseInt(process.env.GESTIONES_LIMITE_HORA || '0', 10);
+  if (LIMITE_HORA > 0) {
+    const haceUnaHora = new Date(Date.now() - 3600 * 1000).toISOString();
+    const enUltimaHora = db.prepare(
+      'SELECT COUNT(*) AS c FROM gestiones WHERE asesor = ? AND fecha >= ?'
+    ).get(g.asesor, haceUnaHora).c;
+    if (enUltimaHora >= LIMITE_HORA) {
+      return res.status(422).json({ error: `Demasiadas gestiones en poco tiempo (${LIMITE_HORA}/hora). Revisa y reintenta en unos minutos.` });
+    }
   }
 
   let fechaProx = g.fechaProxAccion || null;
@@ -2116,7 +2119,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.111 (fix Mensajeria: trEtapa2 esperaba objeto y se le pasaba string - rompia la lista con toUpperCase; ahora usa trEtapa) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.112 (gestiones ilimitadas: se libera el tope de 12/hora; configurable con GESTIONES_LIMITE_HORA, 0=ilimitado) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
