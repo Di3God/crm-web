@@ -2531,6 +2531,9 @@ document.addEventListener('click', tipHide, true);
 // ---------- Mensajería (Chatwoot embebido, Nivel 2) ----------
 let CHAT_CONVS = [], CHAT_ACTIVA = null, CHAT_TIMER = null;
 async function cargarChat() {
+  const bloq = $('chatBloqueo');
+  if (!veTodoJS()) { if (bloq) bloq.classList.remove('oculto'); return; } // GPs: en construcción
+  if (bloq) bloq.classList.add('oculto');
   const cont = $('chatLista'); if (!cont) return;
   cont.innerHTML = '<div class="chat-cargando">Cargando…</div>';
   try {

@@ -677,9 +677,18 @@
 
   /* ===== Mensajería (Chatwoot embebido) — diseño TasaTop 3 paneles ===== */
   .chat-wrap { display: grid; grid-template-columns: 300px minmax(0,1fr) 326px; gap: 0;
-    border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 16px; overflow: hidden; position: relative;
     height: calc(100vh - 178px); min-height: 540px; background: var(--card);
     box-shadow: 0 8px 30px rgba(18,58,99,.07); }
+
+  /* Bloqueo "en construcción" (GPs): congela e impide interacción */
+  .chat-bloqueo { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+    background: rgba(244,247,252,.66); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+  .chat-bloqueo-card { text-align: center; background: rgba(255,255,255,.94); border: 1px solid var(--line);
+    border-radius: 16px; padding: 30px 42px; box-shadow: 0 12px 44px rgba(18,58,99,.14); }
+  .chat-bloqueo-ico { font-size: 48px; line-height: 1; margin-bottom: 12px; }
+  .chat-bloqueo-tit { font-size: 19px; font-weight: 700; color: #123A63; }
+  .chat-bloqueo-sub { font-size: 13px; color: var(--muted); margin-top: 7px; }
 
   /* Scrollbar sobria, fina y semi-transparente (estilo WhatsApp) */
   .chat-lista::-webkit-scrollbar, .chat-hilo::-webkit-scrollbar, .chat-ficha::-webkit-scrollbar { width: 6px; }

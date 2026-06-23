@@ -2116,7 +2116,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.109 (Mensajeria rediseño 3 paneles: lista con filtros+busqueda, chat estilo WhatsApp con autoscroll y scrollbar sobria, ficha comercial con metricas reales) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.110 (Mensajeria: bloqueo en construccion para GPs - ven el modulo congelado con overlay, admin/jefa acceso completo) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
