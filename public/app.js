@@ -2541,6 +2541,7 @@ async function cargarChat() {
     }
     CHAT_CONVS = d.conversaciones || [];
     renderChatLista();
+    iniciarChatSSE();
   } catch (e) {
     cont.innerHTML = '<div class="chat-aviso">No se pudo cargar la bandeja: ' + e.message + '</div>';
   }
@@ -2569,7 +2570,8 @@ async function abrirChat(id) {
     (c.codigoLead ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>' : '');
   await cargarMensajes();
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
-  CHAT_TIMER = setInterval(cargarMensajes, 10000); // refresco lite cada 10s (hasta webhooks)
+  CHAT_TIMER = setInterval(cargarMensajes, 20000); // respaldo: SSE es el tiempo real; esto es por si se cae
+  iniciarChatSSE();
 }
 async function cargarMensajes() {
   if (!CHAT_ACTIVA) return;
@@ -2578,22 +2580,56 @@ async function cargarMensajes() {
     const hilo = $('chatHilo');
     hilo.innerHTML = (d.mensajes || []).map(m =>
       '<div class="chat-msg ' + (m.entrante ? 'chat-in' : 'chat-out') + '"><div class="chat-burb">' +
-      (m.texto || '') + '</div></div>'
+      chatEsc(m.texto || '') + '</div></div>'
     ).join('');
     hilo.scrollTop = hilo.scrollHeight;
   } catch (e) {}
+}
+function chatEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function chatBurbuja(entrante, texto) {
+  const hilo = $('chatHilo'); if (!hilo) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + (entrante ? 'chat-in' : 'chat-out');
+  div.innerHTML = '<div class="chat-burb">' + chatEsc(texto) + '</div>';
+  hilo.appendChild(div);
+  hilo.scrollTop = hilo.scrollHeight;
 }
 async function enviarChat() {
   const inp = $('chatTexto'); const txt = inp.value.trim();
   if (!txt || !CHAT_ACTIVA) return;
   inp.value = '';
+  chatBurbuja(false, txt); // optimistic: aparece al instante
   try {
     await api('/api/chat/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: CHAT_ACTIVA.id, texto: txt }) });
-    await cargarMensajes();
   } catch (e) { alert('No se pudo enviar: ' + e.message); inp.value = txt; }
 }
 function irALead(codigo) {
   ir('leads');
   const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
   if (l) { setTimeout(() => { try { verTrazabilidad(codigo); } catch (e) {} }, 200); }
+}
+
+// ---- Tiempo real del chat: SSE (escucha webhooks de Chatwoot) ----
+let CHAT_SSE = null, CHAT_LISTA_PEND = null;
+function iniciarChatSSE() {
+  if (CHAT_SSE) return; // ya conectado
+  try {
+    CHAT_SSE = new EventSource('/api/chat/stream');
+    CHAT_SSE.onmessage = (e) => {
+      let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+      if (d.tipo !== 'mensaje') return;
+      // Si el mensaje es de la conversación abierta, re-render autoritativo (evita duplicados).
+      if (CHAT_ACTIVA && String(d.conversationId) === String(CHAT_ACTIVA.id)) cargarMensajes();
+      // Refrescar la lista (último mensaje, no leídos, conversaciones nuevas) con debounce.
+      clearTimeout(CHAT_LISTA_PEND);
+      CHAT_LISTA_PEND = setTimeout(refrescarListaChat, 600);
+    };
+    CHAT_SSE.onerror = () => { /* EventSource reintenta solo */ };
+  } catch (e) {}
+}
+async function refrescarListaChat() {
+  try {
+    const d = await api('/api/chat/conversaciones');
+    if (d.configurado) { CHAT_CONVS = d.conversaciones || []; renderChatLista(); }
+  } catch (e) {}
 }

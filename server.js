@@ -396,6 +396,7 @@ app.use('/api', (req, res, next) => {
   if (req.path === '/login') return next();
   // Los webhooks de marketing se autentican por token en la URL, no por sesion.
   if (req.path.startsWith('/webhooks/leads/')) return next();
+  if (req.path.startsWith('/webhooks/chatwoot/')) return next();
   const u = usuarioDeSesion(req);
   if (!u) return res.status(401).json({ error: 'Sin sesion. Inicia sesion.' });
   req.user = u;
@@ -1472,6 +1473,65 @@ app.post('/api/chat/enviar', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// ---- Tiempo real: SSE (servidor -> navegador) ----
+// Cada cliente conectado guarda su user para poder filtrar por rol al difundir.
+const sseClientes = [];
+function sseEnviar(asesorDuenio, payload) {
+  const data = 'data: ' + JSON.stringify(payload) + '\n\n';
+  for (const cli of sseClientes) {
+    const u = cli.user;
+    const puede = veTodo(u) || (asesorDuenio && u.nombre === asesorDuenio);
+    if (!puede) continue;
+    try { cli.res.write(data); } catch (e) {}
+  }
+}
+app.get('/api/chat/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': conectado\n\n');
+  const cli = { res, user: req.user };
+  sseClientes.push(cli);
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+  req.on('close', () => {
+    clearInterval(ping);
+    const i = sseClientes.indexOf(cli);
+    if (i >= 0) sseClientes.splice(i, 1);
+  });
+});
+
+// Webhook de Chatwoot: se autentica por token en la URL (CHATWOOT_WEBHOOK_TOKEN).
+// Configurar en Chatwoot: Settings -> Integrations -> Webhooks, suscrito a message_created.
+app.post('/api/webhooks/chatwoot/:token', (req, res) => {
+  const esperado = process.env.CHATWOOT_WEBHOOK_TOKEN;
+  if (!esperado || req.params.token !== esperado) return res.status(403).json({ error: 'Token invalido' });
+  res.json({ ok: true }); // responder rapido siempre
+  try {
+    const ev = req.body || {};
+    if (ev.event !== 'message_created') return;
+    const conv = ev.conversation || {};
+    const convId = conv.id || (ev.conversation_id) || null;
+    if (!convId) return;
+    // Telefono del contacto: probar varias formas segun el payload de Chatwoot.
+    const sender = ev.sender || (conv.meta && conv.meta.sender) || {};
+    const phone = sender.phone_number || sender.identifier ||
+      (conv.meta && conv.meta.sender && conv.meta.sender.phone_number) || '';
+    const k = L.normalizarCelular(phone);
+    const idx = indiceLeadsPorTelefono();
+    const lead = k ? idx[k] : null;
+    const tipo = ev.message_type; // 'incoming' | 'outgoing'
+    const entrante = tipo === 'incoming' || tipo === 0;
+    sseEnviar(lead ? lead.asesor : null, {
+      tipo: 'mensaje',
+      conversationId: convId,
+      mensaje: { entrante, texto: ev.content || '', ts: ev.created_at || Math.floor(Date.now() / 1000) },
+    });
+  } catch (e) { /* nunca romper el webhook */ }
+});
+
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
@@ -1961,7 +2021,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.103 (modulo Mensajeria: bandeja WhatsApp embebida via Chatwoot - leer y enviar; GP ve solo chats de sus leads, jefa/admin ven todo) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.104 (Mensajeria tiempo real: SSE + webhook de Chatwoot, envio optimista; mensajes entran y salen al instante) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
