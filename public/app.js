@@ -560,6 +560,7 @@ function ir(v) {
   if (v === 'cohortes') cargarCohortes();
   if (v === 'brutos') cargarBrutos();
   if (v === 'releads') cargarReleads();
+  if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
 }
 
@@ -793,7 +794,7 @@ function kanbanCard(l) {
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
-    '<div class="knom" onclick="verTrazabilidad(\'' + l.codigo + '\')">' +
+    '<div class="knom"' + nomTipAttr(l) + ' onclick="verTrazabilidad(\'' + l.codigo + '\')">' +
       (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
@@ -997,7 +998,7 @@ function celdaLead(l) {
     else estadoHtml = '<div class="lead-estado">Sin contacto</div>';
   }
   return '<div class="lead-cell">' +
-    '<div class="lead-nom">' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
+    '<div class="lead-nom"' + nomTipAttr(l) + '>' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
       (esLeadNuevo(l) ? '<span class="badge-nuevo">Nuevo</span>' : '') + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
     (fuente ? '<div class="lead-fuente">' + fuente + '</div>' : '') +
@@ -2502,4 +2503,97 @@ function repartoSinAsignar() {
   if (selA) selA.value = '';
   if (selF) selF.value = (selF.value === 'sin-asignar') ? '' : 'sin-asignar';
   cargarLeads();
+}
+
+// ---------- Tooltip flotante: recordatorio con el último comentario sobre el nombre ----------
+function tipEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function nomTipAttr(l) { return (l && l.ultimoComentario) ? ' data-tip="' + tipEsc(l.ultimoComentario) + '"' : ''; }
+function tipBoxEl() {
+  let b = document.getElementById('tipBox');
+  if (!b) { b = document.createElement('div'); b.id = 'tipBox'; b.className = 'tip-box'; document.body.appendChild(b); }
+  return b;
+}
+function tipShow(target) {
+  const txt = target.getAttribute('data-tip'); if (!txt) return;
+  const b = tipBoxEl(); b.textContent = txt; b.style.display = 'block';
+  const r = target.getBoundingClientRect();
+  const bw = b.offsetWidth, bh = b.offsetHeight;
+  let left = r.left; let top = r.bottom + 6;
+  if (left + bw > window.innerWidth - 8) left = window.innerWidth - bw - 8;
+  if (top + bh > window.innerHeight - 8) top = r.top - bh - 6;
+  b.style.left = Math.max(8, left) + 'px'; b.style.top = Math.max(8, top) + 'px';
+}
+function tipHide() { const b = document.getElementById('tipBox'); if (b) b.style.display = 'none'; }
+document.addEventListener('mouseover', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t) tipShow(t); });
+document.addEventListener('mouseout', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t && !t.contains(e.relatedTarget)) tipHide(); });
+document.addEventListener('click', tipHide, true);
+
+// ---------- Mensajería (Chatwoot embebido, Nivel 2) ----------
+let CHAT_CONVS = [], CHAT_ACTIVA = null, CHAT_TIMER = null;
+async function cargarChat() {
+  const cont = $('chatLista'); if (!cont) return;
+  cont.innerHTML = '<div class="chat-cargando">Cargando…</div>';
+  try {
+    const d = await api('/api/chat/conversaciones');
+    if (!d.configurado) {
+      cont.innerHTML = '<div class="chat-aviso">Chatwoot aún no está configurado. Falta cargar las variables CHATWOOT_URL y CHATWOOT_API_TOKEN en Railway.</div>';
+      return;
+    }
+    CHAT_CONVS = d.conversaciones || [];
+    renderChatLista();
+  } catch (e) {
+    cont.innerHTML = '<div class="chat-aviso">No se pudo cargar la bandeja: ' + e.message + '</div>';
+  }
+}
+function renderChatLista() {
+  const cont = $('chatLista');
+  if (!CHAT_CONVS.length) { cont.innerHTML = '<div class="chat-aviso">No hay conversaciones.</div>'; return; }
+  cont.innerHTML = CHAT_CONVS.map(c => {
+    const ini = (c.nombre || '?').trim().slice(0, 2).toUpperCase();
+    const act = CHAT_ACTIVA && CHAT_ACTIVA.id === c.id ? ' chat-it-act' : '';
+    return '<div class="chat-it' + act + '" onclick="abrirChat(' + c.id + ')">' +
+      '<div class="chat-ava">' + ini + '</div>' +
+      '<div class="chat-it-txt"><div class="chat-it-top"><span class="chat-it-nom">' + (c.nombre || '—') + '</span>' +
+      (c.noLeidos > 0 ? '<span class="chat-badge">' + c.noLeidos + '</span>' : '') + '</div>' +
+      '<div class="chat-it-last">' + (c.ultimo || '') + '</div></div></div>';
+  }).join('');
+}
+async function abrirChat(id) {
+  CHAT_ACTIVA = CHAT_CONVS.find(c => c.id === id) || { id };
+  renderChatLista();
+  $('chatVacio').classList.add('oculto');
+  $('chatConv').classList.remove('oculto');
+  const c = CHAT_ACTIVA;
+  $('chatCab').innerHTML = '<div><div class="chat-cab-nom">' + (c.nombre || '—') + '</div>' +
+    '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + c.asesor : '') + '</div></div>' +
+    (c.codigoLead ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>' : '');
+  await cargarMensajes();
+  if (CHAT_TIMER) clearInterval(CHAT_TIMER);
+  CHAT_TIMER = setInterval(cargarMensajes, 10000); // refresco lite cada 10s (hasta webhooks)
+}
+async function cargarMensajes() {
+  if (!CHAT_ACTIVA) return;
+  try {
+    const d = await api('/api/chat/mensajes?id=' + CHAT_ACTIVA.id);
+    const hilo = $('chatHilo');
+    hilo.innerHTML = (d.mensajes || []).map(m =>
+      '<div class="chat-msg ' + (m.entrante ? 'chat-in' : 'chat-out') + '"><div class="chat-burb">' +
+      (m.texto || '') + '</div></div>'
+    ).join('');
+    hilo.scrollTop = hilo.scrollHeight;
+  } catch (e) {}
+}
+async function enviarChat() {
+  const inp = $('chatTexto'); const txt = inp.value.trim();
+  if (!txt || !CHAT_ACTIVA) return;
+  inp.value = '';
+  try {
+    await api('/api/chat/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: CHAT_ACTIVA.id, texto: txt }) });
+    await cargarMensajes();
+  } catch (e) { alert('No se pudo enviar: ' + e.message); inp.value = txt; }
+}
+function irALead(codigo) {
+  ir('leads');
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  if (l) { setTimeout(() => { try { verTrazabilidad(codigo); } catch (e) {} }, 200); }
 }

@@ -530,6 +530,16 @@ function consolidarLead(lead, gestiones) {
   let proximaAccion = ult ? ult.proximaAccion : null;
   if (!proximaAccion && etapa === 'Contactabilidad 3x5') proximaAccion = 'Llamar intento 3x5';
 
+  // Último comentario para el recordatorio (tooltip): el de la última gestión; si esa
+  // no tiene texto (ej. "No respondió"), cae al último comentario con contenido.
+  let ultimoComentario = (ult && ult.comentario && String(ult.comentario).trim()) ? String(ult.comentario).trim() : '';
+  if (!ultimoComentario) {
+    for (let i = gestiones.length - 1; i >= 0; i--) {
+      const c = gestiones[i].comentario;
+      if (c && String(c).trim()) { ultimoComentario = String(c).trim(); break; }
+    }
+  }
+
   // Intentos de HOY (gestiones registradas hoy) y dias desde la asignacion.
   const hoy0 = new Date(); hoy0.setHours(0, 0, 0, 0);
   const man0 = new Date(hoy0); man0.setDate(man0.getDate() + 1);
@@ -552,6 +562,7 @@ function consolidarLead(lead, gestiones) {
     ultimoResultado: ult ? ult.resultado : 'Sin gestion',
     ultimoCanal: ult ? ult.canal : null,
     ultimaGestion: ult ? ult.fecha : null,
+    ultimoComentario,
     proximaAccion, fechaProxAccion,
     ticket, tiempo, nivelInteres, experiencia: avance, avance, experienciaInv,
     cFondos, cPrioriza, cPlazo, cCompetencia, cProximoPaso,

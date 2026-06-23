@@ -1390,6 +1390,88 @@ app.get('/api/reparto', (req, res) => {
   filas.forEach(f => { equipo.asignadosHoy += f.asignadosHoy; equipo.cartera += f.cartera; equipo.sinContactar += f.sinContactar; equipo.vencidos += f.vencidos; equipo.monto += f.monto; });
   res.json({ filas, equipo, sinAsignar: sinAsig });
 });
+// ===== Mensajería (Chatwoot) — bandeja de WhatsApp embebida (Nivel 2) =====
+const cw = require('./chatwoot');
+
+// Índice de leads por teléfono (últimos 9 dígitos) para casar conversación <-> lead.
+function indiceLeadsPorTelefono() {
+  const leads = db.prepare('SELECT codigo,nombre,telefono,asesor FROM leads WHERE COALESCE(archivado,0)=0').all();
+  const idx = {};
+  leads.forEach(l => { const k = L.normalizarCelular(l.telefono); if (k) idx[k] = l; });
+  return idx;
+}
+
+// Lista de conversaciones, filtrada por rol: la GP solo ve las de SUS leads; admin/jefa ven todo.
+app.get('/api/chat/conversaciones', async (req, res) => {
+  if (!cw.cwConfigurado()) return res.json({ configurado: false, conversaciones: [] });
+  try {
+    const convs = await cw.listarConversaciones();
+    const idx = indiceLeadsPorTelefono();
+    const esGP = !veTodo(req.user);
+    const out = [];
+    convs.forEach(c => {
+      const phone = cw.telefonoDeConversacion(c);
+      const k = L.normalizarCelular(phone);
+      const lead = k ? idx[k] : null;
+      if (esGP && (!lead || lead.asesor !== req.user.nombre)) return; // GP: solo sus leads
+      const sender = (c.meta && c.meta.sender) ? c.meta.sender : {};
+      const ult = c.last_non_activity_message || c.messages && c.messages[c.messages.length - 1];
+      out.push({
+        id: c.id,
+        nombre: lead ? lead.nombre : (sender.name || phone || 'Desconocido'),
+        telefono: phone,
+        codigoLead: lead ? lead.codigo : null,
+        asesor: lead ? lead.asesor : null,
+        ultimo: ult ? (ult.content || '') : '',
+        noLeidos: c.unread_count || 0,
+        ts: c.last_activity_at || c.timestamp || null,
+      });
+    });
+    out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    res.json({ configurado: true, conversaciones: out });
+  } catch (e) {
+    res.status(502).json({ configurado: true, error: e.message, conversaciones: [] });
+  }
+});
+
+// Valida que una conversación pertenezca a un lead del usuario (para GP). Admin/jefa: libre.
+async function puedeVerConversacion(req, convId) {
+  if (veTodo(req.user)) return true;
+  try {
+    const data = await cw.obtenerConversacion(convId);
+    const c = data && data.payload ? data.payload : data;
+    const phone = cw.telefonoDeConversacion(c);
+    const k = L.normalizarCelular(phone);
+    if (!k) return false;
+    const idx = indiceLeadsPorTelefono();
+    const lead = idx[k];
+    return !!(lead && lead.asesor === req.user.nombre);
+  } catch (e) { return false; }
+}
+
+app.get('/api/chat/mensajes', async (req, res) => {
+  if (!cw.cwConfigurado()) return res.json({ configurado: false, mensajes: [] });
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Falta id' });
+  if (!(await puedeVerConversacion(req, id))) return res.status(403).json({ error: 'No autorizado' });
+  try {
+    const msgs = await cw.mensajesDe(id);
+    const out = msgs
+      .filter(m => m.message_type === 0 || m.message_type === 1) // 0 entrante, 1 saliente
+      .map(m => ({ id: m.id, entrante: m.message_type === 0, texto: m.content || '', ts: m.created_at }));
+    res.json({ configurado: true, mensajes: out });
+  } catch (e) { res.status(502).json({ error: e.message, mensajes: [] }); }
+});
+
+app.post('/api/chat/enviar', async (req, res) => {
+  if (!cw.cwConfigurado()) return res.status(400).json({ error: 'Chatwoot no configurado' });
+  const { id, texto } = req.body || {};
+  if (!id || !texto || !String(texto).trim()) return res.status(400).json({ error: 'Falta id o texto' });
+  if (!(await puedeVerConversacion(req, id))) return res.status(403).json({ error: 'No autorizado' });
+  try { await cw.enviarMensaje(id, String(texto).trim()); res.json({ ok: true }); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
@@ -1879,7 +1961,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.95 (chips meta redondeados min 1 con panel sobrio; kanban Sin contacto texto plano + chip Por calificar; filtro etapa sin cerrados ordenado por funnel y con nombres visibles) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.103 (modulo Mensajeria: bandeja WhatsApp embebida via Chatwoot - leer y enviar; GP ve solo chats de sus leads, jefa/admin ven todo) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

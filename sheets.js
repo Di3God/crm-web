@@ -32,10 +32,17 @@ function resolverUrl(envFull, gid) {
   return urlPub(gid);
 }
 
+// Interruptores para apagar el sync (cuando esos leads ya entran por webhook directo).
+// Se controlan por variables de entorno en Railway (1/true/on/si), sin tocar codigo:
+//   SHEETS_OFF_META=1     -> apaga solo Meta
+//   SHEETS_OFF_TIKTOK=1   -> apaga solo TikTok
+//   SHEETS_SYNC_OFF=1     -> apaga TODO el sync
+const OFF = v => { const x = String(process.env[v] || '').trim().toLowerCase(); return x === '1' || x === 'true' || x === 'on' || x === 'si'; };
+
 const HOJAS = [
   { origen: 'meta',   url: resolverUrl('SHEETS_META_CSV', GID_META) },
   { origen: 'tiktok', url: resolverUrl('SHEETS_TIKTOK_CSV', GID_TIKTOK) },
-];
+].filter(h => !OFF('SHEETS_OFF_' + h.origen.toUpperCase()));
 
 // Fecha de corte: filas con Fecha ANTERIOR al corte son historial (nunca se
 // crean como lead); de la fecha de corte en adelante son leads nuevos.
@@ -253,6 +260,11 @@ function crearSheetsSync(deps) {
   }
 
   function iniciarScheduler() {
+    if (OFF('SHEETS_SYNC_OFF') || HOJAS.length === 0) {
+      console.log('[sheets] Sync DESACTIVADO (SHEETS_SYNC_OFF o sin fuentes activas). Fuentes activas:', HOJAS.map(h => h.origen).join(', ') || 'ninguna');
+      return;
+    }
+    console.log('[sheets] Sync ACTIVO. Fuentes:', HOJAS.map(h => h.origen).join(', '));
     // Primer disparo a los 20s del arranque (establece baseline), luego cada 5 min.
     setTimeout(() => { sincronizarTodo().catch(() => {}); }, 20000);
     setInterval(() => { sincronizarTodo().catch(() => {}); }, INTERVALO_MS);

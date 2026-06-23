@@ -17,6 +17,7 @@
   <nav class="top-nav">
     <div class="nav-item">
       <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads<span class="nv-car soloAdminJefa oculto">▾</span></button>
+      <button id="nv-chat" onclick="ir('chat')">Mensajería</button>
       <div class="subnav soloAdminJefa oculto">
         <button id="nv-brutos" onclick="ir('brutos')">Ingresos</button>
         <button id="nv-releads" onclick="ir('releads')">Base de Releads</button>
@@ -119,6 +120,27 @@
           <option value="25" selected>25</option>
           <option value="50">50</option>
         </select>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== MENSAJERÍA (WhatsApp / Chatwoot) ===== -->
+  <section id="v-chat" class="vista">
+    <div class="barra"><h2>Mensajería</h2><span class="sub" id="chatSub">WhatsApp</span>
+      <button class="btn ico-btn" style="margin-left:auto" onclick="cargarChat()" title="Actualizar">⟳</button>
+    </div>
+    <div id="chatWrap" class="chat-wrap">
+      <div class="chat-lista" id="chatLista"></div>
+      <div class="chat-panel" id="chatPanel">
+        <div class="chat-vacio" id="chatVacio">Selecciona una conversación</div>
+        <div class="chat-conv oculto" id="chatConv">
+          <div class="chat-cab" id="chatCab"></div>
+          <div class="chat-hilo" id="chatHilo"></div>
+          <div class="chat-input">
+            <input type="text" id="chatTexto" placeholder="Escribe un mensaje…" onkeydown="if(event.key==='Enter')enviarChat()">
+            <button class="btn" onclick="enviarChat()">Enviar</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
