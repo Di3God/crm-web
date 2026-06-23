@@ -1594,6 +1594,39 @@ app.post('/api/chat/crear-lead', async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// Ficha comercial del lead para el panel derecho de Mensajería. Solo métricas REALES.
+app.get('/api/chat/ficha', (req, res) => {
+  const codigo = req.query.codigo;
+  if (!codigo) return res.status(400).json({ error: 'Falta codigo' });
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no existe' });
+  if (!veTodo(req.user) && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'No autorizado' });
+  const cons = leadConsolidado(lead);
+  const nGest = db.prepare('SELECT COUNT(*) n FROM gestiones WHERE codigo = ?').get(codigo).n;
+  const nLlam = db.prepare('SELECT COUNT(*) n FROM llamadas WHERE codigo = ?').get(codigo).n;
+  const nReu = db.prepare("SELECT COUNT(*) n FROM gestiones WHERE codigo = ? AND fechaReunion IS NOT NULL AND fechaReunion <> ''").get(codigo).n;
+  const wa = db.prepare('SELECT COALESCE(SUM(entrantes),0) e, COALESCE(SUM(salientes),0) s FROM chat_actividad WHERE codigo = ?').get(codigo);
+  // Días en la etapa actual (desde la última transición hacia ella)
+  const ORDEN = { 'Contactabilidad 3x5': 0, 'Contactado - por calificar': 1, 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6, 'Cerrado perdido': 6 };
+  let diasEnEtapa = cons.diasDesdeAsignacion != null ? cons.diasDesdeAsignacion : null;
+  try {
+    const tr = db.prepare('SELECT etapa_destino, fecha FROM transiciones_etapa WHERE codigo = ? ORDER BY fecha DESC').all(codigo);
+    const ult = tr.find(t => t.etapa_destino === cons.etapa) || tr[0];
+    if (ult && ult.fecha) diasEnEtapa = Math.max(0, Math.floor((Date.now() - new Date(ult.fecha).getTime()) / 86400000));
+  } catch (e) {}
+  const orden = ORDEN[cons.etapa] != null ? ORDEN[cons.etapa] : 0;
+  const avance = cons.etapa === 'Cerrado ganado' ? 100 : Math.round((orden / 6) * 100);
+  res.json({
+    codigo, nombre: lead.nombre, telefono: lead.telefono, email: lead.email || null, asesor: lead.asesor || null,
+    etapa: cons.etapa, score: cons.score != null ? cons.score : null, probabilidad: cons.probabilidad != null ? cons.probabilidad : null,
+    monto: cons.pipelineEstimado != null ? cons.pipelineEstimado : null, ticket: cons.ticket || null, origen: lead.fuente || null,
+    avance, diasEnEtapa, interacciones: nGest, llamadas: nLlam, reuniones: nReu,
+    waEnviados: wa.s, waRecibidos: wa.e,
+    proximaAccion: cons.proximaAccion || null, fechaProxAccion: cons.fechaProxAccion || null, ultimaGestion: cons.ultimaGestion || null,
+    prioridad: cons.prioridad || null,
+  });
+});
+
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
@@ -2083,7 +2116,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.108 (Mensajeria: crear lead desde conversacion huerfana reutilizando la dedup de Leads Ingresos, sin auto-asignar) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.109 (Mensajeria rediseño 3 paneles: lista con filtros+busqueda, chat estilo WhatsApp con autoscroll y scrollbar sobria, ficha comercial con metricas reales) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -2554,15 +2554,23 @@ async function cargarChat() {
 }
 function renderChatLista() {
   const cont = $('chatLista');
-  if (!CHAT_CONVS.length) { cont.innerHTML = '<div class="chat-aviso">No hay conversaciones.</div>'; return; }
-  cont.innerHTML = CHAT_CONVS.map(c => {
+  const lista = chatConvsVisibles();
+  if (!lista.length) { cont.innerHTML = '<div class="chat-aviso">No hay conversaciones.</div>'; return; }
+  cont.innerHTML = lista.map(c => {
     const ini = (c.nombre || '?').trim().slice(0, 2).toUpperCase();
     const act = CHAT_ACTIVA && CHAT_ACTIVA.id === c.id ? ' chat-it-act' : '';
+    const et = etapaDeLead(c.codigoLead);
+    const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa2 === 'function' ? trEtapa2(et) : et) + '</span>' : '';
     return '<div class="chat-it' + act + '" onclick="abrirChat(' + c.id + ')">' +
       '<div class="chat-ava">' + ini + '</div>' +
-      '<div class="chat-it-txt"><div class="chat-it-top"><span class="chat-it-nom">' + (c.nombre || '—') + '</span>' +
-      (c.noLeidos > 0 ? '<span class="chat-badge">' + c.noLeidos + '</span>' : '') + '</div>' +
-      '<div class="chat-it-last">' + (c.ultimo || '') + '</div></div></div>';
+      '<div class="chat-it-txt">' +
+        '<div class="chat-it-top"><span class="chat-it-nom">' + chatEsc(c.nombre || '—') + '</span>' +
+          '<span class="chat-it-hora">' + chatHora(c.ts) + '</span></div>' +
+        (c.asesor ? '<div class="chat-it-emp">' + chatEsc(c.asesor) + '</div>' : '') +
+        '<div class="chat-it-bot"><span class="chat-it-last">' + chatEsc(c.ultimo || '') + '</span>' +
+          (c.noLeidos > 0 ? '<span class="chat-badge">' + c.noLeidos + '</span>' : '') + '</div>' +
+        tag +
+      '</div></div>';
   }).join('');
 }
 async function abrirChat(id) {
@@ -2571,15 +2579,23 @@ async function abrirChat(id) {
   $('chatVacio').classList.add('oculto');
   $('chatConv').classList.remove('oculto');
   const c = CHAT_ACTIVA;
-  $('chatCab').innerHTML = '<div><div class="chat-cab-nom">' + (c.nombre || '—') + '</div>' +
-    '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + c.asesor : '') + '</div></div>' +
-    (c.codigoLead
-      ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>'
-      : (veTodoJS() ? '<button class="btn" onclick="crearLeadDesdeChat()">+ Crear lead</button>' : ''));
+  const ini = (c.nombre || '?').trim().slice(0, 2).toUpperCase();
+  const et = etapaDeLead(c.codigoLead);
+  const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa2 === 'function' ? trEtapa2(et) : et) + '</span>' : '';
+  $('chatCab').innerHTML =
+    '<div class="chat-cab-l"><div class="chat-cab-ava">' + ini + '</div>' +
+      '<div><div class="chat-cab-nom">' + chatEsc(c.nombre || '—') + ' ' + tag + '</div>' +
+      '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + chatEsc(c.asesor) : '') + '</div></div></div>' +
+    '<div class="chat-cab-r">' +
+      (c.codigoLead
+        ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>'
+        : (veTodoJS() ? '<button class="btn" onclick="crearLeadDesdeChat()">+ Crear lead</button>' : '')) +
+    '</div>';
   await cargarMensajes();
   renderPlantillas();
+  renderFicha();
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
-  CHAT_TIMER = setInterval(cargarMensajes, 20000); // respaldo: SSE es el tiempo real; esto es por si se cae
+  CHAT_TIMER = setInterval(cargarMensajes, 20000);
   iniciarChatSSE();
 }
 async function cargarMensajes() {
@@ -2587,20 +2603,25 @@ async function cargarMensajes() {
   try {
     const d = await api('/api/chat/mensajes?id=' + CHAT_ACTIVA.id);
     const hilo = $('chatHilo');
-    hilo.innerHTML = (d.mensajes || []).map(m =>
-      '<div class="chat-msg ' + (m.entrante ? 'chat-in' : 'chat-out') + '"><div class="chat-burb">' +
-      chatEsc(m.texto || '') + '</div></div>'
-    ).join('');
-    hilo.scrollTop = hilo.scrollHeight;
+    hilo.innerHTML = (d.mensajes || []).map(m => burbujaHTML(m.entrante, m.texto, m.ts)).join('');
+    hilo.scrollTop = hilo.scrollHeight; // siempre mostrar el último mensaje
   } catch (e) {}
 }
 function chatEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function chatHoraHM(ts) {
+  if (!ts) return '';
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+  return isNaN(d) ? '' : d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+}
+function burbujaHTML(entrante, texto, ts) {
+  const check = entrante ? '' : ' <span class="chat-ck">✓✓</span>';
+  return '<div class="chat-msg ' + (entrante ? 'chat-in' : 'chat-out') + '">' +
+    '<div class="chat-burb">' + chatEsc(texto || '') +
+    '<span class="chat-meta">' + chatHoraHM(ts) + check + '</span></div></div>';
+}
 function chatBurbuja(entrante, texto) {
   const hilo = $('chatHilo'); if (!hilo) return;
-  const div = document.createElement('div');
-  div.className = 'chat-msg ' + (entrante ? 'chat-in' : 'chat-out');
-  div.innerHTML = '<div class="chat-burb">' + chatEsc(texto) + '</div>';
-  hilo.appendChild(div);
+  hilo.insertAdjacentHTML('beforeend', burbujaHTML(entrante, texto, Math.floor(Date.now() / 1000)));
   hilo.scrollTop = hilo.scrollHeight;
 }
 async function enviarChat() {
@@ -2722,4 +2743,103 @@ async function crearLeadDesdeChat() {
     alert(msg + (r.mensajeError ? '\n\n' + r.mensajeError : ''));
     if (r.estado === 'creado') { await cargarLeads(); await cargarChat(); CHAT_ABRIR_LEAD = null; abrirChat(CHAT_ACTIVA.id); }
   } catch (e) { alert('No se pudo crear el lead: ' + e.message); }
+}
+
+// ---- Mensajería: filtros, búsqueda y ficha comercial (panel derecho) ----
+let CHAT_FILTRO = 'todos';
+function chatFiltro(f) {
+  CHAT_FILTRO = f;
+  document.querySelectorAll('#chatFiltros .chat-fil').forEach(el => el.classList.toggle('chat-fil-act', el.dataset.f === f));
+  renderChatLista();
+}
+function chatConvsVisibles() {
+  const q = ($('chatBuscar') ? $('chatBuscar').value : '').trim().toLowerCase();
+  return CHAT_CONVS.filter(c => {
+    if (CHAT_FILTRO === 'noleidos' && !(c.noLeidos > 0)) return false;
+    if (CHAT_FILTRO === 'asignados' && !c.codigoLead) return false;
+    if (q && !((c.nombre || '') + ' ' + (c.telefono || '')).toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+function chatHora(ts) {
+  if (!ts) return '';
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+  if (isNaN(d)) return '';
+  const hoy = new Date();
+  if (d.toDateString() === hoy.toDateString()) return d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  const ayer = new Date(hoy); ayer.setDate(hoy.getDate() - 1);
+  if (d.toDateString() === ayer.toDateString()) return 'Ayer';
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' });
+}
+function etapaDeLead(codigo) {
+  if (!codigo) return null;
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  return l ? l.etapa : null;
+}
+function estiloEtapaChip(et) {
+  const m = {
+    'Cierre pendiente': 'color:#A32D2D;background:#FCEBEB',
+    'Cerrado ganado': 'color:#0F6E4A;background:#E7F6EE',
+    'Cerrado perdido': 'color:#5F5E5A;background:#EFEFEC',
+    'Reunion efectiva - seguimiento': 'color:#854F0B;background:#FAEEDA',
+    'Agendado - pendiente reunion': 'color:#185FA5;background:#E6F1FB',
+  };
+  return m[et] || 'color:#185FA5;background:#E6F1FB';
+}
+// Ficha comercial (panel derecho) con métricas REALES del lead
+async function renderFicha() {
+  const cont = $('chatFicha'); if (!cont) return;
+  if (!CHAT_ACTIVA || !CHAT_ACTIVA.codigoLead) {
+    cont.innerHTML = '<div class="ficha-vacia"><i>Sin lead vinculado</i><br>Crea el lead desde la cabecera para ver su ficha comercial.</div>';
+    return;
+  }
+  cont.innerHTML = '<div class="ficha-vacia">Cargando ficha…</div>';
+  try {
+    const f = await api('/api/chat/ficha?codigo=' + CHAT_ACTIVA.codigoLead);
+    cont.innerHTML = fichaHTML(f);
+  } catch (e) { cont.innerHTML = '<div class="ficha-vacia">No se pudo cargar la ficha.</div>'; }
+}
+function fBar(lbl, val, col) {
+  const v = Math.max(0, Math.min(100, Math.round(val || 0)));
+  return '<div class="f-bar"><div class="f-bar-top"><span>' + lbl + '</span><span>' + v + '%</span></div>' +
+    '<div class="f-bar-track"><div class="f-bar-fill" style="width:' + v + '%;background:' + col + '"></div></div></div>';
+}
+function fKpi(lbl, val) { return '<div class="f-kpi"><div class="f-kpi-l">' + lbl + '</div><div class="f-kpi-v">' + val + '</div></div>'; }
+function fichaHTML(f) {
+  const ini = (f.nombre || '?').trim().slice(0, 2).toUpperCase();
+  const etLabel = typeof trEtapa2 === 'function' ? trEtapa2(f.etapa) : f.etapa;
+  const monto = f.monto != null ? (typeof fmtSoles === 'function' ? fmtSoles(f.monto) : ('S/ ' + f.monto)) : '—';
+  let bars = fBar('Avance del proceso', f.avance, '#0B72E8');
+  if (f.probabilidad != null) bars += fBar('Probabilidad de cierre', f.probabilidad, '#1FA06A');
+  if (f.score != null) bars += fBar('Lead score', f.score, '#123A63');
+  const kpis = [
+    ['Interacciones', f.interacciones != null ? f.interacciones : '—'],
+    ['Mensajes WA', (f.waEnviados || 0) + ' / ' + (f.waRecibidos || 0)],
+    ['Llamadas', f.llamadas != null ? f.llamadas : '—'],
+    ['Reuniones', f.reuniones != null ? f.reuniones : '—'],
+    ['Días en etapa', f.diasEnEtapa != null ? f.diasEnEtapa : '—'],
+    ['Origen', f.origen || '—'],
+  ].map(k => fKpi(k[0], k[1])).join('');
+  const prox = f.proximaAccion
+    ? '<div class="f-row"><span><i class="hl">▸</i> Próxima tarea</span><b>' + (f.fechaProxAccion ? chatHora(f.fechaProxAccion) : '') + '</b></div>' +
+      '<div class="f-sub">' + chatEsc(f.proximaAccion) + '</div>'
+    : '';
+  return '<div class="f-head">' +
+      '<div class="chat-cab-ava">' + ini + '</div>' +
+      '<div><div class="f-nom">' + chatEsc(f.nombre || '—') + '</div>' +
+      (f.asesor ? '<div class="f-emp">' + chatEsc(f.asesor) + '</div>' : '') + '</div>' +
+    '</div>' +
+    '<div class="f-contact">' +
+      (f.telefono ? '<div><i class="ti ti-phone"></i> ' + f.telefono + '</div>' : '') +
+      (f.email ? '<div><i class="ti ti-mail"></i> ' + chatEsc(f.email) + '</div>' : '') +
+    '</div>' +
+    '<div class="f-sec"><div class="f-line"><span>Etapa</span><span class="chat-tag" style="' + estiloEtapaChip(f.etapa) + '">' + etLabel + '</span></div></div>' +
+    '<div class="f-resumen">' + fKpi('Monto', monto) + fKpi('Ticket', f.ticket || '—') + fKpi('Ejecutivo', f.asesor || '—') + '</div>' +
+    '<div class="f-titulo">Métricas del lead</div>' +
+    bars +
+    '<div class="f-kpis">' + kpis + '</div>' +
+    (prox ? '<div class="f-titulo">Seguimiento</div>' + prox : '') +
+    '<div class="f-acciones">' +
+      (f.codigoLead || CHAT_ACTIVA.codigoLead ? '<button class="btn" onclick="irALead(\'' + (CHAT_ACTIVA.codigoLead) + '\')">Ver lead completo</button>' : '') +
+    '</div>';
 }

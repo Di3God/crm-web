@@ -126,11 +126,25 @@
 
   <!-- ===== MENSAJERÍA (WhatsApp / Chatwoot) ===== -->
   <section id="v-chat" class="vista">
-    <div class="barra"><h2>Mensajería</h2><span class="sub" id="chatSub">WhatsApp</span>
+    <div class="barra"><h2>Mensajería</h2><span class="sub" id="chatSub">WhatsApp Business</span>
       <button class="btn ico-btn" style="margin-left:auto" onclick="cargarChat()" title="Actualizar">⟳</button>
     </div>
     <div id="chatWrap" class="chat-wrap">
-      <div class="chat-lista" id="chatLista"></div>
+
+      <!-- Panel izquierdo: conversaciones -->
+      <div class="chat-lista-wrap">
+        <div class="chat-buscador">
+          <input type="text" id="chatBuscar" placeholder="Buscar conversaciones…" oninput="renderChatLista()">
+        </div>
+        <div class="chat-filtros" id="chatFiltros">
+          <span class="chat-fil chat-fil-act" data-f="todos" onclick="chatFiltro('todos')">Todos</span>
+          <span class="chat-fil" data-f="noleidos" onclick="chatFiltro('noleidos')">No leídos</span>
+          <span class="chat-fil" data-f="asignados" onclick="chatFiltro('asignados')">Asignados</span>
+        </div>
+        <div class="chat-lista" id="chatLista"></div>
+      </div>
+
+      <!-- Panel central: chat -->
       <div class="chat-panel" id="chatPanel">
         <div class="chat-vacio" id="chatVacio">Selecciona una conversación</div>
         <div class="chat-conv oculto" id="chatConv">
@@ -139,10 +153,14 @@
           <div class="chat-plantillas" id="chatPlantillas"></div>
           <div class="chat-input">
             <input type="text" id="chatTexto" placeholder="Escribe un mensaje…" onkeydown="if(event.key==='Enter')enviarChat()">
-            <button class="btn" onclick="enviarChat()">Enviar</button>
+            <button class="btn chat-enviar" onclick="enviarChat()">Enviar</button>
           </div>
         </div>
       </div>
+
+      <!-- Panel derecho: ficha comercial -->
+      <div class="chat-ficha" id="chatFicha"></div>
+
     </div>
   </section>
 
