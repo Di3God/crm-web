@@ -2563,7 +2563,7 @@ function renderChatLista() {
     const ini = (c.nombre || '?').trim().slice(0, 2).toUpperCase();
     const act = CHAT_ACTIVA && CHAT_ACTIVA.id === c.id ? ' chat-it-act' : '';
     const et = etapaDeLead(c.codigoLead);
-    const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa2 === 'function' ? trEtapa2(et) : et) + '</span>' : '';
+    const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa === 'function' ? trEtapa(et) : et) + '</span>' : '';
     return '<div class="chat-it' + act + '" onclick="abrirChat(' + c.id + ')">' +
       '<div class="chat-ava">' + ini + '</div>' +
       '<div class="chat-it-txt">' +
@@ -2584,7 +2584,7 @@ async function abrirChat(id) {
   const c = CHAT_ACTIVA;
   const ini = (c.nombre || '?').trim().slice(0, 2).toUpperCase();
   const et = etapaDeLead(c.codigoLead);
-  const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa2 === 'function' ? trEtapa2(et) : et) + '</span>' : '';
+  const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa === 'function' ? trEtapa(et) : et) + '</span>' : '';
   $('chatCab').innerHTML =
     '<div class="chat-cab-l"><div class="chat-cab-ava">' + ini + '</div>' +
       '<div><div class="chat-cab-nom">' + chatEsc(c.nombre || '—') + ' ' + tag + '</div>' +
@@ -2810,7 +2810,7 @@ function fBar(lbl, val, col) {
 function fKpi(lbl, val) { return '<div class="f-kpi"><div class="f-kpi-l">' + lbl + '</div><div class="f-kpi-v">' + val + '</div></div>'; }
 function fichaHTML(f) {
   const ini = (f.nombre || '?').trim().slice(0, 2).toUpperCase();
-  const etLabel = typeof trEtapa2 === 'function' ? trEtapa2(f.etapa) : f.etapa;
+  const etLabel = typeof trEtapa === 'function' ? trEtapa(f.etapa) : f.etapa;
   const monto = f.monto != null ? (typeof fmtSoles === 'function' ? fmtSoles(f.monto) : ('S/ ' + f.monto)) : '—';
   let bars = fBar('Avance del proceso', f.avance, '#0B72E8');
   if (f.probabilidad != null) bars += fBar('Probabilidad de cierre', f.probabilidad, '#1FA06A');
