@@ -1280,7 +1280,7 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
 
 // Atajos de los botones de accion (reusados en tabla y kanban).
 // Solo abren el registro con el canal correspondiente (sin enlaces externos).
-function accionWhatsApp(codigo) { abrirGestion(codigo, null, 'WhatsApp'); }
+function accionWhatsApp(codigo) { CHAT_ABRIR_LEAD = codigo; ir('chat'); }
 function accionLlamar(codigo) { abrirGestion(codigo, null, 'Llamada'); }
 function accionRegistrar(codigo) { abrirGestion(codigo, null, 'Llamada'); }
 
@@ -1767,8 +1767,8 @@ async function verTrazabilidad(codigo) {
     <div class="tz-card"><span class="tz-ic morado">💰</span><div><div class="tz-lbl">Monto registrado</div><div class="tz-val">${fmtSoles(r.monto)}</div><div class="tz-sub">${r.ticket ? tr(r.ticket) : ''}</div></div></div>`;
 
   // Timeline
-  const icoTipo = { creado: '👤', gestion: '📞', cambio: '⚑', proxima: '📅', llamada: '📞' };
-  const colorTipo = { creado: 'verde', gestion: 'azul', cambio: 'verde', proxima: 'naranja', llamada: 'azul' };
+  const icoTipo = { creado: '👤', gestion: '📞', cambio: '⚑', proxima: '📅', llamada: '📞', whatsapp: '💬' };
+  const colorTipo = { creado: 'verde', gestion: 'azul', cambio: 'verde', proxima: 'naranja', llamada: 'azul', whatsapp: 'verde' };
   $('tEventos').innerHTML = t.eventos.map((e, i) => {
     const last = i === t.eventos.length - 1;
     let derecha = '';
@@ -1820,7 +1820,7 @@ async function verTrazabilidad(codigo) {
   $('ovTraza').classList.add('act');
 }
 function tipoLabel(e) {
-  const m = { creado: 'Lead creado', gestion: e.canal || 'Gestión', cambio: 'Cambio de etapa', proxima: 'Próxima acción', llamada: 'Llamada' };
+  const m = { creado: 'Lead creado', gestion: e.canal || 'Gestión', cambio: 'Cambio de etapa', proxima: 'Próxima acción', llamada: 'Llamada', whatsapp: 'WhatsApp' };
   return m[e.tipo] || '';
 }
 // Fecha en dos lineas (dd/mm \n hh:mm) para el timeline
@@ -2542,6 +2542,12 @@ async function cargarChat() {
     CHAT_CONVS = d.conversaciones || [];
     renderChatLista();
     iniciarChatSSE();
+    if (CHAT_ABRIR_LEAD) {
+      const c = CHAT_CONVS.find(x => x.codigoLead === CHAT_ABRIR_LEAD);
+      const cod = CHAT_ABRIR_LEAD; CHAT_ABRIR_LEAD = null;
+      if (c) abrirChat(c.id);
+      else chatSinConversacion(cod);
+    }
   } catch (e) {
     cont.innerHTML = '<div class="chat-aviso">No se pudo cargar la bandeja: ' + e.message + '</div>';
   }
@@ -2569,6 +2575,7 @@ async function abrirChat(id) {
     '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + c.asesor : '') + '</div></div>' +
     (c.codigoLead ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>' : '');
   await cargarMensajes();
+  renderPlantillas();
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
   CHAT_TIMER = setInterval(cargarMensajes, 20000); // respaldo: SSE es el tiempo real; esto es por si se cae
   iniciarChatSSE();
@@ -2632,4 +2639,58 @@ async function refrescarListaChat() {
     const d = await api('/api/chat/conversaciones');
     if (d.configurado) { CHAT_CONVS = d.conversaciones || []; renderChatLista(); }
   } catch (e) {}
+}
+
+// ---- Etapa 4: abrir chat del lead + plantillas por etapa ----
+let CHAT_ABRIR_LEAD = null;
+function chatSinConversacion(codigo) {
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  CHAT_ACTIVA = null;
+  $('chatConv').classList.add('oculto');
+  const v = $('chatVacio'); v.classList.remove('oculto');
+  v.innerHTML = 'El lead <b>' + (l ? l.nombre : codigo) + '</b> aún no tiene conversación de WhatsApp abierta.<br><br>' +
+    'Con la API oficial, la conversación se habilita cuando <b>el lead escribe primero</b> (o mediante una plantilla aprobada por Meta). En cuanto te escriba, aparecerá aquí.';
+}
+// Plantillas por etapa interna del lead. {n} = primer nombre del lead.
+const PLANTILLAS_WA = {
+  'Contactabilidad 3x5': [
+    ['Saludo', 'Hola {n}, te saluda el equipo de TasaTop 🙌 Vi tu interés en hacer crecer tu capital con inversiones respaldadas. ¿Te parece si te cuento cómo funciona?'],
+  ],
+  'Contactado - por calificar': [
+    ['Calificar', 'Hola {n}, para recomendarte la mejor opción cuéntame: ¿ya has invertido antes y qué monto tienes pensado destinar?'],
+  ],
+  'Calificado - pendiente agendar': [
+    ['Agendar', '{n}, ¿tienes 10 minutos hoy o mañana para una llamada corta? Te muestro las oportunidades disponibles y resolvemos tus dudas.'],
+  ],
+  'Agendado - pendiente reunion': [
+    ['Confirmar', 'Hola {n}, te confirmo nuestra reunión. ¿Sigue en pie el horario que coordinamos? Quedo atento 😊'],
+  ],
+  'Reunion efectiva - seguimiento': [
+    ['Seguimiento', 'Hola {n}, ¿pudiste revisar la información que te compartí? Cualquier duda con gusto la vemos.'],
+  ],
+  'Cierre pendiente': [
+    ['Cierre', '{n}, ya tenemos todo listo para que empieces a invertir. ¿Avanzamos con tu primera operación?'],
+  ],
+};
+function renderPlantillas() {
+  const cont = $('chatPlantillas'); if (!cont) return;
+  cont.innerHTML = '';
+  if (!CHAT_ACTIVA || !CHAT_ACTIVA.codigoLead) return;
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === CHAT_ACTIVA.codigoLead);
+  if (!l) return;
+  const lista = PLANTILLAS_WA[l.etapa] || [];
+  // Siempre ofrecer también el saludo inicial como comodín
+  const saludo = PLANTILLAS_WA['Contactabilidad 3x5'][0];
+  const todas = (l.etapa === 'Contactabilidad 3x5') ? lista : [saludo].concat(lista);
+  cont.innerHTML = todas.map((p, i) =>
+    '<span class="chat-pl" onclick="usarPlantilla(' + i + ')">' + p[0] + '</span>'
+  ).join('');
+  cont._plantillas = todas;
+  cont._nombre = (l.nombre || '').trim().split(/\s+/)[0] || '';
+}
+function usarPlantilla(i) {
+  const cont = $('chatPlantillas'); if (!cont || !cont._plantillas) return;
+  const p = cont._plantillas[i]; if (!p) return;
+  const txt = p[1].replace(/\{n\}/g, cont._nombre || '');
+  const inp = $('chatTexto'); inp.value = txt; inp.focus();
 }

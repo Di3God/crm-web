@@ -112,6 +112,14 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_llamadas_codigo ON llamadas(codigo);
   CREATE INDEX IF NOT EXISTS idx_gestiones_codigo ON gestiones(codigo);
+  CREATE TABLE IF NOT EXISTS chat_actividad (
+    codigo TEXT NOT NULL,
+    dia TEXT NOT NULL,
+    entrantes INTEGER DEFAULT 0,
+    salientes INTEGER DEFAULT 0,
+    ultimo TEXT,
+    PRIMARY KEY (codigo, dia)
+  );
 `);
 // Migracion suave para bases creadas con v1.0
 try { db.exec('ALTER TABLE leads ADD COLUMN montoPotencial TEXT'); } catch (e) {}
@@ -1130,6 +1138,17 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
       actor: ll.agente || ''
     });
   });
+  // Actividad de WhatsApp (informativa, 1 por dia; NO afecta etapa ni score)
+  const waDias = db.prepare('SELECT * FROM chat_actividad WHERE codigo = ? ORDER BY dia ASC').all(lead.codigo);
+  waDias.forEach(w => {
+    const total = (w.entrantes || 0) + (w.salientes || 0);
+    eventos.push({
+      tipo: 'whatsapp', fecha: w.ultimo || (w.dia + 'T12:00:00'),
+      titulo: 'Conversación de WhatsApp',
+      sub: total + ' mensaje' + (total === 1 ? '' : 's') + ' · ' + (w.entrantes || 0) + ' recibidos · ' + (w.salientes || 0) + ' enviados',
+      actor: lead.asesor || ''
+    });
+  });
   // Ordenar: futuros primero (arriba), luego por fecha desc
   eventos.sort((a, b) => {
     if (a.futuro && !b.futuro) return -1;
@@ -1524,6 +1543,18 @@ app.post('/api/webhooks/chatwoot/:token', (req, res) => {
     const lead = k ? idx[k] : null;
     const tipo = ev.message_type; // 'incoming' | 'outgoing'
     const entrante = tipo === 'incoming' || tipo === 0;
+    // Registro informativo en trazabilidad (1 fila por lead+dia). NO afecta etapa ni score.
+    if (lead) {
+      try {
+        const dia = fechaPeruISO(new Date());
+        const ahoraISO = new Date().toISOString();
+        db.prepare(
+          'INSERT INTO chat_actividad (codigo,dia,entrantes,salientes,ultimo) VALUES (?,?,?,?,?) ' +
+          'ON CONFLICT(codigo,dia) DO UPDATE SET entrantes=entrantes+?, salientes=salientes+?, ultimo=?'
+        ).run(lead.codigo, dia, entrante ? 1 : 0, entrante ? 0 : 1, ahoraISO,
+              entrante ? 1 : 0, entrante ? 0 : 1, ahoraISO);
+      } catch (e) {}
+    }
     sseEnviar(lead ? lead.asesor : null, {
       tipo: 'mensaje',
       conversationId: convId,
@@ -2021,7 +2052,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.104 (Mensajeria tiempo real: SSE + webhook de Chatwoot, envio optimista; mensajes entran y salen al instante) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.107 (Mensajeria: rediseño con colores TasaTop + fix bug de altura - el hilo hace scroll y la barra de envio queda fija) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
