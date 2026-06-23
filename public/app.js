@@ -988,7 +988,7 @@ const ICO_TEL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentCo
 
 // Celda Lead: nombre + canal con icono + fuente + estado de contacto (rojo)
 function celdaLead(l) {
-  const fuente = l.fuente ? 'Fuente: ' + tr(l.fuente) : '';
+  const correo = l.email ? l.email : '';
   const asignado = l.fechaAsignacion ? fechaRelativa(l.fechaAsignacion) : '';
   // Estado de contacto SOLO en etapa "Por contactar":
   // intentos > 0 -> "N intentos" (azul); sin intentos -> "Sin contacto".
@@ -1001,7 +1001,7 @@ function celdaLead(l) {
     '<div class="lead-nom"' + nomTipAttr(l) + '>' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
       (esLeadNuevo(l) ? '<span class="badge-nuevo">Nuevo</span>' : '') + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
-    (fuente ? '<div class="lead-fuente">' + fuente + '</div>' : '') +
+    (correo ? '<div class="lead-fuente" title="' + correo + '">✉ ' + correo + '</div>' : '') +
     estadoHtml +
   '</div>';
 }
