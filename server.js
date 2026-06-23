@@ -513,7 +513,7 @@ function guardarIngresoBruto(norm, estado, mensajeError, codigoLead) {
 
 // Procesa un lead normalizado: aplica dedupe y crea o asocia segun corresponda.
 // Devuelve { estado, codigoLead, mensajeError }.
-function procesarLeadMarketing(norm) {
+function procesarLeadMarketing(norm, opts = {}) {
   // Incompleto: sin celular valido -> no se crea lead operativo, queda en revision.
   if (!norm.telefonoNormalizado || norm.telefonoNormalizado.length < 9) {
     return { estado: 'incompleto', mensajeError: 'Celular ausente o invalido' };
@@ -584,7 +584,7 @@ function procesarLeadMarketing(norm) {
   const ahora = new Date().toISOString();
   const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
-  const gp = elegirGPRoundRobin();
+  const gp = opts.sinAutoasignar ? null : elegirGPRoundRobin();
   db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
@@ -1563,6 +1563,37 @@ app.post('/api/webhooks/chatwoot/:token', (req, res) => {
   } catch (e) { /* nunca romper el webhook */ }
 });
 
+// Crear lead desde una conversación huérfana (número que no es lead). Solo admin/jefa.
+// Reutiliza procesarLeadMarketing -> aplica TODA la dedup de Leads Ingresos
+// (telefono exacto, releads/historial, ganado/perdido, mismo nombre). Crea SIN asignar.
+app.post('/api/chat/crear-lead', async (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo admin o jefa pueden crear leads' });
+  if (!cw.cwConfigurado()) return res.status(400).json({ error: 'Chatwoot no configurado' });
+  const { conversationId, nombre } = req.body || {};
+  if (!conversationId) return res.status(400).json({ error: 'Falta conversationId' });
+  try {
+    const data = await cw.obtenerConversacion(conversationId);
+    const c = data && data.payload ? data.payload : data;
+    const phone = cw.telefonoDeConversacion(c);
+    const telNorm = L.normalizarCelular(phone);
+    if (!telNorm || telNorm.length < 9) return res.status(400).json({ error: 'La conversación no tiene un teléfono válido' });
+    const sender = (c.meta && c.meta.sender) ? c.meta.sender : {};
+    const nombreFinal = (nombre && String(nombre).trim()) || sender.name || '';
+    const norm = {
+      telefonoNormalizado: telNorm,
+      nombre: nombreFinal,
+      email: null,
+      fuente: 'whatsapp',
+      campana: null,
+      montoNumerico: null,
+      rawJson: JSON.stringify({ origen: 'chat-whatsapp', conversationId, phone }),
+    };
+    const r = procesarLeadMarketing(norm, { sinAutoasignar: true });
+    if (r.estado === 'creado') auditar(req, 'crear-lead-chat', r.codigoLead, 'desde WhatsApp ' + phone);
+    res.json(r);
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get('/api/dashboard', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
   if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
@@ -2052,7 +2083,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.107 (Mensajeria: rediseño con colores TasaTop + fix bug de altura - el hilo hace scroll y la barra de envio queda fija) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.108 (Mensajeria: crear lead desde conversacion huerfana reutilizando la dedup de Leads Ingresos, sin auto-asignar) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

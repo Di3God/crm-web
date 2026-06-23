@@ -2573,7 +2573,9 @@ async function abrirChat(id) {
   const c = CHAT_ACTIVA;
   $('chatCab').innerHTML = '<div><div class="chat-cab-nom">' + (c.nombre || '—') + '</div>' +
     '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + c.asesor : '') + '</div></div>' +
-    (c.codigoLead ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>' : '');
+    (c.codigoLead
+      ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>'
+      : (veTodoJS() ? '<button class="btn" onclick="crearLeadDesdeChat()">+ Crear lead</button>' : ''));
   await cargarMensajes();
   renderPlantillas();
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
@@ -2693,4 +2695,31 @@ function usarPlantilla(i) {
   const p = cont._plantillas[i]; if (!p) return;
   const txt = p[1].replace(/\{n\}/g, cont._nombre || '');
   const inp = $('chatTexto'); inp.value = txt; inp.focus();
+}
+
+// Crear lead desde una conversación huérfana (respeta la dedup de Leads Ingresos).
+async function crearLeadDesdeChat() {
+  if (!CHAT_ACTIVA) return;
+  const n = CHAT_ACTIVA.nombre || '';
+  const pareceTel = /^\+?\d[\d\s]*$/.test(n.trim());
+  const sugerido = pareceTel ? '' : n;
+  const nombre = prompt('Nombre del lead a crear (teléfono ' + (CHAT_ACTIVA.telefono || '') + '):', sugerido);
+  if (nombre === null) return; // canceló
+  try {
+    const r = await api('/api/chat/crear-lead', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: CHAT_ACTIVA.id, nombre: nombre.trim() }),
+    });
+    const msg = {
+      creado: '✅ Lead creado (' + r.codigoLead + ') sin asignar. Asígnalo desde la tabla o el panel de Reparto.',
+      duplicado_activo: '⚠️ Este número YA es un lead activo (' + r.codigoLead + '). No se creó duplicado.',
+      duplicado_ganado: '⚠️ Este número ya es un lead GANADO (' + r.codigoLead + '). Revisión manual.',
+      duplicado_perdido: '⚠️ Este número ya es un lead CERRADO PERDIDO (' + r.codigoLead + '). Revisión manual.',
+      duplicado_historial: '⚠️ Este número ya está en la Base de Releads. La jefa decide.',
+      sin_nombre: '⚠️ Falta el nombre. Vuelve a intentar con un nombre.',
+      incompleto: '⚠️ El teléfono no es válido.',
+    }[r.estado] || ('Resultado: ' + r.estado);
+    alert(msg + (r.mensajeError ? '\n\n' + r.mensajeError : ''));
+    if (r.estado === 'creado') { await cargarLeads(); await cargarChat(); CHAT_ABRIR_LEAD = null; abrirChat(CHAT_ACTIVA.id); }
+  } catch (e) { alert('No se pudo crear el lead: ' + e.message); }
 }
