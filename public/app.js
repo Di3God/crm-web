@@ -1633,6 +1633,7 @@ function sugerirFechaProx() {
 }
 
 async function guardarGestion() {
+  const etapaAntes = gLead ? gLead.etapa : null;
   const r = $('gResultado').value;
   const esDescarte = ['Numero invalido', 'Numero equivocado', 'Respondio - no interesado', 'Respondio - no califica', 'Desistio'].includes(r);
   // En modo perdido o descarte, el comentario (motivo) es obligatorio.
@@ -1730,7 +1731,18 @@ async function guardarGestion() {
       });
     }
     cerrar('ovGestion');
-    cargarLeads();
+    await cargarLeads();
+    // Refuerzo positivo (dopamina): celebra la gestión / avance / cierre ganado.
+    if (!modoPerdido && !esDescarte) {
+      try {
+        const ld = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === gCodigo);
+        const etapaDespues = ld ? ld.etapa : null;
+        const ORD = { 'Contactabilidad 3x5': 0, 'Contactado - por calificar': 1, 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6 };
+        if (etapaDespues === 'Cerrado ganado' || r === 'Venta ganada') celebrar('ganado');
+        else if (etapaAntes != null && etapaDespues != null && (ORD[etapaDespues] || 0) > (ORD[etapaAntes] || 0)) celebrar('avance');
+        else celebrar('gestion');
+      } catch (e) {}
+    }
   } catch (e) {
     $('gError').textContent = e.message;
     $('gError').classList.add('act');
@@ -2845,4 +2857,76 @@ function fichaHTML(f) {
     '<div class="f-acciones">' +
       (f.codigoLead || CHAT_ACTIVA.codigoLead ? '<button class="btn" onclick="irALead(\'' + (CHAT_ACTIVA.codigoLead) + '\')">Ver lead completo</button>' : '') +
     '</div>';
+}
+
+// ---- Refuerzo positivo (dopamina): frases que rotan sin repetirse ----
+const FRASES_GESTION = [
+  '¡Gestión completada! Sigue así',
+  '¡Buen movimiento, {n}!',
+  'Cada contacto abre una oportunidad',
+  '¡Estás imparable! 🔥',
+  'Lead gestionado. Vamos por el siguiente 💪',
+  'Bien {n}, estás haciendo que suceda',
+  '¡Acción tomada, progreso ganado!',
+  'Una gestión más cerca de tu meta',
+  '¡Excelente! Mantén la racha 🔥',
+  'Tu constancia convierte oportunidades',
+  '¡Buen trabajo! El siguiente lead te espera 🫰🏻',
+  'Contactaste. Aprendiste. Avanzaste',
+  '¡Vas bien, {n}!',
+  'Cada gestión suma. Sigue adelante 💪',
+  '¡Misión cumplida! Vamos por más',
+  '¡Buen avance! No bajes el ritmo 👍',
+];
+const FRASES_AVANCE = [
+  '¡El cierre está muy cerca! 🚀',
+  '¡Tus leads en movimiento!',
+  '{n}, acabas de subir el nivel 🔥',
+  '¡Avance desbloqueado!',
+  'Un paso más cerca del cierre',
+  '¡Tu gestión dio resultado!',
+  '¡Muy bien! Tu embudo se mueve 👍',
+  'Esto huele a cierre',
+  '¡Súper avance {n}! Mantén el impulso',
+  'Tu seguimiento está funcionando {n} 💪',
+  '¡Cada vez más cerca del cierre!',
+  '¡El siguiente paso es tuyo!',
+  'Buen trabajo: este lead es tuyo 👏',
+  '¡Vamos, {n}! No pierdas el ritmo',
+];
+const FRASES_GANADO = [
+  '🏆 ¡CERRASTE, {n}! Esto es lo que viniste a hacer. ¡Enorme!',
+  '💰 ¡VENTA GANADA! {n}, te luciste. A celebrar este cierre',
+  '🎉 ¡Cierre ganado! El esfuerzo se convirtió en resultado. ¡Bravo!',
+  '🔥 ¡Lo lograste, {n}! Un cliente más que confía en TasaTop',
+  '🚀 ¡GANADO! Así se cierra. El equipo lo celebra contigo',
+  '⭐ ¡Qué cierre, {n}! De esto se trata. Vas a ser imparable',
+  '💪 ¡Venta cerrada! Tu constancia tenía premio. ¡Felicitaciones!',
+  '🥂 ¡Ganaste este, {n}! Un paso más hacia tu mejor mes',
+];
+const _ultFrase = {};
+function fraseRotada(set, key) {
+  if (set.length <= 1) return set[0];
+  let i; do { i = Math.floor(Math.random() * set.length); } while (i === _ultFrase[key]);
+  _ultFrase[key] = i; return set[i];
+}
+function aplicarNombre(s, nom) {
+  if (nom) return s.replace(/\{n\}/g, nom);
+  return s.replace(/\{n\}\s*,\s*/g, '').replace(/,?\s*\{n\}/g, '').replace(/\{n\}/g, '').replace(/^\s*,\s*/, '').trim();
+}
+function celebrar(tier) {
+  const nom = (typeof YO !== 'undefined' && YO && YO.nombre) ? YO.nombre.split(' ')[0] : '';
+  let set, cls, fuerte = false;
+  if (tier === 'ganado') { set = FRASES_GANADO; cls = 'cel-ganado'; fuerte = true; }
+  else if (tier === 'avance') { set = FRASES_AVANCE; cls = 'cel-avance'; }
+  else { set = FRASES_GESTION; cls = 'cel-gestion'; }
+  const txt = aplicarNombre(fraseRotada(set, tier), nom);
+  let host = document.getElementById('celHost');
+  if (!host) { host = document.createElement('div'); host.id = 'celHost'; document.body.appendChild(host); }
+  const el = document.createElement('div');
+  el.className = 'cel-toast ' + cls;
+  el.textContent = txt;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('cel-in'));
+  setTimeout(() => { el.classList.remove('cel-in'); setTimeout(() => el.remove(), 350); }, fuerte ? 5200 : 3600);
 }

@@ -790,3 +790,12 @@
   .f-row .hl { color: #0B72E8; font-style: normal; }
   .f-sub { font-size: 10.5px; color: #5F7186; padding: 2px 15px 0 27px; }
   .f-acciones { padding: 14px 15px 4px; display: flex; flex-direction: column; gap: 7px; }
+
+  /* Refuerzo positivo: toasts de celebración */
+  #celHost { position: fixed; top: 18px; left: 0; right: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+  .cel-toast { max-width: 460px; padding: 12px 22px; border-radius: 999px; font-size: 13.5px; font-weight: 600; color: #fff;
+    box-shadow: 0 8px 30px rgba(0,0,0,.18); opacity: 0; transform: translateY(-16px); transition: opacity .3s, transform .3s; text-align: center; }
+  .cel-in { opacity: 1; transform: translateY(0); }
+  .cel-gestion { background: #0B72E8; }
+  .cel-avance { background: #1FA06A; }
+  .cel-ganado { background: #123A63; font-size: 15px; padding: 15px 28px; box-shadow: 0 10px 38px rgba(18,58,99,.4); border: 1.5px solid #E0A100; }
