@@ -846,14 +846,14 @@
   .ac-fab { position: fixed; right: 22px; bottom: 22px; z-index: 900; width: 54px; height: 54px; border-radius: 50%;
     background: #123A63; color: #fff; border: none; font-size: 23px; cursor: pointer; box-shadow: 0 6px 22px rgba(18,58,99,.38); transition: background .12s; }
   .ac-fab:hover { background: #0E2F54; }
-  .ac-panel { position: fixed; right: 16px; top: 16px; z-index: 950; width: 480px; max-width: calc(100vw - 32px);
+  .ac-panel { position: fixed; right: 16px; top: 16px; z-index: 950; width: 700px; max-width: calc(100vw - 32px);
     max-height: calc(100vh - 32px); background: #fff; border: 1px solid var(--line); border-radius: 14px;
     box-shadow: 0 16px 50px rgba(18,58,99,.3); overflow: hidden; display: flex; flex-direction: column; }
   .ac-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 15px; background: #123A63; color: #fff; font-size: 13px; font-weight: 600; flex: none; }
   .ac-head-btns { display: flex; align-items: center; gap: 6px; }
   .ac-head-btns button { background: rgba(255,255,255,.16); border: none; color: #fff; font-size: 13px; cursor: pointer; line-height: 1; width: 28px; height: 28px; border-radius: 7px; }
   .ac-head-btns button:hover { background: rgba(255,255,255,.28); }
-  .ac-body { flex: 1; min-height: 0; overflow-y: auto; }
-  .ac-workspace { width: 100%; height: 640px; }
+  .ac-body { flex: 1; min-height: 0; overflow: auto; }
+  .ac-workspace { width: 100%; height: 640px; min-width: 666px; }
   .ac-workspace iframe { border: none; width: 100% !important; height: 640px !important; display: block; }
   .ac-hint { padding: 9px 15px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line); flex: none; }

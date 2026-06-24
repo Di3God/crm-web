@@ -2258,7 +2258,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.122 (fix softphone Aircall: panel anclado arriba, limitado al alto de pantalla, cuerpo con scroll interno y workspace altura fija - ya no se corta) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.124 (flujo de llamada: el boton Llamar solo abre Aircall con el numero marcado; al colgar se minimiza el telefono y se abre la gestion con canal Llamada para completar el registro) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

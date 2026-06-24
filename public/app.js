@@ -1284,8 +1284,13 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
 function accionWhatsApp(codigo) { CHAT_ABRIR_LEAD = codigo; ir('chat'); }
 function accionLlamar(codigo) {
   const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
-  if (l && l.telefono) acDial(telE164(l.telefono)); // marca por el softphone Aircall
-  abrirGestion(codigo, null, 'Llamada');             // y abre la gestión para registrar
+  if (l && l.telefono) {
+    AC_LEAD_EN_CURSO = codigo;     // recordamos el lead para abrir su gestión al colgar
+    AC_HUBO_LLAMADA = false;
+    acDial(telE164(l.telefono));   // solo abre Aircall con el número marcado
+  } else {
+    abrirGestion(codigo, null, 'Llamada'); // sin teléfono: registro manual
+  }
 }
 function accionRegistrar(codigo) { abrirGestion(codigo, null, 'Llamada'); }
 
@@ -3006,7 +3011,7 @@ async function cargarCadencia() {
 }
 
 // ---- Softphone Aircall embebido (Etapa C) + click-to-call (Etapa B) ----
-let AC_PHONE = null, AC_LOGGED = false, AC_PENDING = null;
+let AC_PHONE = null, AC_LOGGED = false, AC_PENDING = null, AC_LEAD_EN_CURSO = null, AC_HUBO_LLAMADA = false;
 function acEnsure() {
   if (AC_PHONE) return AC_PHONE;
   if (!window.AircallWorkspace) return null;
@@ -3025,8 +3030,25 @@ function acEnsure() {
         const h = $('acHint'); if (h) h.classList.remove('oculto');
       },
     });
+    // Se inició una llamada saliente → marcamos que hubo llamada (para abrir la gestión al colgar).
+    AC_PHONE.on('outgoing_call', () => { AC_HUBO_LLAMADA = true; });
+    AC_PHONE.on('incoming_call', () => { AC_HUBO_LLAMADA = true; });
+    // La llamada terminó (colgó la GP o el lead) → minimizar teléfono y abrir la gestión.
+    AC_PHONE.on('call_ended', () => { acAlColgar(); });
   } catch (e) { console.error('Aircall init:', e); }
   return AC_PHONE;
+}
+// Al colgar: si hubo una llamada y veníamos de un lead, minimiza el teléfono y abre su gestión.
+function acAlColgar() {
+  const codigo = AC_LEAD_EN_CURSO;
+  const hubo = AC_HUBO_LLAMADA;
+  AC_LEAD_EN_CURSO = null; AC_HUBO_LLAMADA = false;
+  if (!hubo || !codigo) return;
+  // Minimizar el teléfono al botón flotante (mantiene la sesión viva).
+  const p = $('acPhonePanel'); if (p) p.classList.add('oculto');
+  if ($('acFab')) $('acFab').classList.remove('oculto');
+  // Pequeño respiro para que Aircall cierre su vista de llamada antes de abrir la gestión.
+  setTimeout(() => abrirGestion(codigo, null, 'Llamada'), 400);
 }
 // Detecta si ya hay sesion de Aircall (por si onLogin no se disparo, p.ej. login en otra pestaña).
 function acVerificarSesion() {
