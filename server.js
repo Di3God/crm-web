@@ -361,26 +361,27 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
   }
   try {
     const ev = req.body || {};
-    // Aircall envia { event: 'call.ended', data: { ... } }
+    // Formato real de Aircall: { resource, event, timestamp, token, data: {...} }
     const tipo = ev.event || '';
     const c = ev.data || {};
-    // Solo registramos llamadas finalizadas (tienen duracion y desenlace)
-    if (tipo !== 'call.ended' && tipo !== 'call.hungup' && tipo !== 'call.created') {
+    // Registramos solo call.ended: trae todos los datos (duracion, answered_at, etc.).
+    // call.created/hungup se ignoran para no guardar registros incompletos.
+    if (tipo !== 'call.ended') {
       return res.json({ ok: true, ignorado: tipo });
     }
-    // Numero del lead: en salientes es 'to', en entrantes es 'from'
     const direccion = c.direction === 'inbound' ? 'entrante' : 'saliente';
-    const numeroLead = direccion === 'entrante' ? (c.from || c.raw_digits) : (c.to || c.raw_digits);
-    const cel9 = L.normalizarCelular(numeroLead || '');
+    // El numero de la otra parte (el lead) viene SIEMPRE en raw_digits.
+    const numeroLead = c.raw_digits || '';
+    const cel9 = L.normalizarCelular(numeroLead);
     // Buscar lead cuyo telefono termine en esos 9 digitos
     let lead = null;
     if (cel9) {
       lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
         .get('%' + cel9);
     }
-    const contestada = (c.answered_at || c.status === 'answered' || c.duration > 0) ? 1 : 0;
+    const contestada = (c.answered_at || c.status === 'answered' || Number(c.duration) > 0) ? 1 : 0;
     const duracion = Number(c.duration || 0);
-    const agente = (c.user && (c.user.name || c.user.email)) || c.agent || null;
+    const agente = (c.user && (c.user.name || c.user.email)) || null;
     const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
     const aircallId = String(c.id || ('ac-' + Date.now()));
 
@@ -2256,7 +2257,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.117 (3x5 rediseñado: bandas horarias por hora de asignacion 3/2/1, toques ponderados, conexion promedio en que llamada califico, filtros GP/estado/fecha, celdas con pauta y estados respondio sin calificar/calificado/descarte) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.118 (Aircall Etapa A: webhook de registro de llamadas corregido al formato real - usa raw_digits para el match del lead, solo call.ended) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
