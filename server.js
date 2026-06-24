@@ -228,6 +228,7 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
 }
 // Alta idempotente de GP nuevas (no recrea ni pisa las existentes).
 crearUsuario('dbarreto@tasatop.com', 'Dora Barreto', 'gestora', '12345678');
+crearUsuario('cpovis@tasatop.com', 'Cristian Povis', 'gestora', '12345678');
 
 // Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
 try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
@@ -2257,7 +2258,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.118 (Aircall Etapa A: webhook de registro de llamadas corregido al formato real - usa raw_digits para el match del lead, solo call.ended) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.119 (nuevo GP Cristian Povis cpovis@tasatop.com para pruebas de llamadas; agregado a ASESORES) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

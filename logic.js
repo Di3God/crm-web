@@ -10,7 +10,7 @@
 //  - Cadencia: autocalculo de fecha proxima accion (9am-18, dias habiles)
 // =============================================================
 
-const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'];
+const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto', 'Cristian Povis'];
 
 const CANALES = ['Llamada', 'WhatsApp', 'Correo'];
 const FUENTES = ['Meta Ads', 'Google Ads', 'Referido', 'Organico', 'LinkedIn', 'Otro'];
