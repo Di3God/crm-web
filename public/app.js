@@ -2932,16 +2932,35 @@ function celebrar(tier) {
   setTimeout(() => { el.classList.remove('cel-in'); setTimeout(() => el.remove(), 350); }, fuerte ? 5200 : 3600);
 }
 
-// ---- Dashboard: cumplimiento de la cadencia 3x5 ----
+// ---- Dashboard: cumplimiento de la cadencia 3x5 (bandas horarias) ----
+let CAD_GP_INIT = false;
 async function cargarCadencia() {
   try {
-    const d = await api('/api/dashboard/cadencia');
+    const gp = $('cadGP') ? $('cadGP').value : '';
+    const estado = $('cadEstado') ? $('cadEstado').value : '';
+    const desde = $('cadDesde') ? $('cadDesde').value : '';
+    const hasta = $('cadHasta') ? $('cadHasta').value : '';
+    const qs = new URLSearchParams();
+    if (gp) qs.set('gp', gp); if (estado) qs.set('estado', estado);
+    if (desde) qs.set('desde', desde); if (hasta) qs.set('hasta', hasta);
+    const d = await api('/api/dashboard/cadencia?' + qs.toString());
+
+    // Poblar dropdown de GPs y fechas una sola vez
+    if (!CAD_GP_INIT) {
+      const sel = $('cadGP');
+      (d.gpsDisponibles || []).forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+      if ($('cadDesde') && d.filtros) $('cadDesde').value = d.filtros.desde;
+      if ($('cadHasta') && d.filtros) $('cadHasta').value = d.filtros.hasta;
+      CAD_GP_INIT = true;
+    }
+
     const r = d.resumen;
+    const conex = r.conexionProm != null ? ('N° ' + r.conexionProm) : '—';
     const kpis = [
-      ['Cumplimiento 3x5', r.cumplimientoPct + '%', 'leads en ritmo', ''],
-      ['Intentos / lead-día', r.intentosLeadDia, 'meta: 3', ''],
-      ['Leads atrasados', r.atrasados, 'sin el ritmo 3x5', r.atrasados > 0 ? 'rojo' : ''],
-      ['Conexión 1er día', r.conexionDia1Pct + '%', 'contactó el día 1', ''],
+      ['Cumplimiento 3x5', r.cumplimientoPct + '%', 'siguieron la pauta', ''],
+      ['Toques esperados', r.toquesPonderadoPct + '%', 'ponderado por hora', ''],
+      ['Leads sin cumplir', r.sinCumplir, 'no siguieron el 3x5', r.sinCumplir > 0 ? 'rojo' : ''],
+      ['Conexión', conex, 'calificaron en promedio', ''],
     ];
     $('cadResumen').innerHTML = kpis.map(k =>
       '<div class="cad-kpi"><div class="cad-kpi-l">' + k[0] + '</div>' +
@@ -2955,24 +2974,27 @@ async function cargarCadencia() {
         '<div class="cad-gp-n">' + g.nombre + '</div>' +
         '<div class="cad-gp-bar"><div style="width:' + g.pct + '%;background:' + col + '"></div></div>' +
         '<div class="cad-gp-pct" style="color:' + col + '">' + g.pct + '%</div>' +
-        '<div class="cad-gp-x">' + g.intentosDia + ' int/día · ' + g.atrasados + ' atrasados</div>' +
+        '<div class="cad-gp-x">' + g.intentosDia + ' int/día</div>' +
       '</div>';
-    }).join('') || '<div class="cad-vacio">Sin leads en "Por contactar" todavía.</div>';
+    }).join('') || '<div class="cad-vacio">Sin leads asignados en este rango.</div>';
 
-    const celda = v => {
-      const bg = v === 2 ? '#1D9E75' : (v === 1 ? '#85B7EB' : '#EFECE3');
-      const bd = v === 0 ? 'border:1px solid #D3D1C7;' : '';
-      return '<span class="cad-cu2" style="background:' + bg + ';' + bd + '"></span>';
+    const COL = { sinresp: '#85B7EB', sincal: '#EF9F27', cal: '#1D9E75', descarte: '#E24B4A' };
+    const celda = est => {
+      if (est === 'na') return '<span class="cad-cu2 cad-na"></span>';
+      if (est === 'pauta') return '<span class="cad-cu2 cad-pauta"></span>';
+      if (est === 'vacio') return '<span class="cad-cu2" style="background:#EFECE3;border:1px solid #D3D1C7"></span>';
+      return '<span class="cad-cu2" style="background:' + (COL[est] || '#EFECE3') + '"></span>';
     };
     const head = '<div class="cad-row cad-head"><span>Lead</span>' +
       [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('') + '<span class="cad-et">Días s/tocar</span></div>';
-    $('cadLeads').innerHTML = head + (d.leads || []).map(l =>
+    $('cadLeads').innerHTML = head + ((d.leads || []).map(l =>
       '<div class="cad-row">' +
-        '<div class="cad-lead"><div class="cad-lead-n">' + l.nombre + '</div><div class="cad-lead-gp">' + l.gp + '</div></div>' +
-        l.dias.map(dia => '<div class="cad-dia">' + dia.map(celda).join('') + '</div>').join('') +
+        '<div class="cad-lead"><div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
+          '<div class="cad-lead-gp">' + l.gp + ' · asig. ' + l.diaAsig.slice(5) + '</div></div>' +
+        l.grid.map(dia => '<div class="cad-dia">' + dia.map(celda).join('') + '</div>').join('') +
         '<div class="cad-et2 ' + (l.enRitmo ? '' : 'rojo') + '">' + (l.diasSinTocar === 0 ? 'hoy' : l.diasSinTocar + 'd') + '</div>' +
       '</div>'
-    ).join('');
+    ).join('') || '<div class="cad-vacio">No hay leads con estos filtros.</div>');
   } catch (e) {
     if ($('cadResumen')) $('cadResumen').innerHTML = '<div class="cad-vacio">No se pudo cargar la cadencia: ' + e.message + '</div>';
   }

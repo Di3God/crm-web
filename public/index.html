@@ -181,15 +181,32 @@
     </div>
     <!-- Cumplimiento de la cadencia 3x5 -->
     <div class="db-bloque">
-      <div class="db-tit">Cumplimiento de la cadencia 3x5 <span class="db-sub-inline">leads en "Por contactar"</span></div>
+      <div class="db-tit">Cumplimiento de la cadencia 3x5 <span class="db-sub-inline">según hora de asignación</span></div>
       <div id="cadResumen" class="cad-kpis"></div>
-      <div class="cad-subtit">Por gestora</div>
+
+      <div class="cad-filtros">
+        <select id="cadGP" onchange="cargarCadencia()"><option value="">Todas las gestoras</option></select>
+        <select id="cadEstado" onchange="cargarCadencia()">
+          <option value="">Todos los estados</option>
+          <option value="enritmo">En ritmo</option>
+          <option value="atrasado">Atrasados</option>
+        </select>
+        <label class="cad-fl">Asignados desde <input type="date" id="cadDesde" onchange="cargarCadencia()"></label>
+        <label class="cad-fl">hasta <input type="date" id="cadHasta" onchange="cargarCadencia()"></label>
+      </div>
+
+      <div class="cad-subtit">Por gestora <span class="cad-mini">% de sus leads que siguieron el 3x5</span></div>
       <div id="cadGPs" class="cad-gps"></div>
-      <div class="cad-subtit">Detalle por lead · intentos por día (máx 3/día × 5 días)</div>
+
+      <div class="cad-subtit">Detalle por lead · 3 franjas/día (mañana · tarde · noche) × 5 días</div>
       <div class="cad-leyenda">
-        <span><i class="cad-cu" style="background:#1D9E75"></i> Conectó</span>
-        <span><i class="cad-cu" style="background:#85B7EB"></i> Intento sin respuesta</span>
+        <span><i class="cad-cu cad-pauta"></i> Pauta de inicio</span>
         <span><i class="cad-cu" style="background:#EFECE3;border:1px solid #D3D1C7"></i> Sin intento</span>
+        <span><i class="cad-cu" style="background:#85B7EB"></i> Intento sin respuesta</span>
+        <span><i class="cad-cu" style="background:#EF9F27"></i> Respondió sin calificar</span>
+        <span><i class="cad-cu" style="background:#1D9E75"></i> Respondió y calificó</span>
+        <span><i class="cad-cu" style="background:#E24B4A"></i> Descarte</span>
+        <span><i class="cad-cu cad-na"></i> Antes de asignar</span>
       </div>
       <div id="cadLeads" class="cad-leads"></div>
     </div>

@@ -1789,75 +1789,140 @@ function agregarRealBuckets(asesores, buckets) {
   return res;
 }
 const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-// Cumplimiento de la cadencia 3x5: por GP y por lead, intentos por día en la ventana de 5 días.
+// Cumplimiento de la cadencia 3x5 con bandas horarias por hora de asignación.
+// Bandas (hora Perú de asignación) -> intentos MÍNIMOS esperados el día 1:
+//   00:00–10:59 -> 3 (mañana, tarde, noche)   11:00–15:59 -> 2 (tarde, noche)   16:00–23:59 -> 1 (noche)
+//   Días 2 a 5 -> 3 cada uno. Son mínimos; el GP puede hacer más.
+// Filtros (query): gp, estado ('enritmo'|'atrasado'), desde, hasta (fecha de asignación yyyy-mm-dd).
 app.get('/api/dashboard/cadencia', (req, res) => {
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
-  const diaDe = iso => fechaPeruISO(new Date(iso)); // yyyy-mm-dd en hora Perú
-  const diffDias = (a, b) => Math.floor((new Date(a + 'T00:00:00-05:00') - new Date(b + 'T00:00:00-05:00')) / 86400000);
-  const hoy = fechaPeruISO(new Date());
+  const peruDate = iso => new Date(new Date(iso).getTime() - 5 * 3600000);
+  const diaDe = iso => peruDate(iso).toISOString().slice(0, 10);
+  const horaDe = iso => peruDate(iso).getUTCHours();
+  const bandDe = h => (h < 11 ? 0 : (h < 16 ? 1 : 2));
+  const diffDias = (a, b) => Math.round((new Date(a + 'T00:00:00Z') - new Date(b + 'T00:00:00Z')) / 86400000);
+  const hoy = new Date(new Date().getTime() - 5 * 3600000).toISOString().slice(0, 10);
 
-  const filas = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all();
+  // Clasificar el resultado de una gestión
+  const NEG = ['Respondio - no interesado', 'Respondio - no califica', 'Numero equivocado', 'Numero invalido', 'Desistio'];
+  const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
+  function estadoResultado(r) {
+    if (SIN.includes(r)) return 'sinresp';
+    if (CALIF.includes(r)) return 'cal';
+    if (r === 'Respondio - sin calificar') return 'sincal';
+    if (NEG.includes(r)) return 'descarte';
+    return 'sincal';
+  }
+  const peso = { cal: 4, sincal: 3, descarte: 2, sinresp: 1 };
+
+  // Filtros
+  const fGP = (req.query.gp || '').trim();
+  const fEstado = (req.query.estado || '').trim();
+  let desde = (req.query.desde || '').trim();
+  let hasta = (req.query.hasta || '').trim();
+  if (!hasta) hasta = hoy;
+  if (!desde) { const d = new Date(hasta + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 6); desde = d.toISOString().slice(0, 10); }
+
+  const filas = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND fechaAsignacion IS NOT NULL').all();
+  const gpsSet = new Set();
   const leadsCad = [];
   filas.forEach(lead => {
-    const cons = leadConsolidado(lead);
-    if (cons.etapa !== 'Contactabilidad 3x5') return; // solo los que siguen en "Por contactar"
-    if (!lead.fechaAsignacion) return;
+    if (lead.asesor) gpsSet.add(lead.asesor);
     const diaAsig = diaDe(lead.fechaAsignacion);
+    if (diaAsig < desde || diaAsig > hasta) return;
+    if (fGP && lead.asesor !== fGP) return;
+    const bandAsig = bandDe(horaDe(lead.fechaAsignacion));
+
+    // grid[5][3]: 'na' pre-llegada, 'pauta' slot de llegada sin acción, 'vacio' esperado sin intento, o estado del intento
+    const grid = [];
+    for (let d = 0; d < 5; d++) {
+      grid.push([0, 1, 2].map(s => {
+        if (d === 0 && s < bandAsig) return 'na';
+        if (d === 0 && s === bandAsig) return 'pauta';
+        return 'vacio';
+      }));
+    }
     const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(lead.codigo);
-    // 5 días x 3 slots; valor 0 nada, 1 intento sin respuesta, 2 conectó
-    const dias = [[], [], [], [], []];
-    let realizados = 0, conectoDia1 = false, conecto = false, ultimoIntentoDia = null;
+    let realizados = 0, califEnLlamada = null, nAttempt = 0;
+    const realizadosPorDia = [0, 0, 0, 0, 0];
     gs.forEach(g => {
       const idx = diffDias(diaDe(g.fecha), diaAsig);
       if (idx < 0 || idx > 4) return;
-      const v = SIN.includes(g.resultado) ? 1 : 2;
-      if (dias[idx].length < 3) dias[idx].push(v);
-      realizados++;
-      if (v === 2) { conecto = true; if (idx === 0) conectoDia1 = true; }
-      ultimoIntentoDia = diaDe(g.fecha);
+      const slot = bandDe(horaDe(g.fecha));
+      const est = estadoResultado(g.resultado);
+      // el slot guarda el mejor resultado si hubo varios intentos en esa franja
+      const actual = grid[idx][slot];
+      if (actual === 'na' || actual === 'pauta' || actual === 'vacio' || (peso[est] || 0) >= (peso[actual] || 0)) grid[idx][slot] = est;
+      realizados++; realizadosPorDia[idx]++; nAttempt++;
+      if (califEnLlamada === null && est === 'cal') califEnLlamada = nAttempt;
     });
-    for (let i = 0; i < 5; i++) while (dias[i].length < 3) dias[i].push(0);
-    const diasTrans = Math.min(5, Math.max(1, diffDias(hoy, diaAsig) + 1));
-    const esperados = Math.min(15, 3 * diasTrans);
-    const enRitmo = conecto || (realizados / esperados) >= 0.6;
+
+    // Esperados por día (mínimos): día0 = 3-bandAsig; días 1..4 = 3
+    const espDia = [3 - bandAsig, 3, 3, 3, 3];
+    // Días transcurridos (hasta hoy o hasta calificar)
+    let diaCorte = hoy;
+    if (califEnLlamada !== null) {
+      // día en que calificó = primer intento 'cal'
+      for (const g of gs) { if (estadoResultado(g.resultado) === 'cal') { diaCorte = diaDe(g.fecha); break; } }
+    }
+    const elapsed = Math.min(5, Math.max(1, diffDias(diaCorte < hoy ? diaCorte : hoy, diaAsig) + 1));
+    let espTot = 0, realCap = 0, cumpleTodos = true;
+    for (let d = 0; d < elapsed; d++) {
+      espTot += espDia[d];
+      realCap += Math.min(realizadosPorDia[d], espDia[d]);
+      if (realizadosPorDia[d] < espDia[d]) cumpleTodos = false;
+    }
+    const enRitmo = (califEnLlamada !== null) || cumpleTodos;
+
+    // último día con intento (para "días sin tocar")
+    let ultimoDia = null;
+    gs.forEach(g => { const i = diffDias(diaDe(g.fecha), diaAsig); if (i >= 0 && i <= 4) ultimoDia = diaDe(g.fecha); });
+    const diasSinTocar = ultimoDia ? diffDias(hoy, ultimoDia) : Math.min(5, diffDias(hoy, diaAsig));
+
     leadsCad.push({
       codigo: lead.codigo, nombre: lead.nombre, gp: lead.asesor || 'Sin asignar',
-      dias, realizados, esperados, enRitmo, conectoDia1,
-      diasSinTocar: ultimoIntentoDia ? diffDias(hoy, ultimoIntentoDia) : diasTrans,
+      diaAsig, bandAsig, grid, realizados, esperados: espTot, realCap,
+      enRitmo, califEnLlamada, diasSinTocar,
     });
   });
 
-  // Resumen por GP
+  let lista = leadsCad;
+  if (fEstado === 'enritmo') lista = lista.filter(l => l.enRitmo);
+  else if (fEstado === 'atrasado') lista = lista.filter(l => !l.enRitmo);
+
+  // Por GP (sobre el conjunto filtrado por fecha/gp, antes del filtro de estado)
   const porGPmap = {};
   leadsCad.forEach(l => {
     const k = l.gp;
-    if (!porGPmap[k]) porGPmap[k] = { nombre: k, leads: 0, enRitmo: 0, realizados: 0, diasLead: 0, atrasados: 0 };
+    if (!porGPmap[k]) porGPmap[k] = { nombre: k, leads: 0, enRitmo: 0, realizados: 0, dias: 0, atrasados: 0 };
     const g = porGPmap[k];
     g.leads++; if (l.enRitmo) g.enRitmo++; else g.atrasados++;
-    g.realizados += l.realizados;
-    g.diasLead += Math.min(5, l.esperados / 3);
+    g.realizados += l.realizados; g.dias += Math.max(1, Math.round(l.esperados / 3));
   });
   const porGP = Object.values(porGPmap).map(g => ({
-    nombre: g.nombre,
-    pct: g.leads ? Math.round((g.enRitmo / g.leads) * 100) : 0,
-    intentosDia: g.diasLead ? +(g.realizados / g.diasLead).toFixed(1) : 0,
-    leads: g.leads, atrasados: g.atrasados,
+    nombre: g.nombre, pct: g.leads ? Math.round((g.enRitmo / g.leads) * 100) : 0,
+    intentosDia: g.dias ? +(g.realizados / g.dias).toFixed(1) : 0, leads: g.leads, atrasados: g.atrasados,
   })).sort((a, b) => b.pct - a.pct);
 
   const total = leadsCad.length;
   const enRitmoT = leadsCad.filter(l => l.enRitmo).length;
-  const totRealizados = leadsCad.reduce((s, l) => s + l.realizados, 0);
-  const totDiasLead = leadsCad.reduce((s, l) => s + Math.min(5, l.esperados / 3), 0);
-  const conDia1 = leadsCad.filter(l => l.conectoDia1).length;
+  const espGlobal = leadsCad.reduce((s, l) => s + l.esperados, 0);
+  const realCapGlobal = leadsCad.reduce((s, l) => s + l.realCap, 0);
+  const califs = leadsCad.filter(l => l.califEnLlamada !== null);
+  const conexProm = califs.length ? +(califs.reduce((s, l) => s + l.califEnLlamada, 0) / califs.length).toFixed(1) : null;
+
   res.json({
+    filtros: { gp: fGP, estado: fEstado, desde, hasta },
+    gpsDisponibles: Array.from(gpsSet).sort(),
     resumen: {
       cumplimientoPct: total ? Math.round((enRitmoT / total) * 100) : 0,
-      intentosLeadDia: totDiasLead ? +(totRealizados / totDiasLead).toFixed(1) : 0,
-      atrasados: total - enRitmoT,
-      conexionDia1Pct: total ? Math.round((conDia1 / total) * 100) : 0,
+      toquesPonderadoPct: espGlobal ? Math.round((realCapGlobal / espGlobal) * 100) : 0,
+      sinCumplir: total - enRitmoT,
+      conexionProm: conexProm,
+      calificados: califs.length,
     },
     porGP,
-    leads: leadsCad.sort((a, b) => a.enRitmo - b.enRitmo).slice(0, 40),
+    leads: lista.sort((a, b) => a.enRitmo - b.enRitmo || a.diaAsig.localeCompare(b.diaAsig)).slice(0, 80),
   });
 });
 
@@ -2191,7 +2256,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.116 (Dashboard: bloque Cumplimiento 3x5 - resumen, por GP y detalle por lead con intentos por dia; 1ro de 3 vistas analiticas) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.117 (3x5 rediseñado: bandas horarias por hora de asignacion 3/2/1, toques ponderados, conexion promedio en que llamada califico, filtros GP/estado/fecha, celdas con pauta y estados respondio sin calificar/calificado/descarte) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
