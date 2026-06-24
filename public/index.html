@@ -739,6 +739,23 @@
 </div>
 
 <script src="app.js"></script>
+
+<!-- Softphone Aircall embebido (persistente en toda la app) -->
+<button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>
+<div id="acPhonePanel" class="ac-panel oculto">
+  <div class="ac-panel-head">
+    <span>📞 Teléfono Aircall</span>
+    <button class="ac-x" onclick="acToggle()" title="Cerrar">✕</button>
+  </div>
+  <div id="acWorkspace" class="ac-workspace"></div>
+  <div id="acHint" class="ac-hint">Inicia sesión con tu cuenta de Aircall para poder llamar.</div>
+</div>
+<script type="module">
+  try {
+    const m = await import('https://esm.sh/aircall-everywhere@2.0.6');
+    window.AircallWorkspace = m.default || m.AircallWorkspace;
+  } catch (e) { console.error('No se pudo cargar Aircall Everywhere:', e); }
+</script>
 <button id="btnArriba" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Subir">↑</button>
 </body>
 </html>

@@ -495,6 +495,7 @@ async function init() {
 }
 async function arrancar() {
   $('rolBox').style.display = 'flex';
+  if ($('acFab')) $('acFab').classList.remove('oculto'); // mostrar teléfono Aircall tras login
   const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP' };
   $('rolNombre').textContent = YO.nombre;
   $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
@@ -1281,7 +1282,11 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
 // Atajos de los botones de accion (reusados en tabla y kanban).
 // Solo abren el registro con el canal correspondiente (sin enlaces externos).
 function accionWhatsApp(codigo) { CHAT_ABRIR_LEAD = codigo; ir('chat'); }
-function accionLlamar(codigo) { abrirGestion(codigo, null, 'Llamada'); }
+function accionLlamar(codigo) {
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  if (l && l.telefono) acDial(telE164(l.telefono)); // marca por el softphone Aircall
+  abrirGestion(codigo, null, 'Llamada');             // y abre la gestión para registrar
+}
 function accionRegistrar(codigo) { abrirGestion(codigo, null, 'Llamada'); }
 
 // Muestra/oculta secciones segun el resultado elegido
@@ -2998,4 +3003,65 @@ async function cargarCadencia() {
   } catch (e) {
     if ($('cadResumen')) $('cadResumen').innerHTML = '<div class="cad-vacio">No se pudo cargar la cadencia: ' + e.message + '</div>';
   }
+}
+
+// ---- Softphone Aircall embebido (Etapa C) + click-to-call (Etapa B) ----
+let AC_PHONE = null, AC_LOGGED = false, AC_PENDING = null;
+function acEnsure() {
+  if (AC_PHONE) return AC_PHONE;
+  if (!window.AircallWorkspace) return null;
+  try {
+    AC_PHONE = new window.AircallWorkspace({
+      domToLoadWorkspace: '#acWorkspace',
+      size: 'big',
+      debug: false,
+      onLogin: () => {
+        AC_LOGGED = true;
+        const h = $('acHint'); if (h) h.classList.add('oculto');
+        if (AC_PENDING) { const n = AC_PENDING; AC_PENDING = null; acDial(n); }
+      },
+      onLogout: () => {
+        AC_LOGGED = false;
+        const h = $('acHint'); if (h) h.classList.remove('oculto');
+      },
+    });
+  } catch (e) { console.error('Aircall init:', e); }
+  return AC_PHONE;
+}
+function acToggle() {
+  const p = $('acPhonePanel'); if (!p) return;
+  const abrir = p.classList.contains('oculto');
+  if (abrir) { acEnsure(); p.classList.remove('oculto'); if ($('acFab')) $('acFab').classList.add('oculto'); }
+  else { p.classList.add('oculto'); if ($('acFab')) $('acFab').classList.remove('oculto'); }
+}
+// Normaliza a E.164 (Aircall lo exige). Celular peruano de 9 dígitos -> +51.
+function telE164(tel) {
+  const raw = String(tel || '').trim();
+  const d = raw.replace(/[^\d]/g, '');
+  if (!d) return '';
+  if (raw.startsWith('+')) return '+' + d;
+  if (d.length === 9) return '+51' + d;
+  if (d.length === 11 && d.startsWith('51')) return '+' + d;
+  return '+' + d;
+}
+function acDial(numero) {
+  if (!numero) return;
+  acEnsure();
+  const p = $('acPhonePanel'); if (p) p.classList.remove('oculto');
+  if ($('acFab')) $('acFab').classList.add('oculto');
+  if (!AC_PHONE) { acToast('El teléfono Aircall no está disponible. Recarga la página.'); return; }
+  if (!AC_LOGGED) { AC_PENDING = numero; acToast('Inicia sesión en el teléfono Aircall; tu llamada saldrá enseguida.'); return; }
+  AC_PHONE.send('dial_number', { phone_number: numero }, (ok, data) => {
+    if (!ok) acToast('No se pudo marcar: ' + ((data && (data.error || data.message)) || 'revisa el teléfono'));
+  });
+}
+function acToast(msg) {
+  let host = document.getElementById('celHost');
+  if (!host) { host = document.createElement('div'); host.id = 'celHost'; document.body.appendChild(host); }
+  const el = document.createElement('div');
+  el.className = 'cel-toast cel-gestion';
+  el.textContent = msg;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('cel-in'));
+  setTimeout(() => { el.classList.remove('cel-in'); setTimeout(() => el.remove(), 350); }, 4200);
 }

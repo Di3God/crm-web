@@ -841,3 +841,15 @@
   .cad-et2 { text-align: right; font-size: 11px; color: #1D9E75; font-weight: 600; }
   .cad-et2.rojo { color: #A32D2D; }
   .cad-vacio { padding: 14px; font-size: 12.5px; color: var(--muted); }
+
+  /* Softphone Aircall embebido */
+  .ac-fab { position: fixed; right: 22px; bottom: 22px; z-index: 900; width: 54px; height: 54px; border-radius: 50%;
+    background: #123A63; color: #fff; border: none; font-size: 23px; cursor: pointer; box-shadow: 0 6px 22px rgba(18,58,99,.38); transition: background .12s; }
+  .ac-fab:hover { background: #0E2F54; }
+  .ac-panel { position: fixed; right: 22px; bottom: 22px; z-index: 950; width: 668px; max-width: calc(100vw - 24px);
+    background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 50px rgba(18,58,99,.3); overflow: hidden; }
+  .ac-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 15px; background: #123A63; color: #fff; font-size: 13px; font-weight: 600; }
+  .ac-x { background: transparent; border: none; color: #fff; font-size: 16px; cursor: pointer; line-height: 1; }
+  .ac-workspace { width: 666px; max-width: 100%; height: 376px; }
+  .ac-workspace iframe { border: none; width: 100%; height: 100%; display: block; }
+  .ac-hint { padding: 9px 15px; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line); }
