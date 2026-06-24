@@ -1789,6 +1789,78 @@ function agregarRealBuckets(asesores, buckets) {
   return res;
 }
 const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+// Cumplimiento de la cadencia 3x5: por GP y por lead, intentos por día en la ventana de 5 días.
+app.get('/api/dashboard/cadencia', (req, res) => {
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const diaDe = iso => fechaPeruISO(new Date(iso)); // yyyy-mm-dd en hora Perú
+  const diffDias = (a, b) => Math.floor((new Date(a + 'T00:00:00-05:00') - new Date(b + 'T00:00:00-05:00')) / 86400000);
+  const hoy = fechaPeruISO(new Date());
+
+  const filas = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all();
+  const leadsCad = [];
+  filas.forEach(lead => {
+    const cons = leadConsolidado(lead);
+    if (cons.etapa !== 'Contactabilidad 3x5') return; // solo los que siguen en "Por contactar"
+    if (!lead.fechaAsignacion) return;
+    const diaAsig = diaDe(lead.fechaAsignacion);
+    const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(lead.codigo);
+    // 5 días x 3 slots; valor 0 nada, 1 intento sin respuesta, 2 conectó
+    const dias = [[], [], [], [], []];
+    let realizados = 0, conectoDia1 = false, conecto = false, ultimoIntentoDia = null;
+    gs.forEach(g => {
+      const idx = diffDias(diaDe(g.fecha), diaAsig);
+      if (idx < 0 || idx > 4) return;
+      const v = SIN.includes(g.resultado) ? 1 : 2;
+      if (dias[idx].length < 3) dias[idx].push(v);
+      realizados++;
+      if (v === 2) { conecto = true; if (idx === 0) conectoDia1 = true; }
+      ultimoIntentoDia = diaDe(g.fecha);
+    });
+    for (let i = 0; i < 5; i++) while (dias[i].length < 3) dias[i].push(0);
+    const diasTrans = Math.min(5, Math.max(1, diffDias(hoy, diaAsig) + 1));
+    const esperados = Math.min(15, 3 * diasTrans);
+    const enRitmo = conecto || (realizados / esperados) >= 0.6;
+    leadsCad.push({
+      codigo: lead.codigo, nombre: lead.nombre, gp: lead.asesor || 'Sin asignar',
+      dias, realizados, esperados, enRitmo, conectoDia1,
+      diasSinTocar: ultimoIntentoDia ? diffDias(hoy, ultimoIntentoDia) : diasTrans,
+    });
+  });
+
+  // Resumen por GP
+  const porGPmap = {};
+  leadsCad.forEach(l => {
+    const k = l.gp;
+    if (!porGPmap[k]) porGPmap[k] = { nombre: k, leads: 0, enRitmo: 0, realizados: 0, diasLead: 0, atrasados: 0 };
+    const g = porGPmap[k];
+    g.leads++; if (l.enRitmo) g.enRitmo++; else g.atrasados++;
+    g.realizados += l.realizados;
+    g.diasLead += Math.min(5, l.esperados / 3);
+  });
+  const porGP = Object.values(porGPmap).map(g => ({
+    nombre: g.nombre,
+    pct: g.leads ? Math.round((g.enRitmo / g.leads) * 100) : 0,
+    intentosDia: g.diasLead ? +(g.realizados / g.diasLead).toFixed(1) : 0,
+    leads: g.leads, atrasados: g.atrasados,
+  })).sort((a, b) => b.pct - a.pct);
+
+  const total = leadsCad.length;
+  const enRitmoT = leadsCad.filter(l => l.enRitmo).length;
+  const totRealizados = leadsCad.reduce((s, l) => s + l.realizados, 0);
+  const totDiasLead = leadsCad.reduce((s, l) => s + Math.min(5, l.esperados / 3), 0);
+  const conDia1 = leadsCad.filter(l => l.conectoDia1).length;
+  res.json({
+    resumen: {
+      cumplimientoPct: total ? Math.round((enRitmoT / total) * 100) : 0,
+      intentosLeadDia: totDiasLead ? +(totRealizados / totDiasLead).toFixed(1) : 0,
+      atrasados: total - enRitmoT,
+      conexionDia1Pct: total ? Math.round((conDia1 / total) * 100) : 0,
+    },
+    porGP,
+    leads: leadsCad.sort((a, b) => a.enRitmo - b.enRitmo).slice(0, 40),
+  });
+});
+
 app.get('/api/dashboard/avance', (req, res) => {
   const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
@@ -2119,7 +2191,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.115 (frases de refuerzo actualizadas con el set de Diego: 16 de gestion + 14 de avance, parametrizadas por nombre) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.116 (Dashboard: bloque Cumplimiento 3x5 - resumen, por GP y detalle por lead con intentos por dia; 1ro de 3 vistas analiticas) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

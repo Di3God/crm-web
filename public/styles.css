@@ -799,3 +799,34 @@
   .cel-gestion { background: #0B72E8; }
   .cel-avance { background: #1FA06A; }
   .cel-ganado { background: #123A63; font-size: 15px; padding: 15px 28px; box-shadow: 0 10px 38px rgba(18,58,99,.4); border: 1.5px solid #E0A100; }
+
+  /* Dashboard: cumplimiento 3x5 */
+  .cad-kpis { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 6px 0 16px; }
+  .cad-kpi { background: #F7F8FA; border-radius: 10px; padding: 12px 14px; }
+  .cad-kpi-l { font-size: 12px; color: var(--muted); }
+  .cad-kpi-v { font-size: 23px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+  .cad-kpi-v.rojo { color: #A32D2D; }
+  .cad-kpi-s { font-size: 10.5px; color: #9AA8B8; }
+  .cad-subtit { font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 14px 0 8px; }
+  .cad-gps { display: flex; flex-direction: column; gap: 7px; }
+  .cad-gp { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 9px 13px; }
+  .cad-gp-n { width: 165px; font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cad-gp-bar { flex: 1; height: 8px; background: #EEF2F7; border-radius: 999px; overflow: hidden; }
+  .cad-gp-bar > div { height: 100%; border-radius: 999px; }
+  .cad-gp-pct { width: 40px; text-align: right; font-size: 13px; font-weight: 600; }
+  .cad-gp-x { width: 150px; text-align: right; font-size: 11px; color: #9AA8B8; }
+  .cad-leyenda { display: flex; gap: 14px; margin: 4px 0 10px; font-size: 11px; color: #8593A4; flex-wrap: wrap; }
+  .cad-leyenda span { display: flex; align-items: center; gap: 5px; }
+  .cad-cu { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .cad-leads { display: flex; flex-direction: column; }
+  .cad-row { display: grid; grid-template-columns: 160px repeat(5,1fr) 70px; gap: 8px; align-items: center; padding: 9px 10px; border-top: 1px solid var(--line); }
+  .cad-head { font-size: 10.5px; color: #9AA8B8; border-top: none; padding-bottom: 4px; }
+  .cad-dh { text-align: center; }
+  .cad-et { text-align: right; }
+  .cad-lead-n { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cad-lead-gp { font-size: 10px; color: #9AA8B8; }
+  .cad-dia { display: flex; gap: 3px; justify-content: center; }
+  .cad-cu2 { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
+  .cad-et2 { text-align: right; font-size: 11px; color: #1D9E75; font-weight: 600; }
+  .cad-et2.rojo { color: #A32D2D; }
+  .cad-vacio { padding: 14px; font-size: 12.5px; color: var(--muted); }

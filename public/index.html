@@ -179,6 +179,21 @@
       <h2>Dashboard comercial</h2>
       <button class="btn sec" style="margin-left:auto" onclick="cargarDashboard()">⟳ Actualizar</button>
     </div>
+    <!-- Cumplimiento de la cadencia 3x5 -->
+    <div class="db-bloque">
+      <div class="db-tit">Cumplimiento de la cadencia 3x5 <span class="db-sub-inline">leads en "Por contactar"</span></div>
+      <div id="cadResumen" class="cad-kpis"></div>
+      <div class="cad-subtit">Por gestora</div>
+      <div id="cadGPs" class="cad-gps"></div>
+      <div class="cad-subtit">Detalle por lead · intentos por día (máx 3/día × 5 días)</div>
+      <div class="cad-leyenda">
+        <span><i class="cad-cu" style="background:#1D9E75"></i> Conectó</span>
+        <span><i class="cad-cu" style="background:#85B7EB"></i> Intento sin respuesta</span>
+        <span><i class="cad-cu" style="background:#EFECE3;border:1px solid #D3D1C7"></i> Sin intento</span>
+      </div>
+      <div id="cadLeads" class="cad-leads"></div>
+    </div>
+
     <!-- Avance vs meta del mes -->
     <div class="db-bloque">
       <div class="db-tit">Avance vs meta del mes <span id="dbAvMes" class="db-sub-inline"></span></div>

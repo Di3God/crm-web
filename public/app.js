@@ -2122,6 +2122,7 @@ async function cargarCohortes() {
 
 async function cargarDashboard() {
   cargarAvance();
+  cargarCadencia();
   const d = await api('/api/dashboard');
   const fmtS = n => 'S/ ' + Math.round(n || 0).toLocaleString('es-PE');
 
@@ -2929,4 +2930,50 @@ function celebrar(tier) {
   host.appendChild(el);
   requestAnimationFrame(() => el.classList.add('cel-in'));
   setTimeout(() => { el.classList.remove('cel-in'); setTimeout(() => el.remove(), 350); }, fuerte ? 5200 : 3600);
+}
+
+// ---- Dashboard: cumplimiento de la cadencia 3x5 ----
+async function cargarCadencia() {
+  try {
+    const d = await api('/api/dashboard/cadencia');
+    const r = d.resumen;
+    const kpis = [
+      ['Cumplimiento 3x5', r.cumplimientoPct + '%', 'leads en ritmo', ''],
+      ['Intentos / lead-día', r.intentosLeadDia, 'meta: 3', ''],
+      ['Leads atrasados', r.atrasados, 'sin el ritmo 3x5', r.atrasados > 0 ? 'rojo' : ''],
+      ['Conexión 1er día', r.conexionDia1Pct + '%', 'contactó el día 1', ''],
+    ];
+    $('cadResumen').innerHTML = kpis.map(k =>
+      '<div class="cad-kpi"><div class="cad-kpi-l">' + k[0] + '</div>' +
+      '<div class="cad-kpi-v ' + (k[3] || '') + '">' + k[1] + '</div>' +
+      '<div class="cad-kpi-s">' + k[2] + '</div></div>'
+    ).join('');
+
+    $('cadGPs').innerHTML = (d.porGP || []).map(g => {
+      const col = g.pct >= 80 ? '#1D9E75' : (g.pct >= 65 ? '#BA7517' : '#A32D2D');
+      return '<div class="cad-gp">' +
+        '<div class="cad-gp-n">' + g.nombre + '</div>' +
+        '<div class="cad-gp-bar"><div style="width:' + g.pct + '%;background:' + col + '"></div></div>' +
+        '<div class="cad-gp-pct" style="color:' + col + '">' + g.pct + '%</div>' +
+        '<div class="cad-gp-x">' + g.intentosDia + ' int/día · ' + g.atrasados + ' atrasados</div>' +
+      '</div>';
+    }).join('') || '<div class="cad-vacio">Sin leads en "Por contactar" todavía.</div>';
+
+    const celda = v => {
+      const bg = v === 2 ? '#1D9E75' : (v === 1 ? '#85B7EB' : '#EFECE3');
+      const bd = v === 0 ? 'border:1px solid #D3D1C7;' : '';
+      return '<span class="cad-cu2" style="background:' + bg + ';' + bd + '"></span>';
+    };
+    const head = '<div class="cad-row cad-head"><span>Lead</span>' +
+      [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('') + '<span class="cad-et">Días s/tocar</span></div>';
+    $('cadLeads').innerHTML = head + (d.leads || []).map(l =>
+      '<div class="cad-row">' +
+        '<div class="cad-lead"><div class="cad-lead-n">' + l.nombre + '</div><div class="cad-lead-gp">' + l.gp + '</div></div>' +
+        l.dias.map(dia => '<div class="cad-dia">' + dia.map(celda).join('') + '</div>').join('') +
+        '<div class="cad-et2 ' + (l.enRitmo ? '' : 'rojo') + '">' + (l.diasSinTocar === 0 ? 'hoy' : l.diasSinTocar + 'd') + '</div>' +
+      '</div>'
+    ).join('');
+  } catch (e) {
+    if ($('cadResumen')) $('cadResumen').innerHTML = '<div class="cad-vacio">No se pudo cargar la cadencia: ' + e.message + '</div>';
+  }
 }
