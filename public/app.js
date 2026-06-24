@@ -3013,7 +3013,7 @@ function acEnsure() {
   try {
     AC_PHONE = new window.AircallWorkspace({
       domToLoadWorkspace: '#acWorkspace',
-      size: 'big',
+      size: 'auto',
       debug: false,
       onLogin: () => {
         AC_LOGGED = true;
@@ -3028,10 +3028,30 @@ function acEnsure() {
   } catch (e) { console.error('Aircall init:', e); }
   return AC_PHONE;
 }
+// Detecta si ya hay sesion de Aircall (por si onLogin no se disparo, p.ej. login en otra pestaña).
+function acVerificarSesion() {
+  if (!AC_PHONE || !AC_PHONE.isLoggedIn) return;
+  try {
+    AC_PHONE.isLoggedIn(res => {
+      AC_LOGGED = !!res;
+      const h = $('acHint'); if (h) h.classList.toggle('oculto', !!res);
+      if (res && AC_PENDING) { const n = AC_PENDING; AC_PENDING = null; acDial(n); }
+    });
+  } catch (e) {}
+}
+// Recarga el iframe del telefono (si la sesion se desincroniza, sin recargar toda la pagina).
+function acRecargar() {
+  AC_PHONE = null; AC_LOGGED = false;
+  const w = $('acWorkspace'); if (w) w.innerHTML = '';
+  const h = $('acHint'); if (h) h.classList.remove('oculto');
+  acEnsure();
+  setTimeout(acVerificarSesion, 1500);
+  acToast('Recargando teléfono…');
+}
 function acToggle() {
   const p = $('acPhonePanel'); if (!p) return;
   const abrir = p.classList.contains('oculto');
-  if (abrir) { acEnsure(); p.classList.remove('oculto'); if ($('acFab')) $('acFab').classList.add('oculto'); }
+  if (abrir) { acEnsure(); p.classList.remove('oculto'); if ($('acFab')) $('acFab').classList.add('oculto'); setTimeout(acVerificarSesion, 1200); }
   else { p.classList.add('oculto'); if ($('acFab')) $('acFab').classList.remove('oculto'); }
 }
 // Normaliza a E.164 (Aircall lo exige). Celular peruano de 9 dígitos -> +51.

@@ -745,7 +745,10 @@
 <div id="acPhonePanel" class="ac-panel oculto">
   <div class="ac-panel-head">
     <span>📞 Teléfono Aircall</span>
-    <button class="ac-x" onclick="acToggle()" title="Cerrar">✕</button>
+    <div class="ac-head-btns">
+      <button onclick="acRecargar()" title="Recargar teléfono">⟳</button>
+      <button class="ac-x" onclick="acToggle()" title="Cerrar">✕</button>
+    </div>
   </div>
   <div id="acWorkspace" class="ac-workspace"></div>
   <div id="acHint" class="ac-hint">Inicia sesión con tu cuenta de Aircall para poder llamar.</div>
