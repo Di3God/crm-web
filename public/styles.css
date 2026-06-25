@@ -1017,3 +1017,14 @@
   /* Marca de gestión verificada por Aircall */
   .tz-verif { display: inline-block; font-size: 10px; font-weight: 700; color: #1D9E75; background: #E7F6EF;
     border: 1px solid #BEE7D5; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+
+  /* Fila embudo (40%) + distribución (60%) */
+  .cad-row2 { display: flex; gap: 14px; align-items: stretch; flex-wrap: wrap; }
+  .cad-funnel-box { flex: 0 0 38%; min-width: 280px; }
+  .cad-dist-box { flex: 1; min-width: 320px; }
+  .cad-fn-row { display: grid; grid-template-columns: 92px 1fr 42px; align-items: center; gap: 8px; margin: 7px 0; }
+  .cad-fn-lbl { font-size: 12px; color: #475569; font-weight: 600; }
+  .cad-fn-track { background: #F1F3F6; border-radius: 7px; overflow: hidden; height: 30px; display: flex; align-items: center; }
+  .cad-fn-bar { height: 100%; border-radius: 7px; display: flex; align-items: center; justify-content: flex-end; min-width: 28px; transition: width .5s; }
+  .cad-fn-n { color: #fff; font-weight: 700; font-size: 13px; padding-right: 9px; }
+  .cad-fn-pct { font-size: 12px; color: #8593A4; text-align: right; font-weight: 600; }

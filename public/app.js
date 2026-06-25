@@ -3015,7 +3015,7 @@ async function cargarCadencia() {
       '<div class="cad-kpi-s">' + k[3] + '</div></div>'
     ).join('');
 
-    renderCadDistribucion(d.distribucionGP || []);
+    renderCadDistribucion(h.funnel || {}, d.distribucionGP || []);
 
     CAD_LEADS = d.leads || [];
     CAD_COLS = d.colDates || [];
@@ -3032,10 +3032,11 @@ function renderCadLeads() {
     if (est === 'vacio') return 'background:#EFECE3;border:1px solid #D3D1C7;';
     return 'background:' + (COL[est] || '#EFECE3') + ';';
   };
-  const celda = (est, esPauta) => {
+  const celda = (est, esPauta, horas) => {
     const naCls = est === 'na' ? ' cad-cu2-na' : '';
+    const tip = (horas && horas.length) ? ' title="Llamado: ' + horas.join(' · ') + '"' : '';
     return '<span class="cad-cu2-wrap">' +
-      '<span class="cad-cu2' + naCls + '" style="' + cuadro(est) + '"></span>' +
+      '<span class="cad-cu2' + naCls + '" style="' + cuadro(est) + '"' + tip + '></span>' +
       (esPauta ? '<span class="cad-dot"></span>' : '<span class="cad-dot-sp"></span>') +
       '</span>';
   };
@@ -3052,7 +3053,7 @@ function renderCadLeads() {
         '<div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
         '<div class="cad-lead-gp">' + l.gp + ' · ' + cadFechaHora12(l.asignadoISO) + '</div></div>' +
       l.celdas.map((dia, ci) => '<div class="cad-dia">' +
-        dia.map((est, s) => celda(est, ci === l.pautaCol && s === l.pautaSlot)).join('') +
+        dia.map((est, s) => celda(est, ci === l.pautaCol && s === l.pautaSlot, (l.celdasHoras && l.celdasHoras[ci]) ? l.celdasHoras[ci][s] : [])).join('') +
       '</div>').join('') +
       '<div class="cad-est"><span class="cad-est-chip" style="background:' + (typeof colorEtapa === 'function' ? colorEtapa(l.etapa) : '#EEF1F5') + '">' + (l.etapaVisible || '—') + '</span></div>' +
       '<div class="cad-prox">' + (l.proximaAccion ? l.proximaAccion : '—') +
@@ -3222,9 +3223,30 @@ async function archivarDesdeTraza() {
 }
 
 // ---- 3x5: distribución de resultados por gestora (una barra por GP) ----
-function renderCadDistribucion(distGP) {
+function renderCadDistribucion(funnel, distGP) {
   const cont = $('cadHighlights'); if (!cont) return;
-  if (!distGP || !distGP.length) { cont.innerHTML = ''; return; }
+  // ----- Embudo de totales (40%) -----
+  const fstages = [
+    ['Asignados', funnel.llegaron || 0, '#123A63'],
+    ['Tocados', funnel.tocados || 0, '#0B72E8'],
+    ['Conectados', funnel.conectados || 0, '#1AA3A3'],
+    ['Calificados', funnel.calificados || 0, '#1D9E75'],
+  ];
+  const fmax = Math.max(1, funnel.llegaron || 0);
+  const base = funnel.llegaron || 0;
+  const funnelHtml = fstages.map(s => {
+    const w = Math.max(6, Math.round((s[1] / fmax) * 100));
+    const pct = base ? Math.round((s[1] / base) * 100) : 0;
+    return '<div class="cad-fn-row">' +
+      '<div class="cad-fn-lbl">' + s[0] + '</div>' +
+      '<div class="cad-fn-track"><div class="cad-fn-bar" style="width:' + w + '%;background:' + s[2] + '">' +
+      '<span class="cad-fn-n">' + s[1] + '</span></div></div>' +
+      '<div class="cad-fn-pct">' + pct + '%</div>' +
+    '</div>';
+  }).join('');
+  const funnelBox = '<div class="hl-box cad-funnel-box"><div class="hl-box-tit">Embudo de contactabilidad</div>' + funnelHtml + '</div>';
+
+  // ----- Distribución por gestora (60%) -----
   const segs = [
     ['cal', 'Calificó', '#1D9E75'],
     ['sincal', 'Sin calificar', '#EF9F27'],
@@ -3232,28 +3254,28 @@ function renderCadDistribucion(distGP) {
     ['descarte', 'Descarte', '#E24B4A'],
     ['vacio', 'Sin tocar', '#D3D1C7'],
   ];
-  const filas = distGP.map(g => {
-    const tot = g.total || 1;
-    const barra = segs.map(s => {
-      const n = g[s[0]];
-      if (!n) return '';
-      const pct = Math.round((n / tot) * 100);
-      const w = n / tot * 100;
-      const txt = w >= 11 ? (n + ' (' + pct + '%)') : (w >= 6 ? String(n) : '');
-      const oscuro = s[0] === 'vacio'; // segmento claro -> texto oscuro
-      return '<div style="width:' + w + '%;background:' + s[2] + '" title="' + s[1] + ': ' + n + ' (' + pct + '%)">' +
-        (txt ? '<span class="hl-seg-lbl" style="color:' + (oscuro ? '#5B6470' : '#fff') + '">' + txt + '</span>' : '') +
-        '</div>';
+  let distBox = '';
+  if (distGP && distGP.length) {
+    const filas = distGP.map(g => {
+      const tot = g.total || 1;
+      const barra = segs.map(s => {
+        const n = g[s[0]];
+        if (!n) return '';
+        const pct = Math.round((n / tot) * 100);
+        const w = n / tot * 100;
+        const txt = w >= 11 ? (n + ' (' + pct + '%)') : (w >= 6 ? String(n) : '');
+        const oscuro = s[0] === 'vacio';
+        return '<div style="width:' + w + '%;background:' + s[2] + '" title="' + s[1] + ': ' + n + ' (' + pct + '%)">' +
+          (txt ? '<span class="hl-seg-lbl" style="color:' + (oscuro ? '#5B6470' : '#fff') + '">' + txt + '</span>' : '') +
+          '</div>';
+      }).join('');
+      return '<div class="hl-gprow"><div class="hl-gpn">' + g.nombre + ' <span class="hl-gpt">' + g.total + '</span></div>' +
+        '<div class="hl-dist">' + barra + '</div></div>';
     }).join('');
-    return '<div class="hl-gprow">' +
-      '<div class="hl-gpn">' + g.nombre + ' <span class="hl-gpt">' + g.total + '</span></div>' +
-      '<div class="hl-dist">' + barra + '</div></div>';
-  }).join('');
-  const leyenda = '<div class="hl-dist-leg">' + segs.map(s =>
-    '<span><i style="background:' + s[2] + '"></i>' + s[1] + '</span>').join('') + '</div>';
-  cont.innerHTML =
-    '<div class="hl-box"><div class="hl-box-tit">Distribución de resultados por gestora</div>' +
-    filas + leyenda + '</div>';
+    const leyenda = '<div class="hl-dist-leg">' + segs.map(s => '<span><i style="background:' + s[2] + '"></i>' + s[1] + '</span>').join('') + '</div>';
+    distBox = '<div class="hl-box cad-dist-box"><div class="hl-box-tit">Distribución de resultados por gestora</div>' + filas + leyenda + '</div>';
+  }
+  cont.innerHTML = '<div class="cad-row2">' + funnelBox + distBox + '</div>';
 }
 
 // ---- Reporte: llegada de leads por franja horaria (3h) ----

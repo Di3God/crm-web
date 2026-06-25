@@ -354,6 +354,8 @@ app.get('/api/usuarios', (req, res) => {
 // ---------- Webhook de Aircall (Etapa 1) ----------
 // Recibe eventos de llamada de Aircall y los registra en la trazabilidad del lead.
 // NO usa login (Aircall no inicia sesion); se protege con un token secreto en la URL:
+// IDs de llamadas marcadas como buzón por el evento call.voicemail_left (por si call.ended llega después).
+const BUZON_IDS = new Map();
 //   POST /api/webhooks/aircall/:token   (token = variable de entorno AIRCALL_WEBHOOK_TOKEN)
 // Match del lead por numero de telefono (ultimos 9 digitos).
 app.post('/api/webhooks/aircall/:token', (req, res) => {
@@ -366,6 +368,16 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     // Formato real de Aircall: { resource, event, timestamp, token, data: {...} }
     const tipo = ev.event || '';
     const c = ev.data || {};
+    // Evento dedicado de buzón: si Aircall lo dispara, marcamos esa llamada como NO contestada (buzón) con certeza.
+    if (tipo === 'call.voicemail_left') {
+      const vid = String(c.id || '');
+      if (vid) {
+        try { db.prepare('UPDATE llamadas SET contestada=0 WHERE aircall_id=?').run(vid); } catch (e) { }
+        BUZON_IDS.set(vid, Date.now()); // por si call.ended llega después
+        console.log('[aircall] *** call.voicemail_left recibido ***  id=' + vid, '-> marcada como buzón');
+      }
+      return res.json({ ok: true, evento: 'voicemail_left', id: vid });
+    }
     // Registramos solo call.ended: trae todos los datos (duracion, answered_at, etc.).
     // call.created/hungup se ignoran para no guardar registros incompletos.
     if (tipo !== 'call.ended') {
@@ -393,7 +405,14 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     const buzonTxt = String(c.ended_reason || c.missed_call_reason || c.hangup_cause || c.status || '').toLowerCase();
     const buzonExplicito = !!c.voicemail || /voicemail|buzon|buzón|answering|machine/.test(buzonTxt);
     const buzonHeuristico = aa > 0 && ring >= 12 && talk <= 25;
-    const fueBuzon = buzonExplicito || buzonHeuristico;
+    // Certeza por evento dedicado (si Aircall lo disparó para esta llamada).
+    const idEnded = String(c.id || '');
+    const marcadoBuzon = BUZON_IDS.has(idEnded);
+    if (marcadoBuzon) BUZON_IDS.delete(idEnded);
+    // Limpieza de marcas viejas (>10 min) para no acumular memoria.
+    const ahoraMs = Date.now();
+    for (const [k, t] of BUZON_IDS) { if (ahoraMs - t > 600000) BUZON_IDS.delete(k); }
+    const fueBuzon = buzonExplicito || marcadoBuzon || buzonHeuristico;
     const contestada = (aa > 0 && !fueBuzon) ? 1 : 0;
     let duracion;
     if (contestada) {
@@ -1835,7 +1854,7 @@ function agregarRealBuckets(asesores, buckets) {
 const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 // Cumplimiento de la cadencia 3x5 con bandas horarias por hora de asignación.
 // Bandas (hora Perú de asignación) -> intentos MÍNIMOS esperados el día 1:
-//   00:00–10:59 -> 3 (mañana, tarde, noche)   11:00–15:59 -> 2 (tarde, noche)   16:00–23:59 -> 1 (noche)
+//   00:00–11:59 -> 3 (mañana)   12:00–15:59 -> 2 (tarde)   16:00–23:59 -> 1 (noche)
 //   Días 2 a 5 -> 3 cada uno. Son mínimos; el GP puede hacer más.
 // Filtros (query): gp, estado ('enritmo'|'atrasado'), desde, hasta (fecha de asignación yyyy-mm-dd).
 app.get('/api/dashboard/cadencia', (req, res) => {
@@ -1844,7 +1863,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
   const diaDe = iso => peruDate(iso).toISOString().slice(0, 10);
   const hmDe = iso => { const d = peruDate(iso); return d.getUTCHours() + d.getUTCMinutes() / 60; }; // hora decimal Perú
   // Bandas: <11:00 -> 3 intentos (band 0) · 11:00–15:29:59 -> 2 (band 1) · 15:30–23:59 -> 1 (band 2)
-  const bandDe = hm => (hm < 11 ? 0 : (hm < 15.5 ? 1 : 2));
+  const bandDe = hm => (hm < 12 ? 0 : (hm < 16 ? 1 : 2));
   const diffDias = (a, b) => Math.round((new Date(a + 'T00:00:00Z') - new Date(b + 'T00:00:00Z')) / 86400000);
   const hoy = new Date(new Date().getTime() - 5 * 3600000).toISOString().slice(0, 10);
 
@@ -1907,6 +1926,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
 
     // Celdas en FECHAS ABSOLUTAS (5 columnas). 'na' antes de asignar; 'vacio' esperado; o el estado del intento.
     const celdas = [];
+    const celdasHoras = []; // horas (am/pm Perú) de las gestiones que cayeron en cada celda, para tooltip
     for (let ci = 0; ci < 5; ci++) {
       const cd = colDates[ci];
       celdas.push([0, 1, 2].map(s => {
@@ -1914,7 +1934,14 @@ app.get('/api/dashboard/cadencia', (req, res) => {
         if (cd === diaAsig && s < bandAsig) return 'na';
         return 'vacio';
       }));
+      celdasHoras.push([[], [], []]);
     }
+    const horaAmPm = iso => {
+      const dd = new Date(new Date(iso).getTime() - 5 * 3600000);
+      let hh = dd.getUTCHours(); const mm = dd.getUTCMinutes();
+      const ap = hh < 12 ? 'am' : 'pm'; let h12 = hh % 12; if (h12 === 0) h12 = 12;
+      return h12 + ':' + String(mm).padStart(2, '0') + ' ' + ap;
+    };
     gs.forEach(g => {
       const ci = diffDias(diaDe(g.fecha), ancla);
       if (ci < 0 || ci > 4) return;
@@ -1922,6 +1949,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
       const est = estadoResultado(g.resultado);
       const cur = celdas[ci][s];
       if (cur === 'na') return;
+      celdasHoras[ci][s].push(horaAmPm(g.fecha));
       if (cur === 'vacio' || (peso[est] || 0) >= (peso[cur] || 0)) celdas[ci][s] = est;
     });
     // Marcador de pauta (punto verde) bajo el slot de llegada
@@ -1947,7 +1975,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     leadsCad.push({
       codigo: lead.codigo, nombre: lead.nombre, gp: lead.asesor || 'Sin asignar',
       asignadoISO: lead.fechaAsignacion, diaAsig, bandAsig,
-      celdas, pautaCol, pautaSlot, outcome,
+      celdas, celdasHoras, pautaCol, pautaSlot, outcome,
       realizados, esperados: espTot, realCap, enRitmo, califEnLlamada,
       etapa: cons.etapa, etapaVisible: trEtapaServer(cons.etapa),
       proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : null,
@@ -2123,7 +2151,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const gs = db.prepare('SELECT asesor, canal, resultado, fecha, codigo FROM gestiones').all();
   // Hora decimal Perú y franja del 3x5 (mañana <11:00, tarde 11:00–15:30, noche ≥15:30)
   const peruHM = iso => { const d = new Date(new Date(iso).getTime() - 5 * 3600000); return d.getUTCHours() + d.getUTCMinutes() / 60; };
-  const franjaDe = hm => (hm < 11 ? 0 : (hm < 15.5 ? 1 : 2));
+  const franjaDe = hm => (hm < 12 ? 0 : (hm < 16 ? 1 : 2));
   // Calificados por GP y por día (para la racha histórica)
   const califDia = {};
   const gestLlamadaHoy = []; // gestiones tipo Llamada de hoy, para cruzar con Aircall
@@ -2548,7 +2576,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.146 (diagnostico Aircall ahora muestra TODOS los campos crudos para hallar el diferenciador del buzon; crudo guardado ampliado a 16k) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.148 (3x5: embudo de totales 40% + distribucion por GP 60% en misma fila; tooltip con hora am/pm al pasar sobre celda del detalle; franjas actualizadas medianoche-mediodia(3) mediodia-4pm(2) 4pm-medianoche(1)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
