@@ -380,8 +380,18 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
         .get('%' + cel9);
     }
-    const contestada = (c.answered_at || c.status === 'answered' || Number(c.duration) > 0) ? 1 : 0;
-    const duracion = Number(c.duration || 0);
+    // Contestada SOLO si Aircall reporta answered_at (la otra parte respondió).
+    // OJO: c.duration incluye el tiempo de timbrada, por eso NO sirve para saber si contestaron.
+    const aa = Number(c.answered_at || 0);
+    const sa = Number(c.started_at || 0);
+    const ea = Number(c.ended_at || 0);
+    const contestada = aa > 0 ? 1 : 0;
+    let duracion;
+    if (contestada) {
+      duracion = (ea > aa) ? (ea - aa) : Number(c.duration || 0); // tiempo de conversación
+    } else {
+      duracion = (sa > 0 && ea > sa) ? (ea - sa) : Number(c.duration || 0); // tiempo de timbrada/espera
+    }
     const agente = (c.user && (c.user.name || c.user.email)) || null;
     const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
     const aircallId = String(c.id || ('ac-' + Date.now()));
@@ -1136,10 +1146,14 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   }
   // Llamadas Aircall como eventos
   llamadas.forEach(ll => {
+    const mmss = ll.duracion ? (Math.floor(ll.duracion / 60) + ':' + String(ll.duracion % 60).padStart(2, '0')) : '';
+    const detalle = ll.contestada
+      ? ('Contestada' + (mmss ? ' · ' + mmss : ''))
+      : ('No contestada' + (mmss ? ' · timbró ' + mmss : ''));
     eventos.push({
       tipo: 'llamada', fecha: ll.fecha,
-      titulo: 'Llamada ' + ll.direccion, sub: (ll.contestada ? 'Contestada' : 'No contestada') +
-        (ll.duracion ? ' · ' + Math.floor(ll.duracion/60) + ':' + String(ll.duracion%60).padStart(2,'0') : ''),
+      titulo: 'Llamada ' + ll.direccion, sub: detalle,
+      via: 'Aircall',
       actor: ll.agente || ''
     });
   });
@@ -2079,6 +2093,62 @@ app.get('/api/dashboard/llegadas-horario', (req, res) => {
   res.json({ desde, hasta, total, nuevos, duplicados, sinNombre, bandas });
 });
 
+// Ranking de contactabilidad del día (visible para todas). Cuenta gestiones de hoy por GP.
+app.get('/api/ranking/contactabilidad', (req, res) => {
+  const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+  const hoy = peruDia(new Date().toISOString());
+  const META = 7; // meta diaria: conexiones calificadas por GP
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
+  const m = {};
+  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0 }; });
+  const gs = db.prepare('SELECT asesor, canal, resultado, fecha FROM gestiones').all();
+  // Calificados por GP y por día (para la racha histórica)
+  const califDia = {};
+  gs.forEach(g => {
+    const dia = peruDia(g.fecha);
+    if (CALIF.includes(g.resultado)) {
+      (califDia[g.asesor] = califDia[g.asesor] || {});
+      califDia[g.asesor][dia] = (califDia[g.asesor][dia] || 0) + 1;
+    }
+    if (dia !== hoy) return;
+    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0 };
+    const r = m[g.asesor];
+    r.intentos++;
+    if (g.canal === 'Llamada') r.llamadas++;
+    if (!SIN.includes(g.resultado)) r.conectados++;
+    if (CALIF.includes(g.resultado)) r.calificados++;
+  });
+  // Racha: días seguidos cumpliendo la meta (incluye hoy solo si ya la cumplió)
+  const diaMenos = (ds, n) => { const d = new Date(ds + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+  function rachaDe(asesor) {
+    const dias = califDia[asesor] || {};
+    let streak = 0;
+    let cursor = (dias[hoy] || 0) >= META ? hoy : diaMenos(hoy, 1);
+    for (let i = 0; i < 120; i++) { // tope de seguridad
+      if ((dias[cursor] || 0) >= META) { streak++; cursor = diaMenos(cursor, 1); }
+      else break;
+    }
+    return streak;
+  }
+  // Puntaje ponderado por calidad: intento +1, conexión +3, calificó +8
+  Object.values(m).forEach(r => {
+    r.puntaje = r.intentos * 1 + r.conectados * 3 + r.calificados * 8;
+    r.racha = rachaDe(r.asesor);
+  });
+  const ranking = Object.values(m).sort((a, b) =>
+    b.puntaje - a.puntaje || b.calificados - a.calificados || b.conectados - a.conectados || a.asesor.localeCompare(b.asesor));
+  // Segundos hasta el reinicio (medianoche Perú)
+  const ahoraPeru = new Date(new Date().getTime() - 5 * 3600000);
+  const finDia = new Date(ahoraPeru); finDia.setUTCHours(24, 0, 0, 0);
+  const segundosReinicio = Math.max(0, Math.round((finDia - ahoraPeru) / 1000));
+  // Etiquetas de los días de la racha, empezando por HOY hacia adelante (J, V, S, D...)
+  const INI = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+  const diasRacha = [];
+  for (let i = 0; i < 7; i++) { const dd = new Date(ahoraPeru); dd.setUTCDate(dd.getUTCDate() + i); diasRacha.push(INI[dd.getUTCDay()]); }
+  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 3, calificado: 8 }, ranking });
+});
+
 app.get('/api/dashboard/avance', (req, res) => {
   const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
@@ -2409,7 +2479,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.133 (reporte llegada de leads ahora cuenta marketing_ingresos por fecha de recepcion INCLUYE duplicados activos e historial; desglose total-nuevos-duplicados-sin nombre) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.139 (fix Aircall: contestada solo si answered_at, no por duracion timbrada; muestra timbro M:SS si no contesto y conversacion si contesto; marca Aircall en trazabilidad; podio sin numeritos) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

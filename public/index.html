@@ -52,6 +52,7 @@
 <div class="content" id="content">
   <!-- ===== MIS LEADS ===== -->
   <section id="v-leads" class="vista act">
+    <div id="tiraRank" class="tira-rank" onclick="abrirRanking()" title="Ver ranking completo"></div>
     <div id="miDia" class="midia oculto"></div>
     <div id="reparto" class="reparto oculto"></div>
     <div id="tarjetas" class="tarjetas"></div>
@@ -372,6 +373,33 @@
       <button class="btn sec" id="rlNext" onclick="releadsPagina(1)">Siguiente ›</button>
     </div>
   </section>
+
+  <!-- ===== MODAL FLOTANTE: RANKING DE CONTACTABILIDAD ===== -->
+  <div class="overlay rk-overlay" id="ovRank">
+    <div class="rk-modal">
+      <button class="rk-close" onclick="cerrar('ovRank')" title="Cerrar">✕</button>
+      <div class="rk-hero">
+        <div class="rk-hero-l">
+          <span class="rk-hero-ic">🏆</span>
+          <div>
+            <h2>Ranking de contactabilidad</h2>
+            <div class="rk-sub">Se reinicia en <b id="rkReinicio">--:--:--</b></div>
+          </div>
+        </div>
+        <div class="rk-hero-r">
+          <button class="btn sec" onclick="cargarRanking()">⟳ Actualizar</button>
+          <div class="rk-upd">Actualizado <span id="rkUpd">—</span></div>
+        </div>
+      </div>
+      <div class="rk-top3">
+        <div id="rkMeta" class="rk-side"></div>
+        <div id="rkPodio" class="rk-podio"></div>
+        <div id="rkRacha" class="rk-side"></div>
+      </div>
+      <div id="rkTabla" class="rk-tabla"></div>
+      <div class="rk-foot">Puntos: cada intento <b>+1</b> · conexión <b>+3</b> · calificado <b>+8</b>. <span style="color:#1D9E75">¡A llamar! 📞</span></div>
+    </div>
+  </div>
 </div><!-- .content -->
 
 <!-- ===== MODAL: REGISTRAR GESTION ===== -->

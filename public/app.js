@@ -496,6 +496,7 @@ async function init() {
 async function arrancar() {
   $('rolBox').style.display = 'flex';
   if ($('acFab')) $('acFab').classList.remove('oculto'); // mostrar teléfono Aircall tras login
+  iniciarTira(); // tira de ranking en Mis Leads
   const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP' };
   $('rolNombre').textContent = YO.nombre;
   $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
@@ -1807,7 +1808,7 @@ async function verTrazabilidad(codigo) {
       <div class="tz-ev-linea"><span class="tz-dot ${colorTipo[e.tipo]||'azul'}"></span>${last ? '' : '<span class="tz-rail"></span>'}</div>
       <div class="tz-ev-card">
         <div class="tz-ev-head"><span class="tz-ev-tipo ${colorTipo[e.tipo]||''}">${tipoLabel(e)}</span><span class="tz-ev-actor">${e.actor||''}</span></div>
-        <div class="tz-ev-tit">${e.titulo}</div>
+        <div class="tz-ev-tit">${e.titulo}${e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : ''}</div>
         ${e.sub ? `<div class="tz-ev-sub">${e.sub}</div>` : ''}
         ${derecha ? `<div class="tz-ev-badges">${derecha}</div>` : ''}
       </div>
@@ -3356,4 +3357,173 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+// ---- Ranking de contactabilidad (modal flotante) ----
+let RK_TIMER = null, RK_CD_TIMER = null, RK_CD_SEG = 0;
+function abrirRanking() {
+  $('ovRank').classList.add('act');
+  cargarRanking();
+  if (RK_TIMER) clearInterval(RK_TIMER);
+  RK_TIMER = setInterval(cargarRanking, 60 * 1000);
+}
+// Al cerrar el modal, detener timers
+(function () {
+  const _cerrar = window.cerrar;
+  window.cerrar = function (id) {
+    if (id === 'ovRank') { if (RK_TIMER) { clearInterval(RK_TIMER); RK_TIMER = null; } if (RK_CD_TIMER) { clearInterval(RK_CD_TIMER); RK_CD_TIMER = null; } }
+    return _cerrar(id);
+  };
+})();
+// Avatar circular con iniciales y color por nombre
+function rkAvatar(nombre, cls) {
+  const partes = String(nombre || '?').trim().split(/\s+/);
+  const ini = ((partes[0] || '')[0] || '') + ((partes[1] || '')[0] || '');
+  const colores = ['#E0732B', '#1D9E75', '#7C5BD9', '#0B72E8', '#E24B4A', '#BA7517', '#1AA3A3', '#C13D8C'];
+  let h = 0; for (let i = 0; i < nombre.length; i++) h = (h * 31 + nombre.charCodeAt(i)) >>> 0;
+  const c = colores[h % colores.length];
+  return '<span class="' + (cls || 'rk-av') + '" style="background:' + c + '">' + ini.toUpperCase() + '</span>';
+}
+function rkFmtCD(seg) {
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = seg % 60;
+  const z = n => String(n).padStart(2, '0');
+  return z(h) + ':' + z(m) + ':' + z(s);
+}
+function rkTickCD() {
+  if (RK_CD_SEG > 0) RK_CD_SEG--;
+  if ($('rkReinicio')) $('rkReinicio').textContent = rkFmtCD(RK_CD_SEG);
+}
+async function cargarRanking() {
+  try {
+    const d = await api('/api/ranking/contactabilidad');
+    const rk = d.ranking || [];
+    const META = d.meta || 7;
+    if ($('rkUpd')) $('rkUpd').textContent = cadHora12(d.actualizado);
+    // Conteo regresivo al reinicio (medianoche Perú)
+    RK_CD_SEG = d.segundosReinicio || 0;
+    if ($('rkReinicio')) $('rkReinicio').textContent = rkFmtCD(RK_CD_SEG);
+    if (RK_CD_TIMER) clearInterval(RK_CD_TIMER);
+    RK_CD_TIMER = setInterval(rkTickCD, 1000);
+    const yo = (typeof YO !== 'undefined' && YO) ? YO.nombre : '';
+    const medalla = ['🥇', '🥈', '🥉'];
+
+    // Podio (top 3) — orden visual 2-1-3, con tarima
+    const top = rk.slice(0, 3);
+    const ordenVis = [top[1], top[0], top[2]].filter(Boolean);
+    $('rkPodio').innerHTML = ordenVis.map(g => {
+      const pos = rk.indexOf(g);
+      const alturas = { 0: 'rk-p1', 1: 'rk-p2', 2: 'rk-p3' };
+      const mio = g.asesor === yo ? ' rk-mio' : '';
+      return '<div class="rk-pod ' + (alturas[pos] || '') + mio + '">' +
+        '<div class="rk-pod-rank">' + (pos + 1) + '</div>' +
+        rkAvatar(g.asesor, 'rk-pod-av') +
+        '<div class="rk-pod-n">' + primerNombre(g.asesor) + '</div>' +
+        '<div class="rk-pod-v">' + g.puntaje + '</div>' +
+        '<div class="rk-pod-l">puntos</div>' +
+      '</div>';
+    }).join('') || '<div class="rk-vacio">Aún no hay actividad hoy. ¡Sé la primera! 📞</div>';
+
+    // Tarjeta META (del usuario actual; si admin/jefa, del líder)
+    const miReg = rk.find(g => g.asesor === yo) || rk[0] || { calificados: 0, racha: 0, intentos: 0 };
+    const pctMeta = Math.min(100, Math.round((miReg.calificados / META) * 100));
+    const metaMsg = miReg.calificados >= META ? '¡Meta cumplida! 🎉' : (pctMeta >= 50 ? 'Vas por buen camino ↑' : '¡A darle con todo!');
+    if ($('rkMeta')) $('rkMeta').innerHTML =
+      '<div class="rk-card-tit">🎯 Meta diaria</div>' +
+      '<div class="rk-card-big">' + META + ' <small>conexiones calificadas</small></div>' +
+      '<div class="rk-meta-bar"><div style="width:' + pctMeta + '%"></div></div>' +
+      '<div class="rk-meta-x">' + miReg.calificados + ' / ' + META + '</div>' +
+      '<div class="rk-meta-msg">' + metaMsg + '</div>';
+
+    // Tarjeta RACHA — los círculos arrancan HOY hacia adelante (J,V,S,D...)
+    const racha = miReg.racha || 0;
+    const labels = d.diasRacha || ['', '', '', '', '', '', ''];
+    const hoyActivo = (miReg.intentos || 0) > 0; // hoy se enciende con la 1ra llamada
+    const dots = labels.map((dn, i) => {
+      const on = i === 0 ? hoyActivo : false; // hoy: por actividad; futuros: vacíos hasta que lleguen
+      return '<span class="rk-dotw"><span class="rk-dot ' + (on ? 'on' : '') + '">' + (on ? '✓' : '') + '</span><small>' + dn + '</small></span>';
+    }).join('');
+    if ($('rkRacha')) $('rkRacha').innerHTML =
+      '<div class="rk-card-tit">🔥 Racha</div>' +
+      '<div class="rk-card-big">' + racha + ' <small>días seguidos</small></div>' +
+      '<div class="rk-racha-msg">' + (hoyActivo ? '¡Hoy ya arrancaste! 💪' : 'Haz tu primera llamada y enciende el día') + '</div>' +
+      '<div class="rk-dots">' + dots + '</div>';
+
+    // Tabla completa
+    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span></div>';
+    $('rkTabla').innerHTML = head + rk.map((g, i) => {
+      const mio = g.asesor === yo ? ' rk-mio-row' : '';
+      const pos = i < 3 ? medalla[i] : (i + 1);
+      const tag = i === 0 ? ' <span class="rk-lider">Líder del día</span>' : (g.asesor === yo ? ' <span class="rk-tu">tú</span>' : '');
+      return '<div class="rk-row' + mio + '">' +
+        '<span class="rk-pos">' + pos + '</span>' +
+        '<span class="rk-n">' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
+        '<span class="rk-big">' + g.puntaje + '</span>' +
+        '<span>' + g.intentos + '</span>' +
+        '<span>' + g.conectados + '</span>' +
+        '<span class="rk-cal">' + g.calificados + '</span>' +
+      '</div>';
+    }).join('');
+    RK_DATA = rk;
+  } catch (e) {
+    if ($('rkTabla')) $('rkTabla').innerHTML = '<div class="rk-vacio">No se pudo cargar el ranking: ' + e.message + '</div>';
+  }
+}
+function primerNombre(n) { return String(n || '').trim().split(/\s+/)[0] || n; }
+
+// ---- Tira rotativa de ranking en Mis Leads (siempre visible, rota cada 10s) ----
+let RK_DATA = null, TIRA_DATA = null, TIRA_VISTA = 0, TIRA_ROT = null, TIRA_REFRESH = null;
+async function cargarTiraData() {
+  try {
+    const d = await api('/api/ranking/contactabilidad');
+    TIRA_DATA = d.ranking || [];
+    renderTira();
+  } catch (e) { /* silencioso: la tira no debe romper Mis Leads */ }
+}
+function iniciarTira() {
+  if (!$('tiraRank')) return;
+  cargarTiraData();
+  if (TIRA_ROT) clearInterval(TIRA_ROT);
+  TIRA_ROT = setInterval(() => { TIRA_VISTA = TIRA_VISTA ? 0 : 1; renderTira(); }, 10000);
+  if (TIRA_REFRESH) clearInterval(TIRA_REFRESH);
+  TIRA_REFRESH = setInterval(cargarTiraData, 3 * 60 * 1000);
+}
+function renderTira() {
+  const el = $('tiraRank'); if (!el || !TIRA_DATA) return;
+  const yo = (typeof YO !== 'undefined' && YO) ? YO.nombre : '';
+  const medalla = ['🥇', '🥈', '🥉'];
+  let html;
+  if (TIRA_VISTA === 0) {
+    // Vista A: PODIO top 3
+    const top = TIRA_DATA.slice(0, 3);
+    const pods = top.map((g, i) => {
+      const mio = g.asesor === yo ? ' tira-mio' : '';
+      return '<span class="tira-pod' + mio + '"><span class="tira-pod-m">' + medalla[i] + '</span>' +
+        '<span class="tira-pod-n">' + primerNombre(g.asesor) + '</span>' +
+        '<span class="tira-pod-v">' + g.puntaje + ' pts</span></span>';
+    }).join('');
+    html = '<div class="tira-in tira-podio"><span class="tira-tit">🏆 Podio de hoy</span>' + pods + '</div>';
+  } else {
+    // Vista B: POSICIÓN PERSONAL (apunta al inmediato superior)
+    html = '<div class="tira-in"><span class="tira-tit">📊 Tu posición</span><span class="tira-pers">' + textoPosicionPersonal(yo) + '</span></div>';
+  }
+  el.innerHTML = html;
+  el.classList.remove('tira-fade'); void el.offsetWidth; el.classList.add('tira-fade');
+}
+function textoPosicionPersonal(yo) {
+  const rk = TIRA_DATA || [];
+  const idx = rk.findIndex(g => g.asesor === yo);
+  // admin/jefa (no están en el ranking de GPs): mostrar al líder
+  if (idx === -1) {
+    const lider = rk[0];
+    return lider ? ('Lidera <b>' + primerNombre(lider.asesor) + '</b> con <b>' + lider.puntaje + ' pts</b>') : 'Aún sin actividad hoy';
+  }
+  const yoReg = rk[idx];
+  if (idx === 0) {
+    const sig = rk[1];
+    if (sig) return '🥇 ¡Vas 1°! Te sigue <b>' + primerNombre(sig.asesor) + '</b> a <b>' + (yoReg.puntaje - sig.puntaje) + ' pts</b>';
+    return '🥇 ¡Vas 1°! Lideras con <b>' + yoReg.puntaje + ' pts</b>';
+  }
+  const arriba = rk[idx - 1];
+  const falta = arriba.puntaje - yoReg.puntaje;
+  return 'Vas <b>' + (idx + 1) + '°</b> con <b>' + yoReg.puntaje + ' pts</b> · te faltan <b>' + (falta <= 0 ? 1 : falta) + '</b> para alcanzar a <b>' + primerNombre(arriba.asesor) + '</b> 🔼';
 }
