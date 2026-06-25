@@ -1776,7 +1776,10 @@ async function verTrazabilidad(codigo) {
     `<span class="chip-est" style="background:#EEF1F5;color:#555">Prioridad ${t.prioridad}</span>` +
     `<span class="sep">·</span><span class="dato"><b>Score ${t.score}/100</b></span>` +
     `<span class="sep">·</span><span class="dato">Prob. <b>${t.probabilidad}%</b></span>` +
-    `<span class="sep">·</span><span class="dato">GP ${t.asesor || '—'}</span>`;
+    `<span class="sep">·</span><span class="dato">GP ${t.asesor || '—'}</span>` +
+    `<span class="sep">·</span><span class="dato">Asignado: <b>${t.fechaAsignacion ? fmtFecha(t.fechaAsignacion) : '—'}</b>` +
+    (veTodoJS() ? ` <a class="tz-edit" title="Editar fecha de asignación" onclick="editarFechaAsig('${t.codigo}')">✎</a>` : '') +
+    `</span>`;
 
   // 4 tarjetas resumen
   const r = t.resumen;
@@ -3106,4 +3109,34 @@ function acToast(msg) {
   host.appendChild(el);
   requestAnimationFrame(() => el.classList.add('cel-in'));
   setTimeout(() => { el.classList.remove('cel-in'); setTimeout(() => el.remove(), 350); }, 4200);
+}
+
+// ---- Editar fecha de asignación de un lead (admin/jefa) ----
+function isoAPeruLocal(iso) { // ISO UTC -> "AAAA-MM-DD HH:MM" en hora Perú
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() - 5 * 3600000);
+  return isNaN(d) ? '' : d.toISOString().slice(0, 16).replace('T', ' ');
+}
+function peruLocalAISO(s) { // "AAAA-MM-DD HH:MM" Perú -> ISO UTC
+  const t = String(s).trim();
+  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(t)) return null; // formato estricto
+  const d = new Date(t.replace(' ', 'T') + ':00-05:00');
+  return isNaN(d) ? null : d.toISOString();
+}
+function editarFechaAsig(codigo) {
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  const actual = l && l.fechaAsignacion ? isoAPeruLocal(l.fechaAsignacion) : '';
+  const v = prompt('Nueva fecha y hora de asignación (hora Perú).\nFormato: AAAA-MM-DD HH:MM', actual);
+  if (v == null) return;
+  const iso = peruLocalAISO(v);
+  if (!iso) { alert('Fecha inválida. Usa el formato AAAA-MM-DD HH:MM (ej. 2026-06-23 09:00).'); return; }
+  api('/api/leads/' + codigo + '/fecha-asignacion', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fechaAsignacion: iso }),
+  }).then(() => {
+    if (l) l.fechaAsignacion = iso;
+    if (typeof acToast === 'function') acToast('Fecha de asignación actualizada');
+    verTrazabilidad(codigo);
+    if (typeof cargarLeads === 'function') cargarLeads();
+  }).catch(e => alert('No se pudo actualizar: ' + e.message));
 }

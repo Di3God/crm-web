@@ -1202,7 +1202,7 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
     codigo: lead.codigo, nombre: lead.nombre, telefono: lead.telefono,
     etapa: cons.etapa, etapaVisible: trEtapaServer(cons.etapa),
     prioridad: cons.prioridad, score: cons.score, probabilidad: cons.probabilidad,
-    asesor: lead.asesor,
+    asesor: lead.asesor, fechaAsignacion: lead.fechaAsignacion,
     resumen: {
       ultimaGestion: cons.ultimaGestion, ultimoResultado: cons.ultimoResultado,
       proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : null,
@@ -1273,6 +1273,20 @@ function textoDesfase(ms) {
   const dias = Math.round(horas / 24);
   return 'Gestionado ' + dias + (dias === 1 ? ' día tarde' : ' días tarde');
 }
+
+// Editar manualmente la fecha de asignación de un lead (admin/jefa). Recibe ISO UTC.
+app.put('/api/leads/:codigo/fecha-asignacion', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'No autorizado' });
+  const codigo = req.params.codigo;
+  const fa = (req.body && req.body.fechaAsignacion) || '';
+  const d = new Date(fa);
+  if (!fa || isNaN(d.getTime())) return res.status(400).json({ error: 'Fecha inválida' });
+  const lead = db.prepare('SELECT codigo FROM leads WHERE codigo = ?').get(codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no existe' });
+  db.prepare('UPDATE leads SET fechaAsignacion = ? WHERE codigo = ?').run(d.toISOString(), codigo);
+  try { auditar(req, 'editar_fecha_asignacion', codigo, d.toISOString()); } catch (e) {}
+  res.json({ ok: true, fechaAsignacion: d.toISOString() });
+});
 
 // ---------- Archivar / Restaurar / Eliminar (solo admin) ----------
 // Archivar: borrado logico, sale de la vista pero queda en BD.
@@ -2258,7 +2272,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.124 (flujo de llamada: el boton Llamar solo abre Aircall con el numero marcado; al colgar se minimiza el telefono y se abre la gestion con canal Llamada para completar el registro) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.125 (editor manual de fecha de asignacion en trazabilidad para admin/jefa: lapiz que abre prompt en hora Peru, valida formato, convierte a UTC) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
