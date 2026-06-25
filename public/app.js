@@ -198,11 +198,16 @@ async function abrirAutoasig() {
     const d = await api('/api/gestoras');
     $('autoasigLista').innerHTML = d.gestoras.map(g => {
       const on = Number(g.autoasignar) === 1;
+      const rkOn = Number(g.rankingVisible) === 1;
       const inact = Number(g.activo) !== 1 ? ' <span class="sub">(cuenta inactiva)</span>' : '';
       return '<div class="aa-row">' +
         '<div><b>' + g.nombre + '</b>' + inact + '<div class="sub">' + g.usuario + '</div></div>' +
+        '<div style="display:flex;gap:6px">' +
         '<button class="aa-toggle ' + (on ? 'on' : 'off') + '" onclick="toggleAutoasig(\'' + g.usuario + '\',' + (on ? 0 : 1) + ')">' +
         (on ? 'Recibe leads' : 'En pausa') + '</button>' +
+        '<button class="aa-toggle ' + (rkOn ? 'on' : 'off') + '" onclick="toggleRankingGP(\'' + g.usuario + '\',' + (rkOn ? 0 : 1) + ')">' +
+        (rkOn ? '🏆 En ranking' : '🏆 Oculta') + '</button>' +
+        '</div>' +
       '</div>';
     }).join('') +
     (d.ultimoAsignado ? '<div class="sub" style="margin-top:10px">Último lead asignado a: <b>' + d.ultimoAsignado + '</b></div>' : '');
@@ -211,6 +216,13 @@ async function abrirAutoasig() {
 async function toggleAutoasig(usuario, val) {
   try {
     await api('/api/gestoras/' + encodeURIComponent(usuario) + '/autoasignar',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valor: val }) });
+    abrirAutoasig();
+  } catch (e) { alert('Error al actualizar.'); }
+}
+async function toggleRankingGP(usuario, val) {
+  try {
+    await api('/api/gestoras/' + encodeURIComponent(usuario) + '/ranking',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valor: val }) });
     abrirAutoasig();
   } catch (e) { alert('Error al actualizar.'); }

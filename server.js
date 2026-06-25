@@ -232,6 +232,7 @@ crearUsuario('cpovis@tasatop.com', 'Cristian Povis', 'gestora', '12345678');
 
 // Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
 try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
+try { db.exec('ALTER TABLE usuarios ADD COLUMN rankingVisible INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -2104,7 +2105,11 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
   const m = {};
-  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 }; });
+  // GPs ocultas del ranking (interruptor por usuario, sin tocar el código)
+  const ocultas = new Set(
+    db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND COALESCE(rankingVisible,1)=0").all().map(u => u.nombre)
+  );
+  (L.ASESORES || []).filter(a => !ocultas.has(a)).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 }; });
   const gs = db.prepare('SELECT asesor, canal, resultado, fecha, codigo FROM gestiones').all();
   // Hora decimal Perú y franja del 3x5 (mañana <11:00, tarde 11:00–15:30, noche ≥15:30)
   const peruHM = iso => { const d = new Date(new Date(iso).getTime() - 5 * 3600000); return d.getUTCHours() + d.getUTCMinutes() / 60; };
@@ -2120,6 +2125,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
       califDia[g.asesor][dia] = (califDia[g.asesor][dia] || 0) + 1;
     }
     if (dia !== hoy) return;
+    if (ocultas.has(g.asesor)) return; // GP oculta del ranking
     if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 };
     const r = m[g.asesor];
     r.intentos++;
@@ -2286,7 +2292,7 @@ app.get('/api/marketing/sheets/estado', soloAdminOJefa, (req, res) => {
 
 // ---------- Auto-asignacion: interruptor por GP (round-robin) ----------
 app.get('/api/gestoras', soloAdminOJefa, (req, res) => {
-  const gestoras = db.prepare("SELECT usuario, nombre, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol='gestora' ORDER BY id").all();
+  const gestoras = db.prepare("SELECT usuario, nombre, activo, COALESCE(autoasignar,1) AS autoasignar, COALESCE(rankingVisible,1) AS rankingVisible FROM usuarios WHERE rol='gestora' ORDER BY id").all();
   const rr = db.prepare("SELECT valor FROM app_config WHERE clave='rr_ultimo'").get();
   res.json({ gestoras, ultimoAsignado: rr ? rr.valor : null });
 });
@@ -2297,6 +2303,14 @@ app.post('/api/gestoras/:usuario/autoasignar', soloAdminOJefa, (req, res) => {
   db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(val, u.usuario);
   auditar(req, 'toggle autoasignar', u.usuario, 'valor=' + val);
   res.json({ ok: true, usuario: u.usuario, autoasignar: val });
+});
+app.post('/api/gestoras/:usuario/ranking', soloAdminOJefa, (req, res) => {
+  const val = (req.body && (req.body.valor === 1 || req.body.valor === true)) ? 1 : 0;
+  const u = db.prepare("SELECT usuario FROM usuarios WHERE usuario=? AND rol='gestora'").get(String(req.params.usuario).toLowerCase());
+  if (!u) return res.status(404).json({ error: 'GP no encontrada' });
+  db.prepare('UPDATE usuarios SET rankingVisible=? WHERE usuario=?').run(val, u.usuario);
+  auditar(req, 'toggle ranking GP', u.usuario, 'visible=' + val);
+  res.json({ ok: true, usuario: u.usuario, rankingVisible: val });
 });
 
 // ---------- Metas comerciales ----------
@@ -2508,7 +2522,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.141 (puntaje de intentos con rendimiento decreciente por lead+franja 3x5: 1er intento 1pto, repeticiones +0.5, reinicia por franja manana/tarde/noche; columna Aircall en ranking; podio sin avatares con piso fijo) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.142 (interruptor por GP para mostrar/ocultar del ranking sin tocar codigo: toggle en panel de gestoras, columna rankingVisible; el ranking excluye a las GPs ocultas) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
