@@ -2104,11 +2104,15 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
   const m = {};
-  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0 }; });
+  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 }; });
   const gs = db.prepare('SELECT asesor, canal, resultado, fecha, codigo FROM gestiones').all();
+  // Hora decimal Perú y franja del 3x5 (mañana <11:00, tarde 11:00–15:30, noche ≥15:30)
+  const peruHM = iso => { const d = new Date(new Date(iso).getTime() - 5 * 3600000); return d.getUTCHours() + d.getUTCMinutes() / 60; };
+  const franjaDe = hm => (hm < 11 ? 0 : (hm < 15.5 ? 1 : 2));
   // Calificados por GP y por día (para la racha histórica)
   const califDia = {};
   const gestLlamadaHoy = []; // gestiones tipo Llamada de hoy, para cruzar con Aircall
+  const intentoGrupos = {}; // asesor -> { 'codigo|franja': nro de intentos } (para rendimiento decreciente)
   gs.forEach(g => {
     const dia = peruDia(g.fecha);
     if (CALIF.includes(g.resultado)) {
@@ -2116,12 +2120,23 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
       califDia[g.asesor][dia] = (califDia[g.asesor][dia] || 0) + 1;
     }
     if (dia !== hoy) return;
-    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0 };
+    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 };
     const r = m[g.asesor];
     r.intentos++;
+    // Agrupar intento por lead + franja (corazón del 3x5: 1er intento de la franja vale 1, repetir +0.5)
+    const fr = franjaDe(peruHM(g.fecha));
+    const key = (g.codigo || '?') + '|' + fr;
+    (intentoGrupos[g.asesor] = intentoGrupos[g.asesor] || {});
+    intentoGrupos[g.asesor][key] = (intentoGrupos[g.asesor][key] || 0) + 1;
     if (g.canal === 'Llamada') { r.llamadas++; gestLlamadaHoy.push({ asesor: g.asesor, codigo: g.codigo, t: new Date(g.fecha).getTime() }); }
     if (!SIN.includes(g.resultado)) r.conectados++;
     if (CALIF.includes(g.resultado)) r.calificados++;
+  });
+  // Puntos por intento con rendimiento decreciente: 1er intento de cada (lead, franja) = 1; cada repetición = +0.5
+  Object.keys(intentoGrupos).forEach(a => {
+    let p = 0;
+    Object.values(intentoGrupos[a]).forEach(n => { p += 1 + 0.5 * (n - 1); });
+    if (m[a]) m[a].puntosIntento = Math.round(p * 10) / 10;
   });
   // VERIFICACIÓN AIRCALL: una gestión "Llamada" se verifica si hay una llamada real de Aircall
   // al mismo lead dentro de ±5 min del registro. Match 1:1 (una llamada respalda una sola gestión).
@@ -2145,9 +2160,9 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     }
     return streak;
   }
-  // Puntaje ponderado por calidad: intento +1, conexión +3, calificó +8, + bonus Aircall +2 por verificada
+  // Puntaje: intentos (rendimiento decreciente por franja) + conexión×3 + calificó×8 + verificada Aircall×2
   Object.values(m).forEach(r => {
-    r.puntaje = r.intentos * 1 + r.conectados * 3 + r.calificados * 8 + (r.verificadas || 0) * 2;
+    r.puntaje = Math.round((r.puntosIntento + r.conectados * 3 + r.calificados * 8 + (r.verificadas || 0) * 2) * 10) / 10;
     r.racha = rachaDe(r.asesor);
   });
   const ranking = Object.values(m).sort((a, b) =>
@@ -2493,7 +2508,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.140 (puntaje hibrido: bonus +2 por gestion Llamada verificada con llamada real de Aircall, cruce por lead+ventana 5min match 1:1; columna Verif en ranking; marca verificada en trazabilidad) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.141 (puntaje de intentos con rendimiento decreciente por lead+franja 3x5: 1er intento 1pto, repeticiones +0.5, reinicia por franja manana/tarde/noche; columna Aircall en ranking; podio sin avatares con piso fijo) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

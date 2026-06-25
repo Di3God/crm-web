@@ -3384,6 +3384,7 @@ function rkAvatar(nombre, cls) {
   const c = colores[h % colores.length];
   return '<span class="' + (cls || 'rk-av') + '" style="background:' + c + '">' + ini.toUpperCase() + '</span>';
 }
+function rkFmt(n) { return Number.isInteger(n) ? n : (Math.round(n * 10) / 10).toFixed(1); }
 function rkFmtCD(seg) {
   const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = seg % 60;
   const z = n => String(n).padStart(2, '0');
@@ -3416,9 +3417,8 @@ async function cargarRanking() {
       const mio = g.asesor === yo ? ' rk-mio' : '';
       return '<div class="rk-pod ' + (alturas[pos] || '') + mio + '">' +
         '<div class="rk-pod-rank">' + (pos + 1) + '</div>' +
-        rkAvatar(g.asesor, 'rk-pod-av') +
         '<div class="rk-pod-n">' + primerNombre(g.asesor) + '</div>' +
-        '<div class="rk-pod-v">' + g.puntaje + '</div>' +
+        '<div class="rk-pod-v">' + rkFmt(g.puntaje) + '</div>' +
         '<div class="rk-pod-l">puntos</div>' +
       '</div>';
     }).join('') || '<div class="rk-vacio">Aún no hay actividad hoy. ¡Sé la primera! 📞</div>';
@@ -3449,7 +3449,7 @@ async function cargarRanking() {
       '<div class="rk-dots">' + dots + '</div>';
 
     // Tabla completa
-    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Verif. ✓</span></div>';
+    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Aircall</span></div>';
     $('rkTabla').innerHTML = head + rk.map((g, i) => {
       const mio = g.asesor === yo ? ' rk-mio-row' : '';
       const pos = i < 3 ? medalla[i] : (i + 1);
@@ -3457,7 +3457,7 @@ async function cargarRanking() {
       return '<div class="rk-row' + mio + '">' +
         '<span class="rk-pos">' + pos + '</span>' +
         '<span class="rk-n">' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
-        '<span class="rk-big">' + g.puntaje + '</span>' +
+        '<span class="rk-big">' + rkFmt(g.puntaje) + '</span>' +
         '<span>' + g.intentos + '</span>' +
         '<span>' + g.conectados + '</span>' +
         '<span class="rk-cal">' + g.calificados + '</span>' +
@@ -3500,7 +3500,7 @@ function renderTira() {
       const mio = g.asesor === yo ? ' tira-mio' : '';
       return '<span class="tira-pod' + mio + '"><span class="tira-pod-m">' + medalla[i] + '</span>' +
         '<span class="tira-pod-n">' + primerNombre(g.asesor) + '</span>' +
-        '<span class="tira-pod-v">' + g.puntaje + ' pts</span></span>';
+        '<span class="tira-pod-v">' + rkFmt(g.puntaje) + ' pts</span></span>';
     }).join('');
     html = '<div class="tira-in tira-podio"><span class="tira-tit">🏆 Podio de hoy</span>' + pods + '</div>';
   } else {
@@ -3516,15 +3516,15 @@ function textoPosicionPersonal(yo) {
   // admin/jefa (no están en el ranking de GPs): mostrar al líder
   if (idx === -1) {
     const lider = rk[0];
-    return lider ? ('Lidera <b>' + primerNombre(lider.asesor) + '</b> con <b>' + lider.puntaje + ' pts</b>') : 'Aún sin actividad hoy';
+    return lider ? ('Lidera <b>' + primerNombre(lider.asesor) + '</b> con <b>' + rkFmt(lider.puntaje) + ' pts</b>') : 'Aún sin actividad hoy';
   }
   const yoReg = rk[idx];
   if (idx === 0) {
     const sig = rk[1];
-    if (sig) return '🥇 ¡Vas 1°! Te sigue <b>' + primerNombre(sig.asesor) + '</b> a <b>' + (yoReg.puntaje - sig.puntaje) + ' pts</b>';
-    return '🥇 ¡Vas 1°! Lideras con <b>' + yoReg.puntaje + ' pts</b>';
+    if (sig) return '🥇 ¡Vas 1°! Te sigue <b>' + primerNombre(sig.asesor) + '</b> a <b>' + rkFmt(yoReg.puntaje - sig.puntaje) + ' pts</b>';
+    return '🥇 ¡Vas 1°! Lideras con <b>' + rkFmt(yoReg.puntaje) + ' pts</b>';
   }
   const arriba = rk[idx - 1];
   const falta = arriba.puntaje - yoReg.puntaje;
-  return 'Vas <b>' + (idx + 1) + '°</b> con <b>' + yoReg.puntaje + ' pts</b> · te faltan <b>' + (falta <= 0 ? 1 : falta) + '</b> para alcanzar a <b>' + primerNombre(arriba.asesor) + '</b> 🔼';
+  return 'Vas <b>' + (idx + 1) + '°</b> con <b>' + rkFmt(yoReg.puntaje) + ' pts</b> · te faltan <b>' + rkFmt(falta <= 0 ? 0.5 : falta) + '</b> para alcanzar a <b>' + primerNombre(arriba.asesor) + '</b> 🔼';
 }

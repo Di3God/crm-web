@@ -955,20 +955,16 @@
   .rk-dot.on { background: #1D9E75; box-shadow: 0 0 0 3px rgba(29,158,117,.25); }
 
   .rk-podio { display: flex; align-items: flex-end; justify-content: center; gap: 10px; align-self: end; }
-  .rk-pod { width: 142px; border-radius: 13px 13px 0 0; padding: 12px 9px 13px; text-align: center; color: #fff; position: relative; box-shadow: 0 8px 26px rgba(0,0,0,.3); }
+  .rk-pod { width: 142px; border-radius: 13px 13px 0 0; padding: 14px 10px 14px; color: #fff; position: relative; box-shadow: 0 8px 26px rgba(0,0,0,.3);
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; }
   .rk-p1 { background: linear-gradient(180deg,#F4C842,#C9971A); height: 150px; }
   .rk-p1::before { content: '👑'; position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-size: 24px; }
-  .rk-p2 { background: linear-gradient(180deg,#C7D0DA,#8C99A8); height: 126px; }
-  .rk-p3 { background: linear-gradient(180deg,#D49A6A,#A6713F); height: 108px; }
+  .rk-p2 { background: linear-gradient(180deg,#C7D0DA,#8C99A8); height: 124px; }
+  .rk-p3 { background: linear-gradient(180deg,#D49A6A,#A6713F); height: 104px; }
   .rk-pod-rank { position: absolute; top: 8px; left: 9px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
-  .rk-pod-av { font-size: 15px; font-weight: 700; color: #fff; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 2px auto 4px; border: 2px solid rgba(255,255,255,.55); }
-  .rk-pod-n { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rk-pod-v { font-size: 28px; font-weight: 800; line-height: 1.05; margin-top: 2px; }
-  .rk-pod-l { font-size: 10px; opacity: .9; }
-  .rk-pod-x { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.28); }
-  .rk-pod-x span { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
-  .rk-pod-x b { font-size: 13px; font-weight: 700; }
-  .rk-pod-x small { font-size: 7.5px; font-weight: 400; opacity: .85; }
+  .rk-pod-n { font-size: 14px; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .rk-pod-v { font-size: 30px; font-weight: 800; line-height: 1; }
+  .rk-pod-l { font-size: 10.5px; opacity: .9; line-height: 1; }
   .rk-pod.rk-mio { outline: 3px solid #1D9E75; outline-offset: 2px; }
 
   .rk-tabla { display: flex; flex-direction: column; }
