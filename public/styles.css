@@ -801,12 +801,15 @@
   .cel-ganado { background: #123A63; font-size: 15px; padding: 15px 28px; box-shadow: 0 10px 38px rgba(18,58,99,.4); border: 1.5px solid #E0A100; }
 
   /* Dashboard: cumplimiento 3x5 */
-  .cad-kpis { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 6px 0 14px; }
-  .cad-kpi { background: #F7F8FA; border-radius: 10px; padding: 12px 14px; }
-  .cad-kpi-l { font-size: 12px; color: var(--muted); }
-  .cad-kpi-v { font-size: 23px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+  .cad-kpis { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin: 6px 0 14px; }
+  .cad-kpi { background: #FBFCFD; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; }
+  .cad-kpi-top { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+  .cad-kpi-ic { width: 24px; height: 24px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex: none; }
+  .cad-kpi-l { font-size: 11.5px; color: var(--muted); line-height: 1.15; }
+  .cad-kpi-v { font-size: 23px; font-weight: 700; color: var(--ink); margin-top: 2px; }
   .cad-kpi-v.rojo { color: #A32D2D; }
-  .cad-kpi-s { font-size: 10.5px; color: #9AA8B8; }
+  .cad-kpi-s { font-size: 10px; color: #9AA8B8; margin-top: 1px; }
+  @media (max-width: 1050px) { .cad-kpis { grid-template-columns: repeat(2,1fr); } }
   .cad-filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 14px; }
   .cad-filtros select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; background: #fff; color: var(--ink); }
   .cad-filtros-top { margin: 2px 0 16px; gap: 7px; }
@@ -889,8 +892,9 @@
   .hl-card-v { font-size: 18px; font-weight: 600; margin: 1px 0; }
   .hl-card-s { font-size: 9.5px; color: #9AA8B8; }
   .hl-dist-tit { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
-  .hl-dist { display: flex; height: 16px; border-radius: 6px; overflow: hidden; background: #EEF2F7; }
-  .hl-dist > div { height: 100%; }
+  .hl-dist { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: #EEF2F7; }
+  .hl-dist > div { height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .hl-seg-lbl { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
   .hl-dist-leg { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; }
   .hl-dist-leg span { font-size: 10.5px; color: #6E7D8E; display: flex; align-items: center; gap: 5px; }
   .hl-dist-leg i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
@@ -898,3 +902,20 @@
   .hl-gpn { width: 165px; font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hl-gpt { font-size: 11px; font-weight: 400; color: #9AA8B8; }
   .hl-gprow .hl-dist { flex: 1; }
+
+  /* Reporte: llegada de leads por franja horaria */
+  .llg-date { padding: 4px 7px; border: 1px solid var(--line); border-radius: 8px; font-size: 11.5px; color: var(--ink); width: 130px; }
+  .llg-chart { display: flex; flex-direction: column; gap: 9px; margin-top: 6px; }
+  .llg-row { display: grid; grid-template-columns: 110px 1fr 78px; gap: 10px; align-items: center; }
+  .llg-lbl { font-size: 12px; font-weight: 600; color: #475569; }
+  .llg-bar-wrap { height: 20px; background: #EEF2F7; border-radius: 6px; overflow: hidden; }
+  .llg-bar { height: 100%; border-radius: 6px; background: linear-gradient(90deg,#1E5FA8,#3B82C4); transition: width .3s; }
+  .llg-num { font-size: 14px; font-weight: 700; color: #123A63; text-align: right; }
+  .llg-pct { font-size: 11px; font-weight: 400; color: #9AA8B8; }
+  .llg-total { margin-top: 8px; font-size: 12px; color: var(--muted); text-align: right; }
+
+  /* Llegadas: resumen de desglose */
+  .llg-resumen { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 4px 0 14px; }
+  .llg-rc { background: #F7F8FA; border-radius: 9px; padding: 10px 12px; text-align: center; }
+  .llg-rc-v { font-size: 22px; font-weight: 700; color: #123A63; }
+  .llg-rc-l { font-size: 10.5px; color: var(--muted); margin-top: 1px; }

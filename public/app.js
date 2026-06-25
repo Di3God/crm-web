@@ -2988,16 +2988,18 @@ async function cargarCadencia() {
     const h = d.highlights || {};
     const re = h.reaccion || {}, ef = h.efectividad || {};
     const kpis = [
-      ['Tocados el mismo día', (re.tocadosMismoDiaPct || 0) + '%', 'reacción rápida', ''],
-      ['1er intento (prom.)', re.minutosPrimerIntento != null ? re.minutosPrimerIntento + ' min' : '—', 'desde que llegó', ''],
-      ['Tasa de conexión', (ef.tasaConexion || 0) + '%', 'de los intentos', ''],
-      ['Tasa de calificados', (ef.tasaCalificacion || 0) + '%', 'de los que respondieron', ''],
-      ['Conexión', ef.conexionProm != null ? ef.conexionProm : '—', 'llamada promedio', ''],
+      ['⚡', 'Tocados el mismo día', (re.tocadosMismoDiaPct || 0) + '%', 'reacción rápida', '#0B72E8'],
+      ['⏱️', '1er intento (prom.)', re.minutosPrimerIntento != null ? re.minutosPrimerIntento + ' min' : '—', 'desde que llegó', '#BA7517'],
+      ['📞', 'Tasa de conexión', (ef.tasaConexion || 0) + '%', 'de los intentos', '#7C5BD9'],
+      ['✅', 'Tasa de calificados', (ef.tasaCalificacion || 0) + '%', 'de los que respondieron', '#1D9E75'],
+      ['🎯', 'Conexión', ef.conexionProm != null ? ef.conexionProm : '—', 'llamada promedio', '#E0732B'],
     ];
     $('cadResumen').innerHTML = kpis.map(k =>
-      '<div class="cad-kpi"><div class="cad-kpi-l">' + k[0] + '</div>' +
-      '<div class="cad-kpi-v ' + (k[3] || '') + '">' + k[1] + '</div>' +
-      '<div class="cad-kpi-s">' + k[2] + '</div></div>'
+      '<div class="cad-kpi" style="border-left:3px solid ' + k[4] + '">' +
+      '<div class="cad-kpi-top"><span class="cad-kpi-ic" style="background:' + k[4] + '22">' + k[0] + '</span>' +
+      '<span class="cad-kpi-l">' + k[1] + '</span></div>' +
+      '<div class="cad-kpi-v" style="color:' + k[4] + '">' + k[2] + '</div>' +
+      '<div class="cad-kpi-s">' + k[3] + '</div></div>'
     ).join('');
 
     renderCadDistribucion(d.distribucionGP || []);
@@ -3219,8 +3221,17 @@ function renderCadDistribucion(distGP) {
   ];
   const filas = distGP.map(g => {
     const tot = g.total || 1;
-    const barra = segs.map(s => g[s[0]] > 0
-      ? '<div style="width:' + (g[s[0]] / tot * 100) + '%;background:' + s[2] + '" title="' + s[1] + ': ' + g[s[0]] + '"></div>' : '').join('');
+    const barra = segs.map(s => {
+      const n = g[s[0]];
+      if (!n) return '';
+      const pct = Math.round((n / tot) * 100);
+      const w = n / tot * 100;
+      const txt = w >= 11 ? (n + ' (' + pct + '%)') : (w >= 6 ? String(n) : '');
+      const oscuro = s[0] === 'vacio'; // segmento claro -> texto oscuro
+      return '<div style="width:' + w + '%;background:' + s[2] + '" title="' + s[1] + ': ' + n + ' (' + pct + '%)">' +
+        (txt ? '<span class="hl-seg-lbl" style="color:' + (oscuro ? '#5B6470' : '#fff') + '">' + txt + '</span>' : '') +
+        '</div>';
+    }).join('');
     return '<div class="hl-gprow">' +
       '<div class="hl-gpn">' + g.nombre + ' <span class="hl-gpt">' + g.total + '</span></div>' +
       '<div class="hl-dist">' + barra + '</div></div>';
@@ -3230,4 +3241,119 @@ function renderCadDistribucion(distGP) {
   cont.innerHTML =
     '<div class="hl-box"><div class="hl-box-tit">Distribución de resultados por gestora</div>' +
     filas + leyenda + '</div>';
+}
+
+// ---- Reporte: llegada de leads por franja horaria (3h) ----
+const LLG_BANDAS = ['00:00 – 03:00', '03:00 – 06:00', '06:00 – 09:00', '09:00 – 12:00', '12:00 – 15:00', '15:00 – 18:00', '18:00 – 21:00', '21:00 – 24:00'];
+let LLG_DATOS = null;
+function abrirLlegadas() {
+  $('ovLlegadas').classList.add('act');
+  cargarLlegadas();
+}
+async function cargarLlegadas() {
+  try {
+    const desde = $('llgDesde') ? $('llgDesde').value : '';
+    const hasta = $('llgHasta') ? $('llgHasta').value : '';
+    const qs = new URLSearchParams();
+    if (desde) qs.set('desde', desde); if (hasta) qs.set('hasta', hasta);
+    const d = await api('/api/dashboard/llegadas-horario?' + qs.toString());
+    LLG_DATOS = d;
+    if ($('llgResumen')) {
+      $('llgResumen').innerHTML =
+        '<div class="llg-rc"><div class="llg-rc-v">' + d.total + '</div><div class="llg-rc-l">Total recibidos</div></div>' +
+        '<div class="llg-rc"><div class="llg-rc-v" style="color:#1D9E75">' + d.nuevos + '</div><div class="llg-rc-l">Nuevos (creados)</div></div>' +
+        '<div class="llg-rc"><div class="llg-rc-v" style="color:#BA7517">' + d.duplicados + '</div><div class="llg-rc-l">Duplicados</div></div>' +
+        '<div class="llg-rc"><div class="llg-rc-v" style="color:#8593A4">' + d.sinNombre + '</div><div class="llg-rc-l">Sin nombre</div></div>';
+    }
+    const max = Math.max(1, ...d.bandas);
+    $('llgChart').innerHTML = LLG_BANDAS.map((lbl, i) => {
+      const n = d.bandas[i];
+      const pct = (n / max) * 100;
+      const pctTot = d.total ? Math.round((n / d.total) * 100) : 0;
+      return '<div class="llg-row">' +
+        '<div class="llg-lbl">' + lbl + '</div>' +
+        '<div class="llg-bar-wrap"><div class="llg-bar" style="width:' + Math.max(n > 0 ? 3 : 0, pct) + '%"></div></div>' +
+        '<div class="llg-num">' + n + '<span class="llg-pct"> · ' + pctTot + '%</span></div>' +
+      '</div>';
+    }).join('') + '<div class="llg-total">Total: <b>' + d.total + '</b> leads</div>';
+  } catch (e) {
+    if ($('llgChart')) $('llgChart').innerHTML = '<div class="cad-vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+// Dibuja el reporte en un canvas y lo copia al portapapeles como imagen PNG.
+async function copiarLlegadasImagen() {
+  if (!LLG_DATOS) { acToast('Aún no hay datos para copiar.'); return; }
+  const d = LLG_DATOS;
+  const cv = $('llgCanvas');
+  const W = 760, padX = 36, rowH = 44, top = 116, bottom = 56;
+  const H = top + LLG_BANDAS.length * rowH + bottom;
+  const scale = 2; // nitidez retina
+  cv.width = W * scale; cv.height = H * scale;
+  const ctx = cv.getContext('2d');
+  ctx.scale(scale, scale);
+  // Fondo
+  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#123A63'; ctx.fillRect(0, 0, W, 8);
+  // Título
+  ctx.fillStyle = '#123A63'; ctx.font = '700 22px Arial, sans-serif'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Llegada de leads de marketing por franja horaria', padX, 48);
+  ctx.fillStyle = '#7A8794'; ctx.font = '400 13px Arial, sans-serif';
+  const rango = (d.desde || d.hasta) ? ('Recepción: ' + (d.desde || '…') + ' a ' + (d.hasta || 'hoy')) : 'Todos los ingresos de marketing';
+  ctx.fillText(rango + '  ·  incluye duplicados', padX, 70);
+  ctx.fillStyle = '#123A63'; ctx.font = '600 13px Arial, sans-serif';
+  ctx.fillText('Total: ' + d.total + '   ·   Nuevos: ' + d.nuevos + '   ·   Duplicados: ' + d.duplicados + '   ·   Sin nombre: ' + d.sinNombre, padX, 88);
+  ctx.strokeStyle = '#E7EBF0'; ctx.beginPath(); ctx.moveTo(padX, 100); ctx.lineTo(W - padX, 100); ctx.stroke();
+
+  const max = Math.max(1, ...d.bandas);
+  const lblW = 110, numW = 78;
+  const barX = padX + lblW + 10;
+  const barMax = W - padX - numW - barX - 8;
+  d.bandas.forEach((n, i) => {
+    const y = top + i * rowH;
+    // etiqueta
+    ctx.fillStyle = '#475569'; ctx.font = '600 13px Arial, sans-serif';
+    ctx.fillText(LLG_BANDAS[i], padX, y + 20);
+    // pista de barra
+    ctx.fillStyle = '#EEF2F7';
+    roundRect(ctx, barX, y + 6, barMax, 20, 6); ctx.fill();
+    // barra
+    const w = Math.max(n > 0 ? 6 : 0, (n / max) * barMax);
+    if (w > 0) {
+      const grad = ctx.createLinearGradient(barX, 0, barX + w, 0);
+      grad.addColorStop(0, '#1E5FA8'); grad.addColorStop(1, '#3B82C4');
+      ctx.fillStyle = grad; roundRect(ctx, barX, y + 6, w, 20, 6); ctx.fill();
+    }
+    // número + %
+    const pctTot = d.total ? Math.round((n / d.total) * 100) : 0;
+    ctx.fillStyle = '#123A63'; ctx.font = '700 15px Arial, sans-serif';
+    ctx.fillText(String(n), W - padX - numW + 6, y + 21);
+    ctx.fillStyle = '#9AA8B8'; ctx.font = '400 12px Arial, sans-serif';
+    ctx.fillText(pctTot + '%', W - padX - numW + 34, y + 21);
+  });
+  // Pie
+  ctx.fillStyle = '#9AA8B8'; ctx.font = '400 11px Arial, sans-serif';
+  ctx.fillText('TasaTop · MiTasaTop · ' + new Date().toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }), padX, H - 22);
+
+  // Copiar al portapapeles
+  cv.toBlob(async blob => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      acToast('✅ Imagen copiada. Pégala en WhatsApp o correo.');
+    } catch (err) {
+      // Fallback: descargar
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'llegadas-por-hora.png'; a.click();
+      acToast('Imagen descargada (tu navegador no permitió copiar directo).');
+    }
+  }, 'image/png');
+}
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }

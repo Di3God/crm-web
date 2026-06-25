@@ -39,6 +39,7 @@
     <div class="tu-menu oculto" id="tuMenu">
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetas()">🎯 Asignar metas</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirVerMetas()">📊 Ver metas cargadas</button>
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirLlegadas()">🕐 Llegada de leads por hora</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirAutoasig()">🔀 Auto-asignación</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirClave()">🔑 Contraseñas</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();descargarBackup()">💾 Descargar respaldo</button>
@@ -666,6 +667,25 @@
     <div class="acciones">
       <button class="btn sec" onclick="cerrar('ovAsignar')">Cancelar</button>
       <button class="btn" onclick="confirmarAsignar()">Asignar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: LLEGADA DE LEADS POR HORA (solo admin) ===== -->
+<div class="overlay" id="ovLlegadas">
+  <div class="modal" style="max-width:720px">
+    <h3>Llegada de leads de marketing por franja horaria</h3>
+    <div class="sub">Todo lo que entra por el webhook de marketing (landing/Meta), por hora de recepción (Perú). <b>Incluye duplicados</b> activos e historial.</div>
+    <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap">
+      <label class="cad-fl">Desde <input type="date" id="llgDesde" onchange="cargarLlegadas()"></label>
+      <label class="cad-fl">Hasta <input type="date" id="llgHasta" onchange="cargarLlegadas()"></label>
+      <button class="btn sec" style="margin-left:auto" onclick="copiarLlegadasImagen()">📋 Copiar como imagen</button>
+    </div>
+    <div id="llgResumen" class="llg-resumen"></div>
+    <div id="llgChart" class="llg-chart"></div>
+    <canvas id="llgCanvas" style="display:none"></canvas>
+    <div class="acciones" style="margin-top:12px;">
+      <button class="btn sec" onclick="cerrar('ovLlegadas')">Cerrar</button>
     </div>
   </div>
 </div>

@@ -2053,6 +2053,32 @@ app.get('/api/dashboard/cadencia', (req, res) => {
   });
 });
 
+// Leads de MARKETING por franja horaria de recepción (incluye duplicados activos e historial).
+// Cuenta marketing_ingresos (todo lo que entra por el webhook), no la tabla leads.
+app.get('/api/dashboard/llegadas-horario', (req, res) => {
+  const peruHora = iso => new Date(new Date(iso).getTime() - 5 * 3600000).getUTCHours();
+  const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = (req.query.desde || '').trim();
+  const hasta = (req.query.hasta || '').trim();
+  // Estados que cuentan como "lead que llegó" (incluye duplicados); se excluyen los errores de validación.
+  const VALIDOS = ['creado', 'duplicado_activo', 'duplicado_perdido', 'duplicado_ganado', 'duplicado_historial', 'sin_nombre'];
+  const filas = db.prepare('SELECT fechaRecepcion, estado FROM marketing_ingresos WHERE fechaRecepcion IS NOT NULL').all();
+  const bandas = [0, 0, 0, 0, 0, 0, 0, 0];
+  let total = 0, nuevos = 0, duplicados = 0, sinNombre = 0;
+  filas.forEach(f => {
+    if (!VALIDOS.includes(f.estado)) return;
+    const dia = peruDia(f.fechaRecepcion);
+    if (desde && dia < desde) return;
+    if (hasta && dia > hasta) return;
+    bandas[Math.floor(peruHora(f.fechaRecepcion) / 3)]++;
+    total++;
+    if (f.estado === 'creado') nuevos++;
+    else if (f.estado === 'sin_nombre') sinNombre++;
+    else duplicados++;
+  });
+  res.json({ desde, hasta, total, nuevos, duplicados, sinNombre, bandas });
+});
+
 app.get('/api/dashboard/avance', (req, res) => {
   const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
@@ -2383,7 +2409,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.130 (banda noche desde 3:30pm=1 intento; fix proxima accion null en etapas terminales; 3x5 filtros compactos arriba; 5 KPIs nuevos (mismo dia, 1er intento en min, conexion, calificados, conexion num); quitado por-gestora; distribucion de resultados por GP) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.133 (reporte llegada de leads ahora cuenta marketing_ingresos por fecha de recepcion INCLUYE duplicados activos e historial; desglose total-nuevos-duplicados-sin nombre) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
