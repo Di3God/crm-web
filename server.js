@@ -388,10 +388,11 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     const ea = Number(c.ended_at || 0);
     const ring = (aa > 0 && sa > 0 && aa > sa) ? (aa - sa) : 0; // segundos timbrando antes de "contestar"
     const talk = (aa > 0 && ea > aa) ? (ea - aa) : 0;           // segundos de "conversación"
-    // Buzón explícito (si Aircall lo manda) o heurística: timbró ≥12s y "habló" ≤14s (patrón típico de buzón).
+    // Buzón explícito (si Aircall lo manda) o heurística: timbró ≥12s y "habló" ≤25s (patrón típico de buzón:
+    // timbra varios segundos y luego solo se oye el saludo). Las llamadas reales timbran poco o hablan mucho.
     const buzonTxt = String(c.ended_reason || c.missed_call_reason || c.hangup_cause || c.status || '').toLowerCase();
     const buzonExplicito = !!c.voicemail || /voicemail|buzon|buzón|answering|machine/.test(buzonTxt);
-    const buzonHeuristico = aa > 0 && ring >= 12 && talk <= 14;
+    const buzonHeuristico = aa > 0 && ring >= 12 && talk <= 25;
     const fueBuzon = buzonExplicito || buzonHeuristico;
     const contestada = (aa > 0 && !fueBuzon) ? 1 : 0;
     let duracion;
@@ -410,7 +411,7 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo)
       VALUES (?,?,?,?,?,?,?,?,?)`)
       .run(aircallId, lead ? lead.codigo : null, numeroLead || null, direccion,
-           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 4000));
+           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 16000));
 
     console.log('[aircall] Llamada', direccion, contestada ? 'contestada' : 'no contestada',
       duracion + 's', '->', lead ? lead.codigo : 'sin match', numeroLead);
@@ -2203,9 +2204,8 @@ app.get('/api/aircall/diagnostico', soloAdmin, (req, res) => {
     return {
       aircall_id: f.aircall_id, codigo: f.codigo, direccion: f.direccion,
       contestada: f.contestada, duracion: f.duracion, fecha: f.fecha,
-      answered_at: c.answered_at, started_at: c.started_at, ended_at: c.ended_at, duration: c.duration,
-      voicemail: c.voicemail, missed_call_reason: c.missed_call_reason,
-      ended_reason: c.ended_reason, hangup_cause: c.hangup_cause, status: c.status
+      // Todos los campos crudos que mandó Aircall (para encontrar el diferenciador del buzón):
+      camposCrudos: c
     };
   }));
 });
@@ -2548,7 +2548,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.144 (buzon de voz NO cuenta como contestada via heuristica: timbro >=12s y hablo <=14s; meta diaria del modal ahora claramente individual 7 calificados por GP con avance propio) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.146 (diagnostico Aircall ahora muestra TODOS los campos crudos para hallar el diferenciador del buzon; crudo guardado ampliado a 16k) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
