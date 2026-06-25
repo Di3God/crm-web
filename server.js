@@ -381,20 +381,26 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
         .get('%' + cel9);
     }
-    // Contestada SOLO si Aircall reporta answered_at (la otra parte respondió)... salvo que haya caído al BUZÓN.
+    // Contestada SOLO si la otra parte respondió (answered_at)... y NO fue buzón de voz.
     // OJO: c.duration incluye la timbrada; y Aircall marca answered_at al caer al buzón aunque nadie humano contestó.
     const aa = Number(c.answered_at || 0);
     const sa = Number(c.started_at || 0);
     const ea = Number(c.ended_at || 0);
-    // ¿Cayó al buzón de voz? Distintos campos posibles de Aircall.
+    const ring = (aa > 0 && sa > 0 && aa > sa) ? (aa - sa) : 0; // segundos timbrando antes de "contestar"
+    const talk = (aa > 0 && ea > aa) ? (ea - aa) : 0;           // segundos de "conversación"
+    // Buzón explícito (si Aircall lo manda) o heurística: timbró ≥12s y "habló" ≤14s (patrón típico de buzón).
     const buzonTxt = String(c.ended_reason || c.missed_call_reason || c.hangup_cause || c.status || '').toLowerCase();
-    const fueBuzon = !!c.voicemail || /voicemail|buzon|buzón|answering|machine/.test(buzonTxt);
+    const buzonExplicito = !!c.voicemail || /voicemail|buzon|buzón|answering|machine/.test(buzonTxt);
+    const buzonHeuristico = aa > 0 && ring >= 12 && talk <= 14;
+    const fueBuzon = buzonExplicito || buzonHeuristico;
     const contestada = (aa > 0 && !fueBuzon) ? 1 : 0;
     let duracion;
     if (contestada) {
-      duracion = (ea > aa) ? (ea - aa) : Number(c.duration || 0); // tiempo de conversación
+      duracion = talk || Number(c.duration || 0);                       // tiempo de conversación real
+    } else if (fueBuzon && ring > 0) {
+      duracion = ring;                                                   // timbró hasta caer al buzón
     } else {
-      duracion = (sa > 0 && ea > sa) ? (ea - sa) : Number(c.duration || 0); // tiempo de timbrada/espera
+      duracion = (sa > 0 && ea > sa) ? (ea - sa) : Number(c.duration || 0); // timbrada/espera
     }
     const agente = (c.user && (c.user.name || c.user.email)) || null;
     const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
@@ -2542,7 +2548,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.143 (Aircall: buzon de voz ya NO cuenta como contestada - detecta voicemail/reason; endpoint diagnostico admin para ver campos crudos y afinar) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.144 (buzon de voz NO cuenta como contestada via heuristica: timbro >=12s y hablo <=14s; meta diaria del modal ahora claramente individual 7 calificados por GP con avance propio) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

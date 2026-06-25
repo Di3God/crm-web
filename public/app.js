@@ -3435,16 +3435,17 @@ async function cargarRanking() {
       '</div>';
     }).join('') || '<div class="rk-vacio">Aún no hay actividad hoy. ¡Sé la primera! 📞</div>';
 
-    // Tarjeta META (del usuario actual; si admin/jefa, del líder)
+    // Tarjeta META individual (cada GP: sus calificados vs 7). Admin/jefa ve la del líder como referencia.
     const miReg = rk.find(g => g.asesor === yo) || rk[0] || { calificados: 0, racha: 0, intentos: 0 };
+    const soyGP = rk.some(g => g.asesor === yo);
     const pctMeta = Math.min(100, Math.round((miReg.calificados / META) * 100));
     const metaMsg = miReg.calificados >= META ? '¡Meta cumplida! 🎉' : (pctMeta >= 50 ? 'Vas por buen camino ↑' : '¡A darle con todo!');
     if ($('rkMeta')) $('rkMeta').innerHTML =
-      '<div class="rk-card-tit">🎯 Meta diaria</div>' +
-      '<div class="rk-card-big">' + META + ' <small>conexiones calificadas</small></div>' +
+      '<div class="rk-card-tit">🎯 ' + (soyGP ? 'Tu meta diaria' : 'Meta diaria (por GP)') + '</div>' +
+      '<div class="rk-card-big">' + META + ' <small>calificados por gestora</small></div>' +
       '<div class="rk-meta-bar"><div style="width:' + pctMeta + '%"></div></div>' +
-      '<div class="rk-meta-x">' + miReg.calificados + ' / ' + META + '</div>' +
-      '<div class="rk-meta-msg">' + metaMsg + '</div>';
+      '<div class="rk-meta-x">' + (soyGP ? 'Tú: ' : (primerNombre(miReg.asesor || '') + ': ')) + miReg.calificados + ' / ' + META + '</div>' +
+      '<div class="rk-meta-msg">' + (soyGP ? metaMsg : 'Cada GP tiene su propia meta de 7') + '</div>';
 
     // Tarjeta RACHA — los círculos arrancan HOY hacia adelante (J,V,S,D...)
     const racha = miReg.racha || 0;
