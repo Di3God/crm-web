@@ -381,12 +381,15 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
         .get('%' + cel9);
     }
-    // Contestada SOLO si Aircall reporta answered_at (la otra parte respondió).
-    // OJO: c.duration incluye el tiempo de timbrada, por eso NO sirve para saber si contestaron.
+    // Contestada SOLO si Aircall reporta answered_at (la otra parte respondió)... salvo que haya caído al BUZÓN.
+    // OJO: c.duration incluye la timbrada; y Aircall marca answered_at al caer al buzón aunque nadie humano contestó.
     const aa = Number(c.answered_at || 0);
     const sa = Number(c.started_at || 0);
     const ea = Number(c.ended_at || 0);
-    const contestada = aa > 0 ? 1 : 0;
+    // ¿Cayó al buzón de voz? Distintos campos posibles de Aircall.
+    const buzonTxt = String(c.ended_reason || c.missed_call_reason || c.hangup_cause || c.status || '').toLowerCase();
+    const fueBuzon = !!c.voicemail || /voicemail|buzon|buzón|answering|machine/.test(buzonTxt);
+    const contestada = (aa > 0 && !fueBuzon) ? 1 : 0;
     let duracion;
     if (contestada) {
       duracion = (ea > aa) ? (ea - aa) : Number(c.duration || 0); // tiempo de conversación
@@ -2184,6 +2187,23 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 3, calificado: 8, verificada: 2 }, ranking });
 });
 
+// Diagnóstico Aircall (admin): muestra los campos crudos de las últimas llamadas para
+// confirmar qué campo marca el buzón de voz y afinar la detección si hiciera falta.
+app.get('/api/aircall/diagnostico', soloAdmin, (req, res) => {
+  const filas = db.prepare('SELECT aircall_id, codigo, direccion, contestada, duracion, fecha, crudo FROM llamadas ORDER BY fecha DESC LIMIT 12').all();
+  res.json(filas.map(f => {
+    let ev = {}; try { ev = JSON.parse(f.crudo || '{}'); } catch (e) { }
+    const c = ev.data || ev || {};
+    return {
+      aircall_id: f.aircall_id, codigo: f.codigo, direccion: f.direccion,
+      contestada: f.contestada, duracion: f.duracion, fecha: f.fecha,
+      answered_at: c.answered_at, started_at: c.started_at, ended_at: c.ended_at, duration: c.duration,
+      voicemail: c.voicemail, missed_call_reason: c.missed_call_reason,
+      ended_reason: c.ended_reason, hangup_cause: c.hangup_cause, status: c.status
+    };
+  }));
+});
+
 app.get('/api/dashboard/avance', (req, res) => {
   const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
@@ -2522,7 +2542,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.142 (interruptor por GP para mostrar/ocultar del ranking sin tocar codigo: toggle en panel de gestoras, columna rankingVisible; el ranking excluye a las GPs ocultas) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.143 (Aircall: buzon de voz ya NO cuenta como contestada - detecta voicemail/reason; endpoint diagnostico admin para ver campos crudos y afinar) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
