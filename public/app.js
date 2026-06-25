@@ -2999,6 +2999,8 @@ async function cargarCadencia() {
       '<div class="cad-kpi-s">' + k[2] + '</div></div>'
     ).join('');
 
+    renderCadHighlights(d.highlights);
+
     $('cadGPs').innerHTML = (d.porGP || []).map(g => {
       const col = g.pct >= 80 ? '#1D9E75' : (g.pct >= 65 ? '#BA7517' : '#A32D2D');
       return '<div class="cad-gp">' +
@@ -3033,7 +3035,8 @@ function renderCadLeads() {
   };
   const head = '<div class="cad-row cad-head"><span>Lead</span>' +
     (CAD_COLS.length ? CAD_COLS.map(c => '<span class="cad-dh">' + cadFechaCol(c) + '</span>').join('')
-      : [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('')) + '</div>';
+      : [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('')) +
+    '<span class="cad-dh2">Estado actual</span><span class="cad-dh2">Próxima acción</span></div>';
 
   const ini = CAD_PAGE * 10;
   const pagina = CAD_LEADS.slice(ini, ini + 10);
@@ -3045,6 +3048,9 @@ function renderCadLeads() {
       l.celdas.map((dia, ci) => '<div class="cad-dia">' +
         dia.map((est, s) => celda(est, ci === l.pautaCol && s === l.pautaSlot)).join('') +
       '</div>').join('') +
+      '<div class="cad-est"><span class="cad-est-chip" style="background:' + (typeof colorEtapa === 'function' ? colorEtapa(l.etapa) : '#EEF1F5') + '">' + (l.etapaVisible || '—') + '</span></div>' +
+      '<div class="cad-prox">' + (l.proximaAccion ? l.proximaAccion : '—') +
+        (l.fechaProxAccion ? '<div class="cad-prox-f">' + fmtFecha(l.fechaProxAccion) + '</div>' : '') + '</div>' +
     '</div>'
   ).join('');
   $('cadLeads').innerHTML = head + (filas || '<div class="cad-vacio">No hay leads con estos filtros.</div>');
@@ -3207,4 +3213,61 @@ async function archivarDesdeTraza() {
     if (typeof cargarLeads === 'function') cargarLeads();
     if (typeof cargarCadencia === 'function' && $('cadResumen')) cargarCadencia();
   } catch (e) { alert('No se pudo archivar: ' + e.message); }
+}
+
+// ---- 3x5: highlights agregados de contactabilidad ----
+function renderCadHighlights(h) {
+  const cont = $('cadHighlights'); if (!cont) return;
+  if (!h) { cont.innerHTML = ''; return; }
+  const f = h.funnel, re = h.reaccion, ef = h.efectividad, sa = h.salud, di = h.distribucion;
+  const base = f.llegaron || 1;
+  const pct = n => Math.round((n / base) * 100);
+  const conv = (a, b) => b ? Math.round((a / b) * 100) : 0;
+
+  // Embudo de contactabilidad
+  const pasos = [
+    ['Llegaron', f.llegaron, '#64748B', 100, null],
+    ['Tocados', f.tocados, '#0B72E8', pct(f.tocados), conv(f.tocados, f.llegaron)],
+    ['Conectados', f.conectados, '#7C5BD9', pct(f.conectados), conv(f.conectados, f.tocados)],
+    ['Calificados', f.calificados, '#1D9E75', pct(f.calificados), conv(f.calificados, f.conectados)],
+  ];
+  const funnel = '<div class="hl-funnel">' + pasos.map(p =>
+    '<div class="hl-fstep">' +
+      '<div class="hl-ftop"><span class="hl-flbl">' + p[0] + '</span><span class="hl-fnum">' + p[1] + '</span></div>' +
+      '<div class="hl-fbar"><div style="width:' + Math.max(3, p[3]) + '%;background:' + p[2] + '"></div></div>' +
+      '<div class="hl-fconv">' + (p[4] != null ? p[4] + '% del paso previo' : ' ') + '</div>' +
+    '</div>'
+  ).join('') + '</div>';
+
+  // Tarjetas de highlights
+  const card = (lbl, val, sub, col) => '<div class="hl-card"><div class="hl-card-l">' + lbl + '</div>' +
+    '<div class="hl-card-v" style="color:' + (col || 'var(--ink)') + '">' + val + '</div><div class="hl-card-s">' + sub + '</div></div>';
+  const cards = '<div class="hl-cards">' +
+    card('Tocados el mismo día', re.tocadosMismoDiaPct + '%', 'reacción rápida', re.tocadosMismoDiaPct >= 70 ? '#1D9E75' : (re.tocadosMismoDiaPct >= 40 ? '#BA7517' : '#A32D2D')) +
+    card('1er intento (prom.)', re.horasPrimerIntento != null ? re.horasPrimerIntento + ' h' : '—', 'desde que llegó', re.horasPrimerIntento != null && re.horasPrimerIntento <= 3 ? '#1D9E75' : '#BA7517') +
+    card('Tasa de conexión', ef.tasaConexion + '%', 'de los intentos', ef.tasaConexion >= 30 ? '#1D9E75' : '#BA7517') +
+    card('Tasa de calificación', ef.tasaCalificacion + '%', 'de los que respondieron', '') +
+    card('Conexión', ef.conexionProm != null ? ('N° ' + ef.conexionProm) : '—', 'llamada promedio', '') +
+    card('Leads abandonados', sa.abandonadosPct + '%', '+2 días sin tocar', sa.abandonadosPct > 0 ? '#A32D2D' : '#1D9E75') +
+    '';
+  const cardsEnd = '</div>';
+
+  // Distribución de resultados (barra apilada)
+  const segs = [
+    ['Calificó', di.cal, '#1D9E75'],
+    ['Sin calificar', di.sincal, '#EF9F27'],
+    ['Solo intentos', di.sinresp, '#85B7EB'],
+    ['Descarte', di.descarte, '#E24B4A'],
+    ['Sin tocar', di.vacio, '#D3D1C7'],
+  ];
+  const totD = segs.reduce((s, x) => s + x[1], 0) || 1;
+  const dist = '<div class="hl-dist-tit">Distribución de resultados</div>' +
+    '<div class="hl-dist">' + segs.map(s => s[1] > 0 ? '<div style="width:' + (s[1] / totD * 100) + '%;background:' + s[2] + '" title="' + s[0] + ': ' + s[1] + '"></div>' : '').join('') + '</div>' +
+    '<div class="hl-dist-leg">' + segs.map(s => '<span><i style="background:' + s[2] + '"></i>' + s[0] + ' ' + s[1] + '</span>').join('') + '</div>';
+
+  cont.innerHTML =
+    '<div class="hl-grid">' +
+      '<div class="hl-box"><div class="hl-box-tit">Embudo de contactabilidad</div>' + funnel + '</div>' +
+      '<div class="hl-box">' + cards + cardsEnd + dist + '</div>' +
+    '</div>';
 }

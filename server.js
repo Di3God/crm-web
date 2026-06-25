@@ -1912,11 +1912,17 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     }
     const enRitmo = (califEnLlamada !== null) || cumpleTodos;
 
+    // Estado actual + próxima acción (del último resultado)
+    const cons = leadConsolidado(lead);
+
     leadsCad.push({
       codigo: lead.codigo, nombre: lead.nombre, gp: lead.asesor || 'Sin asignar',
       asignadoISO: lead.fechaAsignacion, diaAsig, bandAsig,
       celdas, pautaCol, pautaSlot, outcome,
       realizados, esperados: espTot, realCap, enRitmo, califEnLlamada,
+      etapa: cons.etapa, etapaVisible: trEtapaServer(cons.etapa),
+      proximaAccion: cons.proximaAccion ? trAccionServer(cons.proximaAccion, cons.etapa) : null,
+      fechaProxAccion: cons.fechaProxAccion || null,
     });
   });
 
@@ -1946,6 +1952,79 @@ app.get('/api/dashboard/cadencia', (req, res) => {
   const califs = leadsCad.filter(l => l.califEnLlamada !== null);
   const conexProm = califs.length ? +(califs.reduce((s, l) => s + l.califEnLlamada, 0) / califs.length).toFixed(1) : null;
 
+  // ───── Highlights agregados de contactabilidad ─────
+  // Funnel: llegaron -> tocados -> conectados -> calificados
+  const tocados = leadsCad.filter(l => l.realizados > 0).length;
+  const conectados = leadsCad.filter(l => ['cal', 'sincal'].includes(l.outcome)).length;
+  const calificados = leadsCad.filter(l => l.outcome === 'cal').length;
+  // Reacción: tocados el mismo día de llegada / dentro de la franja de pauta; horas hasta el 1er intento
+  let tocadosMismoDia = 0, tocadosEnPauta = 0, sumaHorasPrimer = 0, conPrimer = 0;
+  // Abandono: tuvieron intentos pero hace >=2 días sin tocar y no calificaron
+  let abandonados = 0;
+  // Descartes: intentos antes de descartar
+  let sumaIntentosDescarte = 0, nDescarte = 0;
+  // Conteo de intentos y conexiones para tasas
+  let totIntentos = 0, totConexiones = 0, totRespuestas = 0;
+  leadsCad.forEach(l => {
+    const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(l.codigo);
+    const enVentana = gs.filter(g => { const o = diffDias(diaDe(g.fecha), l.diaAsig); return o >= 0 && o <= 4; });
+    if (enVentana.length) {
+      const primero = enVentana[0];
+      // mismo día
+      if (diaDe(primero.fecha) === l.diaAsig) tocadosMismoDia++;
+      // dentro de la franja de pauta (mismo día y misma banda de llegada)
+      if (diaDe(primero.fecha) === l.diaAsig && bandDe(horaDe(primero.fecha)) === l.bandAsig) tocadosEnPauta++;
+      // horas hasta el primer intento
+      const hrs = (new Date(primero.fecha) - new Date(l.asignadoISO)) / 3600000;
+      if (hrs >= 0 && hrs < 240) { sumaHorasPrimer += hrs; conPrimer++; }
+    }
+    enVentana.forEach(g => {
+      const e = estadoResultado(g.resultado);
+      totIntentos++;
+      if (e !== 'sinresp') totRespuestas++;             // hubo respuesta
+      if (e === 'cal' || e === 'sincal') totConexiones++; // conexión efectiva
+    });
+    // abandono: tuvo intentos, no calificó, y el último intento fue hace >= 2 días
+    if (l.realizados > 0 && l.outcome !== 'cal') {
+      let ultDia = null;
+      enVentana.forEach(g => { ultDia = diaDe(g.fecha); });
+      if (ultDia && diffDias(hoy, ultDia) >= 2) abandonados++;
+    }
+    // intentos antes de descartar
+    if (l.outcome === 'descarte') {
+      let n = 0;
+      for (const g of enVentana) { n++; if (estadoResultado(g.resultado) === 'descarte') break; }
+      sumaIntentosDescarte += n; nDescarte++;
+    }
+  });
+
+  const highlights = {
+    funnel: { llegaron: total, tocados, conectados, calificados },
+    reaccion: {
+      tocadosMismoDiaPct: total ? Math.round((tocadosMismoDia / total) * 100) : 0,
+      tocadosEnPautaPct: total ? Math.round((tocadosEnPauta / total) * 100) : 0,
+      horasPrimerIntento: conPrimer ? +(sumaHorasPrimer / conPrimer).toFixed(1) : null,
+    },
+    efectividad: {
+      tasaConexion: totIntentos ? Math.round((totConexiones / totIntentos) * 100) : 0,
+      tasaRespuesta: totIntentos ? Math.round((totRespuestas / totIntentos) * 100) : 0,
+      tasaCalificacion: conectados ? Math.round((calificados / conectados) * 100) : 0,
+      conexionProm: conexProm,
+    },
+    salud: {
+      abandonados,
+      abandonadosPct: total ? Math.round((abandonados / total) * 100) : 0,
+      intentosAntesDescarte: nDescarte ? +(sumaIntentosDescarte / nDescarte).toFixed(1) : null,
+    },
+    distribucion: {
+      cal: calificados,
+      sincal: leadsCad.filter(l => l.outcome === 'sincal').length,
+      sinresp: leadsCad.filter(l => l.outcome === 'sinresp').length,
+      descarte: leadsCad.filter(l => l.outcome === 'descarte').length,
+      vacio: leadsCad.filter(l => l.outcome === 'vacio').length,
+    },
+  };
+
   res.json({
     filtros: { gp: fGP, estado: fEstado, resultado: fResultado, desde, hasta },
     gpsDisponibles: Array.from(gpsSet).sort(),
@@ -1957,6 +2036,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
       conexionProm: conexProm,
       calificados: califs.length,
     },
+    highlights,
     porGP,
     leads: lista.sort((a, b) => a.enRitmo - b.enRitmo || a.diaAsig.localeCompare(b.diaAsig) || a.nombre.localeCompare(b.nombre)).slice(0, 200),
   });
@@ -2292,7 +2372,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.127 (3x5 contactabilidad: columnas con fechas reales Lun 22 etc, pauta como punto verde DEBAJO del cuadro sin tapar el color, subtitulo con fecha y hora 12h de llegada, filtro por resultado, paginacion 10, quitado dias sin tocar) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.129 (3x5 highlights agregados: embudo contactabilidad llegaron-tocados-conectados-calificados, reaccion mismo dia y horas al 1er intento, tasas conexion-calificacion, abandonados, distribucion de resultados) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
