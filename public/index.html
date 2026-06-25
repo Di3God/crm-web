@@ -182,30 +182,28 @@
     <!-- Cumplimiento de la cadencia 3x5 -->
     <div class="db-bloque">
       <div class="db-tit">Cumplimiento de la cadencia 3x5 <span class="db-sub-inline">según hora de asignación</span></div>
-      <div id="cadResumen" class="cad-kpis"></div>
-      <div id="cadHighlights" class="cad-hl"></div>
 
-      <div class="cad-filtros">
-        <select id="cadGP" onchange="cargarCadencia()"><option value="">Todas las gestoras</option></select>
+      <div class="cad-filtros cad-filtros-top">
+        <select id="cadGP" onchange="cargarCadencia()"><option value="">Gestora</option></select>
         <select id="cadEstado" onchange="cargarCadencia()">
-          <option value="">Todos los estados</option>
+          <option value="">Estado</option>
           <option value="enritmo">En ritmo</option>
           <option value="atrasado">Atrasados</option>
         </select>
         <select id="cadResultado" onchange="cargarCadencia()">
-          <option value="">Todos los resultados</option>
+          <option value="">Resultado</option>
           <option value="cal">Respondió y calificó</option>
           <option value="sincal">Respondió sin calificar</option>
           <option value="sinresp">Intento sin respuesta</option>
           <option value="descarte">Descarte</option>
           <option value="vacio">Sin intento</option>
         </select>
-        <label class="cad-fl">Asignados desde <input type="date" id="cadDesde" onchange="cargarCadencia()"></label>
-        <label class="cad-fl">hasta <input type="date" id="cadHasta" onchange="cargarCadencia()"></label>
+        <input type="date" id="cadDesde" onchange="cargarCadencia()" title="Asignados desde">
+        <input type="date" id="cadHasta" onchange="cargarCadencia()" title="Asignados hasta">
       </div>
 
-      <div class="cad-subtit">Por gestora <span class="cad-mini">% de sus leads que siguieron el 3x5</span></div>
-      <div id="cadGPs" class="cad-gps"></div>
+      <div id="cadResumen" class="cad-kpis"></div>
+      <div id="cadHighlights" class="cad-hl"></div>
 
       <div class="cad-subtit">Detalle por lead · 3 franjas/día (mañana · tarde · noche) × 5 días</div>
       <div class="cad-leyenda">

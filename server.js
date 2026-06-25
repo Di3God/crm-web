@@ -1814,8 +1814,9 @@ app.get('/api/dashboard/cadencia', (req, res) => {
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const peruDate = iso => new Date(new Date(iso).getTime() - 5 * 3600000);
   const diaDe = iso => peruDate(iso).toISOString().slice(0, 10);
-  const horaDe = iso => peruDate(iso).getUTCHours();
-  const bandDe = h => (h < 11 ? 0 : (h < 16 ? 1 : 2));
+  const hmDe = iso => { const d = peruDate(iso); return d.getUTCHours() + d.getUTCMinutes() / 60; }; // hora decimal Perú
+  // Bandas: <11:00 -> 3 intentos (band 0) · 11:00–15:29:59 -> 2 (band 1) · 15:30–23:59 -> 1 (band 2)
+  const bandDe = hm => (hm < 11 ? 0 : (hm < 15.5 ? 1 : 2));
   const diffDias = (a, b) => Math.round((new Date(a + 'T00:00:00Z') - new Date(b + 'T00:00:00Z')) / 86400000);
   const hoy = new Date(new Date().getTime() - 5 * 3600000).toISOString().slice(0, 10);
 
@@ -1860,7 +1861,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
 
   const leadsCad = [];
   sel.forEach(({ lead, diaAsig }) => {
-    const bandAsig = bandDe(horaDe(lead.fechaAsignacion));
+    const bandAsig = bandDe(hmDe(lead.fechaAsignacion));
     const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(lead.codigo);
 
     // Métricas por la ventana propia del lead (offset desde su asignación)
@@ -1889,7 +1890,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     gs.forEach(g => {
       const ci = diffDias(diaDe(g.fecha), ancla);
       if (ci < 0 || ci > 4) return;
-      const s = bandDe(horaDe(g.fecha));
+      const s = bandDe(hmDe(g.fecha));
       const est = estadoResultado(g.resultado);
       const cur = celdas[ci][s];
       if (cur === 'na') return;
@@ -1973,7 +1974,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
       // mismo día
       if (diaDe(primero.fecha) === l.diaAsig) tocadosMismoDia++;
       // dentro de la franja de pauta (mismo día y misma banda de llegada)
-      if (diaDe(primero.fecha) === l.diaAsig && bandDe(horaDe(primero.fecha)) === l.bandAsig) tocadosEnPauta++;
+      if (diaDe(primero.fecha) === l.diaAsig && bandDe(hmDe(primero.fecha)) === l.bandAsig) tocadosEnPauta++;
       // horas hasta el primer intento
       const hrs = (new Date(primero.fecha) - new Date(l.asignadoISO)) / 3600000;
       if (hrs >= 0 && hrs < 240) { sumaHorasPrimer += hrs; conPrimer++; }
@@ -2003,7 +2004,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     reaccion: {
       tocadosMismoDiaPct: total ? Math.round((tocadosMismoDia / total) * 100) : 0,
       tocadosEnPautaPct: total ? Math.round((tocadosEnPauta / total) * 100) : 0,
-      horasPrimerIntento: conPrimer ? +(sumaHorasPrimer / conPrimer).toFixed(1) : null,
+      minutosPrimerIntento: conPrimer ? Math.round((sumaHorasPrimer / conPrimer) * 60) : null,
     },
     efectividad: {
       tasaConexion: totIntentos ? Math.round((totConexiones / totIntentos) * 100) : 0,
@@ -2025,6 +2026,16 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     },
   };
 
+  // Distribución de resultados por GP (una barra por gestora)
+  const distGPmap = {};
+  leadsCad.forEach(l => {
+    const k = l.gp;
+    if (!distGPmap[k]) distGPmap[k] = { nombre: k, cal: 0, sincal: 0, sinresp: 0, descarte: 0, vacio: 0, total: 0 };
+    distGPmap[k][l.outcome] = (distGPmap[k][l.outcome] || 0) + 1;
+    distGPmap[k].total++;
+  });
+  const distribucionGP = Object.values(distGPmap).sort((a, b) => b.total - a.total);
+
   res.json({
     filtros: { gp: fGP, estado: fEstado, resultado: fResultado, desde, hasta },
     gpsDisponibles: Array.from(gpsSet).sort(),
@@ -2037,7 +2048,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
       calificados: califs.length,
     },
     highlights,
-    porGP,
+    distribucionGP,
     leads: lista.sort((a, b) => a.enRitmo - b.enRitmo || a.diaAsig.localeCompare(b.diaAsig) || a.nombre.localeCompare(b.nombre)).slice(0, 200),
   });
 });
@@ -2372,7 +2383,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.129 (3x5 highlights agregados: embudo contactabilidad llegaron-tocados-conectados-calificados, reaccion mismo dia y horas al 1er intento, tasas conexion-calificacion, abandonados, distribucion de resultados) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.130 (banda noche desde 3:30pm=1 intento; fix proxima accion null en etapas terminales; 3x5 filtros compactos arriba; 5 KPIs nuevos (mismo dia, 1er intento en min, conexion, calificados, conexion num); quitado por-gestora; distribucion de resultados por GP) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

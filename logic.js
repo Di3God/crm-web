@@ -524,11 +524,16 @@ function consolidarLead(lead, gestiones) {
     estadoReunion, tieneCalificacion
   });
   const probabilidad = calcularProbabilidad({ etapa, score, intentos });
-  const fechaProxAccion = ult ? ult.fechaProxAccion : null;
+  let fechaProxAccion = ult ? ult.fechaProxAccion : null;
   const prioridad = calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, fechaAsignacion: lead.fechaAsignacion });
 
   let proximaAccion = ult ? ult.proximaAccion : null;
-  if (!proximaAccion && etapa === 'Contactabilidad 3x5') proximaAccion = 'Llamar intento 3x5';
+  if (etapa === 'Cerrado perdido' || etapa === 'Cerrado ganado') {
+    // Etapas terminales: el lead ya no tiene próxima acción ni fecha pendiente.
+    proximaAccion = null; fechaProxAccion = null;
+  } else if (!proximaAccion && etapa === 'Contactabilidad 3x5') {
+    proximaAccion = 'Llamar intento 3x5';
+  }
 
   // Último comentario para el recordatorio (tooltip): el de la última gestión; si esa
   // no tiene texto (ej. "No respondió"), cae al último comentario con contenido.
