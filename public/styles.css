@@ -823,23 +823,26 @@
   .cad-leyenda { display: flex; gap: 14px; margin: 4px 0 10px; font-size: 11px; color: #8593A4; flex-wrap: wrap; }
   .cad-leyenda span { display: flex; align-items: center; gap: 5px; }
   .cad-cu { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-  .cad-pauta { background: #EFECE3; border: 1px solid #D3D1C7; position: relative; }
-  .cad-pauta::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 5px; height: 5px; border-radius: 50%; background: #1D9E75; }
+  .cad-pauta-leg { background: #EFECE3; border: 1px solid #D3D1C7; position: relative; }
+  .cad-pauta-leg::after { content: ''; position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: #1D9E75; }
   .cad-na { background: repeating-linear-gradient(45deg,#F3F2EE,#F3F2EE 2px,#E8E7E2 2px,#E8E7E2 4px); }
   .cad-leads { display: flex; flex-direction: column; }
-  .cad-row { display: grid; grid-template-columns: 170px repeat(5,1fr) 70px; gap: 8px; align-items: center; padding: 9px 10px; border-top: 1px solid var(--line); }
+  .cad-row { display: grid; grid-template-columns: 200px repeat(5,1fr); gap: 8px; align-items: center; padding: 10px 10px; border-top: 1px solid var(--line); }
   .cad-head { font-size: 10.5px; color: #9AA8B8; border-top: none; padding-bottom: 4px; }
   .cad-dh { text-align: center; }
-  .cad-et { text-align: right; }
   .cad-lead-n { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cad-lead-gp { font-size: 10px; color: #9AA8B8; }
-  .cad-dia { display: flex; gap: 3px; justify-content: center; }
-  .cad-cu2 { width: 13px; height: 13px; border-radius: 3px; display: inline-block; position: relative; }
-  .cad-cu2.cad-pauta { background: #EFECE3; border: 1px solid #D3D1C7; }
-  .cad-cu2.cad-pauta::after { width: 6px; height: 6px; }
-  .cad-cu2.cad-na { background: repeating-linear-gradient(45deg,#F3F2EE,#F3F2EE 2px,#E8E7E2 2px,#E8E7E2 4px); }
-  .cad-et2 { text-align: right; font-size: 11px; color: #1D9E75; font-weight: 600; }
-  .cad-et2.rojo { color: #A32D2D; }
+  .cad-dia { display: flex; gap: 6px; justify-content: center; }
+  .cad-cu2-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+  .cad-cu2 { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  .cad-cu2-na { border: none !important; }
+  .cad-dot { width: 5px; height: 5px; border-radius: 50%; background: #1D9E75; }
+  .cad-dot-sp { width: 5px; height: 5px; }
+  .cad-pag { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px 0 2px; }
+  .cad-pag-b { font-size: 12px; padding: 5px 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); cursor: pointer; }
+  .cad-pag-b:disabled { opacity: .4; cursor: default; }
+  .cad-pag-b:not(:disabled):hover { background: #F1F5FB; }
+  .cad-pag-info { font-size: 11.5px; color: var(--muted); }
   .cad-vacio { padding: 14px; font-size: 12.5px; color: var(--muted); }
 
   /* Softphone Aircall embebido */

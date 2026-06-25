@@ -1841,46 +1841,68 @@ app.get('/api/dashboard/cadencia', (req, res) => {
 
   const filas = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND fechaAsignacion IS NOT NULL').all();
   const gpsSet = new Set();
-  const leadsCad = [];
+  const fResultado = (req.query.resultado || '').trim();
+
+  // Pre-filtrar por fecha y GP, y juntar para el ancla de columnas
+  const sel = [];
   filas.forEach(lead => {
     if (lead.asesor) gpsSet.add(lead.asesor);
     const diaAsig = diaDe(lead.fechaAsignacion);
     if (diaAsig < desde || diaAsig > hasta) return;
     if (fGP && lead.asesor !== fGP) return;
-    const bandAsig = bandDe(horaDe(lead.fechaAsignacion));
+    sel.push({ lead, diaAsig });
+  });
+  // Ancla de las 5 columnas = fecha de asignación más antigua del conjunto (o 'desde')
+  let ancla = desde;
+  sel.forEach(s => { if (s.diaAsig < ancla) ancla = s.diaAsig; });
+  const colDates = [];
+  for (let i = 0; i < 5; i++) { const d = new Date(ancla + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + i); colDates.push(d.toISOString().slice(0, 10)); }
 
-    // grid[5][3]: 'na' pre-llegada, 'pauta' slot de llegada sin acción, 'vacio' esperado sin intento, o estado del intento
-    const grid = [];
-    for (let d = 0; d < 5; d++) {
-      grid.push([0, 1, 2].map(s => {
-        if (d === 0 && s < bandAsig) return 'na';
-        if (d === 0 && s === bandAsig) return 'pauta';
+  const leadsCad = [];
+  sel.forEach(({ lead, diaAsig }) => {
+    const bandAsig = bandDe(horaDe(lead.fechaAsignacion));
+    const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(lead.codigo);
+
+    // Métricas por la ventana propia del lead (offset desde su asignación)
+    const realizadosPorDia = [0, 0, 0, 0, 0];
+    let realizados = 0, califEnLlamada = null, nAttempt = 0, outcome = 'vacio';
+    gs.forEach(g => {
+      const off = diffDias(diaDe(g.fecha), diaAsig);
+      const est = estadoResultado(g.resultado);
+      if (off >= 0 && off <= 4) {
+        realizadosPorDia[off]++; realizados++; nAttempt++;
+        if (califEnLlamada === null && est === 'cal') califEnLlamada = nAttempt;
+        if ((peso[est] || 0) > (peso[outcome] || 0)) outcome = est;
+      }
+    });
+
+    // Celdas en FECHAS ABSOLUTAS (5 columnas). 'na' antes de asignar; 'vacio' esperado; o el estado del intento.
+    const celdas = [];
+    for (let ci = 0; ci < 5; ci++) {
+      const cd = colDates[ci];
+      celdas.push([0, 1, 2].map(s => {
+        if (cd < diaAsig) return 'na';
+        if (cd === diaAsig && s < bandAsig) return 'na';
         return 'vacio';
       }));
     }
-    const gs = db.prepare('SELECT fecha,resultado FROM gestiones WHERE codigo=? ORDER BY fecha ASC').all(lead.codigo);
-    let realizados = 0, califEnLlamada = null, nAttempt = 0;
-    const realizadosPorDia = [0, 0, 0, 0, 0];
     gs.forEach(g => {
-      const idx = diffDias(diaDe(g.fecha), diaAsig);
-      if (idx < 0 || idx > 4) return;
-      const slot = bandDe(horaDe(g.fecha));
+      const ci = diffDias(diaDe(g.fecha), ancla);
+      if (ci < 0 || ci > 4) return;
+      const s = bandDe(horaDe(g.fecha));
       const est = estadoResultado(g.resultado);
-      // el slot guarda el mejor resultado si hubo varios intentos en esa franja
-      const actual = grid[idx][slot];
-      if (actual === 'na' || actual === 'pauta' || actual === 'vacio' || (peso[est] || 0) >= (peso[actual] || 0)) grid[idx][slot] = est;
-      realizados++; realizadosPorDia[idx]++; nAttempt++;
-      if (califEnLlamada === null && est === 'cal') califEnLlamada = nAttempt;
+      const cur = celdas[ci][s];
+      if (cur === 'na') return;
+      if (cur === 'vacio' || (peso[est] || 0) >= (peso[cur] || 0)) celdas[ci][s] = est;
     });
+    // Marcador de pauta (punto verde) bajo el slot de llegada
+    const pautaCol = diffDias(diaAsig, ancla);
+    const pautaSlot = bandAsig;
 
-    // Esperados por día (mínimos): día0 = 3-bandAsig; días 1..4 = 3
+    // Cumplimiento / ponderado (ventana propia)
     const espDia = [3 - bandAsig, 3, 3, 3, 3];
-    // Días transcurridos (hasta hoy o hasta calificar)
     let diaCorte = hoy;
-    if (califEnLlamada !== null) {
-      // día en que calificó = primer intento 'cal'
-      for (const g of gs) { if (estadoResultado(g.resultado) === 'cal') { diaCorte = diaDe(g.fecha); break; } }
-    }
+    if (califEnLlamada !== null) { for (const g of gs) { if (estadoResultado(g.resultado) === 'cal') { diaCorte = diaDe(g.fecha); break; } } }
     const elapsed = Math.min(5, Math.max(1, diffDias(diaCorte < hoy ? diaCorte : hoy, diaAsig) + 1));
     let espTot = 0, realCap = 0, cumpleTodos = true;
     for (let d = 0; d < elapsed; d++) {
@@ -1890,23 +1912,20 @@ app.get('/api/dashboard/cadencia', (req, res) => {
     }
     const enRitmo = (califEnLlamada !== null) || cumpleTodos;
 
-    // último día con intento (para "días sin tocar")
-    let ultimoDia = null;
-    gs.forEach(g => { const i = diffDias(diaDe(g.fecha), diaAsig); if (i >= 0 && i <= 4) ultimoDia = diaDe(g.fecha); });
-    const diasSinTocar = ultimoDia ? diffDias(hoy, ultimoDia) : Math.min(5, diffDias(hoy, diaAsig));
-
     leadsCad.push({
       codigo: lead.codigo, nombre: lead.nombre, gp: lead.asesor || 'Sin asignar',
-      diaAsig, bandAsig, grid, realizados, esperados: espTot, realCap,
-      enRitmo, califEnLlamada, diasSinTocar,
+      asignadoISO: lead.fechaAsignacion, diaAsig, bandAsig,
+      celdas, pautaCol, pautaSlot, outcome,
+      realizados, esperados: espTot, realCap, enRitmo, califEnLlamada,
     });
   });
 
   let lista = leadsCad;
   if (fEstado === 'enritmo') lista = lista.filter(l => l.enRitmo);
   else if (fEstado === 'atrasado') lista = lista.filter(l => !l.enRitmo);
+  if (fResultado) lista = lista.filter(l => l.outcome === fResultado);
 
-  // Por GP (sobre el conjunto filtrado por fecha/gp, antes del filtro de estado)
+  // Por GP (sobre el conjunto filtrado por fecha/gp, antes del filtro de estado/resultado)
   const porGPmap = {};
   leadsCad.forEach(l => {
     const k = l.gp;
@@ -1928,8 +1947,9 @@ app.get('/api/dashboard/cadencia', (req, res) => {
   const conexProm = califs.length ? +(califs.reduce((s, l) => s + l.califEnLlamada, 0) / califs.length).toFixed(1) : null;
 
   res.json({
-    filtros: { gp: fGP, estado: fEstado, desde, hasta },
+    filtros: { gp: fGP, estado: fEstado, resultado: fResultado, desde, hasta },
     gpsDisponibles: Array.from(gpsSet).sort(),
+    colDates,
     resumen: {
       cumplimientoPct: total ? Math.round((enRitmoT / total) * 100) : 0,
       toquesPonderadoPct: espGlobal ? Math.round((realCapGlobal / espGlobal) * 100) : 0,
@@ -1938,7 +1958,7 @@ app.get('/api/dashboard/cadencia', (req, res) => {
       calificados: califs.length,
     },
     porGP,
-    leads: lista.sort((a, b) => a.enRitmo - b.enRitmo || a.diaAsig.localeCompare(b.diaAsig)).slice(0, 80),
+    leads: lista.sort((a, b) => a.enRitmo - b.enRitmo || a.diaAsig.localeCompare(b.diaAsig) || a.nombre.localeCompare(b.nombre)).slice(0, 200),
   });
 });
 
@@ -2272,7 +2292,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.126 (nombres del tablero 3x5 clickeables a trazabilidad; boton Archivar lead en trazabilidad para admin - para eliminar leads de prueba) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.127 (3x5 contactabilidad: columnas con fechas reales Lun 22 etc, pauta como punto verde DEBAJO del cuadro sin tapar el color, subtitulo con fecha y hora 12h de llegada, filtro por resultado, paginacion 10, quitado dias sin tocar) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

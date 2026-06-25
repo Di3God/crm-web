@@ -2947,19 +2947,36 @@ function celebrar(tier) {
 }
 
 // ---- Dashboard: cumplimiento de la cadencia 3x5 (bandas horarias) ----
-let CAD_GP_INIT = false;
+// ---- Dashboard: cumplimiento de la cadencia 3x5 (bandas horarias) ----
+let CAD_GP_INIT = false, CAD_LEADS = [], CAD_COLS = [], CAD_PAGE = 0;
+const CAD_DIAS_SEM = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+function cadFechaCol(ymd) { // "2026-06-22" -> "Lun 22"
+  const d = new Date(ymd + 'T12:00:00Z');
+  return isNaN(d) ? ymd : CAD_DIAS_SEM[d.getUTCDay()] + ' ' + d.getUTCDate();
+}
+function cadHora12(iso) { // ISO -> "08:00 am" (hora Perú)
+  const d = new Date(new Date(iso).getTime() - 5 * 3600000);
+  let h = d.getUTCHours(); const m = d.getUTCMinutes();
+  const ap = h < 12 ? 'am' : 'pm'; let h12 = h % 12; if (h12 === 0) h12 = 12;
+  return h12 + ':' + String(m).padStart(2, '0') + ' ' + ap;
+}
+function cadFechaHora12(iso) { // "Lun 23, 08:00 am"
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() - 5 * 3600000);
+  return CAD_DIAS_SEM[d.getUTCDay()] + ' ' + d.getUTCDate() + ', ' + cadHora12(iso);
+}
 async function cargarCadencia() {
   try {
     const gp = $('cadGP') ? $('cadGP').value : '';
     const estado = $('cadEstado') ? $('cadEstado').value : '';
+    const resultado = $('cadResultado') ? $('cadResultado').value : '';
     const desde = $('cadDesde') ? $('cadDesde').value : '';
     const hasta = $('cadHasta') ? $('cadHasta').value : '';
     const qs = new URLSearchParams();
-    if (gp) qs.set('gp', gp); if (estado) qs.set('estado', estado);
+    if (gp) qs.set('gp', gp); if (estado) qs.set('estado', estado); if (resultado) qs.set('resultado', resultado);
     if (desde) qs.set('desde', desde); if (hasta) qs.set('hasta', hasta);
     const d = await api('/api/dashboard/cadencia?' + qs.toString());
 
-    // Poblar dropdown de GPs y fechas una sola vez
     if (!CAD_GP_INIT) {
       const sel = $('cadGP');
       (d.gpsDisponibles || []).forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
@@ -2992,26 +3009,62 @@ async function cargarCadencia() {
       '</div>';
     }).join('') || '<div class="cad-vacio">Sin leads asignados en este rango.</div>';
 
-    const COL = { sinresp: '#85B7EB', sincal: '#EF9F27', cal: '#1D9E75', descarte: '#E24B4A' };
-    const celda = est => {
-      if (est === 'na') return '<span class="cad-cu2 cad-na"></span>';
-      if (est === 'pauta') return '<span class="cad-cu2 cad-pauta"></span>';
-      if (est === 'vacio') return '<span class="cad-cu2" style="background:#EFECE3;border:1px solid #D3D1C7"></span>';
-      return '<span class="cad-cu2" style="background:' + (COL[est] || '#EFECE3') + '"></span>';
-    };
-    const head = '<div class="cad-row cad-head"><span>Lead</span>' +
-      [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('') + '<span class="cad-et">Días s/tocar</span></div>';
-    $('cadLeads').innerHTML = head + ((d.leads || []).map(l =>
-      '<div class="cad-row">' +
-        '<div class="cad-lead" onclick="verTrazabilidad(\'' + l.codigo + '\')" title="Ver trazabilidad" style="cursor:pointer"><div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
-          '<div class="cad-lead-gp">' + l.gp + ' · asig. ' + l.diaAsig.slice(5) + '</div></div>' +
-        l.grid.map(dia => '<div class="cad-dia">' + dia.map(celda).join('') + '</div>').join('') +
-        '<div class="cad-et2 ' + (l.enRitmo ? '' : 'rojo') + '">' + (l.diasSinTocar === 0 ? 'hoy' : l.diasSinTocar + 'd') + '</div>' +
-      '</div>'
-    ).join('') || '<div class="cad-vacio">No hay leads con estos filtros.</div>');
+    CAD_LEADS = d.leads || [];
+    CAD_COLS = d.colDates || [];
+    CAD_PAGE = 0;
+    renderCadLeads();
   } catch (e) {
     if ($('cadResumen')) $('cadResumen').innerHTML = '<div class="cad-vacio">No se pudo cargar la cadencia: ' + e.message + '</div>';
   }
+}
+function renderCadLeads() {
+  const COL = { sinresp: '#85B7EB', sincal: '#EF9F27', cal: '#1D9E75', descarte: '#E24B4A' };
+  const cuadro = est => {
+    if (est === 'na') return 'background:transparent;';
+    if (est === 'vacio') return 'background:#EFECE3;border:1px solid #D3D1C7;';
+    return 'background:' + (COL[est] || '#EFECE3') + ';';
+  };
+  const celda = (est, esPauta) => {
+    const naCls = est === 'na' ? ' cad-cu2-na' : '';
+    return '<span class="cad-cu2-wrap">' +
+      '<span class="cad-cu2' + naCls + '" style="' + cuadro(est) + '"></span>' +
+      (esPauta ? '<span class="cad-dot"></span>' : '<span class="cad-dot-sp"></span>') +
+      '</span>';
+  };
+  const head = '<div class="cad-row cad-head"><span>Lead</span>' +
+    (CAD_COLS.length ? CAD_COLS.map(c => '<span class="cad-dh">' + cadFechaCol(c) + '</span>').join('')
+      : [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('')) + '</div>';
+
+  const ini = CAD_PAGE * 10;
+  const pagina = CAD_LEADS.slice(ini, ini + 10);
+  const filas = pagina.map(l =>
+    '<div class="cad-row">' +
+      '<div class="cad-lead" onclick="verTrazabilidad(\'' + l.codigo + '\')" title="Ver trazabilidad" style="cursor:pointer">' +
+        '<div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
+        '<div class="cad-lead-gp">' + l.gp + ' · ' + cadFechaHora12(l.asignadoISO) + '</div></div>' +
+      l.celdas.map((dia, ci) => '<div class="cad-dia">' +
+        dia.map((est, s) => celda(est, ci === l.pautaCol && s === l.pautaSlot)).join('') +
+      '</div>').join('') +
+    '</div>'
+  ).join('');
+  $('cadLeads').innerHTML = head + (filas || '<div class="cad-vacio">No hay leads con estos filtros.</div>');
+
+  const totalPags = Math.ceil(CAD_LEADS.length / 10);
+  const pag = $('cadPaginacion');
+  if (pag) {
+    if (totalPags <= 1) { pag.innerHTML = CAD_LEADS.length ? '<span class="cad-pag-info">' + CAD_LEADS.length + ' lead(s)</span>' : ''; }
+    else {
+      pag.innerHTML =
+        '<button class="cad-pag-b" ' + (CAD_PAGE === 0 ? 'disabled' : '') + ' onclick="cadPag(-1)">‹ Anterior</button>' +
+        '<span class="cad-pag-info">Página ' + (CAD_PAGE + 1) + ' de ' + totalPags + ' · ' + CAD_LEADS.length + ' leads</span>' +
+        '<button class="cad-pag-b" ' + (CAD_PAGE >= totalPags - 1 ? 'disabled' : '') + ' onclick="cadPag(1)">Siguiente ›</button>';
+    }
+  }
+}
+function cadPag(dir) {
+  const totalPags = Math.ceil(CAD_LEADS.length / 10);
+  CAD_PAGE = Math.max(0, Math.min(totalPags - 1, CAD_PAGE + dir));
+  renderCadLeads();
 }
 
 // ---- Softphone Aircall embebido (Etapa C) + click-to-call (Etapa B) ----

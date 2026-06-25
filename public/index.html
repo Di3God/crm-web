@@ -191,6 +191,14 @@
           <option value="enritmo">En ritmo</option>
           <option value="atrasado">Atrasados</option>
         </select>
+        <select id="cadResultado" onchange="cargarCadencia()">
+          <option value="">Todos los resultados</option>
+          <option value="cal">Respondió y calificó</option>
+          <option value="sincal">Respondió sin calificar</option>
+          <option value="sinresp">Intento sin respuesta</option>
+          <option value="descarte">Descarte</option>
+          <option value="vacio">Sin intento</option>
+        </select>
         <label class="cad-fl">Asignados desde <input type="date" id="cadDesde" onchange="cargarCadencia()"></label>
         <label class="cad-fl">hasta <input type="date" id="cadHasta" onchange="cargarCadencia()"></label>
       </div>
@@ -200,7 +208,7 @@
 
       <div class="cad-subtit">Detalle por lead · 3 franjas/día (mañana · tarde · noche) × 5 días</div>
       <div class="cad-leyenda">
-        <span><i class="cad-cu cad-pauta"></i> Pauta de inicio</span>
+        <span><i class="cad-cu cad-pauta-leg"></i> Pauta de inicio (llegada)</span>
         <span><i class="cad-cu" style="background:#EFECE3;border:1px solid #D3D1C7"></i> Sin intento</span>
         <span><i class="cad-cu" style="background:#85B7EB"></i> Intento sin respuesta</span>
         <span><i class="cad-cu" style="background:#EF9F27"></i> Respondió sin calificar</span>
@@ -209,6 +217,7 @@
         <span><i class="cad-cu cad-na"></i> Antes de asignar</span>
       </div>
       <div id="cadLeads" class="cad-leads"></div>
+      <div id="cadPaginacion" class="cad-pag"></div>
     </div>
 
     <!-- Avance vs meta del mes -->
