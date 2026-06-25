@@ -1843,6 +1843,7 @@ async function verTrazabilidad(codigo) {
   $('tCalif').innerHTML = calHtml;
 
   $('ovTraza').classList.add('act');
+  const ba = $('tArchivar'); if (ba) ba.style.display = (typeof YO !== 'undefined' && YO && YO.rol === 'admin') ? '' : 'none';
 }
 function tipoLabel(e) {
   const m = { creado: 'Lead creado', gestion: e.canal || 'Gestión', cambio: 'Cambio de etapa', proxima: 'Próxima acción', llamada: 'Llamada', whatsapp: 'WhatsApp' };
@@ -3002,7 +3003,7 @@ async function cargarCadencia() {
       [1, 2, 3, 4, 5].map(n => '<span class="cad-dh">Día ' + n + '</span>').join('') + '<span class="cad-et">Días s/tocar</span></div>';
     $('cadLeads').innerHTML = head + ((d.leads || []).map(l =>
       '<div class="cad-row">' +
-        '<div class="cad-lead"><div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
+        '<div class="cad-lead" onclick="verTrazabilidad(\'' + l.codigo + '\')" title="Ver trazabilidad" style="cursor:pointer"><div class="cad-lead-n">' + (l.nombre || '—') + '</div>' +
           '<div class="cad-lead-gp">' + l.gp + ' · asig. ' + l.diaAsig.slice(5) + '</div></div>' +
         l.grid.map(dia => '<div class="cad-dia">' + dia.map(celda).join('') + '</div>').join('') +
         '<div class="cad-et2 ' + (l.enRitmo ? '' : 'rojo') + '">' + (l.diasSinTocar === 0 ? 'hoy' : l.diasSinTocar + 'd') + '</div>' +
@@ -3139,4 +3140,18 @@ function editarFechaAsig(codigo) {
     verTrazabilidad(codigo);
     if (typeof cargarLeads === 'function') cargarLeads();
   }).catch(e => alert('No se pudo actualizar: ' + e.message));
+}
+
+// Archivar el lead abierto en la trazabilidad (admin). Reversible desde Auditoría.
+async function archivarDesdeTraza() {
+  const codigo = tCodigoActual;
+  if (!codigo) return;
+  if (!confirm('¿Archivar este lead?\nSaldrá de la lista, de las gestiones de los GPs y del tablero 3x5.\nQueda guardado y se puede restaurar (o eliminar definitivamente) desde Auditoría.')) return;
+  try {
+    await api('/api/leads/' + codigo + '/archivar', { method: 'PUT' });
+    cerrar('ovTraza');
+    if (typeof acToast === 'function') acToast('Lead archivado');
+    if (typeof cargarLeads === 'function') cargarLeads();
+    if (typeof cargarCadencia === 'function' && $('cadResumen')) cargarCadencia();
+  } catch (e) { alert('No se pudo archivar: ' + e.message); }
 }

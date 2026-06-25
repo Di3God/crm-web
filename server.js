@@ -2272,7 +2272,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.125 (editor manual de fecha de asignacion en trazabilidad para admin/jefa: lapiz que abre prompt en hora Peru, valida formato, convierte a UTC) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.126 (nombres del tablero 3x5 clickeables a trazabilidad; boton Archivar lead en trazabilidad para admin - para eliminar leads de prueba) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
