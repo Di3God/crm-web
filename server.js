@@ -1111,10 +1111,13 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
       const desfaseMs = new Date(g.fecha) - new Date(proxAccionPrev);
       if (desfaseMs > 6 * 3600 * 1000) tardanza = textoDesfase(desfaseMs); // > 6h se considera tarde
     }
+    // ¿Gestión "Llamada" respaldada por una llamada real de Aircall (±5 min)?
+    const gt = new Date(g.fecha).getTime();
+    const verificada = g.canal === 'Llamada' && llamadas.some(ll => Math.abs(new Date(ll.fecha).getTime() - gt) <= 5 * 60 * 1000);
     eventos.push({
       tipo: 'gestion', fecha: g.fecha,
       titulo: tituloResultado(g.resultado), sub: g.comentario || subtituloResultado(g.resultado, g),
-      actor: g.asesor || lead.asesor || '', canal: g.canal,
+      actor: g.asesor || lead.asesor || '', canal: g.canal, verificada,
       score: parcial.score, probabilidad: parcial.probabilidad,
       sinContacto: grupo === 'No_respondio',
       intentoNum: grupo === 'No_respondio' ? eventos.filter(e => e.sinContacto).length + 1 : null,
@@ -2101,10 +2104,11 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
   const m = {};
-  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0 }; });
-  const gs = db.prepare('SELECT asesor, canal, resultado, fecha FROM gestiones').all();
+  (L.ASESORES || []).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0 }; });
+  const gs = db.prepare('SELECT asesor, canal, resultado, fecha, codigo FROM gestiones').all();
   // Calificados por GP y por día (para la racha histórica)
   const califDia = {};
+  const gestLlamadaHoy = []; // gestiones tipo Llamada de hoy, para cruzar con Aircall
   gs.forEach(g => {
     const dia = peruDia(g.fecha);
     if (CALIF.includes(g.resultado)) {
@@ -2112,12 +2116,22 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
       califDia[g.asesor][dia] = (califDia[g.asesor][dia] || 0) + 1;
     }
     if (dia !== hoy) return;
-    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0 };
+    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0 };
     const r = m[g.asesor];
     r.intentos++;
-    if (g.canal === 'Llamada') r.llamadas++;
+    if (g.canal === 'Llamada') { r.llamadas++; gestLlamadaHoy.push({ asesor: g.asesor, codigo: g.codigo, t: new Date(g.fecha).getTime() }); }
     if (!SIN.includes(g.resultado)) r.conectados++;
     if (CALIF.includes(g.resultado)) r.calificados++;
+  });
+  // VERIFICACIÓN AIRCALL: una gestión "Llamada" se verifica si hay una llamada real de Aircall
+  // al mismo lead dentro de ±5 min del registro. Match 1:1 (una llamada respalda una sola gestión).
+  const VENTANA = 5 * 60 * 1000;
+  const llamHoy = db.prepare('SELECT id, codigo, fecha FROM llamadas WHERE codigo IS NOT NULL').all()
+    .filter(ll => peruDia(ll.fecha) === hoy)
+    .map(ll => ({ id: ll.id, codigo: ll.codigo, t: new Date(ll.fecha).getTime(), usada: false }));
+  gestLlamadaHoy.sort((a, b) => a.t - b.t).forEach(ge => {
+    const cand = llamHoy.find(ll => !ll.usada && ll.codigo === ge.codigo && Math.abs(ll.t - ge.t) <= VENTANA);
+    if (cand) { cand.usada = true; if (m[ge.asesor]) m[ge.asesor].verificadas++; }
   });
   // Racha: días seguidos cumpliendo la meta (incluye hoy solo si ya la cumplió)
   const diaMenos = (ds, n) => { const d = new Date(ds + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
@@ -2131,9 +2145,9 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     }
     return streak;
   }
-  // Puntaje ponderado por calidad: intento +1, conexión +3, calificó +8
+  // Puntaje ponderado por calidad: intento +1, conexión +3, calificó +8, + bonus Aircall +2 por verificada
   Object.values(m).forEach(r => {
-    r.puntaje = r.intentos * 1 + r.conectados * 3 + r.calificados * 8;
+    r.puntaje = r.intentos * 1 + r.conectados * 3 + r.calificados * 8 + (r.verificadas || 0) * 2;
     r.racha = rachaDe(r.asesor);
   });
   const ranking = Object.values(m).sort((a, b) =>
@@ -2146,7 +2160,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const INI = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
   const diasRacha = [];
   for (let i = 0; i < 7; i++) { const dd = new Date(ahoraPeru); dd.setUTCDate(dd.getUTCDate() + i); diasRacha.push(INI[dd.getUTCDay()]); }
-  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 3, calificado: 8 }, ranking });
+  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 3, calificado: 8, verificada: 2 }, ranking });
 });
 
 app.get('/api/dashboard/avance', (req, res) => {
@@ -2479,7 +2493,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.139 (fix Aircall: contestada solo si answered_at, no por duracion timbrada; muestra timbro M:SS si no contesto y conversacion si contesto; marca Aircall en trazabilidad; podio sin numeritos) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.140 (puntaje hibrido: bonus +2 por gestion Llamada verificada con llamada real de Aircall, cruce por lead+ventana 5min match 1:1; columna Verif en ranking; marca verificada en trazabilidad) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

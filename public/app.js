@@ -1808,7 +1808,7 @@ async function verTrazabilidad(codigo) {
       <div class="tz-ev-linea"><span class="tz-dot ${colorTipo[e.tipo]||'azul'}"></span>${last ? '' : '<span class="tz-rail"></span>'}</div>
       <div class="tz-ev-card">
         <div class="tz-ev-head"><span class="tz-ev-tipo ${colorTipo[e.tipo]||''}">${tipoLabel(e)}</span><span class="tz-ev-actor">${e.actor||''}</span></div>
-        <div class="tz-ev-tit">${e.titulo}${e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : ''}</div>
+        <div class="tz-ev-tit">${e.titulo}${e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : ''}${e.verificada ? ' <span class="tz-verif" title="Llamada verificada por Aircall">✓ verificada</span>' : ''}</div>
         ${e.sub ? `<div class="tz-ev-sub">${e.sub}</div>` : ''}
         ${derecha ? `<div class="tz-ev-badges">${derecha}</div>` : ''}
       </div>
@@ -3449,7 +3449,7 @@ async function cargarRanking() {
       '<div class="rk-dots">' + dots + '</div>';
 
     // Tabla completa
-    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span></div>';
+    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Verif. ✓</span></div>';
     $('rkTabla').innerHTML = head + rk.map((g, i) => {
       const mio = g.asesor === yo ? ' rk-mio-row' : '';
       const pos = i < 3 ? medalla[i] : (i + 1);
@@ -3461,6 +3461,7 @@ async function cargarRanking() {
         '<span>' + g.intentos + '</span>' +
         '<span>' + g.conectados + '</span>' +
         '<span class="rk-cal">' + g.calificados + '</span>' +
+        '<span class="rk-verif">' + (g.verificadas || 0) + '</span>' +
       '</div>';
     }).join('');
     RK_DATA = rk;

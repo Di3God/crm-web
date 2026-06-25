@@ -972,7 +972,7 @@
   .rk-pod.rk-mio { outline: 3px solid #1D9E75; outline-offset: 2px; }
 
   .rk-tabla { display: flex; flex-direction: column; }
-  .rk-row { display: grid; grid-template-columns: 52px 1fr 100px 100px 110px 110px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
+  .rk-row { display: grid; grid-template-columns: 48px 1fr 88px 88px 96px 96px 86px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
   .rk-head { background: #F7F8FA; font-size: 10.5px; color: #9AA8B8; text-transform: uppercase; letter-spacing: .03em; padding: 9px 22px; }
   .rk-head span:not(:nth-child(2)) { text-align: center; }
   .rk-pos { font-size: 15px; font-weight: 700; text-align: center; color: #475569; }
@@ -983,6 +983,7 @@
   .rk-row span:nth-child(n+3) { text-align: center; font-size: 13.5px; color: #475569; }
   .rk-big { font-size: 18px !important; font-weight: 800 !important; color: #123A63 !important; }
   .rk-cal { font-weight: 700 !important; color: #1D9E75 !important; }
+  .rk-verif { font-weight: 700 !important; color: #0B72E8 !important; }
   .rk-mio-row { background: #EAF7F1; }
   .rk-foot { text-align: center; font-size: 11.5px; color: var(--muted); padding: 13px; }
   .rk-vacio { padding: 26px; text-align: center; font-size: 13px; color: #fff; opacity: .85; }
@@ -1016,3 +1017,7 @@
   /* Marca Aircall en eventos de llamada de la trazabilidad */
   .tz-via { display: inline-block; font-size: 10px; font-weight: 600; color: #0B72E8; background: #E8F1FE;
     border: 1px solid #C5DDFB; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+
+  /* Marca de gestión verificada por Aircall */
+  .tz-verif { display: inline-block; font-size: 10px; font-weight: 700; color: #1D9E75; background: #E7F6EF;
+    border: 1px solid #BEE7D5; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
