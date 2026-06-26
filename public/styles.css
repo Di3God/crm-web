@@ -1042,3 +1042,7 @@
   .b2b-pill { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 
   .b2b-badge { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 9px; background: #EF9F27; color: #fff; font-size: 10px; font-weight: 700; text-align: center; margin-left: 4px; }
+
+  .btn-sunat { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: #475569; margin-left: 2px; }
+  .btn-sunat:hover { background: #F1F3F6; }
+  .btn-sunat:disabled { opacity: .5; cursor: default; }

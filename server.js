@@ -344,6 +344,9 @@ db.exec(`
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tieneInmueble TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tipoInmueble TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN areaInmueble TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatRaw TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatEstado TEXT"); } catch (e) { } // 'ok' | 'pendiente' | 'error'
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); } catch (e) { }
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -668,6 +671,59 @@ function soloB2B(req, res, next) {
   next();
 }
 
+// Enriquecimiento SUNAT: consulta el microservicio (POST /consultar-ruc {ruc}) y guarda `data` en sunatRaw.
+// Asíncrona y tolerante: si falla, deja la solicitud en 'pendiente' para reintentar. Nunca lanza.
+async function enriquecerSunat(codigo, opts = {}) {
+  const base = process.env.SUNAT_API_URL;
+  const sol = db.prepare('SELECT codigo, ruc, razonSocial FROM b2b_solicitudes WHERE codigo=?').get(codigo);
+  if (!sol) return { ok: false, motivo: 'solicitud_inexistente' };
+  const ruc = (opts.ruc || sol.ruc || '').toString().trim();
+  if (!ruc || ruc.length !== 11) {
+    db.prepare("UPDATE b2b_solicitudes SET sunatEstado='pendiente' WHERE codigo=?").run(codigo);
+    return { ok: false, motivo: 'sin_ruc_valido' };
+  }
+  if (!base) {
+    db.prepare("UPDATE b2b_solicitudes SET sunatEstado='pendiente' WHERE codigo=?").run(codigo);
+    return { ok: false, motivo: 'sin_api_configurada' };
+  }
+  const ahora = new Date().toISOString();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 25000); // SUNAT scrapea: damos margen
+    const resp = await fetch(base.replace(/\/+$/, '') + '/consultar-ruc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ruc }),
+      signal: ctrl.signal
+    });
+    clearTimeout(t);
+    const json = await resp.json().catch(() => null);
+    if (!json || json.success !== true || !json.data) {
+      db.prepare("UPDATE b2b_solicitudes SET sunatEstado='error', sunatVerificadoEn=? WHERE codigo=?")
+        .run(ahora, codigo);
+      return { ok: false, motivo: 'consulta_fallida', mensaje: (json && json.message) || 'Sin datos' };
+    }
+    const data = json.data;
+    // Autocompleta razón social si vino vacía del intake.
+    const completarRazon = (!sol.razonSocial || !sol.razonSocial.trim()) && data.razonSocial;
+    if (completarRazon) {
+      db.prepare("UPDATE b2b_solicitudes SET sunatRaw=?, sunatEstado='ok', sunatVerificadoEn=?, razonSocial=? WHERE codigo=?")
+        .run(JSON.stringify(data).slice(0, 16000), ahora, data.razonSocial, codigo);
+    } else {
+      db.prepare("UPDATE b2b_solicitudes SET sunatRaw=?, sunatEstado='ok', sunatVerificadoEn=? WHERE codigo=?")
+        .run(JSON.stringify(data).slice(0, 16000), ahora, codigo);
+    }
+    return { ok: true, data };
+  } catch (e) {
+    db.prepare("UPDATE b2b_solicitudes SET sunatEstado='error', sunatVerificadoEn=? WHERE codigo=?").run(ahora, codigo);
+    return { ok: false, motivo: 'excepcion', mensaje: e.message };
+  }
+}
+// Dispara el enriquecimiento sin bloquear (fire-and-forget).
+function enriquecerSunatAsync(codigo) {
+  Promise.resolve().then(() => enriquecerSunat(codigo)).catch(() => { });
+}
+
 // Operadores B2B en la rotación: roles B2B con autoasignar=1 (Diego controla quién entra).
 function operadoresB2BParaAuto() {
   return db.prepare("SELECT nombre FROM usuarios WHERE rol IN ('asistente_creditos','funcionario_b2b') AND activo=1 AND COALESCE(autoasignar,1)=1 ORDER BY id")
@@ -796,6 +852,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
     .run(codigo, norm.ruc, norm.razonSocial, norm.contacto, norm.telefono, norm.email, norm.origen,
       norm.monto, ticket, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
       'Nuevo', op, op, ahora);
+  enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano (no bloquea el webhook)
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
@@ -2569,6 +2626,18 @@ app.post('/api/b2b/equipo/:usuario/autoasignar', soloB2B, (req, res) => {
   res.json({ ok: true, autoasignar: nuevo });
 });
 
+// Reconsulta SUNAT a pedido (botón "Validar SUNAT" en la ficha). Espera el resultado y lo devuelve.
+app.post('/api/b2b/solicitudes/:codigo/sunat', soloB2B, async (req, res) => {
+  const sol = db.prepare('SELECT codigo, ruc FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!sol) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const rucManual = req.body && req.body.ruc ? String(req.body.ruc).trim() : null;
+  const r = await enriquecerSunat(sol.codigo, rucManual ? { ruc: rucManual } : {});
+  if (rucManual && rucManual !== sol.ruc) db.prepare('UPDATE b2b_solicitudes SET ruc=? WHERE codigo=?').run(rucManual, sol.codigo);
+  auditar(req, 'b2b_validar_sunat', sol.codigo, r.ok ? 'ok' : (r.motivo || 'error'));
+  const fresh = db.prepare('SELECT sunatRaw, sunatEstado, sunatVerificadoEn, razonSocial FROM b2b_solicitudes WHERE codigo=?').get(sol.codigo);
+  res.json({ ok: r.ok, motivo: r.motivo || null, mensaje: r.mensaje || null, solicitud: fresh });
+});
+
 // Bandeja de ingresos B2B (lo que llegó por webhook: creados y duplicados para revisión).
 app.get('/api/b2b/ingresos', soloB2B, (req, res) => {
   const estado = (req.query.estado || '').trim();
@@ -2599,6 +2668,7 @@ app.post('/api/b2b/solicitudes', soloB2B, (req, res) => {
       b.destinoFondos || null, b.fuenteRepago || null,
       'Nuevo', req.user.nombre, req.user.nombre, ahora);
   auditar(req, 'b2b_alta_solicitud', codigo, (b.razonSocial || b.ruc || '') + (ticket ? ' · ticket ' + ticket : ''));
+  if (b.ruc) enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano
   res.json({ ok: true, codigo, ticket });
 });
 
@@ -2940,7 +3010,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.152 (fix: altas de usuarios B2B movidas DESPUES de la migracion de roles, antes el INSERT OR IGNORE las descartaba por el CHECK viejo y el equipo salia vacio) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.153 (enriquecimiento SUNAT: consulta microservicio SUNAT_API_URL por RUC, guarda data en sunatRaw, autocompleta razonSocial, disparo automatico asincrono al crear solicitud (webhook+manual) + endpoint/boton Validar SUNAT con semaforo Activo/Habido) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

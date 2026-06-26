@@ -3603,13 +3603,14 @@ async function cargarB2B() {
         '<span class="b2b-chip"><i style="background:' + (B2B_ESTADO_COL[e] || '#888') + '"></i>' + trEstadoB2B(e) + ': ' + n + '</span>').join('');
     if (!lista.length) { cont.innerHTML = '<div class="vacio">No hay solicitudes con estos filtros. Crea una con “+ Nueva solicitud”.</div>'; return; }
     cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
-      '<th>Código</th><th>Empresa</th><th>RUC</th><th>Contacto</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
+      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
       '</tr></thead><tbody>' +
       lista.map(s =>
         '<tr>' +
         '<td><span class="b2b-cod">' + s.codigo + '</span></td>' +
         '<td><b>' + (s.razonSocial || '—') + '</b>' + (s.nombreComercial ? '<div class="b2b-sub">' + s.nombreComercial + '</div>' : '') + '</td>' +
         '<td>' + (s.ruc || '—') + '</td>' +
+        '<td>' + celdaSunat(s) + '</td>' +
         '<td>' + (s.contacto || '—') + (s.telefono ? '<div class="b2b-sub">' + s.telefono + '</div>' : '') + '</td>' +
         '<td>' + (s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : '—') + '</td>' +
         '<td>' + (s.ticket ? '<span class="b2b-pill" style="background:' + (B2B_TICKET_COL[s.ticket] || '#888') + '22;color:' + (B2B_TICKET_COL[s.ticket] || '#888') + '">' + s.ticket + '</span>' : '—') + '</td>' +
@@ -3626,6 +3627,38 @@ async function cargarB2B() {
 function trEstadoB2B(e) {
   const M = { 'Filtro credito': 'Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': 'Filtro garantía', 'Apto garantia': 'Apto garantía', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
   return M[e] || e;
+}
+
+// Semáforo SUNAT + botón validar/reconsultar, leyendo de sunatRaw.
+function celdaSunat(s) {
+  const btn = (txt) => s.ruc ? '<button class="btn-sunat" onclick="validarSunat(\'' + s.codigo + '\', this)">' + txt + '</button>' : '';
+  if (s.sunatEstado === 'ok' && s.sunatRaw) {
+    let d = {}; try { d = JSON.parse(s.sunatRaw); } catch (e) { }
+    const est = (d.estado || '').toUpperCase();
+    const cond = (d.condicion || '').toUpperCase();
+    const activo = est.includes('ACTIVO');
+    const habido = cond === 'HABIDO';
+    const ok = activo && habido;
+    const col = ok ? '#1D9E75' : (activo || habido ? '#EF9F27' : '#E24B4A');
+    const acti = Array.isArray(d.actividadesEconomicas) && d.actividadesEconomicas[0] ? d.actividadesEconomicas[0] : '';
+    return '<span class="b2b-pill" style="background:' + col + '22;color:' + col + '" title="' + (acti ? acti.replace(/"/g, "'") : '') + '">' +
+      (d.estado || '?') + ' · ' + (d.condicion || '?') + '</span>' +
+      ' <button class="btn-sunat" onclick="validarSunat(\'' + s.codigo + '\', this)" title="Reconsultar">⟳</button>';
+  }
+  if (s.sunatEstado === 'error') return '<span class="b2b-sub" style="color:#E24B4A">Error</span> ' + btn('Reintentar');
+  if (s.sunatEstado === 'pendiente') return '<span class="b2b-sub">Pendiente</span> ' + btn('Validar');
+  return btn('Validar SUNAT') || '—';
+}
+
+async function validarSunat(codigo, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/sunat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    cargarB2B();
+  } catch (e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✕'; }
+    alert('No se pudo validar SUNAT: ' + e.message);
+  }
 }
 
 function abrirAltaB2B() {
