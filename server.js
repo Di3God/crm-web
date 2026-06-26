@@ -12,6 +12,7 @@ const path = require('path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
+const multer = require('multer');
 const L = require('./logic');
 const mailer = require('./mailer');
 
@@ -31,6 +32,28 @@ try {
 }
 console.log('Usando base de datos en:', DB_PATH);
 const db = new DatabaseSync(DB_PATH);
+
+// Carpeta de subidas en el MISMO volumen persistente que la base (no se pierde en redeploys).
+const UPLOADS_DIR = path.join(DB_DIR, 'uploads', 'b2b');
+try { if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true }); } catch (e) { console.error('No se pudo crear carpeta de subidas:', e.message); }
+// Multer: guarda en uploads/b2b/<codigoSolicitud>/<archivo>. Límite 20MB. Solo PDF e imágenes.
+const b2bUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(UPLOADS_DIR, String(req.params.codigo || 'sin-codigo').replace(/[^A-Za-z0-9_-]/g, ''));
+      try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); cb(null, dir); } catch (e) { cb(e); }
+    },
+    filename: (req, file, cb) => {
+      const base = (file.originalname || 'archivo').replace(/[^A-Za-z0-9._-]/g, '_').slice(-80);
+      cb(null, Date.now() + '_' + base);
+    }
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
+    cb(ok ? null : new Error('Solo se permiten PDF e imágenes (JPG, PNG, WEBP)'), ok);
+  }
+});
 db.exec(`
   CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -339,6 +362,56 @@ db.exec(`
     rawJson TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_b2bing_estado ON b2b_ingresos(estado);
+  CREATE TABLE IF NOT EXISTS b2b_garantia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    tipoInmueble TEXT,
+    departamento TEXT,
+    provincia TEXT,
+    distrito TEXT,
+    direccion TEXT,
+    linkMaps TEXT,
+    titularidad TEXT,
+    propietario TEXT,
+    copropietarios TEXT,
+    relacionPropietario TEXT,
+    inscritoSunarp TEXT,
+    partidaRegistral TEXT,
+    cargas TEXT,
+    ocupacion TEXT,
+    materialNoble TEXT,
+    servicios TEXT,
+    primeraHipoteca TEXT,
+    valorEstimado REAL,
+    observaciones TEXT,
+    actualizadoEn TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bgar_sol ON b2b_garantia(codigoSolicitud);
+  CREATE TABLE IF NOT EXISTS b2b_documentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    etapa TEXT,
+    tipoDoc TEXT,
+    nombreArchivo TEXT,
+    rutaArchivo TEXT,
+    mime TEXT,
+    tamano INTEGER,
+    subidoPor TEXT,
+    subidoEn TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bdoc_sol ON b2b_documentos(codigoSolicitud);
+  CREATE TABLE IF NOT EXISTS b2b_filtros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    tipoFiltro TEXT NOT NULL,
+    checklist TEXT,
+    semaforo TEXT,
+    observaciones TEXT,
+    responsable TEXT,
+    actualizadoEn TEXT,
+    UNIQUE(codigoSolicitud, tipoFiltro)
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bfil_sol ON b2b_filtros(codigoSolicitud);
 `);
 // Columnas de garantía añadidas a solicitudes ya existentes (despliegues previos de v1.149).
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tieneInmueble TEXT"); } catch (e) { }
@@ -722,22 +795,23 @@ async function enriquecerSunat(codigo, opts = {}) {
       return { ok: false, motivo: 'consulta_fallida', mensaje: (json && json.message) || 'Sin datos' };
     }
     const data = json.data;
-    // Campos derivables de SUNAT (se rellenan SOLO si están vacíos, para no pisar al analista).
-    const sol2 = db.prepare('SELECT razonSocial, actividad, sector, antiguedadMeses, sunatDepartamento, sunatDistrito FROM b2b_solicitudes WHERE codigo=?').get(codigo);
+    // SUNAT es la fuente de verdad: SOBREESCRIBE razón social, nombre comercial, sector, actividad y antigüedad.
+    const sol2 = db.prepare('SELECT sunatDepartamento FROM b2b_solicitudes WHERE codigo=?').get(codigo);
     const sets = ['sunatRaw=?', "sunatEstado='ok'", 'sunatVerificadoEn=?'];
     const vals = [JSON.stringify(data).slice(0, 16000), ahora];
-    if ((!sol2.razonSocial || !sol2.razonSocial.trim()) && data.razonSocial) { sets.push('razonSocial=?'); vals.push(data.razonSocial); }
+    if (data.razonSocial) { sets.push('razonSocial=?'); vals.push(data.razonSocial); }
+    if (data.nombreComercial != null) { sets.push('nombreComercial=?'); vals.push(data.nombreComercial || null); }
     // Actividad principal: primer elemento de actividadesEconomicas (ej. "Principal - 4690 - VENTA AL POR MAYOR...").
     const actPrincipal = Array.isArray(data.actividadesEconomicas) && data.actividadesEconomicas.length ? String(data.actividadesEconomicas[0]).trim() : null;
-    if ((!sol2.actividad || !sol2.actividad.trim()) && actPrincipal) { sets.push('actividad=?'); vals.push(actPrincipal); }
-    // Rubro/sector: la glosa de la actividad (lo que va después del CIIU). "Principal - 4690 - VENTA..." -> "VENTA...".
-    if ((!sol2.sector || !sol2.sector.trim()) && actPrincipal) {
+    if (actPrincipal) {
+      sets.push('actividad=?'); vals.push(actPrincipal);
+      // Rubro/sector: la glosa de la actividad (lo que va después del CIIU). "Principal - 4690 - VENTA..." -> "VENTA...".
       const partes = actPrincipal.split(' - ');
       const glosa = partes.length >= 3 ? partes.slice(2).join(' - ').trim() : (partes.length === 2 ? partes[1].trim() : actPrincipal);
       sets.push('sector=?'); vals.push(glosa);
     }
-    // Antigüedad en meses desde fechaInicioActividades (formato dd/mm/aaaa).
-    if (!sol2.antiguedadMeses && data.fechaInicioActividades) {
+    // Antigüedad en meses desde fechaInicioActividades (formato dd/mm/aaaa). Siempre se recalcula.
+    if (data.fechaInicioActividades) {
       const m = String(data.fechaInicioActividades).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
       if (m) {
         const ini = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
@@ -749,7 +823,7 @@ async function enriquecerSunat(codigo, opts = {}) {
         }
       }
     }
-    // Ubicación: departamento y distrito extraídos del domicilio fiscal.
+    // Ubicación: departamento y distrito del domicilio fiscal (se rellena si está vacío).
     if ((!sol2.sunatDepartamento || !sol2.sunatDepartamento.trim()) && data.domicilioFiscal) {
       const ub = parseUbicacionSunat(data.domicilioFiscal);
       if (ub.departamento) { sets.push('sunatDepartamento=?'); vals.push(ub.departamento); }
@@ -1777,6 +1851,15 @@ app.get('/api/auditoria', soloAdmin, (req, res) => {
   res.json(filas);
 });
 
+// Auditoría B2B independiente: solo eventos del módulo B2B (accion empieza con 'b2b_' o código B2B-).
+// Visible para admin y jefe B2B (Dante).
+app.get('/api/b2b/auditoria', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'No autorizado' });
+  let filas = db.prepare("SELECT * FROM auditoria WHERE accion LIKE 'b2b\\_%' ESCAPE '\\' OR codigo LIKE 'B2B-%' ORDER BY fecha DESC LIMIT 1000").all();
+  if (req.query.accion) filas = filas.filter(f => f.accion === req.query.accion);
+  res.json(filas);
+});
+
 // Backup: descarga una copia CONSISTENTE de la base (solo admin).
 app.get('/api/backup', soloAdmin, (req, res) => {
   if (!fs.existsSync(DB_PATH)) return res.status(404).json({ error: 'Base no encontrada' });
@@ -2641,7 +2724,8 @@ app.get('/api/aircall/diagnostico', soloAdmin, (req, res) => {
 app.get('/api/b2b/solicitudes', soloB2B, (req, res) => {
   const estado = (req.query.estado || '').trim();
   const q = (req.query.q || '').trim().toLowerCase();
-  let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 ORDER BY fechaIngreso DESC, id DESC').all();
+  const verArchivados = req.query.archivados === '1';
+  let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=? ORDER BY fechaIngreso DESC, id DESC').all(verArchivados ? 1 : 0);
   if (estado) filas = filas.filter(s => s.estado === estado);
   if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
   res.json({ solicitudes: filas, total: filas.length });
@@ -2679,6 +2763,134 @@ app.post('/api/b2b/equipo/:usuario/autoasignar', soloB2B, (req, res) => {
   db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(nuevo, u.usuario);
   auditar(req, 'b2b_toggle_rotacion', null, u.nombre + ' -> ' + (nuevo ? 'en rotación' : 'fuera de rotación'));
   res.json({ ok: true, autoasignar: nuevo });
+});
+
+// Archivar / desarchivar una solicitud B2B (no la borra; la saca de la lista activa).
+app.put('/api/b2b/solicitudes/:codigo/archivar', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo, archivado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const nuevo = s.archivado ? 0 : 1;
+  db.prepare('UPDATE b2b_solicitudes SET archivado=? WHERE codigo=?').run(nuevo, s.codigo);
+  auditar(req, 'b2b_archivar_solicitud', s.codigo, nuevo ? 'archivada' : 'desarchivada');
+  res.json({ ok: true, archivado: nuevo });
+});
+// Eliminar una solicitud B2B (admin y jefes B2B). Borra definitivamente.
+app.delete('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_creditos', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefes B2B pueden eliminar' });
+  const s = db.prepare('SELECT codigo, razonSocial, ruc FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  db.prepare('DELETE FROM b2b_solicitudes WHERE codigo=?').run(s.codigo);
+  auditar(req, 'b2b_eliminar_solicitud', s.codigo, (s.razonSocial || s.ruc || ''));
+  res.json({ ok: true });
+});
+
+// ===== FICHA B2B: datos completos, garantía, filtros, documentos, avanzar etapa =====
+// Devuelve todo lo necesario para la ficha de una solicitud.
+app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const garantia = db.prepare('SELECT * FROM b2b_garantia WHERE codigoSolicitud=?').get(s.codigo) || null;
+  const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
+  const filtrosRows = db.prepare('SELECT tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn FROM b2b_filtros WHERE codigoSolicitud=?').all(s.codigo);
+  const filtros = {};
+  filtrosRows.forEach(f => { filtros[f.tipoFiltro] = { checklist: f.checklist ? JSON.parse(f.checklist) : null, semaforo: f.semaforo, observaciones: f.observaciones, responsable: f.responsable, actualizadoEn: f.actualizadoEn }; });
+  res.json({ solicitud: s, garantia, documentos, filtros });
+});
+
+// Guarda los datos del inmueble (garantía).
+app.put('/api/b2b/solicitudes/:codigo/garantia', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const campos = ['tipoInmueble', 'departamento', 'provincia', 'distrito', 'direccion', 'linkMaps', 'titularidad', 'propietario', 'copropietarios', 'relacionPropietario', 'inscritoSunarp', 'partidaRegistral', 'cargas', 'ocupacion', 'materialNoble', 'servicios', 'primeraHipoteca', 'valorEstimado', 'observaciones'];
+  const existe = db.prepare('SELECT id FROM b2b_garantia WHERE codigoSolicitud=?').get(s.codigo);
+  const ahora = new Date().toISOString();
+  if (existe) {
+    const sets = campos.map(c => c + '=?');
+    const vals = campos.map(c => b[c] != null ? b[c] : null);
+    vals.push(ahora, s.codigo);
+    db.prepare('UPDATE b2b_garantia SET ' + sets.join(', ') + ', actualizadoEn=? WHERE codigoSolicitud=?').run(...vals);
+  } else {
+    const cols = ['codigoSolicitud', ...campos, 'actualizadoEn'];
+    const ph = cols.map(() => '?').join(',');
+    const vals = [s.codigo, ...campos.map(c => b[c] != null ? b[c] : null), ahora];
+    db.prepare('INSERT INTO b2b_garantia (' + cols.join(',') + ') VALUES (' + ph + ')').run(...vals);
+  }
+  auditar(req, 'b2b_guardar_garantia', s.codigo, null);
+  res.json({ ok: true });
+});
+
+// Guarda checklist + semáforo de un filtro (credito | garantia | finanzas).
+app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const tipo = req.params.tipo;
+  if (!['credito', 'garantia', 'finanzas'].includes(tipo)) return res.status(400).json({ error: 'Filtro inválido' });
+  const b = req.body || {};
+  const checklist = b.checklist ? JSON.stringify(b.checklist) : null;
+  const semaforo = b.semaforo || null;
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET checklist=excluded.checklist, semaforo=excluded.semaforo, observaciones=excluded.observaciones, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
+    .run(s.codigo, tipo, checklist, semaforo, b.observaciones || null, req.user.nombre, ahora);
+  // Refleja el semáforo en la solicitud (columna resultado*).
+  const colRes = { credito: 'resultadoCredito', garantia: 'resultadoGarantia', finanzas: 'resultadoFinanzas' }[tipo];
+  if (colRes && semaforo) db.prepare('UPDATE b2b_solicitudes SET ' + colRes + '=? WHERE codigo=?').run(semaforo, s.codigo);
+  auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : ''));
+  res.json({ ok: true });
+});
+
+// Sube un documento (multipart) a una etapa de la solicitud.
+app.post('/api/b2b/solicitudes/:codigo/documentos', soloB2B, b2bUpload.single('archivo'), (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
+  const ahora = new Date().toISOString();
+  const r = db.prepare(`INSERT INTO b2b_documentos (codigoSolicitud, etapa, tipoDoc, nombreArchivo, rutaArchivo, mime, tamano, subidoPor, subidoEn)
+    VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(s.codigo, (req.body && req.body.etapa) || 'garantia', (req.body && req.body.tipoDoc) || 'Documento',
+      req.file.originalname, req.file.path, req.file.mimetype, req.file.size, req.user.nombre, ahora);
+  auditar(req, 'b2b_subir_documento', s.codigo, ((req.body && req.body.tipoDoc) || '') + ' · ' + req.file.originalname);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+
+// Descarga/visualiza un documento.
+app.get('/api/b2b/documentos/:id/descargar', soloB2B, (req, res) => {
+  const d = db.prepare('SELECT * FROM b2b_documentos WHERE id=?').get(req.params.id);
+  if (!d || !d.rutaArchivo || !fs.existsSync(d.rutaArchivo)) return res.status(404).json({ error: 'Archivo no encontrado' });
+  res.download(d.rutaArchivo, d.nombreArchivo || 'archivo');
+});
+
+// Elimina un documento (archivo del disco + registro).
+app.delete('/api/b2b/documentos/:id', soloB2B, (req, res) => {
+  const d = db.prepare('SELECT * FROM b2b_documentos WHERE id=?').get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Documento no encontrado' });
+  try { if (d.rutaArchivo && fs.existsSync(d.rutaArchivo)) fs.unlinkSync(d.rutaArchivo); } catch (e) { }
+  db.prepare('DELETE FROM b2b_documentos WHERE id=?').run(d.id);
+  auditar(req, 'b2b_eliminar_documento', d.codigoSolicitud, d.nombreArchivo || '');
+  res.json({ ok: true });
+});
+
+// Avanza la etapa según el semáforo del filtro (verde→siguiente, amarillo→nurture, rojo→no elegible).
+const SIGUIENTE_ETAPA_B2B = {
+  credito: { Verde: 'Filtro garantia', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' },
+  garantia: { Verde: 'Filtro finanzas', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' },
+  finanzas: { Verde: 'Expediente', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' }
+};
+app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const tipo = (req.body && req.body.tipoFiltro) || '';
+  const semaforo = (req.body && req.body.semaforo) || '';
+  const mapa = SIGUIENTE_ETAPA_B2B[tipo];
+  if (!mapa) return res.status(400).json({ error: 'Filtro inválido' });
+  if (!semaforo) return res.status(400).json({ error: 'Falta el semáforo del filtro' });
+  const nuevoEstado = mapa[semaforo];
+  if (!nuevoEstado) return res.status(400).json({ error: 'Semáforo inválido' });
+  db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(nuevoEstado, s.codigo);
+  auditar(req, 'b2b_avanzar_etapa', s.codigo, s.estado + ' → ' + nuevoEstado + ' (' + tipo + ' ' + semaforo + ')');
+  res.json({ ok: true, estado: nuevoEstado });
 });
 
 // Reconsulta SUNAT a pedido (botón "Validar SUNAT" en la ficha). Espera el resultado y lo devuelve.
@@ -3065,7 +3277,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.156 (refactor navegacion: dos mundos B2C/B2B como menus desplegables con permisos finos por rol; Equipo B2B movido al menu de usuario filtrado por jefe; vista Base de Releads B2B en construccion; Cohortes fuera del menu) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.158 (ficha de solicitud B2B: acordeon de 4 etapas, etapa Garantia funcional con checklist+semaforo, datos del inmueble, subida real de documentos (multer) al volumen, avanzar etapa por semaforo verde/amarillo/rojo) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

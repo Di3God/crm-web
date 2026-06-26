@@ -606,6 +606,7 @@ function ir(v) {
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
+  if (v === 'b2b-audit') cargarAuditoriaB2B();
 }
 
 // ===== Navegación de dos mundos (B2C / B2B) =====
@@ -624,7 +625,7 @@ function navB2C(v) { cerrarMundos(); ir(v); }
 function navB2B(which) {
   cerrarMundos();
   if (which === 'releads') { ir('b2b-releads'); return; }
-  if (which === 'audit') { ir('audit'); return; }
+  if (which === 'audit') { ir('b2b-audit'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -3650,11 +3651,11 @@ async function cargarB2B() {
         '<span class="b2b-chip"><i style="background:' + (B2B_ESTADO_COL[e] || '#888') + '"></i>' + trEstadoB2B(e) + ': ' + n + '</span>').join('');
     if (!lista.length) { cont.innerHTML = '<div class="vacio">No hay solicitudes con estos filtros. Crea una con “+ Nueva solicitud”.</div>'; return; }
     cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
-      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Sector / Rubro</th><th>Antigüedad</th><th>Ubicación</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
+      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Sector / Rubro</th><th>Antigüedad</th><th>Ubicación</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th><th></th>' +
       '</tr></thead><tbody>' +
       lista.map(s =>
         '<tr>' +
-        '<td><span class="b2b-cod">' + s.codigo + '</span></td>' +
+        '<td><span class="b2b-cod b2b-cod-link" onclick="abrirFichaB2B(\'' + s.codigo + '\')" title="Abrir ficha">' + s.codigo + '</span></td>' +
         '<td><b>' + (s.razonSocial || '—') + '</b>' + (s.nombreComercial ? '<div class="b2b-sub">' + s.nombreComercial + '</div>' : '') + '</td>' +
         '<td>' + (s.ruc || '—') + '</td>' +
         '<td>' + celdaSunat(s) + '</td>' +
@@ -3667,6 +3668,7 @@ async function cargarB2B() {
         '<td><span class="b2b-pill" style="background:' + (B2B_ESTADO_COL[s.estado] || '#888') + '22;color:' + (B2B_ESTADO_COL[s.estado] || '#888') + '">' + trEstadoB2B(s.estado) + '</span></td>' +
         '<td>' + (s.responsableActual ? primerNombre(s.responsableActual) : '—') + '</td>' +
         '<td>' + (s.fechaIngreso ? fmtFecha(s.fechaIngreso) : '—') + '</td>' +
+        '<td class="b2b-acc">' + celdaAccionesB2B(s) + '</td>' +
         '</tr>').join('') +
       '</tbody></table></div>';
   } catch (e) {
@@ -3682,10 +3684,13 @@ function trEstadoB2B(e) {
 function fmtAntiguedad(meses) {
   if (meses == null || meses === '') return '—';
   const m = Number(meses);
-  if (!isFinite(m)) return '—';
-  if (m < 12) return m + ' m';
+  if (!isFinite(m) || m < 0) return '—';
   const a = Math.floor(m / 12), r = m % 12;
-  return r ? a + ' a ' + r + ' m' : a + ' años';
+  const pa = a === 1 ? '1 año' : a + ' años';
+  const pr = r === 1 ? '1 mes' : r + ' meses';
+  if (a === 0) return pr;       // 5 -> "5 meses", 1 -> "1 mes"
+  if (r === 0) return pa;       // 24 -> "2 años"
+  return pa + ' ' + pr;         // 15 -> "1 año 3 meses", 25 -> "2 años 1 mes"
 }
 
 function fmtUbicacion(s) {
@@ -3693,6 +3698,15 @@ function fmtUbicacion(s) {
   if (!dep && !dist) return '—';
   if (dep && dist) return '<span class="b2b-sub">' + dist + '<br>' + dep + '</span>';
   return '<span class="b2b-sub">' + (dist || dep) + '</span>';
+}
+
+// Acciones por solicitud: archivar (todos) y eliminar (admin/jefes).
+function celdaAccionesB2B(s) {
+  const esJefe = ['admin', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol);
+  const nom = (s.razonSocial || s.ruc || s.codigo).replace(/'/g, '');
+  let h = '<button class="btn-sunat" title="Archivar" onclick="archivarB2B(\'' + s.codigo + '\')">🗄</button>';
+  if (esJefe) h += ' <button class="btn-sunat" title="Eliminar" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarB2B(\'' + s.codigo + '\',\'' + nom + '\')">🗑</button>';
+  return h;
 }
 
 // Semáforo SUNAT + botón validar/reconsultar, leyendo de sunatRaw.
@@ -3860,4 +3874,288 @@ async function cargarIngresosB2B() {
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar la bandeja: ' + e.message + '</div>';
   }
+}
+
+// ========== Auditoría B2B + archivar/eliminar solicitudes ==========
+async function cargarAuditoriaB2B() {
+  // Solicitudes archivadas
+  const tb = $('b2bArchivadas');
+  try {
+    const d = await api('/api/b2b/solicitudes?archivados=1');
+    const arch = d.solicitudes || [];
+    tb.innerHTML = arch.length ? arch.map(s =>
+      '<tr>' +
+      '<td><span class="b2b-cod">' + s.codigo + '</span></td>' +
+      '<td>' + (s.razonSocial || '—') + '</td>' +
+      '<td>' + (s.ruc || '—') + '</td>' +
+      '<td>' + trEstadoB2B(s.estado) + '</td>' +
+      '<td><button class="btn-sunat" onclick="archivarB2B(\'' + s.codigo + '\')">Desarchivar</button> ' +
+      '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarB2B(\'' + s.codigo + '\',\'' + (s.razonSocial || s.ruc || s.codigo).replace(/'/g, '') + '\')">Eliminar</button></td>' +
+      '</tr>').join('') : '<tr><td colspan="5" class="vacio">No hay solicitudes archivadas.</td></tr>';
+  } catch (e) { tb.innerHTML = '<tr><td colspan="5" class="vacio">' + e.message + '</td></tr>'; }
+
+  // Registro de actividad B2B
+  const cont = $('b2bAuditCont');
+  try {
+    const audit = await api('/api/b2b/auditoria');
+    if (!audit.length) { cont.innerHTML = '<div class="vacio">Sin actividad registrada aún.</div>'; return; }
+    cont.innerHTML = '<div style="overflow-x:auto"><table style="box-shadow:none"><thead><tr>' +
+      '<th>Fecha</th><th>Usuario</th><th>Acción</th><th>Código</th><th>Detalle</th>' +
+      '</tr></thead><tbody>' +
+      audit.map(a =>
+        '<tr>' +
+        '<td>' + fmtFechaHora(a.fecha) + '</td>' +
+        '<td>' + (a.usuario || '—') + '</td>' +
+        '<td>' + trAccionB2B(a.accion) + '</td>' +
+        '<td><span class="b2b-cod">' + (a.codigo || '—') + '</span></td>' +
+        '<td class="b2b-sub">' + (a.detalle || '') + '</td>' +
+        '</tr>').join('') +
+      '</tbody></table></div>';
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+
+function trAccionB2B(a) {
+  const M = {
+    b2b_alta_solicitud: 'Alta de solicitud', b2b_validar_sunat: 'Validación SUNAT',
+    b2b_toggle_rotacion: 'Cambio de rotación', b2b_archivar_solicitud: 'Archivar/desarchivar',
+    b2b_eliminar_solicitud: 'Eliminar solicitud'
+  };
+  return M[a] || a;
+}
+
+async function archivarB2B(codigo) {
+  try { await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/archivar', { method: 'PUT' }); cargarB2B(); if ($('v-b2b-audit').classList.contains('act')) cargarAuditoriaB2B(); }
+  catch (e) { alert('No se pudo archivar: ' + e.message); }
+}
+
+async function eliminarB2B(codigo, nombre) {
+  if (!confirm('¿Eliminar definitivamente la solicitud de ' + (nombre || codigo) + '? Esta acción no se puede deshacer.')) return;
+  try { await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo), { method: 'DELETE' }); cargarB2B(); if ($('v-b2b-audit') && $('v-b2b-audit').classList.contains('act')) cargarAuditoriaB2B(); }
+  catch (e) { alert('No se pudo eliminar: ' + e.message); }
+}
+
+// ========================= FICHA DE SOLICITUD B2B =========================
+let FICHA = null;          // datos cargados de la ficha actual
+let FICHA_ETAPA_OPEN = 'garantia';  // etapa abierta en el acordeón
+
+const FB_CHECKLIST_GARANTIA = [
+  ['tipo', 'Tipo de inmueble identificado'],
+  ['sunarp', 'Inscrito en SUNARP / partida registral'],
+  ['titularidad', 'Titularidad clara'],
+  ['copropietarios', 'Copropietarios identificados'],
+  ['sinCargas', 'Sin cargas (hipoteca, embargo, litigio)'],
+  ['ubicacion', 'Ubicación y zona aceptable'],
+  ['material', 'Material noble y servicios básicos'],
+  ['primeraHipoteca', 'Dispuesto a primera hipoteca'],
+  ['fotos', 'Fotos y link de ubicación recibidos'],
+  ['docsSolicitados', 'Documentos mínimos solicitados']
+];
+const FB_DOCS_GARANTIA = ['Copia literal SUNARP', 'HR / PU', 'DNI propietarios', 'Recibo de luz', 'Fotos del inmueble'];
+
+async function abrirFichaB2B(codigo) {
+  $('ovFichaB2B').classList.add('act');
+  $('fbAcordeon').innerHTML = '<div class="vacio">Cargando…</div>';
+  try {
+    FICHA = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/ficha');
+    renderFicha();
+  } catch (e) {
+    $('fbAcordeon').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+
+function renderFicha() {
+  const s = FICHA.solicitud;
+  $('fbTitulo').textContent = s.razonSocial || s.ruc || s.codigo;
+  $('fbSubtitulo').innerHTML = s.codigo + ' · RUC ' + (s.ruc || '—') + (s.ticket ? ' · ticket <b>' + s.ticket + '</b>' : '') + ' · ' + trEstadoB2B(s.estado);
+
+  // Estado de cada etapa
+  const semCredito = (FICHA.filtros.credito && FICHA.filtros.credito.semaforo) || null;
+  const semGarantia = (FICHA.filtros.garantia && FICHA.filtros.garantia.semaforo) || null;
+  const garantiaDesbloqueada = semCredito === 'Verde' || ['Filtro garantia', 'Apto garantia', 'Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
+  const finanzasDesbloqueada = semGarantia === 'Verde' || ['Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
+
+  const panels = [
+    panelEmpresa(s),
+    panelFiltroSimple('credito', 'Filtro crédito', '📋', semCredito, true),
+    panelGarantia(garantiaDesbloqueada, semGarantia),
+    panelBloqueable('finanzas', 'Filtro finanzas y negocio', '💰', finanzasDesbloqueada),
+    panelBloqueable('businesscase', 'Business case', '📑', false)
+  ];
+  $('fbAcordeon').innerHTML = panels.join('');
+}
+
+function fbPill(sem) {
+  if (!sem) return '';
+  const c = { Verde: '#1D9E75', Amarillo: '#EF9F27', Rojo: '#E24B4A' }[sem] || '#888';
+  return '<span class="b2b-pill" style="background:' + c + '22;color:' + c + '">' + sem + '</span>';
+}
+
+function panelEmpresa(s) {
+  const open = FICHA_ETAPA_OPEN === 'empresa';
+  const cuerpo = open ? '<div class="fb-body">' +
+    fbCampo('Razón social', s.razonSocial) + fbCampo('Nombre comercial', s.nombreComercial) +
+    fbCampo('RUC', s.ruc) + fbCampo('Sector', s.sector) + fbCampo('Actividad', s.actividad) +
+    fbCampo('Antigüedad', fmtAntiguedad(s.antiguedadMeses)) +
+    fbCampo('Ubicación', [s.sunatDistrito, s.sunatDepartamento].filter(Boolean).join(', ')) +
+    fbCampo('SUNAT', s.sunatEstado === 'ok' ? 'Validado' : (s.sunatEstado || 'pendiente')) +
+    '</div>' : '';
+  return fbPanelWrap('empresa', '🏢', 'Empresa (SUNAT)', '<span style="font-size:12px;color:#1D9E75">✓ completo</span>', open, cuerpo);
+}
+
+function panelFiltroSimple(tipo, titulo, ic, sem, habilitado) {
+  const open = FICHA_ETAPA_OPEN === tipo;
+  const cuerpo = open ? '<div class="fb-body"><p class="sub">Este filtro se completará con la integración de Sentinel (centrales de riesgo). Por ahora puedes marcar el semáforo manualmente.</p>' +
+    fbSemaforoBar(tipo) + '</div>' : '';
+  return fbPanelWrap(tipo, ic, titulo, fbPill(sem) || '<span class="sub">pendiente</span>', open, cuerpo);
+}
+
+function panelGarantia(desbloqueada, sem) {
+  if (!desbloqueada) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
+  const open = FICHA_ETAPA_OPEN === 'garantia';
+  if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', false, '');
+  const g = FICHA.garantia || {};
+  const chk = (FICHA.filtros.garantia && FICHA.filtros.garantia.checklist) || {};
+  // Checklist
+  const checklist = '<div class="fb-sec">Checklist de garantía</div><div class="fb-chk">' +
+    FB_CHECKLIST_GARANTIA.map(([k, label]) =>
+      '<label><input type="checkbox" data-chk="' + k + '"' + (chk[k] ? ' checked' : '') + '> ' + label + '</label>').join('') +
+    '</div>';
+  // Datos del inmueble (los principales)
+  const datos = '<div class="fb-sec">Datos del inmueble</div><div class="fb-grid">' +
+    fbInput('tipoInmueble', 'Tipo', g.tipoInmueble) +
+    fbInput('distrito', 'Distrito', g.distrito) +
+    fbInput('propietario', 'Propietario', g.propietario) +
+    fbInput('partidaRegistral', 'Partida registral', g.partidaRegistral) +
+    fbInput('valorEstimado', 'Valor estimado (S/)', g.valorEstimado, 'number') +
+    fbInput('cargas', 'Cargas', g.cargas) +
+    '</div>';
+  // Documentos
+  const docs = '<div class="fb-sec">Documentos</div>' + renderDocsGarantia();
+  // Semáforo + avanzar
+  const acciones = fbSemaforoBar('garantia') +
+    '<div class="fb-acc"><button class="btn sec" onclick="guardarGarantia()">Guardar garantía</button>' +
+    '<button class="btn" onclick="avanzarEtapa(\'garantia\')">Avanzar según semáforo →</button></div>';
+  return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', true,
+    '<div class="fb-body">' + checklist + datos + docs + acciones + '</div>');
+}
+
+function panelBloqueable(tipo, titulo, ic, desbloqueada) {
+  if (!desbloqueada) return fbPanelWrap(tipo, ic, titulo, '<span class="sub" style="color:#94a3b8">🔒 bloqueado</span>', false, '', true);
+  const open = FICHA_ETAPA_OPEN === tipo;
+  const cuerpo = open ? '<div class="fb-body"><p class="sub">Etapa en construcción. Se habilitará en la siguiente fase.</p></div>' : '';
+  return fbPanelWrap(tipo, ic, titulo, '<span class="sub">disponible</span>', open, cuerpo);
+}
+
+function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado) {
+  const cls = open ? ' fb-panel-open' : '';
+  const onclick = bloqueado ? '' : ' onclick="fbToggle(\'' + tipo + '\')"';
+  return '<div class="fb-panel' + cls + '">' +
+    '<div class="fb-panel-head"' + onclick + '>' +
+    '<span class="fb-ic">' + ic + '</span>' +
+    '<span class="fb-titulo">' + titulo + '</span>' +
+    '<span class="fb-estado">' + estadoHtml + '</span>' +
+    (bloqueado ? '' : '<span class="fb-caret">' + (open ? '▴' : '▾') + '</span>') +
+    '</div>' + (cuerpo || '') + '</div>';
+}
+
+function fbToggle(tipo) { FICHA_ETAPA_OPEN = (FICHA_ETAPA_OPEN === tipo) ? null : tipo; renderFicha(); }
+
+function fbCampo(label, val) {
+  return '<div class="fb-campo"><span>' + label + '</span><b>' + (val || '—') + '</b></div>';
+}
+function fbInput(id, label, val, tipo) {
+  return '<label class="fb-in"><span>' + label + '</span><input id="fb_' + id + '" type="' + (tipo || 'text') + '" value="' + (val != null ? String(val).replace(/"/g, '&quot;') : '') + '"></label>';
+}
+function fbSemaforoBar(tipo) {
+  const sem = (FICHA.filtros[tipo] && FICHA.filtros[tipo].semaforo) || '';
+  return '<div class="fb-sem"><span>Semáforo:</span>' +
+    ['Verde', 'Amarillo', 'Rojo'].map(o =>
+      '<label class="fb-sem-op"><input type="radio" name="fbsem_' + tipo + '" value="' + o + '"' + (sem === o ? ' checked' : '') + '> ' +
+      ({ Verde: '🟢', Amarillo: '🟡', Rojo: '🔴' }[o]) + ' ' + o + '</label>').join('') +
+    '</div>';
+}
+
+function renderDocsGarantia() {
+  const docs = (FICHA.documentos || []).filter(d => d.etapa === 'garantia');
+  const filas = FB_DOCS_GARANTIA.map(tipo => {
+    const sub = docs.find(d => d.tipoDoc === tipo);
+    if (sub) {
+      return '<div class="fb-doc"><i>📄</i><span>' + tipo + '</span>' +
+        '<a href="/api/b2b/documentos/' + sub.id + '/descargar" target="_blank" class="fb-doc-link">' + sub.nombreArchivo + '</a>' +
+        '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + sub.id + ')">✕</button></div>';
+    }
+    return '<div class="fb-doc"><i>📄</i><span>' + tipo + '</span>' +
+      '<span class="fb-doc-pend">pendiente</span>' +
+      '<button class="btn-sunat" onclick="subirDoc(\'' + tipo + '\')">Subir</button></div>';
+  }).join('');
+  // Otros documentos subidos no estándar
+  const otros = docs.filter(d => !FB_DOCS_GARANTIA.includes(d.tipoDoc));
+  const otrosHtml = otros.map(d => '<div class="fb-doc"><i>📎</i><span>' + d.tipoDoc + '</span>' +
+    '<a href="/api/b2b/documentos/' + d.id + '/descargar" target="_blank" class="fb-doc-link">' + d.nombreArchivo + '</a>' +
+    '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button></div>').join('');
+  return '<div class="fb-docs">' + filas + otrosHtml + '</div>';
+}
+
+function leerSemaforo(tipo) {
+  const sel = document.querySelector('input[name="fbsem_' + tipo + '"]:checked');
+  return sel ? sel.value : null;
+}
+function leerChecklistGarantia() {
+  const o = {};
+  document.querySelectorAll('#fbAcordeon input[data-chk]').forEach(c => { o[c.getAttribute('data-chk')] = c.checked; });
+  return o;
+}
+
+async function guardarGarantia() {
+  const g = {};
+  ['tipoInmueble', 'distrito', 'propietario', 'partidaRegistral', 'valorEstimado', 'cargas'].forEach(id => {
+    const el = $('fb_' + id); if (el) g[id] = el.value.trim() || null;
+  });
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(g) });
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: leerChecklistGarantia(), semaforo: leerSemaforo('garantia') }) });
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+async function avanzarEtapa(tipo) {
+  const sem = leerSemaforo(tipo);
+  if (!sem) { alert('Marca el semáforo antes de avanzar.'); return; }
+  if (!confirm('Con semáforo ' + sem + ', la solicitud ' + (sem === 'Verde' ? 'avanza a la siguiente etapa' : sem === 'Rojo' ? 'pasa a No elegible' : 'pasa a nurture') + '. ¿Continuar?')) return;
+  try {
+    // Guarda el filtro primero (con checklist si es garantía)
+    const body = { semaforo: sem };
+    if (tipo === 'garantia') body.checklist = leerChecklistGarantia();
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/' + tipo, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/avanzar', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipoFiltro: tipo, semaforo: sem }) });
+    cargarB2B();
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo avanzar: ' + e.message); }
+}
+
+function subirDoc(tipoDoc) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pdf,image/*';
+  input.onchange = async () => {
+    if (!input.files || !input.files[0]) return;
+    const fd = new FormData();
+    fd.append('archivo', input.files[0]);
+    fd.append('etapa', 'garantia');
+    fd.append('tipoDoc', tipoDoc);
+    try {
+      const r = await fetch('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/documentos', { method: 'POST', body: fd });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
+      await abrirFichaB2B(FICHA.solicitud.codigo);
+    } catch (e) { alert('No se pudo subir: ' + e.message); }
+  };
+  input.click();
+}
+
+async function eliminarDoc(id) {
+  if (!confirm('¿Eliminar este documento?')) return;
+  try { await api('/api/b2b/documentos/' + id, { method: 'DELETE' }); await abrirFichaB2B(FICHA.solicitud.codigo); }
+  catch (e) { alert('No se pudo eliminar: ' + e.message); }
 }
