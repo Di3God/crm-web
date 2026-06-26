@@ -63,7 +63,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     usuario TEXT UNIQUE NOT NULL,
     nombre TEXT NOT NULL,
-    rol TEXT NOT NULL CHECK (rol IN ('admin','jefa','gestora')),
+    rol TEXT NOT NULL CHECK (rol IN ('admin','jefa','gestora','asistente_creditos','funcionario_b2b','jefe_creditos','jefe_b2b')),
     hash TEXT NOT NULL,
     sal TEXT NOT NULL,
     activo INTEGER DEFAULT 1
@@ -230,9 +230,119 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
 crearUsuario('dbarreto@tasatop.com', 'Dora Barreto', 'gestora', '12345678');
 crearUsuario('cpovis@tasatop.com', 'Cristian Povis', 'gestora', '12345678');
 
+// Equipo B2B (clave inicial 12345678). Jefes supervisan; equipos operan.
+crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
+crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
+crearUsuario('cmartinez@tasatop.com', 'Carmen Martinez', 'asistente_creditos', '12345678');
+crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
+crearUsuario('bvasquez@tasatop.com', 'Brillite Vasquez', 'funcionario_b2b', '12345678');
+crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
+crearUsuario('bsegil@tasatop.com', 'Bony Segil', 'funcionario_b2b', '12345678');
+
 // Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
 try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
 try { db.exec('ALTER TABLE usuarios ADD COLUMN rankingVisible INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
+// Migración: ampliar el CHECK de roles para incluir el equipo B2B (SQLite no permite ALTER de CHECK in-place).
+try {
+  const tdef = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='usuarios'").get();
+  if (tdef && tdef.sql && !tdef.sql.includes('jefe_creditos')) {
+    db.exec('BEGIN');
+    db.exec(`CREATE TABLE usuarios_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario TEXT UNIQUE NOT NULL,
+      nombre TEXT NOT NULL,
+      rol TEXT NOT NULL CHECK (rol IN ('admin','jefa','gestora','asistente_creditos','funcionario_b2b','jefe_creditos','jefe_b2b')),
+      hash TEXT NOT NULL,
+      sal TEXT NOT NULL,
+      activo INTEGER DEFAULT 1,
+      autoasignar INTEGER DEFAULT 1,
+      rankingVisible INTEGER DEFAULT 1
+    )`);
+    db.exec('INSERT INTO usuarios_new (id,usuario,nombre,rol,hash,sal,activo,autoasignar,rankingVisible) SELECT id,usuario,nombre,rol,hash,sal,COALESCE(activo,1),COALESCE(autoasignar,1),COALESCE(rankingVisible,1) FROM usuarios');
+    db.exec('DROP TABLE usuarios');
+    db.exec('ALTER TABLE usuarios_new RENAME TO usuarios');
+    db.exec('COMMIT');
+    console.log('[migracion] usuarios: roles B2B (asistente_creditos, funcionario_b2b, jefe_creditos, jefe_b2b) habilitados');
+  }
+} catch (e) { try { db.exec('ROLLBACK'); } catch (_) { } console.error('[migracion usuarios] error:', e.message); }
+
+// ===== MÓDULO B2B (crowdlending empresarial) — Fase 1: solicitudes =====
+db.exec(`
+  CREATE TABLE IF NOT EXISTS b2b_solicitudes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo TEXT UNIQUE NOT NULL,
+    ruc TEXT,
+    razonSocial TEXT,
+    nombreComercial TEXT,
+    contacto TEXT,
+    telefono TEXT,
+    email TEXT,
+    fuente TEXT,
+    campana TEXT,
+    montoSolicitado REAL,
+    ticket TEXT,
+    sector TEXT,
+    actividad TEXT,
+    antiguedadMeses INTEGER,
+    ventasEstimadas REAL,
+    destinoFondos TEXT,
+    fuenteRepago TEXT,
+    estado TEXT DEFAULT 'Nuevo',
+    asistente TEXT,
+    funcionario TEXT,
+    responsableActual TEXT,
+    fechaIngreso TEXT,
+    fechaPrimerToque TEXT,
+    fechaFinCredito TEXT,
+    fechaLlamadaGarantia TEXT,
+    fechaTraspaso TEXT,
+    scoreTemp INTEGER,
+    temperatura TEXT,
+    resultadoCredito TEXT,
+    resultadoGarantia TEXT,
+    resultadoFinanzas TEXT,
+    alertaPrincipal TEXT,
+    motivoDescarte TEXT,
+    proximaAccion TEXT,
+    fechaLimite TEXT,
+    objeciones TEXT,
+    observaciones TEXT,
+    tieneInmueble TEXT,
+    tipoInmueble TEXT,
+    areaInmueble TEXT,
+    archivado INTEGER DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2b_estado ON b2b_solicitudes(estado);
+  CREATE INDEX IF NOT EXISTS idx_b2b_ruc ON b2b_solicitudes(ruc);
+  CREATE TABLE IF NOT EXISTS b2b_ingresos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fechaRecepcion TEXT,
+    origen TEXT,
+    estado TEXT,
+    ruc TEXT,
+    razonSocial TEXT,
+    contacto TEXT,
+    telefono TEXT,
+    email TEXT,
+    monto REAL,
+    tieneInmueble TEXT,
+    tipoInmueble TEXT,
+    areaInmueble TEXT,
+    formulario TEXT,
+    utmSource TEXT,
+    utmMedium TEXT,
+    utmCampaign TEXT,
+    codigoSolicitud TEXT,
+    asignadoA TEXT,
+    mensajeError TEXT,
+    rawJson TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bing_estado ON b2b_ingresos(estado);
+`);
+// Columnas de garantía añadidas a solicitudes ya existentes (despliegues previos de v1.149).
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tieneInmueble TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tipoInmueble TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN areaInmueble TEXT"); } catch (e) { }
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -441,11 +551,36 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
   }
 });
 
+// Webhook B2B: recepción de solicitudes de empresas (landing, meta, tiktok…).
+// Token propio B2B_WEBHOOK_TOKEN (cae a MARKETING_WEBHOOK_TOKEN si no está definido, para pruebas).
+// :origen = landing | meta | tiktok | test
+app.post('/api/webhooks/b2b/:origen/:token', (req, res) => {
+  const esperado = process.env.B2B_WEBHOOK_TOKEN || process.env.MARKETING_WEBHOOK_TOKEN;
+  if (!esperado || req.params.token !== esperado) return res.status(403).json({ error: 'Token invalido' });
+  let norm;
+  try {
+    norm = normalizarB2B(req.params.origen, req.body || {});
+  } catch (e) {
+    guardarIngresoB2B({ origen: String(req.params.origen || '').toLowerCase(), rawJson: JSON.stringify(req.body || {}).slice(0, 16000) }, 'error_validacion', 'Error al normalizar: ' + e.message, null, null);
+    return res.status(200).json({ ok: true, estado: 'error_validacion' });
+  }
+  let resultado;
+  try {
+    resultado = procesarSolicitudB2B(norm);
+  } catch (e) {
+    guardarIngresoB2B(norm, 'error_validacion', 'Error al procesar: ' + e.message, null, null);
+    return res.status(200).json({ ok: true, estado: 'error_validacion' });
+  }
+  const idIngreso = guardarIngresoB2B(norm, resultado.estado, resultado.mensajeError, resultado.codigoSolicitud, resultado.asignadoA);
+  res.json({ ok: true, estado: resultado.estado, ingresoId: idIngreso, codigoSolicitud: resultado.codigoSolicitud || null, asignadoA: resultado.asignadoA || null });
+});
+
 // Middleware: toda la API (salvo login y webhooks publicos) requiere sesion.
 app.use('/api', (req, res, next) => {
   if (req.path === '/login') return next();
   // Los webhooks de marketing se autentican por token en la URL, no por sesion.
   if (req.path.startsWith('/webhooks/leads/')) return next();
+  if (req.path.startsWith('/webhooks/b2b/')) return next();
   if (req.path.startsWith('/webhooks/chatwoot/')) return next();
   const u = usuarioDeSesion(req);
   if (!u) return res.status(401).json({ error: 'Sin sesion. Inicia sesion.' });
@@ -499,6 +634,168 @@ function generarCodigo() {
   let codigo;
   do { n++; codigo = pref + String(n).padStart(6, '0'); } while (existe.get(codigo));
   return codigo;
+}
+
+// ===== Helpers B2B =====
+function generarCodigoB2B() {
+  const hoy = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const pref = `B2B-${hoy}-`;
+  const row = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1').get(pref + '%');
+  let n = row ? (parseInt(row.codigo.slice(pref.length), 10) || 0) : 0;
+  const existe = db.prepare('SELECT 1 FROM b2b_solicitudes WHERE codigo = ?');
+  let codigo;
+  do { n++; codigo = pref + String(n).padStart(6, '0'); } while (existe.get(codigo));
+  return codigo;
+}
+// Ticket por monto: Bajo 50k–300k, Medio 300k–1M, Alto >1M
+function ticketDeMonto(monto) {
+  const m = Number(monto) || 0;
+  if (m >= 1000000) return 'Alto';
+  if (m >= 300000) return 'Medio';
+  return 'Bajo';
+}
+// Acceso al módulo B2B: admin/jefa supervisan; asistente_creditos y funcionario_b2b operan.
+function puedeB2B(user) {
+  return ['admin', 'jefa', 'asistente_creditos', 'funcionario_b2b', 'jefe_creditos', 'jefe_b2b'].includes(user.rol);
+}
+// ¿Puede administrar el equipo B2B (toggle de round-robin)? Admin y jefes B2B.
+function puedeGestionarEquipoB2B(user) {
+  return ['admin', 'jefe_creditos', 'jefe_b2b'].includes(user.rol);
+}
+function soloB2B(req, res, next) {
+  if (!puedeB2B(req.user)) return res.status(403).json({ error: 'Sin acceso al módulo B2B' });
+  next();
+}
+
+// Operadores B2B en la rotación: roles B2B con autoasignar=1 (Diego controla quién entra).
+function operadoresB2BParaAuto() {
+  return db.prepare("SELECT nombre FROM usuarios WHERE rol IN ('asistente_creditos','funcionario_b2b') AND activo=1 AND COALESCE(autoasignar,1)=1 ORDER BY id")
+    .all().map(r => r.nombre);
+}
+function elegirOperadorB2BRoundRobin() {
+  const ops = operadoresB2BParaAuto();
+  if (!ops.length) return null;
+  const row = db.prepare("SELECT valor FROM app_config WHERE clave='rr_b2b_ultimo'").get();
+  const idx = row ? ops.indexOf(row.valor) : -1;
+  const siguiente = ops[(idx + 1) % ops.length];
+  db.prepare("INSERT INTO app_config (clave,valor) VALUES ('rr_b2b_ultimo',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor")
+    .run(siguiente);
+  return siguiente;
+}
+
+// Normaliza el celular peruano a 9 dígitos (quita +51, espacios, guiones).
+function normalizarTelefonoB2B(t) {
+  if (!t) return null;
+  let s = String(t).replace(/[^0-9]/g, '');
+  if (s.startsWith('51') && s.length > 9) s = s.slice(s.length - 9);
+  return s.length >= 9 ? s.slice(-9) : s;
+}
+// Normaliza el payload del webhook B2B. Acepta claves limpias (ruc, telefono, email, monto…)
+// y cae a heurística para landings tipo Elementor (email por regex, garantía por nombre de campo).
+function normalizarB2B(origen, body) {
+  const b = body || {};
+  const keys = Object.keys(b);
+  const val = (...nombres) => {
+    for (const n of nombres) { if (b[n] != null && String(b[n]).trim() !== '') return String(b[n]).trim(); }
+    return null;
+  };
+  // email: clave directa o el primer valor que parezca correo
+  let email = val('email', 'correo', 'Correo', 'Email');
+  if (!email) {
+    const re = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    for (const k of keys) { if (re.test(String(b[k] || '').trim())) { email = String(b[k]).trim(); break; } }
+  }
+  const telefono = normalizarTelefonoB2B(val('telefono', 'Telefono', 'celular', 'Celular', 'phone'));
+  const ruc = val('ruc', 'RUC');
+  // monto: clave directa; si no, barrido excluyendo RUC, teléfono, DNI y números con pinta de esos.
+  let montoRaw = val('monto', 'montoSolicitado', 'Monto');
+  if (!montoRaw) {
+    const telRaw = normalizarTelefonoB2B(telefono);
+    for (const k of keys) {
+      const kl = k.toLowerCase();
+      if (kl.includes('ruc') || kl.includes('telefono') || kl.includes('celular') || kl.includes('phone') || kl.includes('dni')) continue;
+      const digits = String(b[k]).replace(/[^0-9.]/g, '');
+      const entero = digits.replace(/\./g, '');
+      const n = Number(digits);
+      if (!isFinite(n) || n < 10000) continue;
+      if (entero.length === 11 || entero.length === 9) continue; // pinta de RUC o teléfono
+      if (entero === ruc || entero === telRaw) continue;
+      montoRaw = String(b[k]); break;
+    }
+  }
+  const monto = montoRaw != null ? (Number(String(montoRaw).replace(/[^0-9.]/g, '')) || null) : null;
+  // nombre/contacto: si coincide con el teléfono (error típico de landing), se ignora
+  let contacto = val('contacto', 'nombre', 'Nombre', 'nombres');
+  if (contacto && normalizarTelefonoB2B(contacto) === telefono) contacto = null;
+  // garantía: por nombre de campo (preguntas largas del formulario)
+  let tieneInmueble = val('tieneInmueble', 'tiene_inmueble');
+  let tipoInmueble = val('tipoInmueble', 'tipo_inmueble');
+  let areaInmueble = val('area', 'areaInmueble', 'area_inmueble');
+  for (const k of keys) {
+    const kl = k.toLowerCase();
+    if (!tieneInmueble && (kl.includes('propiedad') || kl.includes('cuenta con'))) tieneInmueble = String(b[k]).trim();
+    if (!tipoInmueble && kl.includes('tipo') && kl.includes('inmueble')) tipoInmueble = String(b[k]).trim();
+  }
+  return {
+    origen: String(origen || 'landing').toLowerCase(),
+    ruc,
+    razonSocial: val('razonSocial', 'razon_social', 'empresa', 'Empresa', 'razonsocial'),
+    contacto, telefono, email, monto,
+    tieneInmueble, tipoInmueble, areaInmueble,
+    formulario: val('form_name', 'formulario', 'form_id'),
+    utmSource: val('utm_source', 'utmSource'),
+    utmMedium: val('utm_medium', 'utmMedium'),
+    utmCampaign: val('utm_campaign', 'utmCampaign'),
+    fuente: String(origen || 'landing').toLowerCase(),
+    rawJson: JSON.stringify(b).slice(0, 16000)
+  };
+}
+
+// Guarda el ingreso bruto B2B en la bandeja (nada se pierde).
+function guardarIngresoB2B(norm, estado, mensajeError, codigoSolicitud, asignadoA) {
+  const r = db.prepare(`INSERT INTO b2b_ingresos
+    (fechaRecepcion,origen,estado,ruc,razonSocial,contacto,telefono,email,monto,
+     tieneInmueble,tipoInmueble,areaInmueble,formulario,utmSource,utmMedium,utmCampaign,
+     codigoSolicitud,asignadoA,mensajeError,rawJson)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(new Date().toISOString(), norm.origen, estado, norm.ruc, norm.razonSocial, norm.contacto,
+      norm.telefono, norm.email, norm.monto, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
+      norm.formulario, norm.utmSource, norm.utmMedium, norm.utmCampaign,
+      codigoSolicitud || null, asignadoA || null, mensajeError || null, norm.rawJson);
+  return r.lastInsertRowid;
+}
+
+// Procesa una solicitud B2B normalizada: dedup por RUC/teléfono, crea o marca para revisión manual.
+// Estados terminales/archivados se tratan como "historial" (revisión manual).
+const B2B_ESTADOS_TERMINALES = ['No elegible'];
+function procesarSolicitudB2B(norm, opts = {}) {
+  if (!norm.ruc && !norm.telefono) {
+    return { estado: 'sin_datos', mensajeError: 'Sin RUC ni teléfono válidos — revisar manualmente' };
+  }
+  // Dedup: RUC manda; si no hay RUC, por teléfono.
+  let existente = null;
+  if (norm.ruc) existente = db.prepare('SELECT * FROM b2b_solicitudes WHERE ruc = ? ORDER BY id DESC LIMIT 1').get(norm.ruc);
+  if (!existente && norm.telefono) existente = db.prepare('SELECT * FROM b2b_solicitudes WHERE telefono = ? ORDER BY id DESC LIMIT 1').get(norm.telefono);
+  if (existente) {
+    const terminal = B2B_ESTADOS_TERMINALES.includes(existente.estado) || existente.archivado;
+    if (terminal) {
+      return { estado: 'duplicado_historial', codigoSolicitud: existente.codigo, mensajeError: `⚠ Ya existe en historial (${existente.codigo}, ${existente.estado}) — la revisión es manual` };
+    }
+    return { estado: 'duplicado_activo', codigoSolicitud: existente.codigo, mensajeError: `⚠ Solicitud activa duplicada (${existente.codigo}) — gestión manual` };
+  }
+  // Nueva: se crea automática en estado Nuevo, con round-robin entre operadores B2B.
+  const codigo = generarCodigoB2B();
+  const ahora = new Date().toISOString();
+  const ticket = norm.monto != null ? ticketDeMonto(norm.monto) : null;
+  const op = opts.sinAutoasignar ? null : elegirOperadorB2BRoundRobin();
+  db.prepare(`INSERT INTO b2b_solicitudes
+    (codigo, ruc, razonSocial, contacto, telefono, email, fuente, montoSolicitado, ticket,
+     tieneInmueble, tipoInmueble, areaInmueble, estado, asistente, responsableActual, fechaIngreso)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(codigo, norm.ruc, norm.razonSocial, norm.contacto, norm.telefono, norm.email, norm.origen,
+      norm.monto, ticket, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
+      'Nuevo', op, op, ahora);
+  return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
 // GPs activas y habilitadas para auto-asignacion, en orden estable.
@@ -2238,6 +2535,72 @@ app.get('/api/aircall/diagnostico', soloAdmin, (req, res) => {
   }));
 });
 
+// ===== ENDPOINTS B2B — Fase 1 (alta, listado, detalle) =====
+app.get('/api/b2b/solicitudes', soloB2B, (req, res) => {
+  const estado = (req.query.estado || '').trim();
+  const q = (req.query.q || '').trim().toLowerCase();
+  let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 ORDER BY fechaIngreso DESC, id DESC').all();
+  if (estado) filas = filas.filter(s => s.estado === estado);
+  if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
+  res.json({ solicitudes: filas, total: filas.length });
+});
+
+app.get('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  res.json(s);
+});
+
+// Equipo B2B: listar miembros con su estado de round-robin (autoasignar).
+app.get('/api/b2b/equipo', soloB2B, (req, res) => {
+  const filas = db.prepare("SELECT usuario, nombre, rol, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol IN ('jefe_creditos','asistente_creditos','jefe_b2b','funcionario_b2b') ORDER BY CASE rol WHEN 'jefe_creditos' THEN 1 WHEN 'asistente_creditos' THEN 2 WHEN 'jefe_b2b' THEN 3 ELSE 4 END, id").all();
+  res.json({ equipo: filas, puedeGestionar: puedeGestionarEquipoB2B(req.user) });
+});
+// Activar/desactivar a un operador del round-robin B2B (solo admin y jefes B2B).
+app.post('/api/b2b/equipo/:usuario/autoasignar', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado' });
+  const u = db.prepare("SELECT usuario, nombre, rol, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE usuario=?").get(req.params.usuario);
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (!['asistente_creditos', 'funcionario_b2b'].includes(u.rol)) return res.status(400).json({ error: 'Solo operadores entran al round-robin (los jefes no)' });
+  const nuevo = u.autoasignar ? 0 : 1;
+  db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(nuevo, u.usuario);
+  auditar(req, 'b2b_toggle_rotacion', null, u.nombre + ' -> ' + (nuevo ? 'en rotación' : 'fuera de rotación'));
+  res.json({ ok: true, autoasignar: nuevo });
+});
+
+// Bandeja de ingresos B2B (lo que llegó por webhook: creados y duplicados para revisión).
+app.get('/api/b2b/ingresos', soloB2B, (req, res) => {
+  const estado = (req.query.estado || '').trim();
+  let filas = db.prepare('SELECT * FROM b2b_ingresos ORDER BY id DESC LIMIT 500').all();
+  if (estado) filas = filas.filter(i => i.estado === estado);
+  const resumen = {};
+  db.prepare('SELECT estado, COUNT(*) c FROM b2b_ingresos GROUP BY estado').all().forEach(r => { resumen[r.estado] = r.c; });
+  res.json({ ingresos: filas, total: filas.length, resumen });
+});
+
+app.post('/api/b2b/solicitudes', soloB2B, (req, res) => {
+  const b = req.body || {};
+  if (!b.razonSocial && !b.ruc) return res.status(400).json({ error: 'Falta RUC o razón social' });
+  const codigo = generarCodigoB2B();
+  const ahora = new Date().toISOString();
+  const monto = b.montoSolicitado != null ? Number(b.montoSolicitado) : null;
+  const ticket = monto != null ? ticketDeMonto(monto) : null;
+  db.prepare(`INSERT INTO b2b_solicitudes
+    (codigo, ruc, razonSocial, nombreComercial, contacto, telefono, email, fuente, campana,
+     montoSolicitado, ticket, sector, actividad, antiguedadMeses, ventasEstimadas, destinoFondos, fuenteRepago,
+     estado, asistente, responsableActual, fechaIngreso)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(codigo, b.ruc || null, b.razonSocial || null, b.nombreComercial || null, b.contacto || null,
+      b.telefono || null, b.email || null, b.fuente || 'Manual', b.campana || null,
+      monto, ticket, b.sector || null, b.actividad || null,
+      b.antiguedadMeses != null ? Number(b.antiguedadMeses) : null,
+      b.ventasEstimadas != null ? Number(b.ventasEstimadas) : null,
+      b.destinoFondos || null, b.fuenteRepago || null,
+      'Nuevo', req.user.nombre, req.user.nombre, ahora);
+  auditar(req, 'b2b_alta_solicitud', codigo, (b.razonSocial || b.ruc || '') + (ticket ? ' · ticket ' + ticket : ''));
+  res.json({ ok: true, codigo, ticket });
+});
+
 app.get('/api/dashboard/avance', (req, res) => {
   const mes = String(req.query.mes || '').trim() || (new Date()).toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: 'mes invalido (YYYY-MM)' });
@@ -2576,7 +2939,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.148 (3x5: embudo de totales 40% + distribucion por GP 60% en misma fila; tooltip con hora am/pm al pasar sobre celda del detalle; franjas actualizadas medianoche-mediodia(3) mediodia-4pm(2) 4pm-medianoche(1)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.151 (equipo B2B: 7 usuarios reales con roles jefe_creditos/jefe_b2b supervisores + asistente_creditos/funcionario_b2b operadores; pestaña Equipo con toggle de round-robin por operador) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

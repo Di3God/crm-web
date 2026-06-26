@@ -1028,3 +1028,17 @@
   .cad-fn-bar { height: 100%; border-radius: 7px; display: flex; align-items: center; justify-content: flex-end; min-width: 28px; transition: width .5s; }
   .cad-fn-n { color: #fff; font-weight: 700; font-size: 13px; padding-right: 9px; }
   .cad-fn-pct { font-size: 12px; color: #8593A4; text-align: right; font-weight: 600; }
+
+  /* ===== Módulo B2B ===== */
+  .b2b-filtros { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+  .b2b-filtros select, .b2b-filtros input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+  .b2b-filtros input { flex: 1; min-width: 220px; }
+  .b2b-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .b2b-chip { display: inline-flex; align-items: center; gap: 6px; background: #F1F3F6; border-radius: 20px; padding: 5px 12px; font-size: 12px; color: #475569; }
+  .b2b-chip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .b2b-tabla td { vertical-align: middle; }
+  .b2b-cod { font-family: ui-monospace, monospace; font-size: 11px; color: #64748B; }
+  .b2b-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .b2b-pill { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+
+  .b2b-badge { display: inline-block; min-width: 16px; padding: 1px 6px; border-radius: 9px; background: #EF9F27; color: #fff; font-size: 10px; font-weight: 700; text-align: center; margin-left: 4px; }

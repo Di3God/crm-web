@@ -30,6 +30,7 @@
       </div>
     </div>
     <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoría</button>
+    <button id="nv-b2b" class="soloB2B oculto" onclick="ir('b2b')">🏢 B2B</button>
   </nav>
   <div class="top-user">
     <button class="tu-btn" id="tuBtn" onclick="toggleMenuUsuario(event)">
@@ -374,7 +375,80 @@
     </div>
   </section>
 
-  <!-- ===== MODAL FLOTANTE: RANKING DE CONTACTABILIDAD ===== -->
+  <!-- ===== VISTA B2B (crowdlending empresarial) ===== -->
+  <section id="v-b2b" class="vista">
+    <div class="barra">
+      <h2>B2B · Originación de crédito empresarial</h2>
+      <span class="sub">Solicitudes de empresas con garantía inmobiliaria. Intake, filtros y traspaso.</span>
+      <button class="btn pri" style="margin-left:auto" onclick="abrirAltaB2B()">+ Nueva solicitud</button>
+      <button class="btn sec" onclick="b2bRefrescar()">⟳ Actualizar</button>
+    </div>
+    <div class="vista-toggle" style="margin:10px 0">
+      <button id="b2bTabSol" class="vt-btn act" onclick="b2bTab('sol')">Solicitudes</button>
+      <button id="b2bTabIng" class="vt-btn" onclick="b2bTab('ing')">Bandeja de ingresos <span id="b2bIngBadge" class="b2b-badge oculto">0</span></button>
+      <button id="b2bTabEq" class="vt-btn soloJefeB2B oculto" onclick="b2bTab('eq')">Equipo</button>
+    </div>
+    <div id="b2bPanelSol">
+      <div class="b2b-filtros">
+        <select id="b2bEstado" onchange="cargarB2B()">
+          <option value="">Todos los estados</option>
+          <option value="Nuevo">Nuevo</option>
+          <option value="Filtro credito">Filtro crédito</option>
+          <option value="Apto credito">Apto crédito</option>
+          <option value="Filtro garantia">Filtro garantía</option>
+          <option value="Apto garantia">Apto garantía</option>
+          <option value="Filtro finanzas">Filtro finanzas y negocio</option>
+          <option value="Expediente">Expediente</option>
+          <option value="Amarillo/nurture">Amarillo / nurture</option>
+          <option value="Traspasado B2B">Traspasado B2B</option>
+          <option value="Reunion agendada">Reunión agendada</option>
+          <option value="No responde">No responde</option>
+          <option value="No elegible">No elegible</option>
+        </select>
+        <input type="text" id="b2bQ" placeholder="Buscar empresa, RUC o contacto" oninput="b2bBuscarDebounce()">
+      </div>
+      <div id="b2bResumen" class="b2b-chips"></div>
+      <div id="b2bCont"><div class="vacio">Cargando…</div></div>
+    </div>
+    <div id="b2bPanelIng" class="oculto">
+      <div class="b2b-chips" id="b2bIngResumen"></div>
+      <div id="b2bIngCont"><div class="vacio">Cargando…</div></div>
+    </div>
+    <div id="b2bPanelEq" class="oculto">
+      <p class="sub" style="margin:4px 0 12px">Activa o desactiva quién recibe los leads B2B que llegan por webhook (round-robin). Los jefes supervisan y no entran a la rotación.</p>
+      <div id="b2bEqCont"><div class="vacio">Cargando…</div></div>
+    </div>
+  </section>
+
+  <!-- ===== MODAL: ALTA DE SOLICITUD B2B ===== -->
+  <div class="overlay" id="ovAltaB2B">
+    <div class="modal" style="max-width:640px">
+      <h3>Nueva solicitud B2B</h3>
+      <div class="sub">Genera el código automáticamente (B2B-AAAAMMDD-NNNNNN). El ticket se asigna por monto.</div>
+      <div class="grid">
+        <div><label>RUC</label><input id="b2bRuc" placeholder="20XXXXXXXXX" maxlength="11"></div>
+        <div><label>Razón social</label><input id="b2bRazon" placeholder="Empresa S.A.C."></div>
+        <div><label>Nombre comercial</label><input id="b2bComercial"></div>
+        <div><label>Contacto</label><input id="b2bContacto" placeholder="Nombre del contacto"></div>
+        <div><label>Teléfono</label><input id="b2bTelefono"></div>
+        <div><label>Email</label><input id="b2bEmail" type="email"></div>
+        <div><label>Monto solicitado (S/)</label><input id="b2bMonto" type="number" placeholder="0" oninput="b2bPreviewTicket()"></div>
+        <div><label>Ticket (auto)</label><input id="b2bTicket" readonly placeholder="Por monto" style="background:#F1F3F6"></div>
+        <div><label>Sector</label><input id="b2bSector"></div>
+        <div><label>Actividad</label><input id="b2bActividad"></div>
+        <div><label>Antigüedad (meses)</label><input id="b2bAntiguedad" type="number"></div>
+        <div><label>Ventas estimadas (S/)</label><input id="b2bVentas" type="number"></div>
+        <div class="full"><label>Destino de fondos</label><input id="b2bDestino" placeholder="Uso específico y productivo"></div>
+        <div class="full"><label>Fuente de repago</label><input id="b2bRepago" placeholder="Flujo del negocio, etc."></div>
+      </div>
+      <div class="error" id="b2bAltaMsg"></div>
+      <div class="acciones">
+        <button class="btn sec" onclick="cerrar('ovAltaB2B')">Cancelar</button>
+        <button class="btn" onclick="guardarSolicitudB2B()">Registrar solicitud</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay rk-overlay" id="ovRank">
     <div class="rk-modal">
       <button class="rk-close" onclick="cerrar('ovRank')" title="Cerrar">✕</button>

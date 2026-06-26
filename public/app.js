@@ -509,7 +509,7 @@ async function arrancar() {
   $('rolBox').style.display = 'flex';
   if ($('acFab')) $('acFab').classList.remove('oculto'); // mostrar teléfono Aircall tras login
   iniciarTira(); // tira de ranking en Mis Leads
-  const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP' };
+  const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP', asistente_creditos: 'Asistente de Créditos', funcionario_b2b: 'Funcionario B2B', jefe_creditos: 'Jefe de Créditos', jefe_b2b: 'Jefe B2B' };
   $('rolNombre').textContent = YO.nombre;
   $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
   // Admin ve todo (incluye los elementos .soloAdmin y .asignador).
@@ -523,6 +523,14 @@ async function arrancar() {
   // Leads Brutos: visible para admin y jefa.
   if (YO.rol === 'admin' || YO.rol === 'jefa') {
     document.querySelectorAll('.soloAdminJefa').forEach(e => e.classList.remove('oculto'));
+  }
+  // Módulo B2B: admin, jefa, asistente, funcionario y jefes B2B.
+  if (['admin', 'jefa', 'asistente_creditos', 'funcionario_b2b', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol)) {
+    document.querySelectorAll('.soloB2B').forEach(e => e.classList.remove('oculto'));
+  }
+  // Gestión del equipo B2B (pestaña Equipo): admin y jefes B2B.
+  if (['admin', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol)) {
+    document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
   }
   // Columnas de control de la tabla: visibles solo para admin/jefa
   if (YO.rol === 'admin' || YO.rol === 'jefa') document.body.classList.add('ve-todo');
@@ -576,6 +584,7 @@ function ir(v) {
   if (v === 'releads') cargarReleads();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
+  if (v === 'b2b') b2bRefrescar();
 }
 
 function cerrar(id) { $(id).classList.remove('act'); }
@@ -3562,4 +3571,197 @@ function textoPosicionPersonal(yo) {
   const arriba = rk[idx - 1];
   const falta = arriba.puntaje - yoReg.puntaje;
   return 'Vas <b>' + (idx + 1) + '°</b> con <b>' + rkFmt(yoReg.puntaje) + ' pts</b> · te faltan <b>' + rkFmt(falta <= 0 ? 0.5 : falta) + '</b> para alcanzar a <b>' + primerNombre(arriba.asesor) + '</b> 🔼';
+}
+
+// ========== MÓDULO B2B (Fase 1: alta, listado) ==========
+let B2B_TIMER = null;
+function b2bBuscarDebounce() { clearTimeout(B2B_TIMER); B2B_TIMER = setTimeout(cargarB2B, 350); }
+
+const B2B_ESTADO_COL = {
+  'Nuevo': '#85B7EB', 'Filtro credito': '#0B72E8', 'Apto credito': '#1D9E75',
+  'Filtro garantia': '#0B72E8', 'Apto garantia': '#1D9E75', 'Filtro finanzas': '#7C5BD9',
+  'Expediente': '#1D9E75', 'Amarillo/nurture': '#EF9F27', 'Traspasado B2B': '#534AB7',
+  'Reunion agendada': '#534AB7', 'No responde': '#888780', 'No elegible': '#E24B4A'
+};
+const B2B_TICKET_COL = { 'Bajo': '#85B7EB', 'Medio': '#EF9F27', 'Alto': '#1D9E75' };
+
+async function cargarB2B() {
+  const cont = $('b2bCont'); if (!cont) return;
+  try {
+    const estado = $('b2bEstado') ? $('b2bEstado').value : '';
+    const q = $('b2bQ') ? $('b2bQ').value.trim() : '';
+    const qs = new URLSearchParams();
+    if (estado) qs.set('estado', estado);
+    if (q) qs.set('q', q);
+    const d = await api('/api/b2b/solicitudes' + (qs.toString() ? '?' + qs.toString() : ''));
+    const lista = d.solicitudes || [];
+    // Resumen por estado
+    const porEstado = {};
+    lista.forEach(s => { porEstado[s.estado] = (porEstado[s.estado] || 0) + 1; });
+    $('b2bResumen').innerHTML = '<span class="b2b-chip"><b>' + d.total + '</b> solicitudes</span>' +
+      Object.entries(porEstado).map(([e, n]) =>
+        '<span class="b2b-chip"><i style="background:' + (B2B_ESTADO_COL[e] || '#888') + '"></i>' + trEstadoB2B(e) + ': ' + n + '</span>').join('');
+    if (!lista.length) { cont.innerHTML = '<div class="vacio">No hay solicitudes con estos filtros. Crea una con “+ Nueva solicitud”.</div>'; return; }
+    cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
+      '<th>Código</th><th>Empresa</th><th>RUC</th><th>Contacto</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
+      '</tr></thead><tbody>' +
+      lista.map(s =>
+        '<tr>' +
+        '<td><span class="b2b-cod">' + s.codigo + '</span></td>' +
+        '<td><b>' + (s.razonSocial || '—') + '</b>' + (s.nombreComercial ? '<div class="b2b-sub">' + s.nombreComercial + '</div>' : '') + '</td>' +
+        '<td>' + (s.ruc || '—') + '</td>' +
+        '<td>' + (s.contacto || '—') + (s.telefono ? '<div class="b2b-sub">' + s.telefono + '</div>' : '') + '</td>' +
+        '<td>' + (s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : '—') + '</td>' +
+        '<td>' + (s.ticket ? '<span class="b2b-pill" style="background:' + (B2B_TICKET_COL[s.ticket] || '#888') + '22;color:' + (B2B_TICKET_COL[s.ticket] || '#888') + '">' + s.ticket + '</span>' : '—') + '</td>' +
+        '<td><span class="b2b-pill" style="background:' + (B2B_ESTADO_COL[s.estado] || '#888') + '22;color:' + (B2B_ESTADO_COL[s.estado] || '#888') + '">' + trEstadoB2B(s.estado) + '</span></td>' +
+        '<td>' + (s.responsableActual ? primerNombre(s.responsableActual) : '—') + '</td>' +
+        '<td>' + (s.fechaIngreso ? fmtFecha(s.fechaIngreso) : '—') + '</td>' +
+        '</tr>').join('') +
+      '</tbody></table></div>';
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar B2B: ' + e.message + '</div>';
+  }
+}
+
+function trEstadoB2B(e) {
+  const M = { 'Filtro credito': 'Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': 'Filtro garantía', 'Apto garantia': 'Apto garantía', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
+  return M[e] || e;
+}
+
+function abrirAltaB2B() {
+  ['b2bRuc', 'b2bRazon', 'b2bComercial', 'b2bContacto', 'b2bTelefono', 'b2bEmail', 'b2bMonto', 'b2bTicket', 'b2bSector', 'b2bActividad', 'b2bAntiguedad', 'b2bVentas', 'b2bDestino', 'b2bRepago'].forEach(id => { if ($(id)) $(id).value = ''; });
+  if ($('b2bAltaMsg')) $('b2bAltaMsg').textContent = '';
+  $('ovAltaB2B').classList.add('act');
+}
+
+function b2bPreviewTicket() {
+  const m = Number($('b2bMonto').value) || 0;
+  let t = '';
+  if (m >= 1000000) t = 'Alto'; else if (m >= 300000) t = 'Medio'; else if (m > 0) t = 'Bajo';
+  $('b2bTicket').value = t;
+}
+
+async function guardarSolicitudB2B() {
+  const ruc = $('b2bRuc').value.trim();
+  const razon = $('b2bRazon').value.trim();
+  if (!ruc && !razon) { $('b2bAltaMsg').textContent = 'Ingresa al menos RUC o razón social.'; return; }
+  const body = {
+    ruc, razonSocial: razon,
+    nombreComercial: $('b2bComercial').value.trim(),
+    contacto: $('b2bContacto').value.trim(),
+    telefono: $('b2bTelefono').value.trim(),
+    email: $('b2bEmail').value.trim(),
+    montoSolicitado: $('b2bMonto').value ? Number($('b2bMonto').value) : null,
+    sector: $('b2bSector').value.trim(),
+    actividad: $('b2bActividad').value.trim(),
+    antiguedadMeses: $('b2bAntiguedad').value ? Number($('b2bAntiguedad').value) : null,
+    ventasEstimadas: $('b2bVentas').value ? Number($('b2bVentas').value) : null,
+    destinoFondos: $('b2bDestino').value.trim(),
+    fuenteRepago: $('b2bRepago').value.trim()
+  };
+  try {
+    const r = await api('/api/b2b/solicitudes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    cerrar('ovAltaB2B');
+    cargarB2B();
+  } catch (e) {
+    $('b2bAltaMsg').textContent = 'No se pudo registrar: ' + e.message;
+  }
+}
+
+// --- B2B: toggle de paneles y bandeja de ingresos ---
+function b2bRefrescar() { cargarB2B(); cargarIngresosB2B(); }
+
+function b2bTab(which) {
+  $('b2bPanelSol').classList.toggle('oculto', which !== 'sol');
+  $('b2bPanelIng').classList.toggle('oculto', which !== 'ing');
+  if ($('b2bPanelEq')) $('b2bPanelEq').classList.toggle('oculto', which !== 'eq');
+  $('b2bTabSol').classList.toggle('act', which === 'sol');
+  $('b2bTabIng').classList.toggle('act', which === 'ing');
+  if ($('b2bTabEq')) $('b2bTabEq').classList.toggle('act', which === 'eq');
+  if (which === 'sol') cargarB2B();
+  else if (which === 'ing') cargarIngresosB2B();
+  else if (which === 'eq') cargarEquipoB2B();
+}
+
+const B2B_ROL_TXT = { jefe_creditos: 'Jefe de Créditos', asistente_creditos: 'Créditos', jefe_b2b: 'Jefe B2B', funcionario_b2b: 'Funcionario' };
+
+async function cargarEquipoB2B() {
+  const cont = $('b2bEqCont'); if (!cont) return;
+  try {
+    const d = await api('/api/b2b/equipo');
+    const eq = d.equipo || [];
+    const gestiona = d.puedeGestionar;
+    cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
+      '<th>Nombre</th><th>Rol</th><th>Round-robin</th>' + (gestiona ? '<th></th>' : '') +
+      '</tr></thead><tbody>' +
+      eq.map(m => {
+        const esJefe = m.rol.startsWith('jefe_');
+        const enRotacion = !esJefe && m.autoasignar;
+        const estadoTxt = esJefe ? '<span class="b2b-sub">Supervisa (no rota)</span>' :
+          (enRotacion ? '<span class="b2b-pill" style="background:#1D9E7522;color:#1D9E75">En rotación</span>' : '<span class="b2b-pill" style="background:#88878022;color:#888780">Fuera</span>');
+        const btn = (gestiona && !esJefe) ?
+          '<button class="btn sec" onclick="toggleAutoB2B(\'' + m.usuario + '\')">' + (enRotacion ? 'Quitar de rotación' : 'Poner en rotación') + '</button>' : '';
+        return '<tr>' +
+          '<td><b>' + m.nombre + '</b><div class="b2b-sub">' + m.usuario + '</div></td>' +
+          '<td>' + (B2B_ROL_TXT[m.rol] || m.rol) + '</td>' +
+          '<td>' + estadoTxt + '</td>' +
+          (gestiona ? '<td>' + btn + '</td>' : '') +
+          '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar el equipo: ' + e.message + '</div>';
+  }
+}
+
+async function toggleAutoB2B(usuario) {
+  try {
+    await api('/api/b2b/equipo/' + encodeURIComponent(usuario) + '/autoasignar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    cargarEquipoB2B();
+  } catch (e) { alert('No se pudo cambiar: ' + e.message); }
+}
+
+const B2B_ING_COL = {
+  'creado': '#1D9E75', 'duplicado_activo': '#EF9F27', 'duplicado_historial': '#7C5BD9',
+  'sin_datos': '#888780', 'error_validacion': '#E24B4A'
+};
+const B2B_ING_TXT = {
+  'creado': 'Creado', 'duplicado_activo': 'Duplicado activo', 'duplicado_historial': 'Duplicado en historial',
+  'sin_datos': 'Sin datos', 'error_validacion': 'Error'
+};
+
+async function cargarIngresosB2B() {
+  const cont = $('b2bIngCont'); if (!cont) return;
+  try {
+    const d = await api('/api/b2b/ingresos');
+    const lista = d.ingresos || [];
+    // Badge: cuántos requieren gestión manual (duplicados + sin datos + error)
+    const pendientes = lista.filter(i => i.estado !== 'creado').length;
+    const badge = $('b2bIngBadge');
+    if (badge) { badge.textContent = pendientes; badge.classList.toggle('oculto', pendientes === 0); }
+    // Resumen
+    const res = d.resumen || {};
+    $('b2bIngResumen').innerHTML = '<span class="b2b-chip"><b>' + d.total + '</b> ingresos</span>' +
+      Object.entries(res).map(([e, n]) => '<span class="b2b-chip"><i style="background:' + (B2B_ING_COL[e] || '#888') + '"></i>' + (B2B_ING_TXT[e] || e) + ': ' + n + '</span>').join('');
+    if (!lista.length) { cont.innerHTML = '<div class="vacio">Aún no llegan ingresos por webhook.</div>'; return; }
+    cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
+      '<th>Recibido</th><th>Origen</th><th>Estado</th><th>RUC</th><th>Empresa</th><th>Teléfono</th><th>Monto</th><th>Garantía</th><th>Solicitud</th><th>Detalle</th>' +
+      '</tr></thead><tbody>' +
+      lista.map(i =>
+        '<tr>' +
+        '<td>' + (i.fechaRecepcion ? fmtFecha(i.fechaRecepcion) : '—') + '</td>' +
+        '<td>' + (i.origen || '—') + '</td>' +
+        '<td><span class="b2b-pill" style="background:' + (B2B_ING_COL[i.estado] || '#888') + '22;color:' + (B2B_ING_COL[i.estado] || '#888') + '">' + (B2B_ING_TXT[i.estado] || i.estado) + '</span></td>' +
+        '<td>' + (i.ruc || '—') + '</td>' +
+        '<td>' + (i.razonSocial || '—') + '</td>' +
+        '<td>' + (i.telefono || '—') + '</td>' +
+        '<td>' + (i.monto != null ? fmtSoles(i.monto) : '—') + '</td>' +
+        '<td>' + (i.tieneInmueble ? (i.tieneInmueble + (i.tipoInmueble ? ' · ' + i.tipoInmueble : '')) : '—') + '</td>' +
+        '<td>' + (i.codigoSolicitud ? '<span class="b2b-cod">' + i.codigoSolicitud + '</span>' : '—') + '</td>' +
+        '<td>' + (i.mensajeError ? '<span class="b2b-sub">' + i.mensajeError + '</span>' : '—') + '</td>' +
+        '</tr>').join('') +
+      '</tbody></table></div>';
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar la bandeja: ' + e.message + '</div>';
+  }
 }
