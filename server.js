@@ -2638,8 +2638,9 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const META = 8; // meta GLOBAL del equipo: agendamientos del día (ya no es individual)
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
-  // Agendado o más adelante (subconjunto de CALIF). Es el salto grande del puntaje.
-  const AGEND = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
+  // Agendado de HOY: solo el acto de agendar/confirmar/reprogramar. NO reunión/negociación/cierre,
+  // porque esas vienen de agendamientos pasados y no evidencian gestión de hoy.
+  const AGEND = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'];
   const m = {};
   // GPs ocultas del ranking (interruptor por usuario, sin tocar el código)
   const ocultas = new Set(
@@ -3377,7 +3378,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.162 (ranking B2C: pesos intento1/+0.25, conectado2.5, calificado5, agendado15, Call1; columna Agendados; Puntos primera columna; meta GLOBAL 8 agendamientos equipo; racha desde 1er intento; Termina en; podio campeon mas alto) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.164 (ranking del dia: titulo renombrado, columna nombres primero y Puntos a la izq de Intentos, Agendados en verde (ya no Calificado), pie con pesos nuevos +1 verificada, animacion de entrada escalonada del modal) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

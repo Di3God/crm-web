@@ -923,6 +923,26 @@
   /* ===== Ranking de contactabilidad (modal flotante) ===== */
   .rk-overlay .rk-modal { background: #fff; border-radius: 16px; width: min(1000px, 94vw); max-height: 92vh; overflow-y: auto; position: relative; box-shadow: 0 24px 70px rgba(0,0,0,.4); animation: rkModalIn .35s cubic-bezier(.2,.8,.25,1); }
   @keyframes rkModalIn { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes rkOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes rkUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes rkPodRise { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+  @keyframes rkRowIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+  .rk-overlay.act { animation: rkOverlayIn .25s ease; }
+  .rk-overlay .rk-hero { animation: rkUp .4s .05s ease both; }
+  .rk-overlay #rkMeta { animation: rkUp .45s .12s ease both; }
+  .rk-overlay #rkRacha { animation: rkUp .45s .18s ease both; }
+  .rk-overlay .rk-pod { animation: rkPodRise .5s ease both; }
+  .rk-overlay .rk-pod.rk-p2 { animation-delay: .18s; }
+  .rk-overlay .rk-pod.rk-p1 { animation-delay: .28s; }
+  .rk-overlay .rk-pod.rk-p3 { animation-delay: .38s; }
+  .rk-overlay #rkTabla { animation: rkUp .45s .22s ease both; }
+  .rk-overlay .rk-row:not(.rk-head) { animation: rkRowIn .35s ease both; }
+  .rk-overlay .rk-row:nth-child(2) { animation-delay: .26s; }
+  .rk-overlay .rk-row:nth-child(3) { animation-delay: .30s; }
+  .rk-overlay .rk-row:nth-child(4) { animation-delay: .34s; }
+  .rk-overlay .rk-row:nth-child(5) { animation-delay: .38s; }
+  .rk-overlay .rk-row:nth-child(6) { animation-delay: .42s; }
+  .rk-overlay .rk-row:nth-child(n+7) { animation-delay: .46s; }
   .rk-close { position: absolute; top: 12px; right: 13px; z-index: 3; background: rgba(255,255,255,.14); border: none; color: rgba(255,255,255,.75); width: 24px; height: 24px; border-radius: 7px; font-size: 12px; cursor: pointer; line-height: 1; }
   .rk-close:hover { background: rgba(255,255,255,.28); color: #fff; }
   .rk-hero { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -969,18 +989,19 @@
   .rk-pod.rk-mio { outline: 3px solid #1D9E75; outline-offset: 2px; }
 
   .rk-tabla { display: flex; flex-direction: column; }
-  .rk-row { display: grid; grid-template-columns: 90px 1fr 80px 92px 92px 92px 72px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
+  .rk-row { display: grid; grid-template-columns: 1fr 90px 80px 92px 92px 92px 72px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
   .rk-head { background: #F7F8FA; font-size: 10.5px; color: #9AA8B8; text-transform: uppercase; letter-spacing: .03em; padding: 9px 22px; }
-  .rk-head span:not(:nth-child(2)) { text-align: center; }
+  .rk-head span:not(:nth-child(1)) { text-align: center; }
   .rk-pos { font-size: 15px; font-weight: 700; text-align: center; color: #475569; }
   .rk-n { font-size: 13.5px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 9px; }
   .rk-av { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; flex: none; }
   .rk-lider { background: #FCEFC7; color: #9A6B00; font-size: 10px; padding: 2px 8px; border-radius: 999px; }
   .rk-tu { background: #1D9E75; color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 999px; vertical-align: middle; }
-  .rk-row span:not(:nth-child(2)) { text-align: center; font-size: 13.5px; color: #475569; }
+  .rk-row span:not(:nth-child(1)) { text-align: center; font-size: 13.5px; color: #475569; }
   .rk-pos { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; font-size: 14px; font-weight: 700; color: #475569; margin-right: 2px; }
   .rk-big { font-size: 18px !important; font-weight: 800 !important; color: #123A63 !important; }
-  .rk-cal { font-weight: 700 !important; color: #1D9E75 !important; }
+  .rk-cal { font-weight: 600 !important; color: #475569 !important; }
+  .rk-agend { font-weight: 700 !important; color: #1D9E75 !important; }
   .rk-verif { font-weight: 700 !important; color: #0B72E8 !important; }
   .rk-mio-row { background: #EAF7F1; }
   .rk-foot { text-align: center; font-size: 11.5px; color: var(--muted); padding: 13px; }

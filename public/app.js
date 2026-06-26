@@ -3542,14 +3542,14 @@ async function cargarRanking() {
       '<div class="rk-dots">' + dots + '</div>';
 
     // Tabla completa
-    const head = '<div class="rk-row rk-head"><span>Puntos</span><span>Gestora</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Agendados</span><span>Call</span></div>';
+    const head = '<div class="rk-row rk-head"><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Agendados</span><span>Call</span></div>';
     $('rkTabla').innerHTML = head + rk.map((g, i) => {
       const mio = g.asesor === yo ? ' rk-mio-row' : '';
       const pos = i < 3 ? medalla[i] : (i + 1);
       const tag = i === 0 ? ' <span class="rk-lider">Líder del día</span>' : (g.asesor === yo ? ' <span class="rk-tu">tú</span>' : '');
       return '<div class="rk-row' + mio + '">' +
-        '<span class="rk-big">' + rkFmt(g.puntaje) + '</span>' +
         '<span class="rk-n"><span class="rk-pos">' + pos + '</span> ' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
+        '<span class="rk-big">' + rkFmt(g.puntaje) + '</span>' +
         '<span>' + g.intentos + '</span>' +
         '<span>' + g.conectados + '</span>' +
         '<span class="rk-cal">' + g.calificados + '</span>' +
