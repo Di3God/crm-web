@@ -347,6 +347,8 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN areaInmueble TEXT"); } cat
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatRaw TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatEstado TEXT"); } catch (e) { } // 'ok' | 'pendiente' | 'error'
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -671,6 +673,22 @@ function soloB2B(req, res, next) {
   next();
 }
 
+// Extrae departamento y distrito del domicilio fiscal de SUNAT.
+// Formato: "<dirección> <DEPARTAMENTO> - <PROVINCIA> - <DISTRITO>". El departamento va pegado a la dirección.
+const DEPARTAMENTOS_PE = ['MADRE DE DIOS', 'SAN MARTIN', 'LA LIBERTAD', 'AMAZONAS', 'ANCASH', 'APURIMAC', 'AREQUIPA', 'AYACUCHO', 'CAJAMARCA', 'CALLAO', 'CUSCO', 'HUANCAVELICA', 'HUANUCO', 'ICA', 'JUNIN', 'LAMBAYEQUE', 'LIMA', 'LORETO', 'MOQUEGUA', 'PASCO', 'PIURA', 'PUNO', 'TACNA', 'TUMBES', 'UCAYALI'];
+function parseUbicacionSunat(domicilio) {
+  if (!domicilio) return {};
+  const parts = String(domicilio).split(/\s+-\s+/).map(p => p.trim()).filter(Boolean);
+  if (parts.length < 3) return {};
+  const distrito = parts[parts.length - 1];
+  const addrSeg = parts[parts.length - 3].toUpperCase();
+  const ordenados = DEPARTAMENTOS_PE.slice().sort((a, b) => b.length - a.length); // match más largo primero
+  let departamento = null;
+  for (const d of ordenados) { if (addrSeg === d || addrSeg.endsWith(' ' + d)) { departamento = d; break; } }
+  if (!departamento) { const t = addrSeg.split(/\s+/); departamento = t[t.length - 1]; } // fallback: última palabra
+  return { departamento, distrito };
+}
+
 // Enriquecimiento SUNAT: consulta el microservicio (POST /consultar-ruc {ruc}) y guarda `data` en sunatRaw.
 // Asíncrona y tolerante: si falla, deja la solicitud en 'pendiente' para reintentar. Nunca lanza.
 async function enriquecerSunat(codigo, opts = {}) {
@@ -704,15 +722,41 @@ async function enriquecerSunat(codigo, opts = {}) {
       return { ok: false, motivo: 'consulta_fallida', mensaje: (json && json.message) || 'Sin datos' };
     }
     const data = json.data;
-    // Autocompleta razón social si vino vacía del intake.
-    const completarRazon = (!sol.razonSocial || !sol.razonSocial.trim()) && data.razonSocial;
-    if (completarRazon) {
-      db.prepare("UPDATE b2b_solicitudes SET sunatRaw=?, sunatEstado='ok', sunatVerificadoEn=?, razonSocial=? WHERE codigo=?")
-        .run(JSON.stringify(data).slice(0, 16000), ahora, data.razonSocial, codigo);
-    } else {
-      db.prepare("UPDATE b2b_solicitudes SET sunatRaw=?, sunatEstado='ok', sunatVerificadoEn=? WHERE codigo=?")
-        .run(JSON.stringify(data).slice(0, 16000), ahora, codigo);
+    // Campos derivables de SUNAT (se rellenan SOLO si están vacíos, para no pisar al analista).
+    const sol2 = db.prepare('SELECT razonSocial, actividad, sector, antiguedadMeses, sunatDepartamento, sunatDistrito FROM b2b_solicitudes WHERE codigo=?').get(codigo);
+    const sets = ['sunatRaw=?', "sunatEstado='ok'", 'sunatVerificadoEn=?'];
+    const vals = [JSON.stringify(data).slice(0, 16000), ahora];
+    if ((!sol2.razonSocial || !sol2.razonSocial.trim()) && data.razonSocial) { sets.push('razonSocial=?'); vals.push(data.razonSocial); }
+    // Actividad principal: primer elemento de actividadesEconomicas (ej. "Principal - 4690 - VENTA AL POR MAYOR...").
+    const actPrincipal = Array.isArray(data.actividadesEconomicas) && data.actividadesEconomicas.length ? String(data.actividadesEconomicas[0]).trim() : null;
+    if ((!sol2.actividad || !sol2.actividad.trim()) && actPrincipal) { sets.push('actividad=?'); vals.push(actPrincipal); }
+    // Rubro/sector: la glosa de la actividad (lo que va después del CIIU). "Principal - 4690 - VENTA..." -> "VENTA...".
+    if ((!sol2.sector || !sol2.sector.trim()) && actPrincipal) {
+      const partes = actPrincipal.split(' - ');
+      const glosa = partes.length >= 3 ? partes.slice(2).join(' - ').trim() : (partes.length === 2 ? partes[1].trim() : actPrincipal);
+      sets.push('sector=?'); vals.push(glosa);
     }
+    // Antigüedad en meses desde fechaInicioActividades (formato dd/mm/aaaa).
+    if (!sol2.antiguedadMeses && data.fechaInicioActividades) {
+      const m = String(data.fechaInicioActividades).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m) {
+        const ini = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        if (!isNaN(ini)) {
+          const hoyD = new Date();
+          let meses = (hoyD.getFullYear() - ini.getFullYear()) * 12 + (hoyD.getMonth() - ini.getMonth());
+          if (hoyD.getDate() < ini.getDate()) meses -= 1;
+          if (meses >= 0) { sets.push('antiguedadMeses=?'); vals.push(meses); }
+        }
+      }
+    }
+    // Ubicación: departamento y distrito extraídos del domicilio fiscal.
+    if ((!sol2.sunatDepartamento || !sol2.sunatDepartamento.trim()) && data.domicilioFiscal) {
+      const ub = parseUbicacionSunat(data.domicilioFiscal);
+      if (ub.departamento) { sets.push('sunatDepartamento=?'); vals.push(ub.departamento); }
+      if (ub.distrito) { sets.push('sunatDistrito=?'); vals.push(ub.distrito); }
+    }
+    vals.push(codigo);
+    db.prepare('UPDATE b2b_solicitudes SET ' + sets.join(', ') + ' WHERE codigo=?').run(...vals);
     return { ok: true, data };
   } catch (e) {
     db.prepare("UPDATE b2b_solicitudes SET sunatEstado='error', sunatVerificadoEn=? WHERE codigo=?").run(ahora, codigo);
@@ -2610,16 +2654,27 @@ app.get('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
 });
 
 // Equipo B2B: listar miembros con su estado de round-robin (autoasignar).
+// Qué roles puede VER/gestionar cada usuario en el panel de equipo.
+function rolesGestionablesB2B(user) {
+  if (user.rol === 'admin') return ['jefe_creditos', 'asistente_creditos', 'jefe_b2b', 'funcionario_b2b'];
+  if (user.rol === 'jefe_creditos') return ['jefe_creditos', 'asistente_creditos']; // Eduardo: su área de créditos
+  if (user.rol === 'jefe_b2b') return ['jefe_b2b', 'funcionario_b2b'];               // Dante: sus funcionarios
+  return [];
+}
 app.get('/api/b2b/equipo', soloB2B, (req, res) => {
-  const filas = db.prepare("SELECT usuario, nombre, rol, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol IN ('jefe_creditos','asistente_creditos','jefe_b2b','funcionario_b2b') ORDER BY CASE rol WHEN 'jefe_creditos' THEN 1 WHEN 'asistente_creditos' THEN 2 WHEN 'jefe_b2b' THEN 3 ELSE 4 END, id").all();
+  const roles = rolesGestionablesB2B(req.user);
+  if (!roles.length) return res.json({ equipo: [], puedeGestionar: false });
+  const ph = roles.map(() => '?').join(',');
+  const filas = db.prepare("SELECT usuario, nombre, rol, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol IN (" + ph + ") ORDER BY CASE rol WHEN 'jefe_creditos' THEN 1 WHEN 'asistente_creditos' THEN 2 WHEN 'jefe_b2b' THEN 3 ELSE 4 END, id").all(...roles);
   res.json({ equipo: filas, puedeGestionar: puedeGestionarEquipoB2B(req.user) });
 });
-// Activar/desactivar a un operador del round-robin B2B (solo admin y jefes B2B).
+// Activar/desactivar a un operador del round-robin B2B (admin y jefes, cada jefe solo a su área).
 app.post('/api/b2b/equipo/:usuario/autoasignar', soloB2B, (req, res) => {
   if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado' });
   const u = db.prepare("SELECT usuario, nombre, rol, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE usuario=?").get(req.params.usuario);
   if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (!['asistente_creditos', 'funcionario_b2b'].includes(u.rol)) return res.status(400).json({ error: 'Solo operadores entran al round-robin (los jefes no)' });
+  if (!rolesGestionablesB2B(req.user).includes(u.rol)) return res.status(403).json({ error: 'Solo puedes gestionar a tu propia área' });
   const nuevo = u.autoasignar ? 0 : 1;
   db.prepare('UPDATE usuarios SET autoasignar=? WHERE usuario=?').run(nuevo, u.usuario);
   auditar(req, 'b2b_toggle_rotacion', null, u.nombre + ' -> ' + (nuevo ? 'en rotación' : 'fuera de rotación'));
@@ -3010,7 +3065,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.153 (enriquecimiento SUNAT: consulta microservicio SUNAT_API_URL por RUC, guarda data en sunatRaw, autocompleta razonSocial, disparo automatico asincrono al crear solicitud (webhook+manual) + endpoint/boton Validar SUNAT con semaforo Activo/Habido) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.156 (refactor navegacion: dos mundos B2C/B2B como menus desplegables con permisos finos por rol; Equipo B2B movido al menu de usuario filtrado por jefe; vista Base de Releads B2B en construccion; Cohortes fuera del menu) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -15,22 +15,26 @@
 <header class="topbar" id="rolBox" style="display:none">
   <span class="top-logo">Mi<span>Tasatop</span></span>
   <nav class="top-nav">
-    <div class="nav-item">
-      <button id="nv-leads" class="act" onclick="ir('leads')">Mis Leads<span class="nv-car soloAdminJefa oculto">▾</span></button>
-      <button id="nv-chat" onclick="ir('chat')">Mensajería</button>
-      <div class="subnav soloAdminJefa oculto">
-        <button id="nv-brutos" onclick="ir('brutos')">Ingresos</button>
-        <button id="nv-releads" onclick="ir('releads')">Base de Releads</button>
+    <div class="mundo oculto" id="mundoB2C">
+      <button class="mundo-btn" onclick="toggleMundo('B2C', event)"><span class="mundo-ic">👥</span> B2C <span class="tu-caret">▾</span></button>
+      <div class="mundo-menu oculto" id="menuB2C">
+        <button class="mundo-item oculto" id="mi-leads" onclick="navB2C('leads')">Mis Leads</button>
+        <button class="mundo-item oculto" id="mi-chat" onclick="navB2C('chat')">Mensajería</button>
+        <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
+        <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
+        <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
+        <button class="mundo-item oculto" id="mi-audit" onclick="navB2C('audit')">Auditoría</button>
       </div>
     </div>
-    <div class="nav-item">
-      <button id="nv-dash" class="soloAdminJefa oculto" onclick="ir('dash')">Dashboard<span class="nv-car soloAdmin oculto">▾</span></button>
-      <div class="subnav soloAdmin oculto">
-        <button id="nv-cohortes" onclick="ir('cohortes')">Cohortes</button>
+    <div class="mundo oculto" id="mundoB2B">
+      <button class="mundo-btn" onclick="toggleMundo('B2B', event)"><span class="mundo-ic">🏢</span> B2B <span class="tu-caret">▾</span></button>
+      <div class="mundo-menu oculto" id="menuB2B">
+        <button class="mundo-item oculto" id="mi-b2b-sol" onclick="navB2B('sol')">Solicitudes</button>
+        <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
+        <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
+        <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
       </div>
     </div>
-    <button id="nv-audit" class="soloAdmin oculto" onclick="ir('audit')">Auditoría</button>
-    <button id="nv-b2b" class="soloB2B oculto" onclick="ir('b2b')">🏢 B2B</button>
   </nav>
   <div class="top-user">
     <button class="tu-btn" id="tuBtn" onclick="toggleMenuUsuario(event)">
@@ -42,6 +46,7 @@
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirVerMetas()">📊 Ver metas cargadas</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirLlegadas()">🕐 Llegada de leads por hora</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirAutoasig()">🔀 Auto-asignación</button>
+      <button class="tu-item soloEquipoB2B oculto" onclick="cerrarMenuUsuario();abrirEquipoB2B()">👥 Equipo B2B (round-robin)</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirClave()">🔑 Contraseñas</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();descargarBackup()">💾 Descargar respaldo</button>
       <div class="tu-sep"></div>
@@ -386,7 +391,6 @@
     <div class="vista-toggle" style="margin:10px 0">
       <button id="b2bTabSol" class="vt-btn act" onclick="b2bTab('sol')">Solicitudes</button>
       <button id="b2bTabIng" class="vt-btn" onclick="b2bTab('ing')">Bandeja de ingresos <span id="b2bIngBadge" class="b2b-badge oculto">0</span></button>
-      <button id="b2bTabEq" class="vt-btn soloJefeB2B oculto" onclick="b2bTab('eq')">Equipo</button>
     </div>
     <div id="b2bPanelSol">
       <div class="b2b-filtros">
@@ -414,11 +418,32 @@
       <div class="b2b-chips" id="b2bIngResumen"></div>
       <div id="b2bIngCont"><div class="vacio">Cargando…</div></div>
     </div>
-    <div id="b2bPanelEq" class="oculto">
-      <p class="sub" style="margin:4px 0 12px">Activa o desactiva quién recibe los leads B2B que llegan por webhook (round-robin). Los jefes supervisan y no entran a la rotación.</p>
-      <div id="b2bEqCont"><div class="vacio">Cargando…</div></div>
+  </section>
+
+  <!-- ===== VISTA: BASE DE RELEADS B2B (en construcción) ===== -->
+  <section id="v-b2b-releads" class="vista">
+    <div class="barra">
+      <h2>Base de Releads B2B</h2>
+      <span class="sub">Histórico de empresas ya evaluadas, para matchear por RUC los reingresos.</span>
+    </div>
+    <div class="vacio" style="padding:60px 20px;text-align:center">
+      <div style="font-size:40px">🚧</div>
+      <h3 style="margin:12px 0 6px">En construcción</h3>
+      <p class="sub">Aquí podrás cargar la base de empresas evaluadas anteriormente (Excel/CSV) para que el sistema detecte automáticamente los reingresos por RUC.</p>
     </div>
   </section>
+
+  <!-- ===== MODAL: EQUIPO B2B (round-robin) ===== -->
+  <div class="overlay" id="ovEquipoB2B">
+    <div class="modal" style="max-width:720px">
+      <h3>Equipo B2B · round-robin</h3>
+      <div class="sub">Activa o desactiva quién recibe los leads B2B que llegan por webhook. Los jefes supervisan y no entran a la rotación.</div>
+      <div id="b2bEqCont"><div class="vacio">Cargando…</div></div>
+      <div class="acciones">
+        <button class="btn sec" onclick="cerrar('ovEquipoB2B')">Cerrar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== MODAL: ALTA DE SOLICITUD B2B ===== -->
   <div class="overlay" id="ovAltaB2B">

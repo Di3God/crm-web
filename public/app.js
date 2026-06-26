@@ -524,16 +524,35 @@ async function arrancar() {
   if (YO.rol === 'admin' || YO.rol === 'jefa') {
     document.querySelectorAll('.soloAdminJefa').forEach(e => e.classList.remove('oculto'));
   }
-  // Módulo B2B: admin, jefa, asistente, funcionario y jefes B2B.
-  if (['admin', 'jefa', 'asistente_creditos', 'funcionario_b2b', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol)) {
-    document.querySelectorAll('.soloB2B').forEach(e => e.classList.remove('oculto'));
-  }
-  // Gestión del equipo B2B (pestaña Equipo): admin y jefes B2B.
+  // Gestión del equipo B2B (en el menú de usuario): admin y jefes B2B.
   if (['admin', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol)) {
-    document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
+    document.querySelectorAll('.soloEquipoB2B').forEach(e => e.classList.remove('oculto'));
   }
   // Columnas de control de la tabla: visibles solo para admin/jefa
   if (YO.rol === 'admin' || YO.rol === 'jefa') document.body.classList.add('ve-todo');
+
+  // ===== Navegación de dos mundos: qué menú e ítems ve cada rol =====
+  const ver = ids => ids.forEach(id => { const e = $(id); if (e) e.classList.remove('oculto'); });
+  const verMundo = m => { const e = $('mundo' + m); if (e) e.classList.remove('oculto'); };
+  let mundoInicial = null;
+  const r = YO.rol;
+  if (r === 'admin') {
+    verMundo('B2C'); verMundo('B2B');
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-audit']);
+    ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
+    mundoInicial = 'B2C';
+  } else if (r === 'gestora') {
+    verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
+  } else if (r === 'jefa') {
+    verMundo('B2C'); ver(['mi-leads', 'mi-brutos', 'mi-releads', 'mi-audit']); mundoInicial = 'B2C';
+  } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
+    verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
+  } else if (r === 'jefe_creditos') {
+    verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
+  } else if (r === 'jefe_b2b') {
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']); mundoInicial = 'B2B';
+  }
+  MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
   const sel = $('selAsesor');
   sel.innerHTML = '';
@@ -557,7 +576,9 @@ async function arrancar() {
     $('gResumenCount').textContent = $('gResumen').value.length;
   });
   initFlatpickr();
-  cargarLeads();
+  // Vista inicial según el mundo del rol.
+  if (MUNDO_INICIAL === 'B2B') { ir('b2b'); b2bTab('sol'); }
+  else cargarLeads();
 }
 
 // Inicializa los selectores de fecha/hora (Flatpickr) en español. Se ejecuta 1 vez.
@@ -575,8 +596,8 @@ function initFlatpickr() {
 function ir(v) {
   document.querySelectorAll('.vista').forEach(x => x.classList.remove('act'));
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('act'));
-  $('v-' + v).classList.add('act');
-  $('nv-' + v).classList.add('act');
+  const vista = $('v-' + v); if (vista) vista.classList.add('act');
+  const nvBtn = $('nv-' + v); if (nvBtn) nvBtn.classList.add('act');
   if (v === 'dash') cargarDashboard();
   if (v === 'audit') cargarAuditoria();
   if (v === 'cohortes') cargarCohortes();
@@ -586,6 +607,32 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
 }
+
+// ===== Navegación de dos mundos (B2C / B2B) =====
+let MUNDO_INICIAL = null;
+function toggleMundo(m, ev) {
+  if (ev) ev.stopPropagation();
+  const abrir = $('menu' + m);
+  const otro = $('menu' + (m === 'B2C' ? 'B2B' : 'B2C'));
+  if (otro) otro.classList.add('oculto');
+  if (abrir) abrir.classList.toggle('oculto');
+}
+function cerrarMundos() {
+  ['menuB2C', 'menuB2B'].forEach(id => { const e = $(id); if (e) e.classList.add('oculto'); });
+}
+function navB2C(v) { cerrarMundos(); ir(v); }
+function navB2B(which) {
+  cerrarMundos();
+  if (which === 'releads') { ir('b2b-releads'); return; }
+  if (which === 'audit') { ir('audit'); return; }
+  ir('b2b');
+  b2bTab(which === 'ing' ? 'ing' : 'sol');
+}
+function abrirEquipoB2B() { $('ovEquipoB2B').classList.add('act'); cargarEquipoB2B(); }
+// Cierra los desplegables de mundo al hacer clic fuera.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.mundo')) cerrarMundos();
+});
 
 function cerrar(id) { $(id).classList.remove('act'); }
 
@@ -3603,7 +3650,7 @@ async function cargarB2B() {
         '<span class="b2b-chip"><i style="background:' + (B2B_ESTADO_COL[e] || '#888') + '"></i>' + trEstadoB2B(e) + ': ' + n + '</span>').join('');
     if (!lista.length) { cont.innerHTML = '<div class="vacio">No hay solicitudes con estos filtros. Crea una con “+ Nueva solicitud”.</div>'; return; }
     cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
-      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
+      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Sector / Rubro</th><th>Antigüedad</th><th>Ubicación</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th>' +
       '</tr></thead><tbody>' +
       lista.map(s =>
         '<tr>' +
@@ -3612,6 +3659,9 @@ async function cargarB2B() {
         '<td>' + (s.ruc || '—') + '</td>' +
         '<td>' + celdaSunat(s) + '</td>' +
         '<td>' + (s.contacto || '—') + (s.telefono ? '<div class="b2b-sub">' + s.telefono + '</div>' : '') + '</td>' +
+        '<td>' + (s.sector ? '<span class="b2b-sub">' + s.sector + '</span>' : '—') + '</td>' +
+        '<td>' + fmtAntiguedad(s.antiguedadMeses) + '</td>' +
+        '<td>' + fmtUbicacion(s) + '</td>' +
         '<td>' + (s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : '—') + '</td>' +
         '<td>' + (s.ticket ? '<span class="b2b-pill" style="background:' + (B2B_TICKET_COL[s.ticket] || '#888') + '22;color:' + (B2B_TICKET_COL[s.ticket] || '#888') + '">' + s.ticket + '</span>' : '—') + '</td>' +
         '<td><span class="b2b-pill" style="background:' + (B2B_ESTADO_COL[s.estado] || '#888') + '22;color:' + (B2B_ESTADO_COL[s.estado] || '#888') + '">' + trEstadoB2B(s.estado) + '</span></td>' +
@@ -3627,6 +3677,22 @@ async function cargarB2B() {
 function trEstadoB2B(e) {
   const M = { 'Filtro credito': 'Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': 'Filtro garantía', 'Apto garantia': 'Apto garantía', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
   return M[e] || e;
+}
+
+function fmtAntiguedad(meses) {
+  if (meses == null || meses === '') return '—';
+  const m = Number(meses);
+  if (!isFinite(m)) return '—';
+  if (m < 12) return m + ' m';
+  const a = Math.floor(m / 12), r = m % 12;
+  return r ? a + ' a ' + r + ' m' : a + ' años';
+}
+
+function fmtUbicacion(s) {
+  const dep = s.sunatDepartamento, dist = s.sunatDistrito;
+  if (!dep && !dist) return '—';
+  if (dep && dist) return '<span class="b2b-sub">' + dist + '<br>' + dep + '</span>';
+  return '<span class="b2b-sub">' + (dist || dep) + '</span>';
 }
 
 // Semáforo SUNAT + botón validar/reconsultar, leyendo de sunatRaw.
@@ -3707,13 +3773,10 @@ function b2bRefrescar() { cargarB2B(); cargarIngresosB2B(); }
 function b2bTab(which) {
   $('b2bPanelSol').classList.toggle('oculto', which !== 'sol');
   $('b2bPanelIng').classList.toggle('oculto', which !== 'ing');
-  if ($('b2bPanelEq')) $('b2bPanelEq').classList.toggle('oculto', which !== 'eq');
   $('b2bTabSol').classList.toggle('act', which === 'sol');
   $('b2bTabIng').classList.toggle('act', which === 'ing');
-  if ($('b2bTabEq')) $('b2bTabEq').classList.toggle('act', which === 'eq');
-  if (which === 'sol') cargarB2B();
-  else if (which === 'ing') cargarIngresosB2B();
-  else if (which === 'eq') cargarEquipoB2B();
+  if (which === 'ing') cargarIngresosB2B();
+  else cargarB2B();
 }
 
 const B2B_ROL_TXT = { jefe_creditos: 'Jefe de Créditos', asistente_creditos: 'Créditos', jefe_b2b: 'Jefe B2B', funcionario_b2b: 'Funcionario' };

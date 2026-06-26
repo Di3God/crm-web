@@ -1046,3 +1046,15 @@
   .btn-sunat { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: #475569; margin-left: 2px; }
   .btn-sunat:hover { background: #F1F3F6; }
   .btn-sunat:disabled { opacity: .5; cursor: default; }
+
+  .b2b-tabla th { color: #fff; }
+
+  /* ===== Navegación de dos mundos (B2C / B2B) ===== */
+  .top-nav { display: flex; gap: 8px; align-items: center; height: 100%; }
+  .mundo { position: relative; display: flex; align-items: center; }
+  .top-nav .mundo-btn { display: flex; align-items: center; gap: 7px; background: #F4F6F9; border: 1px solid var(--line); cursor: pointer; padding: 7px 14px; border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--navy); height: auto; }
+  .top-nav .mundo-btn:hover { background: #EAF0F7; border-color: var(--azul); color: var(--navy); }
+  .mundo-ic { font-size: 15px; }
+  .mundo-menu { position: absolute; left: 0; top: 44px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 210px; padding: 6px; z-index: 50; }
+  .top-nav .mundo-item { display: block; width: 100%; text-align: left; background: none; border: none; padding: 9px 12px; border-radius: 7px; font-size: 13px; color: var(--navy); cursor: pointer; height: auto; white-space: nowrap; }
+  .top-nav .mundo-item:hover { background: #EEF3F8; color: var(--azul); }
