@@ -3978,7 +3978,7 @@ function renderFicha() {
 
   const panels = [
     panelEmpresa(s),
-    panelFiltroSimple('credito', 'Filtro crédito', '📋', semCredito, true),
+    panelCredito(semCredito),
     panelGarantia(garantiaDesbloqueada, semGarantia),
     panelBloqueable('finanzas', 'Filtro finanzas y negocio', '💰', finanzasDesbloqueada),
     panelBloqueable('businesscase', 'Business case', '📑', false)
@@ -4007,8 +4007,109 @@ function panelEmpresa(s) {
 function panelFiltroSimple(tipo, titulo, ic, sem, habilitado) {
   const open = FICHA_ETAPA_OPEN === tipo;
   const cuerpo = open ? '<div class="fb-body"><p class="sub">Este filtro se completará con la integración de Sentinel (centrales de riesgo). Por ahora puedes marcar el semáforo manualmente.</p>' +
-    fbSemaforoBar(tipo) + '</div>' : '';
+    fbSemaforoBar(tipo) +
+    '<div class="fb-acc"><button class="btn sec" onclick="guardarFiltroSimple(\'' + tipo + '\')">Guardar</button>' +
+    '<button class="btn" onclick="avanzarEtapa(\'' + tipo + '\')">Avanzar según semáforo →</button></div>' +
+    '</div>' : '';
   return fbPanelWrap(tipo, ic, titulo, fbPill(sem) || '<span class="sub">pendiente</span>', open, cuerpo);
+}
+
+async function guardarFiltroSimple(tipo) {
+  const sem = leerSemaforo(tipo);
+  if (!sem) { alert('Marca el semáforo antes de guardar.'); return; }
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/' + tipo, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ semaforo: sem }) });
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+// ===== FILTRO DE CRÉDITO: 3 sub-bloques (empresa / representantes / vinculadas) =====
+const FB_CHK_CREDITO = {
+  empresa: [
+    ['sbsNormal', 'Clasificación SBS 100% Normal'],
+    ['sinAtrasos', 'Sin atrasos mayores a 30 días'],
+    ['sinProtestos', 'Sin protestos ni deuda coactiva'],
+    ['deudaRazonable', 'Deuda total razonable vs. ventas'],
+    ['tendencia', 'Tendencia estable o mejorando']
+  ],
+  representante: [
+    ['sbsNormal', 'SBS Normal'],
+    ['sinCastigos', 'Sin castigos ni deuda en cobranza'],
+    ['sinProtestos', 'Sin protestos personales']
+  ],
+  vinculada: [
+    ['identificada', 'Identificada y relación clara'],
+    ['sbsSinDuras', 'SBS sin categorías duras'],
+    ['sinCoactiva', 'Sin coactiva fuerte']
+  ]
+};
+
+function consolidadoCreditoJS() {
+  const orden = { Verde: 0, Amarillo: 1, Rojo: 2 };
+  let peor = null, pv = -1;
+  (FICHA.creditoSujetos || []).forEach(su => {
+    if (su.semaforo && orden[su.semaforo] != null && orden[su.semaforo] > pv) { pv = orden[su.semaforo]; peor = su.semaforo; }
+  });
+  return peor;
+}
+
+function panelCredito(semGuardado) {
+  const cons = consolidadoCreditoJS() || semGuardado;
+  const open = FICHA_ETAPA_OPEN === 'credito';
+  const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
+  if (!open) return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, false, '');
+  const sujetos = FICHA.creditoSujetos || [];
+  const empresa = sujetos.find(x => x.tipoSujeto === 'empresa');
+  const reps = sujetos.filter(x => x.tipoSujeto === 'representante');
+  const vinc = sujetos.filter(x => x.tipoSujeto === 'vinculada');
+
+  let html = '<div class="fb-body">';
+  html += '<p class="sub">El semáforo de cada sujeto es manual por ahora; con Sentinel se sugerirá por reglas. El consolidado toma el <b>peor</b> de los tres.</p>';
+  // Empresa
+  html += '<div class="fb-sec">Empresa</div>';
+  html += empresa ? sujetoCard(empresa, false) : '<div class="sub">—</div>';
+  // Representantes
+  html += '<div class="fb-sec">Representantes (' + reps.length + ')</div>';
+  html += reps.map(r => sujetoCard(r, true)).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas representantes.</div>';
+  html += '<button class="btn-sunat" onclick="agregarSujeto(\'representante\')">＋ Agregar representante</button>';
+  // Vinculadas
+  html += '<div class="fb-sec">Empresas vinculadas (' + vinc.length + ')</div>';
+  html += vinc.map(v => sujetoCard(v, true)).join('') || '<div class="sub" style="margin-bottom:8px">Sin empresas vinculadas.</div>';
+  html += '<button class="btn-sunat" onclick="agregarSujeto(\'vinculada\')">＋ Agregar vinculada</button>';
+  // Acciones
+  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn sec" onclick="guardarCredito()">Guardar crédito</button>' +
+    '<button class="btn" onclick="avanzarEtapa(\'credito\')">Avanzar según consolidado →</button></div>';
+  html += '</div>';
+  return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, true, html);
+}
+
+function sujetoCard(su, editable) {
+  const chk = su.checklist || {};
+  const items = FB_CHK_CREDITO[su.tipoSujeto] || [];
+  const docs = (FICHA.documentos || []).filter(d => d.sujetoId === su.id);
+  const nombreHtml = editable
+    ? '<input class="fb-suj-nom" id="suj_nom_' + su.id + '" value="' + (su.nombre ? su.nombre.replace(/"/g, '&quot;') : '') + '" placeholder="Nombre">'
+    : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
+  const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
+  const checklist = '<div class="fb-chk" style="margin:8px 0">' +
+    items.map(([k, label]) => '<label><input type="checkbox" data-sujchk="' + su.id + '" data-k="' + k + '"' + (chk[k] ? ' checked' : '') + '> ' + label + '</label>').join('') +
+    '</div>';
+  const sem = '<div class="fb-sem" style="margin:6px 0 0;padding-top:8px">' +
+    ['Verde', 'Amarillo', 'Rojo'].map(o => '<label class="fb-sem-op"><input type="radio" name="sujsem_' + su.id + '" value="' + o + '"' + (su.semaforo === o ? ' checked' : '') + ' onchange="recalcConsolidado()"> ' + ({ Verde: '🟢', Amarillo: '🟡', Rojo: '🔴' }[o]) + ' ' + o + '</label>').join('') + '</div>';
+  const docHtml = '<div class="fb-doc" style="margin-top:8px">' +
+    (docs.length
+      ? docs.map(d => '<a href="/api/b2b/documentos/' + d.id + '/descargar" target="_blank" class="fb-doc-link">📄 ' + d.nombreArchivo + '</a> <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ')
+      : '<span class="fb-doc-pend">Sentinel pendiente</span> <button class="btn-sunat" onclick="subirDocSujeto(' + su.id + ')">Subir PDF</button>') +
+    '</div>';
+  return '<div class="fb-suj"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + checklist + sem + docHtml + '</div>';
+}
+
+function recalcConsolidado() {
+  // Actualiza el semáforo en memoria y re-renderiza solo el pill superior sin recargar todo.
+  (FICHA.creditoSujetos || []).forEach(su => {
+    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
+    if (r) su.semaforo = r.value;
+  });
 }
 
 function panelGarantia(desbloqueada, sem) {
@@ -4121,6 +4222,19 @@ async function guardarGarantia() {
 }
 
 async function avanzarEtapa(tipo) {
+  // Crédito: guarda los sujetos y avanza por el consolidado (lo calcula el backend).
+  if (tipo === 'credito') {
+    const cons = consolidadoCreditoJS();
+    if (!cons) { alert('Marca el semáforo de cada sujeto antes de avanzar.'); return; }
+    if (!confirm('Consolidado de crédito: ' + cons + '. La solicitud ' + (cons === 'Verde' ? 'avanza a garantía' : cons === 'Rojo' ? 'pasa a No elegible' : 'pasa a nurture') + '. ¿Continuar?')) return;
+    try {
+      await guardarCreditoSilencioso();
+      await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/avanzar', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipoFiltro: 'credito' }) });
+      cargarB2B();
+      await abrirFichaB2B(FICHA.solicitud.codigo);
+    } catch (e) { alert('No se pudo avanzar: ' + e.message); }
+    return;
+  }
   const sem = leerSemaforo(tipo);
   if (!sem) { alert('Marca el semáforo antes de avanzar.'); return; }
   if (!confirm('Con semáforo ' + sem + ', la solicitud ' + (sem === 'Verde' ? 'avanza a la siguiente etapa' : sem === 'Rojo' ? 'pasa a No elegible' : 'pasa a nurture') + '. ¿Continuar?')) return;
@@ -4133,6 +4247,19 @@ async function avanzarEtapa(tipo) {
     cargarB2B();
     await abrirFichaB2B(FICHA.solicitud.codigo);
   } catch (e) { alert('No se pudo avanzar: ' + e.message); }
+}
+
+// Guarda los sujetos de crédito sin recargar la ficha (uso interno de avanzar).
+async function guardarCreditoSilencioso() {
+  for (const su of (FICHA.creditoSujetos || [])) {
+    const chk = {};
+    document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; });
+    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
+    const nomEl = $('suj_nom_' + su.id);
+    const body = { checklist: chk, semaforo: r ? r.value : null };
+    if (nomEl) body.nombre = nomEl.value.trim();
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  }
 }
 
 function subirDoc(tipoDoc) {
@@ -4158,4 +4285,56 @@ async function eliminarDoc(id) {
   if (!confirm('¿Eliminar este documento?')) return;
   try { await api('/api/b2b/documentos/' + id, { method: 'DELETE' }); await abrirFichaB2B(FICHA.solicitud.codigo); }
   catch (e) { alert('No se pudo eliminar: ' + e.message); }
+}
+
+// ===== Acciones del filtro de crédito =====
+async function guardarCredito() {
+  // Guarda cada sujeto (nombre + checklist + semáforo).
+  const sujetos = FICHA.creditoSujetos || [];
+  try {
+    for (const su of sujetos) {
+      const chk = {};
+      document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; });
+      const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
+      const nomEl = $('suj_nom_' + su.id);
+      const body = { checklist: chk, semaforo: r ? r.value : null };
+      if (nomEl) body.nombre = nomEl.value.trim();
+      await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+async function agregarSujeto(tipo) {
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipoSujeto: tipo }) });
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo agregar: ' + e.message); }
+}
+
+async function eliminarSujeto(id) {
+  if (!confirm('¿Quitar este sujeto del análisis de crédito?')) return;
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + id, { method: 'DELETE' });
+    await abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert('No se pudo eliminar: ' + e.message); }
+}
+
+function subirDocSujeto(sujetoId) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.pdf,image/*';
+  input.onchange = async () => {
+    if (!input.files || !input.files[0]) return;
+    const fd = new FormData();
+    fd.append('archivo', input.files[0]);
+    fd.append('etapa', 'credito');
+    fd.append('tipoDoc', 'Reporte Sentinel');
+    fd.append('sujetoId', sujetoId);
+    try {
+      const r = await fetch('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/documentos', { method: 'POST', body: fd });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
+      await abrirFichaB2B(FICHA.solicitud.codigo);
+    } catch (e) { alert('No se pudo subir: ' + e.message); }
+  };
+  input.click();
 }

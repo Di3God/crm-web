@@ -412,6 +412,19 @@ db.exec(`
     UNIQUE(codigoSolicitud, tipoFiltro)
   );
   CREATE INDEX IF NOT EXISTS idx_b2bfil_sol ON b2b_filtros(codigoSolicitud);
+  CREATE TABLE IF NOT EXISTS b2b_credito_sujetos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    tipoSujeto TEXT NOT NULL,
+    nombre TEXT,
+    documento TEXT,
+    checklist TEXT,
+    semaforo TEXT,
+    observaciones TEXT,
+    orden INTEGER DEFAULT 0,
+    actualizadoEn TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bcred_sol ON b2b_credito_sujetos(codigoSolicitud);
 `);
 // Columnas de garantía añadidas a solicitudes ya existentes (despliegues previos de v1.149).
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tieneInmueble TEXT"); } catch (e) { }
@@ -422,6 +435,7 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatEstado TEXT"); } catc
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch (e) { }
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -2784,17 +2798,94 @@ app.delete('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== FILTRO DE CRÉDITO: sujetos (empresa / representantes / vinculadas) y consolidado =====
+// Consolidado = el PEOR semáforo de todos los sujetos (Rojo > Amarillo > Verde).
+const ORDEN_SEM = { Verde: 0, Amarillo: 1, Rojo: 2 };
+function consolidadoCredito(codigo) {
+  const sujetos = db.prepare('SELECT semaforo FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(codigo);
+  if (!sujetos.length) return null;
+  let peor = null, peorVal = -1;
+  for (const s of sujetos) {
+    if (!s.semaforo) continue;
+    const v = ORDEN_SEM[s.semaforo];
+    if (v != null && v > peorVal) { peorVal = v; peor = s.semaforo; }
+  }
+  return peor;
+}
+// Recalcula y guarda el consolidado en b2b_filtros (credito) + resultadoCredito de la solicitud.
+function refrescarConsolidadoCredito(codigo, responsable) {
+  const cons = consolidadoCredito(codigo);
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, semaforo, responsable, actualizadoEn)
+    VALUES (?, 'credito', ?, ?, ?)
+    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
+    .run(codigo, cons, responsable || null, ahora);
+  if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoCredito=? WHERE codigo=?').run(cons, codigo);
+  return cons;
+}
+
+// Agrega un sujeto (representante o vinculada).
+app.post('/api/b2b/solicitudes/:codigo/credito/sujeto', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const tipo = (req.body && req.body.tipoSujeto) || '';
+  if (!['representante', 'vinculada'].includes(tipo)) return res.status(400).json({ error: 'Tipo de sujeto inválido' });
+  const ahora = new Date().toISOString();
+  const r = db.prepare('INSERT INTO b2b_credito_sujetos (codigoSolicitud, tipoSujeto, nombre, documento, orden, actualizadoEn) VALUES (?,?,?,?,?,?)')
+    .run(s.codigo, tipo, (req.body && req.body.nombre) || null, (req.body && req.body.documento) || null, Date.now() % 100000, ahora);
+  auditar(req, 'b2b_credito_agregar_sujeto', s.codigo, tipo);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+
+// Actualiza un sujeto (nombre, documento, checklist, semáforo, observaciones).
+app.put('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res) => {
+  const su = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
+  if (!su) return res.status(404).json({ error: 'Sujeto no encontrado' });
+  const b = req.body || {};
+  const ahora = new Date().toISOString();
+  db.prepare('UPDATE b2b_credito_sujetos SET nombre=?, documento=?, checklist=?, semaforo=?, observaciones=?, actualizadoEn=? WHERE id=?')
+    .run(b.nombre != null ? b.nombre : su.nombre, b.documento != null ? b.documento : su.documento,
+      b.checklist ? JSON.stringify(b.checklist) : su.checklist, b.semaforo != null ? b.semaforo : su.semaforo,
+      b.observaciones != null ? b.observaciones : su.observaciones, ahora, su.id);
+  const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
+  auditar(req, 'b2b_credito_guardar_sujeto', req.params.codigo, su.tipoSujeto + (b.semaforo ? ' · ' + b.semaforo : ''));
+  res.json({ ok: true, consolidado: cons });
+});
+
+// Elimina un sujeto (no la empresa).
+app.delete('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res) => {
+  const su = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
+  if (!su) return res.status(404).json({ error: 'Sujeto no encontrado' });
+  if (su.tipoSujeto === 'empresa') return res.status(400).json({ error: 'No se puede eliminar la empresa' });
+  // Borra también sus documentos.
+  const docs = db.prepare('SELECT * FROM b2b_documentos WHERE sujetoId=?').all(su.id);
+  docs.forEach(d => { try { if (d.rutaArchivo && fs.existsSync(d.rutaArchivo)) fs.unlinkSync(d.rutaArchivo); } catch (e) { } });
+  db.prepare('DELETE FROM b2b_documentos WHERE sujetoId=?').run(su.id);
+  db.prepare('DELETE FROM b2b_credito_sujetos WHERE id=?').run(su.id);
+  const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
+  auditar(req, 'b2b_credito_eliminar_sujeto', req.params.codigo, su.tipoSujeto);
+  res.json({ ok: true, consolidado: cons });
+});
+
 // ===== FICHA B2B: datos completos, garantía, filtros, documentos, avanzar etapa =====
 // Devuelve todo lo necesario para la ficha de una solicitud.
 app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
   const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const garantia = db.prepare('SELECT * FROM b2b_garantia WHERE codigoSolicitud=?').get(s.codigo) || null;
-  const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
+  const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn, sujetoId FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
   const filtrosRows = db.prepare('SELECT tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn FROM b2b_filtros WHERE codigoSolicitud=?').all(s.codigo);
   const filtros = {};
   filtrosRows.forEach(f => { filtros[f.tipoFiltro] = { checklist: f.checklist ? JSON.parse(f.checklist) : null, semaforo: f.semaforo, observaciones: f.observaciones, responsable: f.responsable, actualizadoEn: f.actualizadoEn }; });
-  res.json({ solicitud: s, garantia, documentos, filtros });
+  // Sujetos de crédito (empresa / representantes / vinculadas). Auto-crea la empresa si no existe.
+  let sujetos = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE codigoSolicitud=? ORDER BY CASE tipoSujeto WHEN \'empresa\' THEN 0 WHEN \'representante\' THEN 1 ELSE 2 END, orden, id').all(s.codigo);
+  if (!sujetos.some(x => x.tipoSujeto === 'empresa')) {
+    db.prepare('INSERT INTO b2b_credito_sujetos (codigoSolicitud, tipoSujeto, nombre, documento, orden, actualizadoEn) VALUES (?,?,?,?,?,?)')
+      .run(s.codigo, 'empresa', s.razonSocial || null, s.ruc || null, 0, new Date().toISOString());
+    sujetos = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE codigoSolicitud=? ORDER BY CASE tipoSujeto WHEN \'empresa\' THEN 0 WHEN \'representante\' THEN 1 ELSE 2 END, orden, id').all(s.codigo);
+  }
+  sujetos = sujetos.map(su => ({ ...su, checklist: su.checklist ? JSON.parse(su.checklist) : {} }));
+  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos });
 });
 
 // Guarda los datos del inmueble (garantía).
@@ -2847,10 +2938,11 @@ app.post('/api/b2b/solicitudes/:codigo/documentos', soloB2B, b2bUpload.single('a
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
   const ahora = new Date().toISOString();
-  const r = db.prepare(`INSERT INTO b2b_documentos (codigoSolicitud, etapa, tipoDoc, nombreArchivo, rutaArchivo, mime, tamano, subidoPor, subidoEn)
-    VALUES (?,?,?,?,?,?,?,?,?)`)
+  const r = db.prepare(`INSERT INTO b2b_documentos (codigoSolicitud, etapa, tipoDoc, nombreArchivo, rutaArchivo, mime, tamano, subidoPor, subidoEn, sujetoId)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`)
     .run(s.codigo, (req.body && req.body.etapa) || 'garantia', (req.body && req.body.tipoDoc) || 'Documento',
-      req.file.originalname, req.file.path, req.file.mimetype, req.file.size, req.user.nombre, ahora);
+      req.file.originalname, req.file.path, req.file.mimetype, req.file.size, req.user.nombre, ahora,
+      (req.body && req.body.sujetoId) ? Number(req.body.sujetoId) : null);
   auditar(req, 'b2b_subir_documento', s.codigo, ((req.body && req.body.tipoDoc) || '') + ' · ' + req.file.originalname);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
@@ -2882,10 +2974,12 @@ app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const tipo = (req.body && req.body.tipoFiltro) || '';
-  const semaforo = (req.body && req.body.semaforo) || '';
   const mapa = SIGUIENTE_ETAPA_B2B[tipo];
   if (!mapa) return res.status(400).json({ error: 'Filtro inválido' });
-  if (!semaforo) return res.status(400).json({ error: 'Falta el semáforo del filtro' });
+  // Para crédito, el semáforo es el CONSOLIDADO (el peor de los sujetos), no uno enviado por el cliente.
+  let semaforo = (req.body && req.body.semaforo) || '';
+  if (tipo === 'credito') { semaforo = refrescarConsolidadoCredito(s.codigo, req.user.nombre) || ''; }
+  if (!semaforo) return res.status(400).json({ error: tipo === 'credito' ? 'Marca el semáforo de cada sujeto primero' : 'Falta el semáforo del filtro' });
   const nuevoEstado = mapa[semaforo];
   if (!nuevoEstado) return res.status(400).json({ error: 'Semáforo inválido' });
   db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(nuevoEstado, s.codigo);
@@ -3277,7 +3371,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.158 (ficha de solicitud B2B: acordeon de 4 etapas, etapa Garantia funcional con checklist+semaforo, datos del inmueble, subida real de documentos (multer) al volumen, avanzar etapa por semaforo verde/amarillo/rojo) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.160 (filtro credito como 3 sub-bloques: empresa fija + representantes y vinculadas dinamicos, checklist por sujeto, PDF Sentinel por sujeto, semaforo consolidado=peor de los tres, avanzar por consolidado) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
