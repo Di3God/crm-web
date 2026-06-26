@@ -3371,7 +3371,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.160 (filtro credito como 3 sub-bloques: empresa fija + representantes y vinculadas dinamicos, checklist por sujeto, PDF Sentinel por sujeto, semaforo consolidado=peor de los tres, avanzar por consolidado) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.161 (UI ficha: checklists alineados y sin mayusculas heredadas; subir archivo y agregar sujeto ya NO borran lo marcado (estado en memoria + render suave); animacion de aparicion; fix colision renderFicha B2B vs ficha de chat B2C) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

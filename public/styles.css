@@ -1075,8 +1075,9 @@
   .fb-body { padding: 14px 16px; border-top: 0.5px solid var(--line); }
   .fb-sec { font-size: 12px; font-weight: 600; color: #475569; margin: 14px 0 8px; }
   .fb-sec:first-child { margin-top: 0; }
-  .fb-chk { display: flex; flex-direction: column; gap: 7px; }
-  .fb-chk label { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
+  .fb-chk { display: flex; flex-direction: column; gap: 8px; }
+  #ovFichaB2B .fb-chk label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; font-weight: 400; color: var(--ink); text-transform: none; letter-spacing: normal; margin: 0; cursor: pointer; line-height: 1.4; text-align: left; }
+  #ovFichaB2B .fb-chk input[type=checkbox] { flex: 0 0 auto; width: 16px; height: 16px; margin: 1px 0 0; cursor: pointer; }
   .fb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .fb-in { display: flex; flex-direction: column; gap: 3px; }
   .fb-in span { font-size: 11px; color: var(--muted); }
@@ -1090,8 +1091,15 @@
   .fb-doc-pend { flex: 1; color: var(--muted); font-size: 12px; }
   .fb-sem { display: flex; align-items: center; gap: 14px; margin: 16px 0 12px; padding-top: 12px; border-top: 0.5px solid var(--line); font-size: 13px; }
   .fb-sem > span:first-child { color: var(--muted); }
-  .fb-sem-op { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  #ovFichaB2B .fb-sem-op { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px; font-weight: 400; color: var(--ink); text-transform: none; letter-spacing: normal; margin: 0; }
+  #ovFichaB2B .fb-in { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+  #ovFichaB2B .fb-in span { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: normal; }
   .fb-acc { display: flex; gap: 10px; justify-content: flex-end; }
+  @keyframes fbIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .fb-suj { animation: fbIn .22s ease; }
+  .fb-suj-nueva { animation: fbIn .22s ease; box-shadow: 0 0 0 2px rgba(11,114,232,.25); }
+  .fb-doc { transition: background .2s ease; }
+  .fb-doc-ok { background: #E7F7EE !important; }
 
   /* ===== Sujetos de crédito ===== */
   .fb-suj { border: 0.5px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-bottom: 8px; background: #FBFCFE; }

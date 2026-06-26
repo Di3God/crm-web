@@ -3959,13 +3959,13 @@ async function abrirFichaB2B(codigo) {
   $('fbAcordeon').innerHTML = '<div class="vacio">Cargando…</div>';
   try {
     FICHA = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/ficha');
-    renderFicha();
+    renderFichaB2B();
   } catch (e) {
     $('fbAcordeon').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
   }
 }
 
-function renderFicha() {
+function renderFichaB2B() {
   const s = FICHA.solicitud;
   $('fbTitulo').textContent = s.razonSocial || s.ruc || s.codigo;
   $('fbSubtitulo').innerHTML = s.codigo + ' · RUC ' + (s.ruc || '—') + (s.ticket ? ' · ticket <b>' + s.ticket + '</b>' : '') + ' · ' + trEstadoB2B(s.estado);
@@ -3984,6 +3984,7 @@ function renderFicha() {
     panelBloqueable('businesscase', 'Business case', '📑', false)
   ];
   $('fbAcordeon').innerHTML = panels.join('');
+  (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });  // el resaltado solo en el primer render
 }
 
 function fbPill(sem) {
@@ -4101,15 +4102,13 @@ function sujetoCard(su, editable) {
       ? docs.map(d => '<a href="/api/b2b/documentos/' + d.id + '/descargar" target="_blank" class="fb-doc-link">📄 ' + d.nombreArchivo + '</a> <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ')
       : '<span class="fb-doc-pend">Sentinel pendiente</span> <button class="btn-sunat" onclick="subirDocSujeto(' + su.id + ')">Subir PDF</button>') +
     '</div>';
-  return '<div class="fb-suj"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + checklist + sem + docHtml + '</div>';
+  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + checklist + sem + docHtml + '</div>';
 }
 
 function recalcConsolidado() {
-  // Actualiza el semáforo en memoria y re-renderiza solo el pill superior sin recargar todo.
-  (FICHA.creditoSujetos || []).forEach(su => {
-    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
-    if (r) su.semaforo = r.value;
-  });
+  // Guarda el estado actual en memoria y re-renderiza para refrescar el pill consolidado en vivo.
+  sincronizarFichaDOM();
+  renderFichaB2B();
 }
 
 function panelGarantia(desbloqueada, sem) {
@@ -4161,7 +4160,34 @@ function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado) {
     '</div>' + (cuerpo || '') + '</div>';
 }
 
-function fbToggle(tipo) { FICHA_ETAPA_OPEN = (FICHA_ETAPA_OPEN === tipo) ? null : tipo; renderFicha(); }
+function fbToggle(tipo) { sincronizarFichaDOM(); FICHA_ETAPA_OPEN = (FICHA_ETAPA_OPEN === tipo) ? null : tipo; renderFichaB2B(); }
+
+// Captura el estado actual del DOM (checkboxes, semáforos, inputs) hacia FICHA en memoria,
+// para que al re-renderizar (agregar sujeto, subir doc) NO se pierda lo que el usuario marcó.
+function sincronizarFichaDOM() {
+  if (!FICHA) return;
+  // Garantía: datos del inmueble
+  ['tipoInmueble', 'distrito', 'propietario', 'partidaRegistral', 'valorEstimado', 'cargas'].forEach(id => {
+    const el = $('fb_' + id); if (el) { FICHA.garantia = FICHA.garantia || {}; FICHA.garantia[id] = el.value; }
+  });
+  // Garantía: checklist + semáforo
+  const gchk = {}; let hayG = false;
+  document.querySelectorAll('#fbAcordeon input[data-chk]').forEach(c => { gchk[c.getAttribute('data-chk')] = c.checked; hayG = true; });
+  const gsem = document.querySelector('input[name="fbsem_garantia"]:checked');
+  if (hayG || gsem) {
+    FICHA.filtros.garantia = FICHA.filtros.garantia || {};
+    if (hayG) FICHA.filtros.garantia.checklist = gchk;
+    if (gsem) FICHA.filtros.garantia.semaforo = gsem.value;
+  }
+  // Crédito: por cada sujeto, nombre + checklist + semáforo
+  (FICHA.creditoSujetos || []).forEach(su => {
+    const nom = $('suj_nom_' + su.id); if (nom) su.nombre = nom.value;
+    const chk = {}; let hay = false;
+    document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; hay = true; });
+    if (hay) su.checklist = chk;
+    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked'); if (r) su.semaforo = r.value;
+  });
+}
 
 function fbCampo(label, val) {
   return '<div class="fb-campo"><span>' + label + '</span><b>' + (val || '—') + '</b></div>';
@@ -4268,14 +4294,19 @@ function subirDoc(tipoDoc) {
   input.accept = '.pdf,image/*';
   input.onchange = async () => {
     if (!input.files || !input.files[0]) return;
+    sincronizarFichaDOM();  // conserva el checklist de garantía antes de re-renderizar
+    const f = input.files[0];
     const fd = new FormData();
-    fd.append('archivo', input.files[0]);
+    fd.append('archivo', f);
     fd.append('etapa', 'garantia');
     fd.append('tipoDoc', tipoDoc);
     try {
       const r = await fetch('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/documentos', { method: 'POST', body: fd });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
-      await abrirFichaB2B(FICHA.solicitud.codigo);
+      const j = await r.json();
+      FICHA.documentos = FICHA.documentos || [];
+      FICHA.documentos.unshift({ id: j.id, etapa: 'garantia', tipoDoc: tipoDoc, nombreArchivo: f.name, mime: f.type, tamano: f.size, sujetoId: null });
+      renderFichaB2B();
     } catch (e) { alert('No se pudo subir: ' + e.message); }
   };
   input.click();
@@ -4283,8 +4314,12 @@ function subirDoc(tipoDoc) {
 
 async function eliminarDoc(id) {
   if (!confirm('¿Eliminar este documento?')) return;
-  try { await api('/api/b2b/documentos/' + id, { method: 'DELETE' }); await abrirFichaB2B(FICHA.solicitud.codigo); }
-  catch (e) { alert('No se pudo eliminar: ' + e.message); }
+  sincronizarFichaDOM();
+  try {
+    await api('/api/b2b/documentos/' + id, { method: 'DELETE' });
+    FICHA.documentos = (FICHA.documentos || []).filter(d => d.id !== id);
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo eliminar: ' + e.message); }
 }
 
 // ===== Acciones del filtro de crédito =====
@@ -4306,17 +4341,25 @@ async function guardarCredito() {
 }
 
 async function agregarSujeto(tipo) {
+  sincronizarFichaDOM();  // conserva lo marcado en los demás sujetos
   try {
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipoSujeto: tipo }) });
-    await abrirFichaB2B(FICHA.solicitud.codigo);
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipoSujeto: tipo }) });
+    FICHA.creditoSujetos = FICHA.creditoSujetos || [];
+    FICHA.creditoSujetos.push({ id: r.id, tipoSujeto: tipo, nombre: '', documento: null, checklist: {}, semaforo: null, _nuevo: true });
+    renderFichaB2B();
+    // resalta el recién agregado un instante
+    setTimeout(() => { const el = document.querySelector('.fb-suj-nueva'); if (el) el.classList.remove('fb-suj-nueva'); }, 1200);
   } catch (e) { alert('No se pudo agregar: ' + e.message); }
 }
 
 async function eliminarSujeto(id) {
   if (!confirm('¿Quitar este sujeto del análisis de crédito?')) return;
+  sincronizarFichaDOM();
   try {
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + id, { method: 'DELETE' });
-    await abrirFichaB2B(FICHA.solicitud.codigo);
+    FICHA.creditoSujetos = (FICHA.creditoSujetos || []).filter(s => s.id !== id);
+    FICHA.documentos = (FICHA.documentos || []).filter(d => d.sujetoId !== id);
+    renderFichaB2B();
   } catch (e) { alert('No se pudo eliminar: ' + e.message); }
 }
 
@@ -4325,15 +4368,20 @@ function subirDocSujeto(sujetoId) {
   input.type = 'file'; input.accept = '.pdf,image/*';
   input.onchange = async () => {
     if (!input.files || !input.files[0]) return;
+    sincronizarFichaDOM();  // conserva lo marcado antes de re-renderizar
+    const f = input.files[0];
     const fd = new FormData();
-    fd.append('archivo', input.files[0]);
+    fd.append('archivo', f);
     fd.append('etapa', 'credito');
     fd.append('tipoDoc', 'Reporte Sentinel');
     fd.append('sujetoId', sujetoId);
     try {
       const r = await fetch('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/documentos', { method: 'POST', body: fd });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
-      await abrirFichaB2B(FICHA.solicitud.codigo);
+      const j = await r.json();
+      FICHA.documentos = FICHA.documentos || [];
+      FICHA.documentos.unshift({ id: j.id, etapa: 'credito', tipoDoc: 'Reporte Sentinel', nombreArchivo: f.name, mime: f.type, tamano: f.size, sujetoId: Number(sujetoId) });
+      renderFichaB2B();
     } catch (e) { alert('No se pudo subir: ' + e.message); }
   };
   input.click();
