@@ -230,15 +230,6 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
 crearUsuario('dbarreto@tasatop.com', 'Dora Barreto', 'gestora', '12345678');
 crearUsuario('cpovis@tasatop.com', 'Cristian Povis', 'gestora', '12345678');
 
-// Equipo B2B (clave inicial 12345678). Jefes supervisan; equipos operan.
-crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
-crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
-crearUsuario('cmartinez@tasatop.com', 'Carmen Martinez', 'asistente_creditos', '12345678');
-crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
-crearUsuario('bvasquez@tasatop.com', 'Brillite Vasquez', 'funcionario_b2b', '12345678');
-crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
-crearUsuario('bsegil@tasatop.com', 'Bony Segil', 'funcionario_b2b', '12345678');
-
 // Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
 try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
 try { db.exec('ALTER TABLE usuarios ADD COLUMN rankingVisible INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
@@ -265,6 +256,16 @@ try {
     console.log('[migracion] usuarios: roles B2B (asistente_creditos, funcionario_b2b, jefe_creditos, jefe_b2b) habilitados');
   }
 } catch (e) { try { db.exec('ROLLBACK'); } catch (_) { } console.error('[migracion usuarios] error:', e.message); }
+
+// Equipo B2B (clave inicial 12345678). DESPUÉS de la migración: el CHECK ya permite los roles.
+// Jefes supervisan; equipos operan. Idempotente (INSERT OR IGNORE).
+crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
+crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
+crearUsuario('cmartinez@tasatop.com', 'Carmen Martinez', 'asistente_creditos', '12345678');
+crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
+crearUsuario('bvasquez@tasatop.com', 'Brillite Vasquez', 'funcionario_b2b', '12345678');
+crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
+crearUsuario('bsegil@tasatop.com', 'Bony Segil', 'funcionario_b2b', '12345678');
 
 // ===== MÓDULO B2B (crowdlending empresarial) — Fase 1: solicitudes =====
 db.exec(`
@@ -2939,7 +2940,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.151 (equipo B2B: 7 usuarios reales con roles jefe_creditos/jefe_b2b supervisores + asistente_creditos/funcionario_b2b operadores; pestaña Equipo con toggle de round-robin por operador) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.152 (fix: altas de usuarios B2B movidas DESPUES de la migracion de roles, antes el INSERT OR IGNORE las descartaba por el CHECK viejo y el equipo salia vacio) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
