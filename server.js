@@ -2635,15 +2635,17 @@ app.get('/api/dashboard/llegadas-horario', (req, res) => {
 app.get('/api/ranking/contactabilidad', (req, res) => {
   const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
   const hoy = peruDia(new Date().toISOString());
-  const META = 7; // meta diaria: conexiones calificadas por GP
+  const META = 8; // meta GLOBAL del equipo: agendamientos del día (ya no es individual)
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
+  // Agendado o más adelante (subconjunto de CALIF). Es el salto grande del puntaje.
+  const AGEND = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
   const m = {};
   // GPs ocultas del ranking (interruptor por usuario, sin tocar el código)
   const ocultas = new Set(
     db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND COALESCE(rankingVisible,1)=0").all().map(u => u.nombre)
   );
-  (L.ASESORES || []).filter(a => !ocultas.has(a)).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 }; });
+  (L.ASESORES || []).filter(a => !ocultas.has(a)).forEach(a => { m[a] = { asesor: a, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, agendados: 0, verificadas: 0, puntosIntento: 0 }; });
   const gs = db.prepare('SELECT asesor, canal, resultado, fecha, codigo FROM gestiones').all();
   // Hora decimal Perú y franja del 3x5 (mañana <11:00, tarde 11:00–15:30, noche ≥15:30)
   const peruHM = iso => { const d = new Date(new Date(iso).getTime() - 5 * 3600000); return d.getUTCHours() + d.getUTCMinutes() / 60; };
@@ -2652,6 +2654,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const califDia = {};
   const gestLlamadaHoy = []; // gestiones tipo Llamada de hoy, para cruzar con Aircall
   const intentoGrupos = {}; // asesor -> { 'codigo|franja': nro de intentos } (para rendimiento decreciente)
+  const intentoDia = {}; // asesor -> { dia: true } para la racha (se enciende con el 1er intento del dia)
   gs.forEach(g => {
     const dia = peruDia(g.fecha);
     if (CALIF.includes(g.resultado)) {
@@ -2660,7 +2663,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     }
     if (dia !== hoy) return;
     if (ocultas.has(g.asesor)) return; // GP oculta del ranking
-    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, verificadas: 0, puntosIntento: 0 };
+    if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, agendados: 0, verificadas: 0, puntosIntento: 0 };
     const r = m[g.asesor];
     r.intentos++;
     // Agrupar intento por lead + franja (corazón del 3x5: 1er intento de la franja vale 1, repetir +0.5)
@@ -2671,11 +2674,13 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     if (g.canal === 'Llamada') { r.llamadas++; gestLlamadaHoy.push({ asesor: g.asesor, codigo: g.codigo, t: new Date(g.fecha).getTime() }); }
     if (!SIN.includes(g.resultado)) r.conectados++;
     if (CALIF.includes(g.resultado)) r.calificados++;
+    if (AGEND.includes(g.resultado)) r.agendados++;
+    (intentoDia[g.asesor] = intentoDia[g.asesor] || {})[dia] = true; // la racha se enciende con cualquier toque del día
   });
-  // Puntos por intento con rendimiento decreciente: 1er intento de cada (lead, franja) = 1; cada repetición = +0.5
+  // Puntos por intento con rendimiento decreciente: 1er intento de cada (lead, franja) = 1; cada repetición = +0.25
   Object.keys(intentoGrupos).forEach(a => {
     let p = 0;
-    Object.values(intentoGrupos[a]).forEach(n => { p += 1 + 0.5 * (n - 1); });
+    Object.values(intentoGrupos[a]).forEach(n => { p += 1 + 0.25 * (n - 1); });
     if (m[a]) m[a].puntosIntento = Math.round(p * 10) / 10;
   });
   // VERIFICACIÓN AIRCALL: una gestión "Llamada" se verifica si hay una llamada real de Aircall
@@ -2688,25 +2693,25 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     const cand = llamHoy.find(ll => !ll.usada && ll.codigo === ge.codigo && Math.abs(ll.t - ge.t) <= VENTANA);
     if (cand) { cand.usada = true; if (m[ge.asesor]) m[ge.asesor].verificadas++; }
   });
-  // Racha: días seguidos cumpliendo la meta (incluye hoy solo si ya la cumplió)
+  // Racha: días seguidos con al menos un intento (se enciende con el 1er toque del día)
   const diaMenos = (ds, n) => { const d = new Date(ds + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
   function rachaDe(asesor) {
-    const dias = califDia[asesor] || {};
+    const dias = intentoDia[asesor] || {};
     let streak = 0;
-    let cursor = (dias[hoy] || 0) >= META ? hoy : diaMenos(hoy, 1);
+    let cursor = dias[hoy] ? hoy : diaMenos(hoy, 1);
     for (let i = 0; i < 120; i++) { // tope de seguridad
-      if ((dias[cursor] || 0) >= META) { streak++; cursor = diaMenos(cursor, 1); }
+      if (dias[cursor]) { streak++; cursor = diaMenos(cursor, 1); }
       else break;
     }
     return streak;
   }
-  // Puntaje: intentos (rendimiento decreciente por franja) + conexión×3 + calificó×8 + verificada Aircall×2
+  // Puntaje: intento (1, +0.25 por repetir franja) + conectado×2.5 + calificado×5 + agendado×15 + Call×1
   Object.values(m).forEach(r => {
-    r.puntaje = Math.round((r.puntosIntento + r.conectados * 3 + r.calificados * 8 + (r.verificadas || 0) * 2) * 10) / 10;
+    r.puntaje = Math.round((r.puntosIntento + r.conectados * 2.5 + r.calificados * 5 + r.agendados * 15 + (r.verificadas || 0) * 1) * 10) / 10;
     r.racha = rachaDe(r.asesor);
   });
   const ranking = Object.values(m).sort((a, b) =>
-    b.puntaje - a.puntaje || b.calificados - a.calificados || b.conectados - a.conectados || a.asesor.localeCompare(b.asesor));
+    b.puntaje - a.puntaje || b.agendados - a.agendados || b.calificados - a.calificados || b.conectados - a.conectados || a.asesor.localeCompare(b.asesor));
   // Segundos hasta el reinicio (medianoche Perú)
   const ahoraPeru = new Date(new Date().getTime() - 5 * 3600000);
   const finDia = new Date(ahoraPeru); finDia.setUTCHours(24, 0, 0, 0);
@@ -2715,7 +2720,8 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const INI = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
   const diasRacha = [];
   for (let i = 0; i < 7; i++) { const dd = new Date(ahoraPeru); dd.setUTCDate(dd.getUTCDate() + i); diasRacha.push(INI[dd.getUTCDay()]); }
-  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 3, calificado: 8, verificada: 2 }, ranking });
+  const agendadosEquipo = Object.values(m).reduce((s, r) => s + (r.agendados || 0), 0);
+  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, metaGlobal: META, agendadosEquipo, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 2.5, calificado: 5, agendado: 15, call: 1 }, ranking });
 });
 
 // Diagnóstico Aircall (admin): muestra los campos crudos de las últimas llamadas para
@@ -3371,7 +3377,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.161 (UI ficha: checklists alineados y sin mayusculas heredadas; subir archivo y agregar sujeto ya NO borran lo marcado (estado en memoria + render suave); animacion de aparicion; fix colision renderFicha B2B vs ficha de chat B2C) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.162 (ranking B2C: pesos intento1/+0.25, conectado2.5, calificado5, agendado15, Call1; columna Agendados; Puntos primera columna; meta GLOBAL 8 agendamientos equipo; racha desde 1er intento; Termina en; podio campeon mas alto) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

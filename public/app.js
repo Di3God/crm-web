@@ -3514,19 +3514,20 @@ async function cargarRanking() {
       '</div>';
     }).join('') || '<div class="rk-vacio">Aún no hay actividad hoy. ¡Sé la primera! 📞</div>';
 
-    // Tarjeta META individual (cada GP: sus calificados vs 7). Admin/jefa ve la del líder como referencia.
-    const miReg = rk.find(g => g.asesor === yo) || rk[0] || { calificados: 0, racha: 0, intentos: 0 };
-    const soyGP = rk.some(g => g.asesor === yo);
-    const pctMeta = Math.min(100, Math.round((miReg.calificados / META) * 100));
-    const metaMsg = miReg.calificados >= META ? '¡Meta cumplida! 🎉' : (pctMeta >= 50 ? 'Vas por buen camino ↑' : '¡A darle con todo!');
+    // Tarjeta META GLOBAL del equipo: agendamientos de hoy vs 8.
+    const metaGlobal = d.metaGlobal || META;
+    const agEquipo = d.agendadosEquipo || 0;
+    const pctMeta = Math.min(100, Math.round((agEquipo / metaGlobal) * 100));
+    const metaMsg = agEquipo >= metaGlobal ? '¡Meta del equipo cumplida! 🎉' : (pctMeta >= 50 ? 'El equipo va por buen camino ↑' : '¡A empujar agendamientos!');
     if ($('rkMeta')) $('rkMeta').innerHTML =
-      '<div class="rk-card-tit">🎯 ' + (soyGP ? 'Tu meta diaria' : 'Meta diaria (por GP)') + '</div>' +
-      '<div class="rk-card-big">' + META + ' <small>calificados por gestora</small></div>' +
+      '<div class="rk-card-tit">🎯 Meta del equipo (hoy)</div>' +
+      '<div class="rk-card-big">' + metaGlobal + ' <small>agendamientos</small></div>' +
       '<div class="rk-meta-bar"><div style="width:' + pctMeta + '%"></div></div>' +
-      '<div class="rk-meta-x">' + (soyGP ? 'Tú: ' : (primerNombre(miReg.asesor || '') + ': ')) + miReg.calificados + ' / ' + META + '</div>' +
-      '<div class="rk-meta-msg">' + (soyGP ? metaMsg : 'Cada GP tiene su propia meta de 7') + '</div>';
+      '<div class="rk-meta-x">Equipo: ' + agEquipo + ' / ' + metaGlobal + '</div>' +
+      '<div class="rk-meta-msg">' + metaMsg + '</div>';
 
     // Tarjeta RACHA — los círculos arrancan HOY hacia adelante (J,V,S,D...)
+    const miReg = rk.find(g => g.asesor === yo) || rk[0] || { racha: 0, intentos: 0 };
     const racha = miReg.racha || 0;
     const labels = d.diasRacha || ['', '', '', '', '', '', ''];
     const hoyActivo = (miReg.intentos || 0) > 0; // hoy se enciende con la 1ra llamada
@@ -3541,18 +3542,18 @@ async function cargarRanking() {
       '<div class="rk-dots">' + dots + '</div>';
 
     // Tabla completa
-    const head = '<div class="rk-row rk-head"><span>#</span><span>Gestora</span><span>Puntos</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Aircall</span></div>';
+    const head = '<div class="rk-row rk-head"><span>Puntos</span><span>Gestora</span><span>Intentos</span><span>Conectados</span><span>Calificados</span><span>Agendados</span><span>Call</span></div>';
     $('rkTabla').innerHTML = head + rk.map((g, i) => {
       const mio = g.asesor === yo ? ' rk-mio-row' : '';
       const pos = i < 3 ? medalla[i] : (i + 1);
       const tag = i === 0 ? ' <span class="rk-lider">Líder del día</span>' : (g.asesor === yo ? ' <span class="rk-tu">tú</span>' : '');
       return '<div class="rk-row' + mio + '">' +
-        '<span class="rk-pos">' + pos + '</span>' +
-        '<span class="rk-n">' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
         '<span class="rk-big">' + rkFmt(g.puntaje) + '</span>' +
+        '<span class="rk-n"><span class="rk-pos">' + pos + '</span> ' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
         '<span>' + g.intentos + '</span>' +
         '<span>' + g.conectados + '</span>' +
         '<span class="rk-cal">' + g.calificados + '</span>' +
+        '<span class="rk-agend">' + (g.agendados || 0) + '</span>' +
         '<span class="rk-verif">' + (g.verificadas || 0) + '</span>' +
       '</div>';
     }).join('');

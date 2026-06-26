@@ -956,19 +956,20 @@
 
   .rk-podio { display: flex; align-items: flex-end; justify-content: center; gap: 10px; align-self: end; }
   .rk-pod { width: 142px; border-radius: 13px 13px 0 0; padding: 14px 10px 14px; color: #fff; position: relative; box-shadow: 0 8px 26px rgba(0,0,0,.3);
-    display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; }
-  .rk-p1 { background: linear-gradient(180deg,#F4C842,#C9971A); height: 150px; }
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; }
+  .rk-p1 { background: linear-gradient(180deg,#F4C842,#C9971A); height: 172px; }
   .rk-p1::before { content: '👑'; position: absolute; top: -25px; left: 50%; transform: translateX(-50%); font-size: 24px; }
+  .rk-p1 .rk-pod-n { font-size: 16px; margin-top: 2px; }
   .rk-p2 { background: linear-gradient(180deg,#C7D0DA,#8C99A8); height: 124px; }
   .rk-p3 { background: linear-gradient(180deg,#D49A6A,#A6713F); height: 104px; }
   .rk-pod-rank { position: absolute; top: 8px; left: 9px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
-  .rk-pod-n { font-size: 14px; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  .rk-pod-v { font-size: 30px; font-weight: 800; line-height: 1; }
-  .rk-pod-l { font-size: 10.5px; opacity: .9; line-height: 1; }
+  .rk-pod-n { font-size: 14px; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; order: 1; }
+  .rk-pod-v { font-size: 30px; font-weight: 800; line-height: 1; order: 2; }
+  .rk-pod-l { font-size: 10.5px; opacity: .9; line-height: 1; order: 3; }
   .rk-pod.rk-mio { outline: 3px solid #1D9E75; outline-offset: 2px; }
 
   .rk-tabla { display: flex; flex-direction: column; }
-  .rk-row { display: grid; grid-template-columns: 48px 1fr 88px 88px 96px 96px 86px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
+  .rk-row { display: grid; grid-template-columns: 90px 1fr 80px 92px 92px 92px 72px; align-items: center; padding: 10px 22px; border-top: 1px solid var(--line); }
   .rk-head { background: #F7F8FA; font-size: 10.5px; color: #9AA8B8; text-transform: uppercase; letter-spacing: .03em; padding: 9px 22px; }
   .rk-head span:not(:nth-child(2)) { text-align: center; }
   .rk-pos { font-size: 15px; font-weight: 700; text-align: center; color: #475569; }
@@ -976,7 +977,8 @@
   .rk-av { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; flex: none; }
   .rk-lider { background: #FCEFC7; color: #9A6B00; font-size: 10px; padding: 2px 8px; border-radius: 999px; }
   .rk-tu { background: #1D9E75; color: #fff; font-size: 10px; padding: 1px 7px; border-radius: 999px; vertical-align: middle; }
-  .rk-row span:nth-child(n+3) { text-align: center; font-size: 13.5px; color: #475569; }
+  .rk-row span:not(:nth-child(2)) { text-align: center; font-size: 13.5px; color: #475569; }
+  .rk-pos { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; font-size: 14px; font-weight: 700; color: #475569; margin-right: 2px; }
   .rk-big { font-size: 18px !important; font-weight: 800 !important; color: #123A63 !important; }
   .rk-cal { font-weight: 700 !important; color: #1D9E75 !important; }
   .rk-verif { font-weight: 700 !important; color: #0B72E8 !important; }
