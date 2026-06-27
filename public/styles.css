@@ -471,6 +471,8 @@
 .bbtn.azul { border-color: var(--azul); color: var(--azul); }
 .bbtn.verde { border-color: #1EBE57; color: #1EBE57; }
 .bbtn.gris { border-color: #9AA3AD; color: #9AA3AD; }
+.bbtn.rojo { border-color: #E8B5AD; color: #C0392B; }
+.bbtn.rojo:hover { background: #FBEAE7; }
 
   /* Base de Releads */
   .rl-filtros { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0; }

@@ -1966,10 +1966,20 @@ const ESTADO_BRUTO = {
   descartado: ['Descartado', '#9AA3AD']
 };
 
+let BRUTOS_FILAS = [];
 async function cargarBrutos() {
   $('brutosCont').innerHTML = '<div class="vacio">Cargando...</div>';
   try {
-    const d = await api('/api/marketing/ingresos');
+    const desde = $('brutDesde') ? $('brutDesde').value : '';
+    const hasta = $('brutHasta') ? $('brutHasta').value : '';
+    let url = '/api/marketing/ingresos';
+    const qs = [];
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
+    if (qs.length) url += '?' + qs.join('&');
+    const d = await api(url);
+    BRUTOS_FILAS = d.ingresos || [];
+    if ($('brutTotal')) $('brutTotal').textContent = BRUTOS_FILAS.length + ' ingresos';
     const chips = Object.entries(d.resumen || {}).map(([est, n]) => {
       const meta = ESTADO_BRUTO[est] || [est, '#9AA3AD'];
       return '<span class="bchip" style="border-color:' + meta[1] + ';color:' + meta[1] + '">' + meta[0] + ': <b>' + n + '</b></span>';
@@ -2026,6 +2036,9 @@ function accionesBruto(i) {
   }
   if (i.codigoLead) {
     btns += '<button class="bbtn azul" onclick="editarAtribucionBruto(\'' + i.codigoLead + '\')" title="Editar campaña, conjunto y anuncio del lead">✏ Editar</button>';
+  }
+  if (YO && YO.rol === 'admin') {
+    btns += '<button class="bbtn rojo" onclick="eliminarBrutoDef(' + i.id + ')" title="Eliminar definitivamente el ingreso y su lead (limpiar pruebas)">🗑 Eliminar</button>';
   }
   return btns;
 }
@@ -4773,4 +4786,45 @@ function invStatusBadge(s) {
   if (up.includes('ACTIVE') || up.includes('OK')) return '<span class="inv-st on">● activo</span>';
   if (up.includes('PAUSED')) return '<span class="inv-st off">○ pausado</span>';
   return '<span class="inv-st off">' + s + '</span>';
+}
+
+// ===================== INGRESOS: eliminar definitivo, filtros y descarga =====================
+async function eliminarBrutoDef(id) {
+  const fila = (BRUTOS_FILAS || []).find(x => x.id === id);
+  const quien = fila ? (fila.nombreRecibido || fila.telefonoRecibido || ('ingreso ' + id)) : ('ingreso ' + id);
+  const conLead = fila && fila.codigoLead ? ('\n\nEsto también borra el lead ' + fila.codigoLead + ' y sus gestiones.') : '';
+  if (!confirm('¿Eliminar DEFINITIVAMENTE "' + quien + '"?' + conLead + '\n\nNo se puede deshacer.')) return;
+  try {
+    await api('/api/marketing/ingresos/' + id, { method: 'DELETE' });
+    cargarBrutos();
+  } catch (e) {
+    alert('No se pudo eliminar: ' + e.message);
+  }
+}
+
+function limpiarFechasBrut() {
+  if ($('brutDesde')) $('brutDesde').value = '';
+  if ($('brutHasta')) $('brutHasta').value = '';
+  cargarBrutos();
+}
+
+function descargarBrutos() {
+  const filas = BRUTOS_FILAS || [];
+  if (!filas.length) { alert('No hay ingresos para descargar.'); return; }
+  const cols = ['id', 'fechaRecepcion', 'origen', 'estado', 'nombreRecibido', 'telefonoRecibido', 'emailRecibido', 'montoNumerico', 'campana', 'conjunto', 'anuncio', 'fuente', 'codigoLead', 'mensajeError'];
+  const titulos = ['ID', 'FechaCreacion', 'Origen', 'Estado', 'Nombre', 'Telefono', 'Email', 'Monto', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'CodigoLead', 'Mensaje'];
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lineas = [titulos.join(',')];
+  filas.forEach(f => lineas.push(cols.map(c => esc(f[c])).join(',')));
+  const csv = '\uFEFF' + lineas.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ingresos_marketing_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

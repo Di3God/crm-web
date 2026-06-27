@@ -1255,10 +1255,13 @@ function soloAdminOJefa(req, res, next) {
 
 // Lista ingresos con filtro opcional por estado.
 app.get('/api/marketing/ingresos', soloAdminOJefa, (req, res) => {
-  const { estado } = req.query;
-  let filas;
-  if (estado) filas = db.prepare('SELECT * FROM marketing_ingresos WHERE estado = ? ORDER BY id DESC LIMIT 500').all(estado);
-  else filas = db.prepare('SELECT * FROM marketing_ingresos ORDER BY id DESC LIMIT 500').all();
+  const { estado, desde, hasta } = req.query;
+  const cond = [], args = [];
+  if (estado) { cond.push('estado = ?'); args.push(estado); }
+  if (desde) { cond.push("substr(fechaRecepcion,1,10) >= ?"); args.push(desde); }
+  if (hasta) { cond.push("substr(fechaRecepcion,1,10) <= ?"); args.push(hasta); }
+  const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+  let filas = db.prepare('SELECT * FROM marketing_ingresos ' + where + ' ORDER BY id DESC LIMIT 1000').all(...args);
   // Deriva el monto traducido (texto recibido -> numero + rango) para la vista.
   filas = filas.map(f => {
     const num = L.montoEtiquetaANumero(f.montoRecibido);
@@ -1299,6 +1302,26 @@ app.post('/api/marketing/ingresos/:id/descartar', soloAdminOJefa, (req, res) => 
   db.prepare('UPDATE marketing_ingresos SET estado=?, mensajeError=? WHERE id=?')
     .run('descartado', req.body && req.body.motivo ? String(req.body.motivo) : 'Descartado manualmente', req.params.id);
   auditar(req, 'descartar ingreso marketing', ing.id, '-');
+  res.json({ ok: true });
+});
+
+// Eliminar DEFINITIVO desde Ingresos: borra el ingreso + su lead (si lo creó) + sus gestiones.
+// Pensado para limpiar leads de prueba. Queda registrado en auditoría como "eliminar definitivo".
+app.delete('/api/marketing/ingresos/:id', soloAdmin, (req, res) => {
+  const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
+  if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  let detalleLead = 'sin lead';
+  if (ing.codigoLead) {
+    const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(ing.codigoLead);
+    if (lead) {
+      const ng = db.prepare('SELECT COUNT(*) AS c FROM gestiones WHERE codigo = ?').get(ing.codigoLead).c;
+      db.prepare('DELETE FROM gestiones WHERE codigo = ?').run(ing.codigoLead);
+      db.prepare('DELETE FROM leads WHERE codigo = ?').run(ing.codigoLead);
+      detalleLead = `${ing.codigoLead} (${lead.nombre || 's/n'}, ${ng} gestiones)`;
+    }
+  }
+  db.prepare('DELETE FROM marketing_ingresos WHERE id = ?').run(req.params.id);
+  auditar(req, 'eliminar definitivo', ing.codigoLead || ('ingreso ' + ing.id), detalleLead);
   res.json({ ok: true });
 });
 
@@ -3736,7 +3759,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.173 (Inversion: filtro de fechas desde/hasta, sin columna impresiones, embudo completo Leads/Tocados/Contact/Calif/Agend/Reunion/Negociacion/Cierre) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.174 (Ingresos: boton eliminar definitivo (ingreso+lead+gestiones, auditado, solo admin) para limpiar pruebas; filtro de fecha de creacion desde/hasta; descarga CSV de la tabla) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
