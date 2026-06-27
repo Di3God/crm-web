@@ -1890,6 +1890,27 @@ app.put('/api/leads/:codigo/fecha-asignacion', (req, res) => {
   res.json({ ok: true, fechaAsignacion: d.toISOString() });
 });
 
+// Edita la atribución (y nombre) de un lead y lo propaga: leads + marketing_ingresos + catálogo.
+app.put('/api/leads/:codigo/atribucion', soloAdminOJefa, (req, res) => {
+  const codigo = req.params.codigo;
+  const lead = db.prepare('SELECT codigo, adId FROM leads WHERE codigo = ?').get(codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no existe' });
+  const b = req.body || {};
+  const limpio = v => (v == null ? null : String(v).trim() || null);
+  const nombre = limpio(b.nombre), campana = limpio(b.campana), conjunto = limpio(b.conjunto), anuncio = limpio(b.anuncio);
+  // 1) El lead (fuente de verdad para todo lo demás)
+  const sets = ['campana=?', 'conjunto=?', 'anuncio=?']; const vals = [campana, conjunto, anuncio];
+  if (nombre) { sets.unshift('nombre=?'); vals.unshift(nombre); }
+  vals.push(codigo);
+  db.prepare('UPDATE leads SET ' + sets.join(', ') + ' WHERE codigo=?').run(...vals);
+  // 2) El registro de ingreso (consistencia)
+  try { db.prepare('UPDATE marketing_ingresos SET campana=?, conjunto=?, anuncio=? WHERE codigoLead=?').run(campana, conjunto, anuncio, codigo); } catch (e) { }
+  // 3) El catálogo de anuncios
+  try { registrarAnuncioCatalogo(campana, conjunto, anuncio, lead.adId); } catch (e) { }
+  try { auditar(req, 'editar_atribucion_lead', codigo, [campana, conjunto, anuncio].filter(Boolean).join(' / ')); } catch (e) { }
+  res.json({ ok: true, campana, conjunto, anuncio, nombre });
+});
+
 // ---------- Archivar / Restaurar / Eliminar (solo admin) ----------
 // Archivar: borrado logico, sale de la vista pero queda en BD.
 app.put('/api/leads/:codigo/archivar', soloAdmin, (req, res) => {
@@ -3537,7 +3558,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.170 (Marketing separa releads de leads de campana: columna origenCreacion make/relead/manual, marcado al crear y backfill; embudo solo Make (campana real-time), detalle con filtro Solo campanas/Releads/Todos y columna Origen en tabla y CSV) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.171 (Ingresos: boton Editar por lead -> modal para corregir campana/conjunto/anuncio (utm_campaign/term/content); PUT /api/leads/:codigo/atribucion actualiza lead + marketing_ingresos + catalogo) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

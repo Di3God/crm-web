@@ -2024,6 +2024,9 @@ function accionesBruto(i) {
   if (i.estado !== 'descartado') {
     btns += '<button class="bbtn gris" onclick="descartarBruto(' + i.id + ')">Descartar</button>';
   }
+  if (i.codigoLead) {
+    btns += '<button class="bbtn azul" onclick="editarAtribucionBruto(\'' + i.codigoLead + '\')" title="Editar campaña, conjunto y anuncio del lead">✏ Editar</button>';
+  }
   return btns;
 }
 
@@ -4563,4 +4566,64 @@ function descargarMktLeads() {
   a.download = 'marketing_leads_' + new Date().toISOString().slice(0, 10) + '.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ===================== EDITAR ATRIBUCIÓN DEL LEAD (desde Ingresos) =====================
+async function editarAtribucionBruto(codigo) {
+  let lead;
+  try { lead = await api('/api/leads/' + codigo); } catch (e) { alert('No se pudo cargar el lead: ' + e.message); return; }
+  const v = s => (s == null ? '' : String(s)).replace(/"/g, '&quot;');
+  let ov = $('ovEditAtrib');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'ovEditAtrib';
+    ov.className = 'overlay';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML =
+    '<div class="ea-modal">' +
+      '<div class="ea-head"><b>Editar atribución del lead</b>' +
+        '<button class="ea-x" onclick="cerrarEditAtrib()">✕</button></div>' +
+      '<div class="ea-sub">' + codigo + ' · ' + (lead.nombre || 'Sin nombre') + '</div>' +
+      '<label class="ea-l">Nombre</label>' +
+      '<input id="eaNombre" class="ea-i" value="' + v(lead.nombre) + '">' +
+      '<label class="ea-l">Campaña <span class="ea-utm">utm_campaign</span></label>' +
+      '<input id="eaCampana" class="ea-i" value="' + v(lead.campana) + '" placeholder="(sin dato)">' +
+      '<label class="ea-l">Conjunto de anuncios <span class="ea-utm">utm_term</span></label>' +
+      '<input id="eaConjunto" class="ea-i" value="' + v(lead.conjunto) + '" placeholder="(sin dato)">' +
+      '<label class="ea-l">Anuncio <span class="ea-utm">utm_content</span></label>' +
+      '<input id="eaAnuncio" class="ea-i" value="' + v(lead.anuncio) + '" placeholder="(sin dato)">' +
+      '<div class="ea-nota">Se actualiza en el lead, su registro de ingreso y el catálogo de anuncios.</div>' +
+      '<div class="ea-acc">' +
+        '<button class="btn sec" onclick="cerrarEditAtrib()">Cancelar</button>' +
+        '<button class="btn" id="eaGuardar" onclick="guardarAtribucionBruto(\'' + codigo + '\')">Guardar cambios</button>' +
+      '</div>' +
+    '</div>';
+  ov.classList.add('act');
+}
+
+function cerrarEditAtrib() {
+  const ov = $('ovEditAtrib');
+  if (ov) ov.classList.remove('act');
+}
+
+async function guardarAtribucionBruto(codigo) {
+  const body = {
+    nombre: $('eaNombre').value.trim(),
+    campana: $('eaCampana').value.trim(),
+    conjunto: $('eaConjunto').value.trim(),
+    anuncio: $('eaAnuncio').value.trim()
+  };
+  const btn = $('eaGuardar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+  try {
+    await api('/api/leads/' + codigo + '/atribucion', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    cerrarEditAtrib();
+    cargarBrutos();
+  } catch (e) {
+    alert('No se pudo guardar: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Guardar cambios'; }
+  }
 }
