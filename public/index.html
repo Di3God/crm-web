@@ -351,8 +351,25 @@
     <div class="barra">
       <h2>Auditoría y administración</h2>
       <button class="btn sec" style="margin-left:auto" onclick="descargarBackup()">⬇ Descargar backup</button>
+      <button class="btn sec" onclick="abrirRecuperar()">↩ Recuperar leads borrados</button>
       <button class="btn sec" onclick="cargarAuditoria()">Actualizar</button>
       <button class="btn sec" style="color:#C0392B;border-color:#E8B5AD" onclick="limpiarPruebas()" title="Borra todas las gestiones y transiciones de prueba; los leads vuelven a Por contactar">🧹 Limpiar datos de prueba</button>
+    </div>
+    <div id="recuperarPanel" class="panel" style="display:none;margin-bottom:16px;background:#FFF8E8;border-color:#F0D9A0">
+      <div style="font-weight:600;margin-bottom:8px">↩ Recuperar leads borrados desde un respaldo</div>
+      <div class="atr-ctrl" style="margin-bottom:8px">
+        <span class="sub">Respaldo:</span>
+        <select id="recBackup" class="inp" style="min-width:180px"></select>
+        <span id="recBackupInfo" class="sub"></span>
+      </div>
+      <div class="sub" style="margin-bottom:4px">Códigos de lead a recuperar (uno por línea o separados por coma):</div>
+      <textarea id="recCodigos" class="inp" style="width:100%;min-height:80px;font-family:monospace;box-sizing:border-box" placeholder="TST-20260623-000001&#10;TST-20260623-000002"></textarea>
+      <div class="atr-ctrl" style="margin-top:8px">
+        <button class="btn sec" onclick="previewRecuperar()">Previsualizar</button>
+        <button class="btn" onclick="ejecutarRecuperar()">Recuperar</button>
+        <button class="btn sec" onclick="$('recuperarPanel').style.display='none'">Cerrar</button>
+      </div>
+      <div id="recResultado" style="margin-top:10px"></div>
     </div>
     <div class="panel" style="margin-bottom:16px;background:#F2FAF4;border-color:#CBE8D4">
       <div style="font-size:12.5px;color:#2E7D32"><b>Respaldo de datos:</b> descarga una copia completa de la base (crm.db) para guardarla por seguridad. Recomendado hacerlo a diario durante el piloto.</div>

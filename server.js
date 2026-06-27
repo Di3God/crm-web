@@ -2062,6 +2062,79 @@ app.get('/api/backup', soloAdmin, (req, res) => {
   }
 });
 
+// Lista los snapshots diarios disponibles en el volumen (para recuperar datos borrados).
+app.get('/api/admin/backups', soloAdmin, (req, res) => {
+  try {
+    const dir = path.join(DB_DIR, 'backups');
+    if (!fs.existsSync(dir)) return res.json({ backups: [] });
+    const backups = fs.readdirSync(dir)
+      .filter(f => /^crm-\d{4}-\d{2}-\d{2}\.db$/.test(f))
+      .map(f => { const st = fs.statSync(path.join(dir, f)); return { archivo: f, fecha: f.slice(4, 14), tamano: Math.round(st.size / 1024) + ' KB', modificado: st.mtime.toISOString() }; })
+      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+    res.json({ backups });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Previsualiza qué leads (con sus gestiones) hay en un backup para una lista de códigos.
+app.post('/api/admin/recuperar-leads/preview', soloAdmin, (req, res) => { recuperarLeads(req, res, true); });
+// Recupera leads borrados desde un snapshot: copia lead + gestiones + transiciones + ingreso.
+app.post('/api/admin/recuperar-leads', soloAdmin, (req, res) => { recuperarLeads(req, res, false); });
+
+function recuperarLeads(req, res, soloPreview) {
+  const b = req.body || {};
+  const archivo = String(b.archivo || '').trim();
+  const codigos = Array.isArray(b.codigos) ? b.codigos.map(c => String(c).trim()).filter(Boolean) : [];
+  if (!/^crm-\d{4}-\d{2}-\d{2}\.db$/.test(archivo)) return res.status(400).json({ error: 'Backup inválido' });
+  if (!codigos.length) return res.status(400).json({ error: 'No se indicaron códigos' });
+  const ruta = path.join(DB_DIR, 'backups', archivo);
+  if (!fs.existsSync(ruta)) return res.status(404).json({ error: 'Backup no encontrado' });
+  let bdb;
+  try {
+    bdb = new DatabaseSync(ruta);
+    const resultado = [];
+    const stripId = o => { const c = { ...o }; delete c.id; return c; };
+    const insertarFila = (tabla, fila) => {
+      const cols = Object.keys(fila);
+      const ph = cols.map(() => '?').join(',');
+      db.prepare(`INSERT INTO ${tabla} (${cols.map(c => '"' + c + '"').join(',')}) VALUES (${ph})`).run(...cols.map(c => fila[c]));
+    };
+    for (const cod of codigos) {
+      const item = { codigo: cod, lead: null, gestiones: 0, transiciones: 0, ingresos: 0, yaExiste: false, error: null };
+      const leadBk = bdb.prepare('SELECT * FROM leads WHERE codigo = ?').get(cod);
+      if (!leadBk) { item.error = 'No está en este backup'; resultado.push(item); continue; }
+      item.lead = leadBk.nombre || '(s/n)';
+      const gs = bdb.prepare('SELECT * FROM gestiones WHERE codigo = ?').all(cod);
+      item.gestiones = gs.length;
+      let trans = []; try { trans = bdb.prepare('SELECT * FROM transiciones_etapa WHERE codigo = ?').all(cod); } catch (e) { }
+      item.transiciones = trans.length;
+      let ings = []; try { ings = bdb.prepare('SELECT * FROM marketing_ingresos WHERE codigoLead = ?').all(cod); } catch (e) { }
+      item.ingresos = ings.length;
+      const existe = db.prepare('SELECT codigo FROM leads WHERE codigo = ?').get(cod);
+      item.yaExiste = !!existe;
+      if (!soloPreview && !existe) {
+        try {
+          db.exec('BEGIN');
+          // Limpia posibles huérfanos (p. ej. transiciones que no se borraron) para no duplicar.
+          db.prepare('DELETE FROM gestiones WHERE codigo = ?').run(cod);
+          try { db.prepare('DELETE FROM transiciones_etapa WHERE codigo = ?').run(cod); } catch (e) { }
+          try { db.prepare('DELETE FROM marketing_ingresos WHERE codigoLead = ?').run(cod); } catch (e) { }
+          insertarFila('leads', stripId(leadBk));
+          gs.forEach(g => insertarFila('gestiones', stripId(g)));
+          trans.forEach(t => insertarFila('transiciones_etapa', stripId(t)));
+          ings.forEach(i => insertarFila('marketing_ingresos', stripId(i)));
+          db.exec('COMMIT');
+          auditar(req, 'recuperar lead de backup', cod, `${item.lead} (${gs.length} gestiones) desde ${archivo}`);
+        } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) { } item.error = 'No se pudo insertar: ' + e.message; }
+      }
+      resultado.push(item);
+    }
+    res.json({ archivo, preview: soloPreview, resultado });
+  } catch (e) {
+    res.status(500).json({ error: 'Recuperación: ' + e.message });
+  } finally { try { if (bdb) bdb.close(); } catch (e) { } }
+}
+
+
 // Analisis de cohortes (solo admin): leads agrupados por mes de asignacion
 app.get('/api/cohortes', soloAdmin, (req, res) => {
   const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
@@ -3794,7 +3867,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.177 (fix Inversion: los leads SIN anuncio ya no se descartaban del conteo CRM; ahora cuentan agrupados como (sin anuncio), para que el total CRM cuadre con Ingresos) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.178 (recuperacion de leads borrados desde snapshot diario: GET /api/admin/backups, POST recuperar-leads(+preview) copia lead+gestiones+transiciones+ingreso; panel en Auditoria) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

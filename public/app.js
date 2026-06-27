@@ -4851,3 +4851,60 @@ function descargarBrutos() {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ===================== RECUPERAR LEADS BORRADOS (desde backup) =====================
+async function abrirRecuperar() {
+  const panel = $('recuperarPanel');
+  panel.style.display = '';
+  $('recResultado').innerHTML = '';
+  try {
+    const d = await api('/api/admin/backups');
+    const sel = $('recBackup');
+    sel.innerHTML = '';
+    if (!d.backups || !d.backups.length) {
+      sel.innerHTML = '<option value="">(no hay respaldos)</option>';
+      $('recBackupInfo').textContent = 'No se encontraron snapshots en el volumen.';
+      return;
+    }
+    d.backups.forEach(b => sel.add(new Option(b.fecha + ' (' + b.tamano + ')', b.archivo)));
+    $('recBackupInfo').textContent = d.backups.length + ' respaldos · elige uno ANTERIOR al borrado';
+  } catch (e) {
+    $('recBackupInfo').textContent = 'No se pudieron listar los respaldos: ' + e.message;
+  }
+}
+
+function recCodigosArray() {
+  return ($('recCodigos').value || '').split(/[\n,;\s]+/).map(s => s.trim()).filter(Boolean);
+}
+
+async function previewRecuperar() { await correrRecuperar(true); }
+async function ejecutarRecuperar() {
+  const n = recCodigosArray().length;
+  if (!confirm('¿Recuperar ' + n + ' lead(s) desde el respaldo seleccionado?\n\nSe restauran el lead, sus gestiones y su ingreso. Los que ya existan se omiten.')) return;
+  await correrRecuperar(false);
+}
+
+async function correrRecuperar(soloPreview) {
+  const archivo = $('recBackup').value;
+  const codigos = recCodigosArray();
+  if (!archivo) { alert('Elige un respaldo.'); return; }
+  if (!codigos.length) { alert('Pega al menos un código de lead.'); return; }
+  $('recResultado').innerHTML = '<div class="sub">Procesando…</div>';
+  try {
+    const url = soloPreview ? '/api/admin/recuperar-leads/preview' : '/api/admin/recuperar-leads';
+    const d = await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archivo, codigos }) });
+    const filas = d.resultado.map(r => {
+      let estado;
+      if (r.error) estado = '<span style="color:#C0392B">' + r.error + '</span>';
+      else if (r.yaExiste) estado = '<span style="color:#94a3b8">ya existe, se omite</span>';
+      else if (soloPreview) estado = '<span style="color:#0B72E8">listo para recuperar</span>';
+      else estado = '<span style="color:#1D9E75">✓ recuperado</span>';
+      return '<tr><td style="font-family:monospace;font-size:11.5px">' + r.codigo + '</td><td>' + (r.lead || '—') + '</td><td style="text-align:center">' + r.gestiones + '</td><td style="text-align:center">' + r.ingresos + '</td><td>' + estado + '</td></tr>';
+    }).join('');
+    $('recResultado').innerHTML =
+      '<div class="sub" style="margin-bottom:4px">' + (soloPreview ? 'Previsualización (no se ha tocado nada todavía):' : 'Resultado:') + '</div>' +
+      '<table class="mkt-tabla"><thead><tr><th>Código</th><th>Nombre</th><th>Gestiones</th><th>Ingresos</th><th>Estado</th></tr></thead><tbody>' + filas + '</tbody></table>';
+  } catch (e) {
+    $('recResultado').innerHTML = '<div style="color:#C0392B">Error: ' + e.message + '</div>';
+  }
+}
