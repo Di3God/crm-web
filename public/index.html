@@ -332,6 +332,11 @@
           <button class="atr-niv act" data-inv="anuncio" onclick="setNivelInv('anuncio')">Por anuncio</button>
           <button class="atr-niv" data-inv="dia" onclick="setNivelInv('dia')">Por anuncio y día</button>
         </div>
+        <span class="sub">Del</span>
+        <input id="invDesde" class="inp" type="date" onchange="cargarInversion()" style="width:auto">
+        <span class="sub">al</span>
+        <input id="invHasta" class="inp" type="date" onchange="cargarInversion()" style="width:auto">
+        <button class="btn sec" onclick="limpiarFechasInv()" title="Quitar el filtro de fechas">Todo</button>
         <span id="invStatus" class="sub" style="margin-left:auto"></span>
         <input type="file" id="invFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="cargarExcelGasto(this)">
         <button class="btn sec" onclick="document.getElementById('invFile').click()">⬆ Cargar Excel de costos</button>

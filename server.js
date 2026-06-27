@@ -2893,7 +2893,7 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
         clave: k, fecha: nivel === 'dia' ? g.fecha : null, anuncio: g.anuncio, campana: g.campana, conjunto: g.conjunto,
         adId: g.adId, creativeUrl: g.creativeUrl, igLink: g.igLink, tipo: g.objetivoCampana, status: g.status,
         costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
-        leadsCRM: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0
+        leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
       };
       const f = filas[k];
       f.costo += g.costo || 0; f.impresiones += g.impresiones || 0; f.clicks += g.clicks || 0; f.resultadosMeta += g.resultados || 0;
@@ -2920,17 +2920,19 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
         clave: k, fecha: nivel === 'dia' ? dia : null, anuncio: l.anuncio, campana: l.campana, conjunto: l.conjunto,
         adId: l.adId, creativeUrl: null, igLink: null, tipo: null, status: null,
         costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
-        leadsCRM: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0
+        leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
       };
       const f = filas[k];
       const gs = gPorCod[l.codigo] || [];
       const cons = leadConsolidado(l, gs);
       const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
       f.leadsCRM++;
+      if (gs.length > 0) f.tocados++;
       if (gs.some(x => !SIN.includes(x.resultado))) f.contactado++;
       if (ord >= 2) f.calificado++;
       if (ord >= 3) f.agendado++;
       if (ord >= 4) f.reunion++;
+      if (ord >= 5) f.negociacion++;
       if (cons.etapa === 'Cerrado ganado') f.cierre++;
     });
 
@@ -3734,7 +3736,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.172 (Marketing Inversion Fase 1: tabla marketing_gasto, carga manual de Excel (SheetJS en navegador -> JSON, upsert por fecha+anuncio), cruce gasto x embudo CRM por fechaCarga (solo make), CPL real vs Meta, costo por agendado/cierre, pestana Inversion con selector anuncio/dia y tarjetas) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.173 (Inversion: filtro de fechas desde/hasta, sin columna impresiones, embudo completo Leads/Tocados/Contact/Calif/Agend/Reunion/Negociacion/Cierre) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

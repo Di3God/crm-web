@@ -4695,12 +4695,23 @@ async function cargarExcelGasto(input) {
 async function cargarInversion() {
   const cont = $('invCont');
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  const desde = $('invDesde') ? $('invDesde').value : '';
+  const hasta = $('invHasta') ? $('invHasta').value : '';
+  let url = '/api/marketing/inversion?nivel=' + INV_NIVEL;
+  if (desde) url += '&desde=' + desde;
+  if (hasta) url += '&hasta=' + hasta;
   try {
-    INV_DATA = await api('/api/marketing/inversion?nivel=' + INV_NIVEL);
+    INV_DATA = await api(url);
     renderInversion();
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
   }
+}
+
+function limpiarFechasInv() {
+  if ($('invDesde')) $('invDesde').value = '';
+  if ($('invHasta')) $('invHasta').value = '';
+  cargarInversion();
 }
 
 function fmtSolesInv(v) { return v == null ? '—' : 'S/ ' + Number(v).toLocaleString('es-PE', { maximumFractionDigits: v < 100 ? 1 : 0 }); }
@@ -4711,7 +4722,7 @@ function renderInversion() {
   const T = (INV_DATA && INV_DATA.totales) || {};
   if (!filas.length) {
     cards.innerHTML = '';
-    cont.innerHTML = '<div class="vacio">Aún no hay gasto cargado. Usa “Cargar Excel de costos”.</div>';
+    cont.innerHTML = '<div class="vacio">No hay gasto en este rango. Carga el Excel o ajusta las fechas.</div>';
     return;
   }
   cards.innerHTML =
@@ -4724,7 +4735,9 @@ function renderInversion() {
   const esDia = INV_NIVEL === 'dia';
   const head = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
     (esDia ? '<th>Fecha</th>' : '') +
-    '<th class="inv-l">Anuncio</th><th>Gasto</th><th>Impr.</th><th>Leads Meta</th><th>Leads CRM</th><th>CPL real</th><th>Agend.</th><th>Cierres</th><th>S//cierre</th>' +
+    '<th class="inv-l">Anuncio</th><th>Gasto</th>' +
+    '<th>Leads</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Negociación</th><th>Cierre</th>' +
+    '<th>CPL real</th><th>S//cierre</th>' +
     '</tr></thead><tbody>' +
     filas.map(f => {
       const thumb = '<div class="inv-thumb">' + (f.creativeUrl ? '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">' : '<span>📷</span>') + '</div>';
@@ -4734,12 +4747,15 @@ function renderInversion() {
         (esDia ? '<td>' + (f.fecha ? fmtFecha(f.fecha) : '—') + '</td>' : '') +
         '<td class="inv-l"><div class="inv-an">' + thumb + '<div class="inv-an-txt"><div class="inv-nom">' + (f.anuncio || '(sin dato)') + '</div><div class="inv-sub">' + stat + (f.tipo ? ' · ' + f.tipo : '') + '</div></div></div></td>' +
         '<td>' + fmtSolesInv(f.costo) + '</td>' +
-        '<td>' + (f.impresiones || 0).toLocaleString('es-PE') + '</td>' +
-        '<td class="inv-muted">' + (f.resultadosMeta || 0) + '</td>' +
         '<td><b>' + (f.leadsCRM || 0) + '</b></td>' +
-        '<td class="' + cplRealCol + '">' + fmtSolesInv(f.cplReal) + '</td>' +
+        '<td>' + (f.tocados || 0) + '</td>' +
+        '<td>' + (f.contactado || 0) + '</td>' +
+        '<td>' + (f.calificado || 0) + '</td>' +
         '<td class="inv-agend">' + (f.agendado || 0) + '</td>' +
+        '<td>' + (f.reunion || 0) + '</td>' +
+        '<td>' + (f.negociacion || 0) + '</td>' +
         '<td><b>' + (f.cierre || 0) + '</b></td>' +
+        '<td class="' + cplRealCol + '">' + fmtSolesInv(f.cplReal) + '</td>' +
         '<td>' + (f.costoCierre != null ? fmtSolesInv(f.costoCierre) : '<span class="inv-muted">—</span>') + '</td>' +
         '</tr>';
     }).join('') +
