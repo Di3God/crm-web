@@ -441,6 +441,7 @@ try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 // Catálogo de anuncios: junta cada anuncio único y permite guardar su imagen (creativo).
@@ -515,6 +516,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
     const r = db.prepare("UPDATE leads SET origenCreacion='manual' WHERE origenCreacion IS NULL OR origenCreacion=''").run();
     marcados = (r && r.changes) || 0;
     if (marcados) console.log('Origen de creación marcado en', marcados, 'leads restantes (manual)');
+    // Alinea la fecha de creación de los leads de campaña con la fecha REAL de llegada del ingreso
+    // (corrige los creados manualmente, que tenían la fecha del momento de creación, no la de llegada).
+    db.prepare(`UPDATE leads SET fechaCarga = (
+        SELECT fechaRecepcion FROM marketing_ingresos WHERE codigoLead = leads.codigo AND fechaRecepcion IS NOT NULL ORDER BY id ASC LIMIT 1
+      ) WHERE origenCreacion='make' AND EXISTS (
+        SELECT 1 FROM marketing_ingresos WHERE codigoLead = leads.codigo AND fechaRecepcion IS NOT NULL
+      )`).run();
   } catch (e) { console.error('Backfill atribución:', e.message); }
 })();
 // Estado del round-robin (clave/valor).
@@ -1344,29 +1352,36 @@ app.delete('/api/marketing/ingresos/:id', soloAdmin, (req, res) => {
 });
 
 // Crear lead manual desde un ingreso bruto (forzar creacion).
+// body.soloConteo=true -> duplicado ACTIVO: cuenta como lead (costo) pero no se gestiona ni entra al embudo.
 app.post('/api/marketing/ingresos/:id/crear-lead', soloAdminOJefa, (req, res) => {
   const ing = db.prepare('SELECT * FROM marketing_ingresos WHERE id = ?').get(req.params.id);
   if (!ing) return res.status(404).json({ error: 'No encontrado' });
+  const soloConteo = !!(req.body && req.body.soloConteo);
   // Nombre: el recibido, o uno que envie la jefa para completar (caso sin_nombre).
   const nombreFinal = (req.body && req.body.nombre && String(req.body.nombre).trim())
     ? String(req.body.nombre).trim() : (ing.nombreRecibido || 'Sin nombre');
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
+  // Fecha de creación = la REAL de llegada del ingreso (no el momento de crearlo a mano).
+  const fechaReal = ing.fechaRecepcion || ahora;
   const monto = L.montoEtiquetaANumero(ing.montoRecibido);
   const rango = monto != null ? L.montoARango(monto) : null;
   const tel = ing.telefonoNormalizado || L.normalizarCelular(ing.telefonoRecibido) || null;
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion,esDuplicadoActivo,archivado)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'make',?,?)`)
     .run(codigo, nombreFinal, tel, ing.emailRecibido || null,
-         ing.fuente || null, ing.campana || null, null, monto, monto, rango, ahora, null);
+         ing.fuente || null, ing.campana || null, ing.conjunto || null, ing.anuncio || null, ing.adId || null,
+         null, monto, monto, rango, fechaReal, null,
+         soloConteo ? 1 : 0, soloConteo ? 1 : 0);
+  registrarAnuncioCatalogo(ing.campana, ing.conjunto, ing.anuncio, ing.adId);
   db.prepare('UPDATE marketing_ingresos SET estado=?, codigoLead=?, mensajeError=? WHERE id=?')
-    .run('creado', codigo, 'Creado manualmente', req.params.id);
+    .run(soloConteo ? 'duplicado_contado' : 'creado', codigo, soloConteo ? 'Contado como lead duplicado (no se gestiona)' : 'Creado manualmente', req.params.id);
   // Si correspondia a un relead, marcarlo como usado para que no se reasigne.
-  if (tel) {
+  if (tel && !soloConteo) {
     db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=? AND estado='pendiente'")
       .run(codigo, (req.user && req.user.nombre) ? req.user.nombre + ' (manual)' : 'manual', ahora, tel);
   }
-  auditar(req, 'crear lead desde ingreso marketing', codigo, '-');
+  auditar(req, soloConteo ? 'contar lead duplicado activo' : 'crear lead desde ingreso marketing', codigo, '-');
   res.json({ ok: true, codigoLead: codigo });
 });
 
@@ -2812,7 +2827,7 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
       const gs = gPorCod[l.codigo] || [];
       const cons = leadConsolidado(l, gs);
       const contactado = gs.some(g => !SIN.includes(g.resultado));
-      return { campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, etapa: cons.etapa, contactado };
+      return { campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, etapa: cons.etapa, contactado, esDuplicadoActivo: l.esDuplicadoActivo };
     });
     // Agrupa por el nivel elegido.
     const grupos = {};
@@ -2821,6 +2836,7 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
       if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0 };
       const g = grupos[clave];
       g.leads++;
+      if (l.esDuplicadoActivo) return; // duplicado activo: cuenta como lead pero no entra al embudo
       if (l.contactado) g.contactado++;
       const ord = ORD_ETAPA_ATRIB[l.etapa] != null ? ORD_ETAPA_ATRIB[l.etapa] : 0;
       if (ord >= 2) g.calificado++;
@@ -2964,10 +2980,11 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
         leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
       };
       const f = filas[k];
+      f.leadsCRM++;
+      if (l.esDuplicadoActivo) return; // duplicado activo: cuenta como lead (costo) pero NO entra al embudo
       const gs = gPorCod[l.codigo] || [];
       const cons = leadConsolidado(l, gs);
       const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
-      f.leadsCRM++;
       if (gs.length > 0) f.tocados++;
       if (gs.some(x => !SIN.includes(x.resultado))) f.contactado++;
       if (ord >= 2) f.calificado++;
@@ -3020,7 +3037,8 @@ app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
         campana: l.campana || '', conjunto: l.conjunto || '', anuncio: l.anuncio || '',
         fuente: l.fuente || '', fechaCarga: l.fechaCarga, fechaAsignacion: l.fechaAsignacion,
         asesor: l.asesor || '', etapa: cons.etapa, archivado: l.archivado ? 1 : 0,
-        origenCreacion: l.origenCreacion || 'manual'
+        origenCreacion: l.origenCreacion || 'manual',
+        esDuplicadoActivo: l.esDuplicadoActivo ? 1 : 0
       };
     });
     res.json({ total: filas.length, filas });
@@ -3777,7 +3795,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.175 (FIX zona horaria en filtros de fecha: Ingresos, Inversion y Atribucion ahora filtran/agrupan por fecha LOCAL de Peru (UTC-5) para coincidir con lo mostrado; fecha del Excel se normaliza sin correrla por TZ) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.176 (duplicados en marketing: inactivo/historial->lead normal con embudo; duplicado ACTIVO->cuenta como lead/CPL pero fuera del embudo (esDuplicadoActivo, archivado); fix crear-lead manual copia conjunto/anuncio/adId+fecha real+origen make; backfill alinea fechaCarga a la llegada real) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

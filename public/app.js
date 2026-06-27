@@ -2028,6 +2028,9 @@ function accionesBruto(i) {
   if (i.estado === 'duplicado_historial') {
     btns += '<button class="bbtn verde" onclick="crearLeadBruto(' + i.id + ')" title="Crear el lead igual, pese a estar en releads">Crear igual</button>';
   }
+  if (i.estado === 'duplicado_activo') {
+    btns += '<button class="bbtn azul" onclick="crearLeadBruto(' + i.id + ', true)" title="Cuenta como lead (costó) pero no se gestiona ni entra al embudo">Contar como lead</button>';
+  }
   if (i.estado === 'sin_nombre') {
     btns += '<button class="bbtn verde" onclick="completarYCrear(' + i.id + ')" title="Escribir el nombre y crear el lead">Completar y crear</button>';
   }
@@ -2162,11 +2165,16 @@ async function descartarBruto(id) {
     cargarBrutos();
   } catch (e) { alert('Error: ' + e.message); }
 }
-async function crearLeadBruto(id) {
-  if (!confirm('¿Crear un lead operativo desde este ingreso?')) return;
+async function crearLeadBruto(id, soloConteo) {
+  const msg = soloConteo
+    ? '¿Contar este ingreso como lead duplicado?\n\nSuma a la cantidad de leads (porque costó), pero NO se gestiona ni entra al embudo (ya se está gestionando el original).'
+    : '¿Crear un lead operativo desde este ingreso?';
+  if (!confirm(msg)) return;
   try {
-    const r = await api('/api/marketing/ingresos/' + id + '/crear-lead', { method: 'POST' });
-    alert('Lead creado: ' + r.codigoLead);
+    const r = await api('/api/marketing/ingresos/' + id + '/crear-lead', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ soloConteo: !!soloConteo })
+    });
+    alert(soloConteo ? 'Contado como lead duplicado: ' + r.codigoLead : 'Lead creado: ' + r.codigoLead);
     cargarBrutos();
   } catch (e) { alert('Error: ' + e.message); }
 }
@@ -4528,7 +4536,7 @@ function renderMktLeads() {
       '<tr>' +
       '<td class="mkt-cod">' + l.codigo + '</td>' +
       '<td>' + (l.nombre || '—') + '</td>' +
-      '<td>' + mktOrigenBadge(l.origenCreacion) + '</td>' +
+      '<td>' + mktOrigenBadge(l.origenCreacion) + (l.esDuplicadoActivo ? ' <span style="background:#FAEEDA;color:#854F0B;font-size:10px;padding:1px 6px;border-radius:9px;white-space:nowrap">dup. activo</span>' : '') + '</td>' +
       '<td class="mkt-attr">' + (l.campana || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
       '<td class="mkt-attr">' + (l.conjunto || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
       '<td class="mkt-attr">' + (l.anuncio || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
