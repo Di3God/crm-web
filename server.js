@@ -2692,7 +2692,8 @@ const ORD_ETAPA_ATRIB = {
   'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6, 'Cerrado perdido': -1
 };
 app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
-  const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
+  try {
+    const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
   const desde = req.query.desde || null, hasta = req.query.hasta || null;
   let leads = db.prepare('SELECT codigo, campana, conjunto, anuncio, adId, etapa, fechaCarga FROM leads').all();
   if (desde) leads = leads.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
@@ -2723,7 +2724,11 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
     if (nivel === 'anuncio') { const hit = cat.find(c => c.anuncio === g.fuente); g.imagenUrl = hit ? hit.imagenUrl : null; }
     return g;
   }).sort((a, b) => b.leads - a.leads);
-  res.json({ nivel, desde, hasta, totalLeads: leads.length, filas });
+    res.json({ nivel, desde, hasta, totalLeads: leads.length, filas });
+  } catch (e) {
+    console.error('Error en /api/atribucion:', e.message);
+    res.status(500).json({ error: 'Atribución: ' + e.message });
+  }
 });
 // Catálogo de anuncios (para asignar imágenes).
 app.get('/api/anuncios', soloAdminOJefa, (req, res) => {
@@ -3487,7 +3492,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.165 (atribucion de anuncios: lead arrastra conjunto+anuncio+adId, recuperacion historica desde rawJson, catalogo de anuncios con imagen, vista Embudo por fuente con matriz campana/conjunto/anuncio x etapa y conversion) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.166 (fix: seccion v-audit perdio su apertura y se infiltraba en todas las vistas, restaurada; endpoint /api/atribucion blindado con try/catch) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
