@@ -2970,11 +2970,10 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
       const dia = peruFecha(l.fechaCarga);  // fecha LOCAL de Perú (coincide con lo que se muestra y con el Excel)
       if (desde && (!dia || dia < desde)) return;
       if (hasta && (!dia || dia > hasta)) return;
-      const an = norm(l.anuncio);
-      if (!an) return;
+      const an = norm(l.anuncio) || '(sin anuncio)';  // leads sin atribución cuentan igual, agrupados aparte
       const k = claveDe(an, dia);
       if (!filas[k]) filas[k] = {
-        clave: k, fecha: nivel === 'dia' ? dia : null, anuncio: l.anuncio, campana: l.campana, conjunto: l.conjunto,
+        clave: k, fecha: nivel === 'dia' ? dia : null, anuncio: l.anuncio || '(sin anuncio)', campana: l.campana, conjunto: l.conjunto,
         adId: l.adId, creativeUrl: null, igLink: null, tipo: null, status: null,
         costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
         leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
@@ -3795,7 +3794,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.176 (duplicados en marketing: inactivo/historial->lead normal con embudo; duplicado ACTIVO->cuenta como lead/CPL pero fuera del embudo (esDuplicadoActivo, archivado); fix crear-lead manual copia conjunto/anuncio/adId+fecha real+origen make; backfill alinea fechaCarga a la llegada real) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.177 (fix Inversion: los leads SIN anuncio ya no se descartaban del conteo CRM; ahora cuentan agrupados como (sin anuncio), para que el total CRM cuadre con Ingresos) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
