@@ -4653,6 +4653,21 @@ function setNivelInv(n) {
   cargarInversion();
 }
 
+// Convierte una fecha de Excel (Date o texto) a YYYY-MM-DD usando componentes locales (sin correrla por TZ).
+function excelFecha(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    const p = n => String(n).padStart(2, '0');
+    return v.getFullYear() + '-' + p(v.getMonth() + 1) + '-' + p(v.getDate());
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);  // DD/MM/YYYY
+  if (m) return m[3] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0');
+  return s.slice(0, 10);
+}
+
 // Mapea los encabezados del Excel a las claves que espera el servidor.
 function mapaFilaGasto(row) {
   const g = (...names) => { for (const n of names) { if (row[n] != null && row[n] !== '') return row[n]; } return null; };
@@ -4693,8 +4708,8 @@ async function cargarExcelGasto(input) {
     const json = XLSX.utils.sheet_to_json(ws, { defval: null });
     const filas = json.map(mapaFilaGasto).filter(f => f.fecha && f.anuncio);
     if (!filas.length) { alert('No se encontraron filas válidas (revisa que tenga columnas Date y Ad name).'); if ($('invStatus')) $('invStatus').textContent = ''; return; }
-    // Normaliza fecha a YYYY-MM-DD
-    filas.forEach(f => { if (f.fecha instanceof Date) f.fecha = f.fecha.toISOString().slice(0, 10); else f.fecha = String(f.fecha).slice(0, 10); });
+    // Normaliza la fecha del Excel a YYYY-MM-DD SIN correrla por zona horaria.
+    filas.forEach(f => { f.fecha = excelFecha(f.fecha); });
     const r = await api('/api/marketing/gasto/cargar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filas }) });
     if ($('invStatus')) $('invStatus').textContent = r.cargadas + ' filas cargadas' + (r.omitidas ? ' · ' + r.omitidas + ' omitidas' : '');
     input.value = '';

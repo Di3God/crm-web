@@ -1254,12 +1254,30 @@ function soloAdminOJefa(req, res, next) {
 }
 
 // Lista ingresos con filtro opcional por estado.
+// Fecha local de Perú (UTC-5) de un ISO, para que los filtros por día coincidan con lo que se muestra.
+function peruFecha(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso).slice(0, 10);
+  return new Date(d.getTime() - 5 * 3600000).toISOString().slice(0, 10);
+}
+// Rango UTC [ini, fin) que cubre las fechas LOCALES de Perú desde..hasta (inclusive). Perú = UTC-5.
+function rangoUTCdePeru(desde, hasta) {
+  let ini = null, fin = null;
+  if (desde) ini = desde + 'T05:00:00.000Z';
+  if (hasta) { const d = new Date(hasta + 'T05:00:00.000Z'); d.setUTCDate(d.getUTCDate() + 1); fin = d.toISOString(); }
+  return { ini, fin };
+}
+
 app.get('/api/marketing/ingresos', soloAdminOJefa, (req, res) => {
   const { estado, desde, hasta } = req.query;
   const cond = [], args = [];
   if (estado) { cond.push('estado = ?'); args.push(estado); }
-  if (desde) { cond.push("substr(fechaRecepcion,1,10) >= ?"); args.push(desde); }
-  if (hasta) { cond.push("substr(fechaRecepcion,1,10) <= ?"); args.push(hasta); }
+  if (desde || hasta) {
+    const { ini, fin } = rangoUTCdePeru(desde, hasta);
+    if (ini) { cond.push('fechaRecepcion >= ?'); args.push(ini); }
+    if (fin) { cond.push('fechaRecepcion < ?'); args.push(fin); }
+  }
   const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
   let filas = db.prepare('SELECT * FROM marketing_ingresos ' + where + ' ORDER BY id DESC LIMIT 1000').all(...args);
   // Deriva el monto traducido (texto recibido -> numero + rango) para la vista.
@@ -2783,8 +2801,8 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
     const origen = req.query.origen || 'make'; // por defecto solo leads de campaña (Make), sin releads
     let leadsRaw = db.prepare('SELECT * FROM leads').all();
     if (origen !== 'todos') leadsRaw = leadsRaw.filter(l => (l.origenCreacion || 'manual') === origen);
-    if (desde) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
-    if (hasta) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) <= hasta);
+    if (desde) leadsRaw = leadsRaw.filter(l => { const pf = peruFecha(l.fechaCarga); return pf && pf >= desde; });
+    if (hasta) leadsRaw = leadsRaw.filter(l => { const pf = peruFecha(l.fechaCarga); return pf && pf <= hasta; });
     // La etapa NO es columna: se calcula con leadConsolidado(lead, gestiones).
     // Traemos todas las gestiones una vez y las agrupamos por lead.
     const SIN = L.RESULTADOS_SIN_CONTACTO || [];
@@ -2933,9 +2951,9 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
     db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
     let leads = db.prepare("SELECT * FROM leads WHERE origenCreacion='make'").all();
     leads.forEach(l => {
-      const dia = (l.fechaCarga || '').slice(0, 10);
-      if (desde && dia < desde) return;
-      if (hasta && dia > hasta) return;
+      const dia = peruFecha(l.fechaCarga);  // fecha LOCAL de Perú (coincide con lo que se muestra y con el Excel)
+      if (desde && (!dia || dia < desde)) return;
+      if (hasta && (!dia || dia > hasta)) return;
       const an = norm(l.anuncio);
       if (!an) return;
       const k = claveDe(an, dia);
@@ -3759,7 +3777,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.174 (Ingresos: boton eliminar definitivo (ingreso+lead+gestiones, auditado, solo admin) para limpiar pruebas; filtro de fecha de creacion desde/hasta; descarga CSV de la tabla) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.175 (FIX zona horaria en filtros de fecha: Ingresos, Inversion y Atribucion ahora filtran/agrupan por fecha LOCAL de Peru (UTC-5) para coincidir con lo mostrado; fecha del Excel se normaliza sin correrla por TZ) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
