@@ -4454,6 +4454,13 @@ function abrirAnuncio(i) {
 // ===================== MARKETING: pestañas y detalle de leads =====================
 let MKT_TAB = 'embudo';
 let MKT_LEADS = [];
+let MKT_ORIGEN = 'make';  // make = solo campañas (Make), relead, todos
+
+function setOrigenMkt(o) {
+  MKT_ORIGEN = o;
+  document.querySelectorAll('[data-org]').forEach(b => b.classList.toggle('act', b.getAttribute('data-org') === o));
+  renderMktLeads();
+}
 
 function cargarMarketing() {
   cargarAtribucion();      // pestaña embudo (ya existente)
@@ -4480,9 +4487,15 @@ async function cargarMktLeads() {
 }
 
 function mktFiltrados() {
+  let base = MKT_LEADS;
+  if (MKT_ORIGEN !== 'todos') base = base.filter(l => (l.origenCreacion || 'manual') === MKT_ORIGEN);
   const q = ($('mktBuscar') ? $('mktBuscar').value : '').trim().toLowerCase();
-  if (!q) return MKT_LEADS;
-  return MKT_LEADS.filter(l => [l.nombre, l.codigo, l.campana, l.conjunto, l.anuncio, l.asesor].some(v => String(v || '').toLowerCase().includes(q)));
+  if (!q) return base;
+  return base.filter(l => [l.nombre, l.codigo, l.campana, l.conjunto, l.anuncio, l.asesor].some(v => String(v || '').toLowerCase().includes(q)));
+}
+
+function mktOrigenLabel(o) {
+  return { make: 'Campaña', relead: 'Relead', manual: 'Manual' }[o] || (o || 'Manual');
 }
 
 function renderMktLeads() {
@@ -4491,12 +4504,13 @@ function renderMktLeads() {
   if ($('mktTotal')) $('mktTotal').textContent = filas.length + ' de ' + MKT_LEADS.length + ' leads';
   if (!MKT_LEADS.length) { cont.innerHTML = '<div class="vacio">No hay leads.</div>'; return; }
   const head = '<div style="overflow-x:auto"><table class="mkt-tabla"><thead><tr>' +
-    '<th>Código</th><th>Nombre</th><th>Campaña</th><th>Conjunto</th><th>Anuncio</th><th>Creado</th><th>Asignado</th><th>Asesor</th><th>Etapa</th><th>Estado</th>' +
+    '<th>Código</th><th>Nombre</th><th>Origen</th><th>Campaña</th><th>Conjunto</th><th>Anuncio</th><th>Creado</th><th>Asignado</th><th>Asesor</th><th>Etapa</th><th>Estado</th>' +
     '</tr></thead><tbody>' +
     filas.map(l =>
       '<tr>' +
       '<td class="mkt-cod">' + l.codigo + '</td>' +
       '<td>' + (l.nombre || '—') + '</td>' +
+      '<td>' + mktOrigenBadge(l.origenCreacion) + '</td>' +
       '<td class="mkt-attr">' + (l.campana || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
       '<td class="mkt-attr">' + (l.conjunto || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
       '<td class="mkt-attr">' + (l.anuncio || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
@@ -4508,6 +4522,12 @@ function renderMktLeads() {
       '</tr>').join('') +
     '</tbody></table></div>';
   cont.innerHTML = head;
+}
+
+function mktOrigenBadge(o) {
+  const e = mktOrigenLabel(o);
+  const col = { Campaña: '#1D9E75', Relead: '#EF9F27', Manual: '#64748B' }[e] || '#64748B';
+  return '<span style="background:' + col + '1a;color:' + col + ';font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap">' + e + '</span>';
 }
 
 function mktEstado(l) {
@@ -4524,15 +4544,15 @@ function mktEstadoBadge(l) {
 
 function descargarMktLeads() {
   const filas = mktFiltrados();
-  const cols = ['codigo', 'nombre', 'telefono', 'campana', 'conjunto', 'anuncio', 'fuente', 'fechaCarga', 'fechaAsignacion', 'asesor', 'etapa', 'estado'];
-  const titulos = ['Codigo', 'Nombre', 'Telefono', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'FechaCreacion', 'FechaAsignacion', 'Asesor', 'Etapa', 'Estado'];
+  const cols = ['codigo', 'nombre', 'telefono', 'origen', 'campana', 'conjunto', 'anuncio', 'fuente', 'fechaCarga', 'fechaAsignacion', 'asesor', 'etapa', 'estado'];
+  const titulos = ['Codigo', 'Nombre', 'Telefono', 'Origen', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'FechaCreacion', 'FechaAsignacion', 'Asesor', 'Etapa', 'Estado'];
   const esc = v => {
     const s = String(v == null ? '' : v);
     return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const lineas = [titulos.join(',')];
   filas.forEach(l => {
-    const row = { ...l, estado: mktEstado(l) };
+    const row = { ...l, estado: mktEstado(l), origen: mktOrigenLabel(l.origenCreacion) };
     lineas.push(cols.map(c => esc(row[c])).join(','));
   });
   const csv = '\uFEFF' + lineas.join('\r\n');  // BOM para que Excel respete tildes

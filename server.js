@@ -440,6 +440,7 @@ try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch
 try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 // Catálogo de anuncios: junta cada anuncio único y permite guardar su imagen (creativo).
@@ -479,6 +480,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS anuncios_meta (
     db.prepare("SELECT DISTINCT campana, conjunto, anuncio, adId FROM leads WHERE campana IS NOT NULL OR conjunto IS NOT NULL OR anuncio IS NOT NULL").all()
       .forEach(r => registrarAnuncioCatalogo(r.campana, r.conjunto, r.anuncio, r.adId));
     if (updated) console.log('Atribución recalculada (mapeo UTM) en', updated, 'leads');
+    // Marca el origen de creación de cada lead (make = vino por webhook; relead = desde la base de releads).
+    let marcados = 0;
+    db.prepare("UPDATE leads SET origenCreacion='make' WHERE (origenCreacion IS NULL OR origenCreacion='') AND codigo IN (SELECT codigoLead FROM marketing_ingresos WHERE codigoLead IS NOT NULL)").run();
+    db.prepare("UPDATE leads SET origenCreacion='relead' WHERE (origenCreacion IS NULL OR origenCreacion='') AND codigo IN (SELECT codigoLead FROM marketing_historial WHERE codigoLead IS NOT NULL)").run();
+    // Lo que quede sin marcar y no tenga atribución se considera manual/otro.
+    const r = db.prepare("UPDATE leads SET origenCreacion='manual' WHERE origenCreacion IS NULL OR origenCreacion=''").run();
+    marcados = (r && r.changes) || 0;
+    if (marcados) console.log('Origen de creación marcado en', marcados, 'leads restantes (manual)');
   } catch (e) { console.error('Backfill atribución:', e.message); }
 })();
 // Estado del round-robin (clave/valor).
@@ -1159,8 +1168,8 @@ function procesarLeadMarketing(norm, opts = {}) {
   const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
   const gp = opts.sinAutoasignar ? null : elegirGPRoundRobin();
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'make')`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
          norm.fuente || null, norm.campana || null, norm.conjunto || null, norm.anuncio || null, norm.adId || null,
          gp || null, monto, monto, rango, ahora, gp ? ahora : null);
@@ -2700,7 +2709,9 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
   try {
     const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
     const desde = req.query.desde || null, hasta = req.query.hasta || null;
+    const origen = req.query.origen || 'make'; // por defecto solo leads de campaña (Make), sin releads
     let leadsRaw = db.prepare('SELECT * FROM leads').all();
+    if (origen !== 'todos') leadsRaw = leadsRaw.filter(l => (l.origenCreacion || 'manual') === origen);
     if (desde) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
     if (hasta) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) <= hasta);
     // La etapa NO es columna: se calcula con leadConsolidado(lead, gestiones).
@@ -2768,7 +2779,8 @@ app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
         codigo: l.codigo, nombre: l.nombre, telefono: l.telefono,
         campana: l.campana || '', conjunto: l.conjunto || '', anuncio: l.anuncio || '',
         fuente: l.fuente || '', fechaCarga: l.fechaCarga, fechaAsignacion: l.fechaAsignacion,
-        asesor: l.asesor || '', etapa: cons.etapa, archivado: l.archivado ? 1 : 0
+        asesor: l.asesor || '', etapa: cons.etapa, archivado: l.archivado ? 1 : 0,
+        origenCreacion: l.origenCreacion || 'manual'
       };
     });
     res.json({ total: filas.length, filas });
@@ -3398,8 +3410,8 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
   const ahora = new Date().toISOString();
   const getRe = db.prepare("SELECT * FROM marketing_historial WHERE telefono = ? AND estado = 'pendiente'");
   const existeLead = db.prepare('SELECT codigo FROM leads WHERE telefono = ?');
-  const insLead = db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insLead = db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'relead')`);
   const updRe = db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=?");
   let creados = 0, yaExistian = 0, noEncontrados = 0;
   const nuevosCods = [];
@@ -3525,7 +3537,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.169 (atribucion por UTM corregida: utm_campaign=campana, utm_term=conjunto, utm_content=anuncio; recupera conjunto desde utm_source si tiene nomenclatura; backfill reprocesa todos los leads; columna Estado en detalle y CSV) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.170 (Marketing separa releads de leads de campana: columna origenCreacion make/relead/manual, marcado al crear y backfill; embudo solo Make (campana real-time), detalle con filtro Solo campanas/Releads/Todos y columna Origen en tabla y CSV) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

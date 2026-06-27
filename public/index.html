@@ -307,13 +307,18 @@
           <button class="atr-niv" data-niv="conjunto" onclick="setNivelAtrib('conjunto')">Conjunto</button>
           <button class="atr-niv act" data-niv="anuncio" onclick="setNivelAtrib('anuncio')">Anuncio</button>
         </div>
-        <span id="atrTotal" class="sub" style="margin-left:auto"></span>
+        <span id="atrTotal" class="sub" style="margin-left:auto">Solo leads de campaña (Make) · sin releads</span>
       </div>
       <div id="atrCont"><div class="vacio">Cargando…</div></div>
     </div>
     <div id="mktLeads" style="display:none">
       <div class="atr-ctrl">
-        <input id="mktBuscar" class="inp" placeholder="Buscar por nombre, código, campaña, anuncio…" style="flex:1;min-width:220px" oninput="renderMktLeads()">
+        <div class="atr-niveles">
+          <button class="atr-niv act" data-org="make" onclick="setOrigenMkt('make')">Solo campañas</button>
+          <button class="atr-niv" data-org="relead" onclick="setOrigenMkt('relead')">Releads</button>
+          <button class="atr-niv" data-org="todos" onclick="setOrigenMkt('todos')">Todos</button>
+        </div>
+        <input id="mktBuscar" class="inp" placeholder="Buscar por nombre, código, campaña, anuncio…" style="flex:1;min-width:200px" oninput="renderMktLeads()">
         <span id="mktTotal" class="sub"></span>
         <button class="btn sec" onclick="descargarMktLeads()">⬇ Descargar tabla (CSV)</button>
       </div>
