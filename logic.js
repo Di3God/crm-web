@@ -824,6 +824,7 @@ function normalizarLeadMarketing(origen, payload) {
   const utmSource = _pick(p, 'utm_source', 'utmSource');
   const utmMedium = _pick(p, 'utm_medium', 'utmMedium');
   const utmCampaign = _pick(p, 'utm_campaign', 'utmCampaign');
+  const utmTerm = _pick(p, 'utm_term', 'utmTerm');
   const utmContent = _pick(p, 'utm_content', 'utmContent');
 
   // Campos comunes con tolerancia a distintos nombres por fuente.
@@ -851,9 +852,14 @@ function normalizarLeadMarketing(origen, payload) {
   const adsetId = _pick(p, 'adset_id', 'adsetId', 'adgroup_id', 'ad_group_id');
   const adId = _pick(p, 'ad_id', 'adId', 'creative_id');
   const leadIdExterno = _pick(p, 'leadgen_id', 'lead_id', 'leadId', 'id');
-  // Nombres de conjunto y anuncio (atribucion completa). Vienen de Meta/Make.
-  const conjunto = _pick(p, 'adset_name', 'adsetName', 'conjunto', 'conjunto_anuncios', 'adset', 'ad_group_name');
-  const anuncio = _pick(p, 'ad_name', 'adName', 'anuncio', 'ad', 'creative_name');
+  // Atribución por UTM (así llegan los leads de TasaTop):
+  //   utm_campaign = campaña · utm_term = conjunto de anuncios · utm_content = anuncio
+  // Se respaldan con los nombres de Meta/Make si vinieran.
+  let conjunto = _pick(p, 'utm_term', 'utmTerm', 'adset_name', 'adsetName', 'conjunto', 'conjunto_anuncios', 'adset', 'ad_group_name');
+  const anuncio = _pick(p, 'utm_content', 'utmContent', 'ad_name', 'adName', 'anuncio', 'ad', 'creative_name');
+  // Recuperación: en algunos leads el conjunto (utm_term) llegó por error a utm_source.
+  // Si utm_source tiene pinta de nomenclatura de anuncios (empieza con b2c_/b2b_), se usa como conjunto.
+  if (!conjunto && utmSource && /^b2[bc]_/i.test(String(utmSource).trim())) conjunto = utmSource;
 
   const telefonoNormalizado = telefonoRaw ? normalizarCelular(telefonoRaw) : null;
 
@@ -862,7 +868,7 @@ function normalizarLeadMarketing(origen, payload) {
     nombre, telefonoRecibido: telefonoRaw, telefonoNormalizado, email,
     fuente, campana, conjunto, anuncio, formulario,
     campaignId, adsetId, adId, leadIdExterno,
-    utmSource, utmMedium, utmCampaign, utmContent,
+    utmSource, utmMedium, utmCampaign, utmTerm, utmContent,
     monto, montoNumerico,
     rawJson: JSON.stringify(p)
   };

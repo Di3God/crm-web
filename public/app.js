@@ -4504,22 +4504,37 @@ function renderMktLeads() {
       '<td>' + (l.fechaAsignacion ? fmtFecha(l.fechaAsignacion) : '—') + '</td>' +
       '<td>' + (l.asesor ? primerNombre(l.asesor) : '<span class="mkt-vacio">sin asignar</span>') + '</td>' +
       '<td>' + (l.etapa || '—') + '</td>' +
-      '<td>' + (l.archivado ? '<span class="mkt-arch">archivado</span>' : '') + '</td>' +
+      '<td>' + mktEstadoBadge(l) + '</td>' +
       '</tr>').join('') +
     '</tbody></table></div>';
   cont.innerHTML = head;
 }
 
+function mktEstado(l) {
+  if (l.archivado) return 'Archivado';
+  if (l.etapa === 'Cerrado ganado') return 'Ganado';
+  if (l.etapa === 'Cerrado perdido') return 'Perdido';
+  return 'Activo';
+}
+function mktEstadoBadge(l) {
+  const e = mktEstado(l);
+  const col = { Activo: '#1D9E75', Ganado: '#0B72E8', Perdido: '#C0392B', Archivado: '#64748B' }[e];
+  return '<span style="background:' + col + '1a;color:' + col + ';font-size:11px;padding:2px 8px;border-radius:10px;white-space:nowrap">' + e + '</span>';
+}
+
 function descargarMktLeads() {
   const filas = mktFiltrados();
-  const cols = ['codigo', 'nombre', 'telefono', 'campana', 'conjunto', 'anuncio', 'fuente', 'fechaCarga', 'fechaAsignacion', 'asesor', 'etapa', 'archivado'];
-  const titulos = ['Codigo', 'Nombre', 'Telefono', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'FechaCreacion', 'FechaAsignacion', 'Asesor', 'Etapa', 'Archivado'];
+  const cols = ['codigo', 'nombre', 'telefono', 'campana', 'conjunto', 'anuncio', 'fuente', 'fechaCarga', 'fechaAsignacion', 'asesor', 'etapa', 'estado'];
+  const titulos = ['Codigo', 'Nombre', 'Telefono', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'FechaCreacion', 'FechaAsignacion', 'Asesor', 'Etapa', 'Estado'];
   const esc = v => {
     const s = String(v == null ? '' : v);
     return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const lineas = [titulos.join(',')];
-  filas.forEach(l => lineas.push(cols.map(c => esc(l[c])).join(',')));
+  filas.forEach(l => {
+    const row = { ...l, estado: mktEstado(l) };
+    lineas.push(cols.map(c => esc(row[c])).join(','));
+  });
   const csv = '\uFEFF' + lineas.join('\r\n');  // BOM para que Excel respete tildes
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

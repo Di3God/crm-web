@@ -454,27 +454,31 @@ db.exec(`CREATE TABLE IF NOT EXISTS anuncios_meta (
   actualizadoEn TEXT,
   UNIQUE(campana, conjunto, anuncio)
 );`);
-// Recuperación histórica: rellena conjunto/anuncio en leads viejos releyendo el rawJson de su ingreso.
+// Recuperación/recálculo de atribución: relee el rawJson de cada lead y reescribe campaña/conjunto/anuncio
+// con el mapeo correcto por UTM (utm_campaign/utm_term/utm_content). Reprocesa TODOS (mapeo corregido).
 (function backfillAtribucion() {
   try {
-    const pend = db.prepare("SELECT codigo, campana FROM leads WHERE (conjunto IS NULL OR conjunto='') OR (anuncio IS NULL OR anuncio='')").all();
+    const todos = db.prepare('SELECT codigo FROM leads').all();
     let updated = 0;
-    for (const l of pend) {
+    for (const l of todos) {
       const ing = db.prepare("SELECT origen, rawJson, conjunto, anuncio, adId FROM marketing_ingresos WHERE codigoLead=? ORDER BY id DESC LIMIT 1").get(l.codigo);
-      if (!ing) continue;
-      let conj = ing.conjunto, anun = ing.anuncio, adId = ing.adId;
-      if ((!conj || !anun) && ing.rawJson) {
-        try { const norm = L.normalizarLeadMarketing(ing.origen, JSON.parse(ing.rawJson)); conj = conj || norm.conjunto; anun = anun || norm.anuncio; adId = adId || norm.adId; } catch (e) { }
-      }
-      if (conj || anun || adId) {
-        db.prepare("UPDATE leads SET conjunto=COALESCE(conjunto,?), anuncio=COALESCE(anuncio,?), adId=COALESCE(adId,?) WHERE codigo=?").run(conj || null, anun || null, adId || null, l.codigo);
+      if (!ing || !ing.rawJson) continue;
+      let conj = null, anun = null, camp = null, adId = ing.adId;
+      try {
+        const norm = L.normalizarLeadMarketing(ing.origen, JSON.parse(ing.rawJson));
+        conj = norm.conjunto; anun = norm.anuncio; camp = norm.campana; adId = adId || norm.adId;
+      } catch (e) { continue; }
+      if (conj || anun || camp) {
+        // Reescribe la atribución (mapeo corregido); conserva campaña si la nueva viene vacía.
+        db.prepare("UPDATE leads SET campana=COALESCE(?,campana), conjunto=?, anuncio=?, adId=COALESCE(?,adId) WHERE codigo=?")
+          .run(camp || null, conj || null, anun || null, adId || null, l.codigo);
         updated++;
       }
     }
     // Poblar el catálogo con todos los anuncios ya conocidos por los leads.
     db.prepare("SELECT DISTINCT campana, conjunto, anuncio, adId FROM leads WHERE campana IS NOT NULL OR conjunto IS NOT NULL OR anuncio IS NOT NULL").all()
       .forEach(r => registrarAnuncioCatalogo(r.campana, r.conjunto, r.anuncio, r.adId));
-    if (updated) console.log('Atribución histórica recuperada en', updated, 'leads');
+    if (updated) console.log('Atribución recalculada (mapeo UTM) en', updated, 'leads');
   } catch (e) { console.error('Backfill atribución:', e.message); }
 })();
 // Estado del round-robin (clave/valor).
@@ -3521,7 +3525,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.168 (vista Marketing: pestanas Embudo y Detalle de leads; tabla lead por lead con campana/conjunto/anuncio/creado/asignado/asesor/etapa/archivado; buscador y descarga CSV para cuadrar) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.169 (atribucion por UTM corregida: utm_campaign=campana, utm_term=conjunto, utm_content=anuncio; recupera conjunto desde utm_source si tiene nomenclatura; backfill reprocesa todos los leads; columna Estado en detalle y CSV) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
