@@ -23,6 +23,7 @@
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
+        <button class="mundo-item oculto" id="mi-atribucion" onclick="navB2C('atribucion')">Atribución de anuncios</button>
         <button class="mundo-item oculto" id="mi-audit" onclick="navB2C('audit')">Auditoría</button>
       </div>
     </div>
@@ -287,9 +288,25 @@
     </div>
   </section>
 
-  <!-- ===== AUDITORIA (solo admin) ===== -->
-  <section id="v-audit" class="vista">
+  <!-- ===== ATRIBUCIÓN DE ANUNCIOS (embudo por fuente) ===== -->
+  <section id="v-atribucion" class="vista">
     <div class="barra">
+      <h2>Atribución de anuncios</h2>
+      <span class="sub">De qué campaña, conjunto o anuncio viene cada lead, y cuánto convierte.</span>
+      <button class="btn sec" style="margin-left:auto" onclick="cargarAtribucion()">⟳ Actualizar</button>
+    </div>
+    <div class="atr-ctrl">
+      <span class="sub">Ver por:</span>
+      <div class="atr-niveles">
+        <button class="atr-niv" data-niv="campana" onclick="setNivelAtrib('campana')">Campaña</button>
+        <button class="atr-niv" data-niv="conjunto" onclick="setNivelAtrib('conjunto')">Conjunto</button>
+        <button class="atr-niv act" data-niv="anuncio" onclick="setNivelAtrib('anuncio')">Anuncio</button>
+      </div>
+      <span id="atrTotal" class="sub" style="margin-left:auto"></span>
+    </div>
+    <div id="atrCont"><div class="vacio">Cargando…</div></div>
+  </section>
+
       <h2>Auditoría y administración</h2>
       <button class="btn sec" style="margin-left:auto" onclick="descargarBackup()">⬇ Descargar backup</button>
       <button class="btn sec" onclick="cargarAuditoria()">Actualizar</button>

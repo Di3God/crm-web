@@ -851,13 +851,16 @@ function normalizarLeadMarketing(origen, payload) {
   const adsetId = _pick(p, 'adset_id', 'adsetId', 'adgroup_id', 'ad_group_id');
   const adId = _pick(p, 'ad_id', 'adId', 'creative_id');
   const leadIdExterno = _pick(p, 'leadgen_id', 'lead_id', 'leadId', 'id');
+  // Nombres de conjunto y anuncio (atribucion completa). Vienen de Meta/Make.
+  const conjunto = _pick(p, 'adset_name', 'adsetName', 'conjunto', 'conjunto_anuncios', 'adset', 'ad_group_name');
+  const anuncio = _pick(p, 'ad_name', 'adName', 'anuncio', 'ad', 'creative_name');
 
   const telefonoNormalizado = telefonoRaw ? normalizarCelular(telefonoRaw) : null;
 
   return {
     origen: o,
     nombre, telefonoRecibido: telefonoRaw, telefonoNormalizado, email,
-    fuente, campana, formulario,
+    fuente, campana, conjunto, anuncio, formulario,
     campaignId, adsetId, adId, leadIdExterno,
     utmSource, utmMedium, utmCampaign, utmContent,
     monto, montoNumerico,

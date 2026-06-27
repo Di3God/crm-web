@@ -538,13 +538,13 @@ async function arrancar() {
   const r = YO.rol;
   if (r === 'admin') {
     verMundo('B2C'); verMundo('B2B');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-audit']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-audit']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
     verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-brutos', 'mi-releads', 'mi-audit']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-brutos', 'mi-releads', 'mi-atribucion', 'mi-audit']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -607,6 +607,7 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
+  if (v === 'atribucion') cargarAtribucion();
 }
 
 // ===== Navegación de dos mundos (B2C / B2B) =====
@@ -4386,4 +4387,66 @@ function subirDocSujeto(sujetoId) {
     } catch (e) { alert('No se pudo subir: ' + e.message); }
   };
   input.click();
+}
+
+// ===================== ATRIBUCIÓN DE ANUNCIOS =====================
+let ATRIB_NIVEL = 'anuncio';
+let ATRIB_DATA = null;
+
+function setNivelAtrib(n) {
+  ATRIB_NIVEL = n;
+  document.querySelectorAll('.atr-niv').forEach(b => b.classList.toggle('act', b.getAttribute('data-niv') === n));
+  cargarAtribucion();
+}
+
+async function cargarAtribucion() {
+  const cont = $('atrCont');
+  cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  try {
+    ATRIB_DATA = await api('/api/atribucion?nivel=' + ATRIB_NIVEL);
+    if ($('atrTotal')) $('atrTotal').textContent = ATRIB_DATA.totalLeads + ' leads';
+    renderAtribucion();
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+
+function renderAtribucion() {
+  const cont = $('atrCont');
+  const filas = ATRIB_DATA.filas || [];
+  if (!filas.length) { cont.innerHTML = '<div class="vacio">Aún no hay leads con atribución para este nivel.</div>'; return; }
+  const esAnuncio = ATRIB_NIVEL === 'anuncio';
+  const head = '<table class="atr-tabla"><thead><tr>' +
+    '<th class="atr-l">' + (ATRIB_NIVEL === 'campana' ? 'Campaña' : ATRIB_NIVEL === 'conjunto' ? 'Conjunto' : 'Anuncio') + '</th>' +
+    '<th>Leads</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Cierre</th><th>Conv.</th>' +
+    '</tr></thead><tbody>';
+  const body = filas.map((f, i) => {
+    const convCol = f.conversion >= 3 ? 'atr-conv-ok' : (f.conversion > 0 ? '' : 'atr-conv-0');
+    const thumb = esAnuncio
+      ? '<div class="atr-thumb">' + (f.imagenUrl ? '<img src="' + f.imagenUrl + '" alt="" onerror="this.parentNode.classList.add(\'atr-thumb-err\')">' : '<span>📷</span>') + '</div>'
+      : '';
+    const sub = esAnuncio && (f.campana || f.conjunto) ? '<div class="atr-sub">' + [f.conjunto, f.campana].filter(Boolean)[0] + '</div>' : '';
+    return '<tr onclick="abrirAnuncio(' + i + ')" style="cursor:pointer">' +
+      '<td class="atr-l"><div class="atr-fuente">' + thumb + '<div class="atr-fuente-txt"><div class="atr-nom">' + f.fuente + '</div>' + sub + '</div></div></td>' +
+      '<td>' + f.leads + '</td>' +
+      '<td>' + f.contactado + '</td>' +
+      '<td>' + f.calificado + '</td>' +
+      '<td class="atr-agend">' + f.agendado + '</td>' +
+      '<td>' + f.reunion + '</td>' +
+      '<td><b>' + f.cierre + '</b></td>' +
+      '<td class="' + convCol + '">' + f.conversion + '%</td>' +
+      '</tr>';
+  }).join('');
+  cont.innerHTML = head + body + '</tbody></table>';
+}
+
+function abrirAnuncio(i) {
+  const f = (ATRIB_DATA.filas || [])[i];
+  if (!f) return;
+  if (ATRIB_NIVEL !== 'anuncio') return;  // detalle con imagen solo a nivel anuncio
+  const url = prompt('Pega la URL de la imagen del anuncio "' + f.fuente + '"\n(deja vacío para quitarla):', f.imagenUrl || '');
+  if (url === null) return;
+  api('/api/anuncios/imagen', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ anuncio: f.fuente, campana: f.campana, conjunto: f.conjunto, imagenUrl: url.trim() || null }) })
+    .then(() => cargarAtribucion())
+    .catch(e => alert('No se pudo guardar: ' + e.message));
 }

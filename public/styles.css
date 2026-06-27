@@ -1128,3 +1128,25 @@
   .fb-suj { border: 0.5px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-bottom: 8px; background: #FBFCFE; }
   .fb-suj-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .fb-suj-nom { flex: 1; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+
+  /* ===== Atribución de anuncios ===== */
+  .atr-ctrl { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .atr-niveles { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .atr-niv { padding: 6px 14px; font-size: 13px; background: #fff; border: none; border-left: 1px solid var(--line); cursor: pointer; color: #475569; }
+  .atr-niv:first-child { border-left: none; }
+  .atr-niv.act { background: #EAF2FE; color: #0B72E8; font-weight: 600; }
+  .atr-tabla { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13px; }
+  .atr-tabla thead tr { background: #F7F8FA; color: #9AA8B8; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  .atr-tabla th { padding: 9px 8px; font-weight: 600; text-align: center; }
+  .atr-tabla th.atr-l, .atr-tabla td.atr-l { text-align: left; }
+  .atr-tabla td { padding: 10px 8px; text-align: center; border-top: 1px solid var(--line); color: #475569; }
+  .atr-tabla tbody tr:hover { background: #F8FAFC; }
+  .atr-fuente { display: flex; align-items: center; gap: 10px; }
+  .atr-thumb { width: 38px; height: 38px; border-radius: 7px; background: #EAF2FE; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; }
+  .atr-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .atr-thumb-err span, .atr-thumb span { font-size: 16px; }
+  .atr-nom { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  .atr-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  .atr-agend { color: #1D9E75 !important; font-weight: 700; }
+  .atr-conv-ok { color: #1D9E75; font-weight: 700; }
+  .atr-conv-0 { color: #94a3b8; }

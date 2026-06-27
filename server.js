@@ -436,6 +436,47 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); 
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch (e) { }
+// Atribución completa de marketing (conjunto = adset, anuncio = ad)
+try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
+// Catálogo de anuncios: junta cada anuncio único y permite guardar su imagen (creativo).
+db.exec(`CREATE TABLE IF NOT EXISTS anuncios_meta (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campana TEXT,
+  conjunto TEXT,
+  anuncio TEXT,
+  adId TEXT,
+  imagenUrl TEXT,
+  primeraVez TEXT,
+  actualizadoEn TEXT,
+  UNIQUE(campana, conjunto, anuncio)
+);`);
+// Recuperación histórica: rellena conjunto/anuncio en leads viejos releyendo el rawJson de su ingreso.
+(function backfillAtribucion() {
+  try {
+    const pend = db.prepare("SELECT codigo, campana FROM leads WHERE (conjunto IS NULL OR conjunto='') OR (anuncio IS NULL OR anuncio='')").all();
+    let updated = 0;
+    for (const l of pend) {
+      const ing = db.prepare("SELECT origen, rawJson, conjunto, anuncio, adId FROM marketing_ingresos WHERE codigoLead=? ORDER BY id DESC LIMIT 1").get(l.codigo);
+      if (!ing) continue;
+      let conj = ing.conjunto, anun = ing.anuncio, adId = ing.adId;
+      if ((!conj || !anun) && ing.rawJson) {
+        try { const norm = L.normalizarLeadMarketing(ing.origen, JSON.parse(ing.rawJson)); conj = conj || norm.conjunto; anun = anun || norm.anuncio; adId = adId || norm.adId; } catch (e) { }
+      }
+      if (conj || anun || adId) {
+        db.prepare("UPDATE leads SET conjunto=COALESCE(conjunto,?), anuncio=COALESCE(anuncio,?), adId=COALESCE(adId,?) WHERE codigo=?").run(conj || null, anun || null, adId || null, l.codigo);
+        updated++;
+      }
+    }
+    // Poblar el catálogo con todos los anuncios ya conocidos por los leads.
+    db.prepare("SELECT DISTINCT campana, conjunto, anuncio, adId FROM leads WHERE campana IS NOT NULL OR conjunto IS NOT NULL OR anuncio IS NOT NULL").all()
+      .forEach(r => registrarAnuncioCatalogo(r.campana, r.conjunto, r.anuncio, r.adId));
+    if (updated) console.log('Atribución histórica recuperada en', updated, 'leads');
+  } catch (e) { console.error('Backfill atribución:', e.message); }
+})();
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
@@ -1026,13 +1067,13 @@ function notificarAsignacion(lead, asesorNombre) {
 function guardarIngresoBruto(norm, estado, mensajeError, codigoLead) {
   const r = db.prepare(`INSERT INTO marketing_ingresos
     (fechaRecepcion,origen,estado,nombreRecibido,telefonoRecibido,telefonoNormalizado,emailRecibido,
-     fuente,campana,formulario,campaignId,adsetId,adId,leadIdExterno,
+     fuente,campana,conjunto,anuncio,formulario,campaignId,adsetId,adId,leadIdExterno,
      utmSource,utmMedium,utmCampaign,utmContent,montoRecibido,codigoLead,mensajeError,rawJson)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
       new Date().toISOString(), norm.origen, estado,
       norm.nombre, norm.telefonoRecibido, norm.telefonoNormalizado, norm.email,
-      norm.fuente, norm.campana, norm.formulario,
+      norm.fuente, norm.campana, norm.conjunto || null, norm.anuncio || null, norm.formulario,
       norm.campaignId, norm.adsetId, norm.adId, norm.leadIdExterno,
       norm.utmSource, norm.utmMedium, norm.utmCampaign, norm.utmContent,
       norm.monto || null, codigoLead || null, mensajeError || null, norm.rawJson
@@ -1114,12 +1155,26 @@ function procesarLeadMarketing(norm, opts = {}) {
   const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
   const gp = opts.sinAutoasignar ? null : elegirGPRoundRobin();
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
-         norm.fuente || null, norm.campana || null, gp || null, monto, monto, rango, ahora, gp ? ahora : null);
+         norm.fuente || null, norm.campana || null, norm.conjunto || null, norm.anuncio || null, norm.adId || null,
+         gp || null, monto, monto, rango, ahora, gp ? ahora : null);
+  registrarAnuncioCatalogo(norm.campana, norm.conjunto, norm.anuncio, norm.adId);
   if (gp) notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
   return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
+}
+
+// Upsert de un anuncio en el catálogo (para luego adjuntarle su imagen). Ignora si no hay datos.
+function registrarAnuncioCatalogo(campana, conjunto, anuncio, adId) {
+  if (!campana && !conjunto && !anuncio) return;
+  const ahora = new Date().toISOString();
+  try {
+    db.prepare(`INSERT INTO anuncios_meta (campana, conjunto, anuncio, adId, primeraVez, actualizadoEn)
+      VALUES (?,?,?,?,?,?)
+      ON CONFLICT(campana, conjunto, anuncio) DO UPDATE SET adId=COALESCE(excluded.adId, anuncios_meta.adId), actualizadoEn=excluded.actualizadoEn`)
+      .run(campana || null, conjunto || null, anuncio || null, adId || null, ahora, ahora);
+  } catch (e) { }
 }
 
 // Webhook universal de recepcion de leads. Valida token por env MARKETING_WEBHOOK_TOKEN.
@@ -2631,6 +2686,60 @@ app.get('/api/dashboard/llegadas-horario', (req, res) => {
   res.json({ desde, hasta, total, nuevos, duplicados, sinNombre, bandas });
 });
 
+// ============== ATRIBUCIÓN: embudo por fuente (campaña / conjunto / anuncio) ==============
+const ORD_ETAPA_ATRIB = {
+  'Contactabilidad 3x5': 0, 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3,
+  'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6, 'Cerrado perdido': -1
+};
+app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
+  const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
+  const desde = req.query.desde || null, hasta = req.query.hasta || null;
+  let leads = db.prepare('SELECT codigo, campana, conjunto, anuncio, adId, etapa, fechaCarga FROM leads').all();
+  if (desde) leads = leads.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
+  if (hasta) leads = leads.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) <= hasta);
+  // Set de leads "contactados" = con al menos una gestión que conectó (resultado fuera de SIN_CONTACTO).
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const placeholders = SIN.map(() => '?').join(',') || "''";
+  const contactadosRows = db.prepare('SELECT DISTINCT codigo FROM gestiones WHERE resultado NOT IN (' + placeholders + ')').all(...SIN);
+  const contactados = new Set(contactadosRows.map(r => r.codigo));
+  // Agrupa por el nivel elegido.
+  const grupos = {};
+  leads.forEach(l => {
+    const clave = ((l[nivel] || '').trim()) || '(sin dato)';
+    if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0 };
+    const g = grupos[clave];
+    g.leads++;
+    if (contactados.has(l.codigo)) g.contactado++;
+    const ord = ORD_ETAPA_ATRIB[l.etapa] != null ? ORD_ETAPA_ATRIB[l.etapa] : 0;
+    if (ord >= 2) g.calificado++;
+    if (ord >= 3) g.agendado++;
+    if (ord >= 4) g.reunion++;
+    if (l.etapa === 'Cerrado ganado') g.cierre++;
+  });
+  // Adjunta imagen del catálogo (por nombre de anuncio) y calcula conversión.
+  const cat = db.prepare('SELECT anuncio, imagenUrl FROM anuncios_meta').all();
+  const filas = Object.values(grupos).map(g => {
+    g.conversion = g.leads ? Math.round((g.cierre / g.leads) * 1000) / 10 : 0;
+    if (nivel === 'anuncio') { const hit = cat.find(c => c.anuncio === g.fuente); g.imagenUrl = hit ? hit.imagenUrl : null; }
+    return g;
+  }).sort((a, b) => b.leads - a.leads);
+  res.json({ nivel, desde, hasta, totalLeads: leads.length, filas });
+});
+// Catálogo de anuncios (para asignar imágenes).
+app.get('/api/anuncios', soloAdminOJefa, (req, res) => {
+  res.json(db.prepare('SELECT * FROM anuncios_meta ORDER BY campana, conjunto, anuncio').all());
+});
+// Guarda/actualiza la imagen (URL del creativo) de un anuncio por nombre.
+app.put('/api/anuncios/imagen', soloAdminOJefa, (req, res) => {
+  const b = req.body || {};
+  if (!b.anuncio) return res.status(400).json({ error: 'Falta el anuncio' });
+  const ahora = new Date().toISOString();
+  const fila = db.prepare('SELECT id FROM anuncios_meta WHERE anuncio=?').get(b.anuncio);
+  if (fila) db.prepare('UPDATE anuncios_meta SET imagenUrl=?, actualizadoEn=? WHERE id=?').run(b.imagenUrl || null, ahora, fila.id);
+  else db.prepare('INSERT INTO anuncios_meta (campana, conjunto, anuncio, imagenUrl, primeraVez, actualizadoEn) VALUES (?,?,?,?,?,?)').run(b.campana || null, b.conjunto || null, b.anuncio, b.imagenUrl || null, ahora, ahora);
+  res.json({ ok: true });
+});
+
 // Ranking de contactabilidad del día (visible para todas). Cuenta gestiones de hoy por GP.
 app.get('/api/ranking/contactabilidad', (req, res) => {
   const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
@@ -3378,7 +3487,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.164 (ranking del dia: titulo renombrado, columna nombres primero y Puntos a la izq de Intentos, Agendados en verde (ya no Calificado), pie con pesos nuevos +1 verificada, animacion de entrada escalonada del modal) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.165 (atribucion de anuncios: lead arrastra conjunto+anuncio+adId, recuperacion historica desde rawJson, catalogo de anuncios con imagen, vista Embudo por fuente con matriz campana/conjunto/anuncio x etapa y conversion) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
