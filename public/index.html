@@ -23,7 +23,7 @@
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
-        <button class="mundo-item oculto" id="mi-atribucion" onclick="navB2C('atribucion')">Atribución de anuncios</button>
+        <button class="mundo-item oculto" id="mi-atribucion" onclick="navB2C('atribucion')">Marketing</button>
         <button class="mundo-item oculto" id="mi-audit" onclick="navB2C('audit')">Auditoría</button>
       </div>
     </div>
@@ -288,23 +288,37 @@
     </div>
   </section>
 
-  <!-- ===== ATRIBUCIÓN DE ANUNCIOS (embudo por fuente) ===== -->
+  <!-- ===== MARKETING (atribución de anuncios) ===== -->
   <section id="v-atribucion" class="vista">
     <div class="barra">
-      <h2>Atribución de anuncios</h2>
-      <span class="sub">De qué campaña, conjunto o anuncio viene cada lead, y cuánto convierte.</span>
-      <button class="btn sec" style="margin-left:auto" onclick="cargarAtribucion()">⟳ Actualizar</button>
+      <h2>Marketing</h2>
+      <span class="sub">Atribución de leads: de qué campaña, conjunto y anuncio vienen, y cuánto convierten.</span>
+      <button class="btn sec" style="margin-left:auto" onclick="cargarMarketing()">⟳ Actualizar</button>
     </div>
-    <div class="atr-ctrl">
-      <span class="sub">Ver por:</span>
-      <div class="atr-niveles">
-        <button class="atr-niv" data-niv="campana" onclick="setNivelAtrib('campana')">Campaña</button>
-        <button class="atr-niv" data-niv="conjunto" onclick="setNivelAtrib('conjunto')">Conjunto</button>
-        <button class="atr-niv act" data-niv="anuncio" onclick="setNivelAtrib('anuncio')">Anuncio</button>
+    <div class="atr-tabs">
+      <button class="atr-tab act" data-tab="embudo" onclick="setTabMkt('embudo')">Embudo por anuncio</button>
+      <button class="atr-tab" data-tab="leads" onclick="setTabMkt('leads')">Detalle de leads</button>
+    </div>
+    <div id="mktEmbudo">
+      <div class="atr-ctrl">
+        <span class="sub">Ver por:</span>
+        <div class="atr-niveles">
+          <button class="atr-niv" data-niv="campana" onclick="setNivelAtrib('campana')">Campaña</button>
+          <button class="atr-niv" data-niv="conjunto" onclick="setNivelAtrib('conjunto')">Conjunto</button>
+          <button class="atr-niv act" data-niv="anuncio" onclick="setNivelAtrib('anuncio')">Anuncio</button>
+        </div>
+        <span id="atrTotal" class="sub" style="margin-left:auto"></span>
       </div>
-      <span id="atrTotal" class="sub" style="margin-left:auto"></span>
+      <div id="atrCont"><div class="vacio">Cargando…</div></div>
     </div>
-    <div id="atrCont"><div class="vacio">Cargando…</div></div>
+    <div id="mktLeads" style="display:none">
+      <div class="atr-ctrl">
+        <input id="mktBuscar" class="inp" placeholder="Buscar por nombre, código, campaña, anuncio…" style="flex:1;min-width:220px" oninput="renderMktLeads()">
+        <span id="mktTotal" class="sub"></span>
+        <button class="btn sec" onclick="descargarMktLeads()">⬇ Descargar tabla (CSV)</button>
+      </div>
+      <div id="mktLeadsCont"><div class="vacio">Cargando…</div></div>
+    </div>
   </section>
 
   <!-- ===== AUDITORIA (solo admin) ===== -->

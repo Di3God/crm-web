@@ -607,7 +607,7 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
-  if (v === 'atribucion') cargarAtribucion();
+  if (v === 'atribucion') cargarMarketing();
 }
 
 // ===== Navegación de dos mundos (B2C / B2B) =====
@@ -4449,4 +4449,83 @@ function abrirAnuncio(i) {
   api('/api/anuncios/imagen', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ anuncio: f.fuente, campana: f.campana, conjunto: f.conjunto, imagenUrl: url.trim() || null }) })
     .then(() => cargarAtribucion())
     .catch(e => alert('No se pudo guardar: ' + e.message));
+}
+
+// ===================== MARKETING: pestañas y detalle de leads =====================
+let MKT_TAB = 'embudo';
+let MKT_LEADS = [];
+
+function cargarMarketing() {
+  cargarAtribucion();      // pestaña embudo (ya existente)
+  cargarMktLeads();        // pestaña detalle
+}
+
+function setTabMkt(t) {
+  MKT_TAB = t;
+  document.querySelectorAll('.atr-tab').forEach(b => b.classList.toggle('act', b.getAttribute('data-tab') === t));
+  $('mktEmbudo').style.display = t === 'embudo' ? '' : 'none';
+  $('mktLeads').style.display = t === 'leads' ? '' : 'none';
+}
+
+async function cargarMktLeads() {
+  const cont = $('mktLeadsCont');
+  cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  try {
+    const d = await api('/api/marketing/leads');
+    MKT_LEADS = d.filas || [];
+    renderMktLeads();
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+
+function mktFiltrados() {
+  const q = ($('mktBuscar') ? $('mktBuscar').value : '').trim().toLowerCase();
+  if (!q) return MKT_LEADS;
+  return MKT_LEADS.filter(l => [l.nombre, l.codigo, l.campana, l.conjunto, l.anuncio, l.asesor].some(v => String(v || '').toLowerCase().includes(q)));
+}
+
+function renderMktLeads() {
+  const cont = $('mktLeadsCont');
+  const filas = mktFiltrados();
+  if ($('mktTotal')) $('mktTotal').textContent = filas.length + ' de ' + MKT_LEADS.length + ' leads';
+  if (!MKT_LEADS.length) { cont.innerHTML = '<div class="vacio">No hay leads.</div>'; return; }
+  const head = '<div style="overflow-x:auto"><table class="mkt-tabla"><thead><tr>' +
+    '<th>Código</th><th>Nombre</th><th>Campaña</th><th>Conjunto</th><th>Anuncio</th><th>Creado</th><th>Asignado</th><th>Asesor</th><th>Etapa</th><th>Estado</th>' +
+    '</tr></thead><tbody>' +
+    filas.map(l =>
+      '<tr>' +
+      '<td class="mkt-cod">' + l.codigo + '</td>' +
+      '<td>' + (l.nombre || '—') + '</td>' +
+      '<td class="mkt-attr">' + (l.campana || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
+      '<td class="mkt-attr">' + (l.conjunto || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
+      '<td class="mkt-attr">' + (l.anuncio || '<span class="mkt-vacio">(sin dato)</span>') + '</td>' +
+      '<td>' + fmtFecha(l.fechaCarga) + '</td>' +
+      '<td>' + (l.fechaAsignacion ? fmtFecha(l.fechaAsignacion) : '—') + '</td>' +
+      '<td>' + (l.asesor ? primerNombre(l.asesor) : '<span class="mkt-vacio">sin asignar</span>') + '</td>' +
+      '<td>' + (l.etapa || '—') + '</td>' +
+      '<td>' + (l.archivado ? '<span class="mkt-arch">archivado</span>' : '') + '</td>' +
+      '</tr>').join('') +
+    '</tbody></table></div>';
+  cont.innerHTML = head;
+}
+
+function descargarMktLeads() {
+  const filas = mktFiltrados();
+  const cols = ['codigo', 'nombre', 'telefono', 'campana', 'conjunto', 'anuncio', 'fuente', 'fechaCarga', 'fechaAsignacion', 'asesor', 'etapa', 'archivado'];
+  const titulos = ['Codigo', 'Nombre', 'Telefono', 'Campana', 'Conjunto', 'Anuncio', 'Fuente', 'FechaCreacion', 'FechaAsignacion', 'Asesor', 'Etapa', 'Archivado'];
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lineas = [titulos.join(',')];
+  filas.forEach(l => lineas.push(cols.map(c => esc(l[c])).join(',')));
+  const csv = '\uFEFF' + lineas.join('\r\n');  // BOM para que Excel respete tildes
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'marketing_leads_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

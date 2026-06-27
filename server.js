@@ -2752,6 +2752,28 @@ app.put('/api/anuncios/imagen', soloAdminOJefa, (req, res) => {
   res.json({ ok: true });
 });
 
+// Detalle lead por lead con su atribución y fechas (para rastrear/cuadrar y descargar).
+app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
+  try {
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(g => { (gPorCod[g.codigo] = gPorCod[g.codigo] || []).push(g); });
+    const filas = db.prepare('SELECT * FROM leads ORDER BY fechaCarga DESC').all().map(l => {
+      const cons = leadConsolidado(l, gPorCod[l.codigo] || []);
+      return {
+        codigo: l.codigo, nombre: l.nombre, telefono: l.telefono,
+        campana: l.campana || '', conjunto: l.conjunto || '', anuncio: l.anuncio || '',
+        fuente: l.fuente || '', fechaCarga: l.fechaCarga, fechaAsignacion: l.fechaAsignacion,
+        asesor: l.asesor || '', etapa: cons.etapa, archivado: l.archivado ? 1 : 0
+      };
+    });
+    res.json({ total: filas.length, filas });
+  } catch (e) {
+    console.error('Error en /api/marketing/leads:', e.message);
+    res.status(500).json({ error: 'Marketing leads: ' + e.message });
+  }
+});
+
 // Ranking de contactabilidad del día (visible para todas). Cuenta gestiones de hoy por GP.
 app.get('/api/ranking/contactabilidad', (req, res) => {
   const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
@@ -3499,7 +3521,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.167 (fix atribucion: la etapa del lead no es columna, se calcula con leadConsolidado; gestiones agrupadas por lead; mapa de etapas corregido con valores reales) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.168 (vista Marketing: pestanas Embudo y Detalle de leads; tabla lead por lead con campana/conjunto/anuncio/creado/asignado/asesor/etapa/archivado; buscador y descarga CSV para cuadrar) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
