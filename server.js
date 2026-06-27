@@ -2688,42 +2688,49 @@ app.get('/api/dashboard/llegadas-horario', (req, res) => {
 
 // ============== ATRIBUCIÓN: embudo por fuente (campaña / conjunto / anuncio) ==============
 const ORD_ETAPA_ATRIB = {
-  'Contactabilidad 3x5': 0, 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3,
-  'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6, 'Cerrado perdido': -1
+  'Contactabilidad 3x5': 0, 'Contactado - por calificar': 1, 'Calificado - pendiente agendar': 2,
+  'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5,
+  'Cerrado ganado': 6, 'Cerrado perdido': -1
 };
 app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
   try {
     const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
-  const desde = req.query.desde || null, hasta = req.query.hasta || null;
-  let leads = db.prepare('SELECT codigo, campana, conjunto, anuncio, adId, etapa, fechaCarga FROM leads').all();
-  if (desde) leads = leads.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
-  if (hasta) leads = leads.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) <= hasta);
-  // Set de leads "contactados" = con al menos una gestión que conectó (resultado fuera de SIN_CONTACTO).
-  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
-  const placeholders = SIN.map(() => '?').join(',') || "''";
-  const contactadosRows = db.prepare('SELECT DISTINCT codigo FROM gestiones WHERE resultado NOT IN (' + placeholders + ')').all(...SIN);
-  const contactados = new Set(contactadosRows.map(r => r.codigo));
-  // Agrupa por el nivel elegido.
-  const grupos = {};
-  leads.forEach(l => {
-    const clave = ((l[nivel] || '').trim()) || '(sin dato)';
-    if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0 };
-    const g = grupos[clave];
-    g.leads++;
-    if (contactados.has(l.codigo)) g.contactado++;
-    const ord = ORD_ETAPA_ATRIB[l.etapa] != null ? ORD_ETAPA_ATRIB[l.etapa] : 0;
-    if (ord >= 2) g.calificado++;
-    if (ord >= 3) g.agendado++;
-    if (ord >= 4) g.reunion++;
-    if (l.etapa === 'Cerrado ganado') g.cierre++;
-  });
-  // Adjunta imagen del catálogo (por nombre de anuncio) y calcula conversión.
-  const cat = db.prepare('SELECT anuncio, imagenUrl FROM anuncios_meta').all();
-  const filas = Object.values(grupos).map(g => {
-    g.conversion = g.leads ? Math.round((g.cierre / g.leads) * 1000) / 10 : 0;
-    if (nivel === 'anuncio') { const hit = cat.find(c => c.anuncio === g.fuente); g.imagenUrl = hit ? hit.imagenUrl : null; }
-    return g;
-  }).sort((a, b) => b.leads - a.leads);
+    const desde = req.query.desde || null, hasta = req.query.hasta || null;
+    let leadsRaw = db.prepare('SELECT * FROM leads').all();
+    if (desde) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) >= desde);
+    if (hasta) leadsRaw = leadsRaw.filter(l => l.fechaCarga && l.fechaCarga.slice(0, 10) <= hasta);
+    // La etapa NO es columna: se calcula con leadConsolidado(lead, gestiones).
+    // Traemos todas las gestiones una vez y las agrupamos por lead.
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(g => { (gPorCod[g.codigo] = gPorCod[g.codigo] || []).push(g); });
+    const leads = leadsRaw.map(l => {
+      const gs = gPorCod[l.codigo] || [];
+      const cons = leadConsolidado(l, gs);
+      const contactado = gs.some(g => !SIN.includes(g.resultado));
+      return { campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, etapa: cons.etapa, contactado };
+    });
+    // Agrupa por el nivel elegido.
+    const grupos = {};
+    leads.forEach(l => {
+      const clave = ((l[nivel] || '').trim()) || '(sin dato)';
+      if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0 };
+      const g = grupos[clave];
+      g.leads++;
+      if (l.contactado) g.contactado++;
+      const ord = ORD_ETAPA_ATRIB[l.etapa] != null ? ORD_ETAPA_ATRIB[l.etapa] : 0;
+      if (ord >= 2) g.calificado++;
+      if (ord >= 3) g.agendado++;
+      if (ord >= 4) g.reunion++;
+      if (l.etapa === 'Cerrado ganado') g.cierre++;
+    });
+    // Adjunta imagen del catálogo (por nombre de anuncio) y calcula conversión.
+    const cat = db.prepare('SELECT anuncio, imagenUrl FROM anuncios_meta').all();
+    const filas = Object.values(grupos).map(g => {
+      g.conversion = g.leads ? Math.round((g.cierre / g.leads) * 1000) / 10 : 0;
+      if (nivel === 'anuncio') { const hit = cat.find(c => c.anuncio === g.fuente); g.imagenUrl = hit ? hit.imagenUrl : null; }
+      return g;
+    }).sort((a, b) => b.leads - a.leads);
     res.json({ nivel, desde, hasta, totalLeads: leads.length, filas });
   } catch (e) {
     console.error('Error en /api/atribucion:', e.message);
@@ -3492,7 +3499,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.166 (fix: seccion v-audit perdio su apertura y se infiltraba en todas las vistas, restaurada; endpoint /api/atribucion blindado con try/catch) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.167 (fix atribucion: la etapa del lead no es columna, se calcula con leadConsolidado; gestiones agrupadas por lead; mapa de etapas corregido con valores reales) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
