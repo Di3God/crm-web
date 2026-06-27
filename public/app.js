@@ -4475,6 +4475,8 @@ function setTabMkt(t) {
   document.querySelectorAll('.atr-tab').forEach(b => b.classList.toggle('act', b.getAttribute('data-tab') === t));
   $('mktEmbudo').style.display = t === 'embudo' ? '' : 'none';
   $('mktLeads').style.display = t === 'leads' ? '' : 'none';
+  $('mktInversion').style.display = t === 'inversion' ? '' : 'none';
+  if (t === 'inversion') cargarInversion();
 }
 
 async function cargarMktLeads() {
@@ -4626,4 +4628,133 @@ async function guardarAtribucionBruto(codigo) {
     alert('No se pudo guardar: ' + e.message);
     if (btn) { btn.disabled = false; btn.textContent = 'Guardar cambios'; }
   }
+}
+
+// ===================== MARKETING: INVERSIÓN (gasto × embudo) =====================
+let INV_NIVEL = 'anuncio';
+let INV_DATA = null;
+
+function setNivelInv(n) {
+  INV_NIVEL = n;
+  document.querySelectorAll('[data-inv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-inv') === n));
+  cargarInversion();
+}
+
+// Mapea los encabezados del Excel a las claves que espera el servidor.
+function mapaFilaGasto(row) {
+  const g = (...names) => { for (const n of names) { if (row[n] != null && row[n] !== '') return row[n]; } return null; };
+  return {
+    fecha: g('Date', 'Fecha', 'date'),
+    campana: g('Campaign name', 'Campaign', 'campana'),
+    conjunto: g('AdSet name', 'Adset name', 'conjunto'),
+    anuncio: g('Ad name', 'anuncio'),
+    adId: g('Ad id', 'Ad ID', 'adId'),
+    creativeUrl: g('Ad creative url', 'Ad creative URL', 'creativeUrl'),
+    igLink: g('Link to instagram post', 'igLink'),
+    objective: g('Objective', 'objective'),
+    status: g('Ad status', 'status'),
+    costo: g('Total Cost', 'Cost', 'costo'),
+    impresiones: g('Impressions', 'impresiones'),
+    clicks: g('Unique clicks', 'Clicks', 'clicks'),
+    fbLeads: g('On Facebook Leads', 'fbLeads'),
+    mensajes: g('New messaging conversations', 'mensajes'),
+    landingB2C: g('LandindB2C', 'LandingB2C', 'landingB2C'),
+    landingB2B: g('LandingB2B', 'landingB2B'),
+    resultados: g('Resultados', 'Results', 'resultados'),
+    nomenclatura: g('Nomenclatura', 'nomenclatura'),
+    mes: g('Mes', 'mes'),
+    tipoCampana: g('Tipo de Campaña', 'tipoCampana'),
+    objetivoCampana: g('Objetivo de Campaña', 'objetivoCampana')
+  };
+}
+
+async function cargarExcelGasto(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (typeof XLSX === 'undefined') { alert('No se pudo cargar el lector de Excel (revisa tu conexión).'); return; }
+  if ($('invStatus')) $('invStatus').textContent = 'Leyendo ' + file.name + '…';
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, { defval: null });
+    const filas = json.map(mapaFilaGasto).filter(f => f.fecha && f.anuncio);
+    if (!filas.length) { alert('No se encontraron filas válidas (revisa que tenga columnas Date y Ad name).'); if ($('invStatus')) $('invStatus').textContent = ''; return; }
+    // Normaliza fecha a YYYY-MM-DD
+    filas.forEach(f => { if (f.fecha instanceof Date) f.fecha = f.fecha.toISOString().slice(0, 10); else f.fecha = String(f.fecha).slice(0, 10); });
+    const r = await api('/api/marketing/gasto/cargar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filas }) });
+    if ($('invStatus')) $('invStatus').textContent = r.cargadas + ' filas cargadas' + (r.omitidas ? ' · ' + r.omitidas + ' omitidas' : '');
+    input.value = '';
+    cargarInversion();
+  } catch (e) {
+    alert('No se pudo cargar el Excel: ' + e.message);
+    if ($('invStatus')) $('invStatus').textContent = '';
+  }
+}
+
+async function cargarInversion() {
+  const cont = $('invCont');
+  cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  try {
+    INV_DATA = await api('/api/marketing/inversion?nivel=' + INV_NIVEL);
+    renderInversion();
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
+  }
+}
+
+function fmtSolesInv(v) { return v == null ? '—' : 'S/ ' + Number(v).toLocaleString('es-PE', { maximumFractionDigits: v < 100 ? 1 : 0 }); }
+
+function renderInversion() {
+  const cont = $('invCont'), cards = $('invCards');
+  const filas = (INV_DATA && INV_DATA.filas) || [];
+  const T = (INV_DATA && INV_DATA.totales) || {};
+  if (!filas.length) {
+    cards.innerHTML = '';
+    cont.innerHTML = '<div class="vacio">Aún no hay gasto cargado. Usa “Cargar Excel de costos”.</div>';
+    return;
+  }
+  cards.innerHTML =
+    '<div class="inv-cards">' +
+      tarjetaInv('Gasto total', fmtSolesInv(T.costo)) +
+      tarjetaInv('Leads Meta vs CRM', (T.resultadosMeta || 0) + ' <small>/ ' + (T.leadsCRM || 0) + '</small>', T.captura != null ? ('captura ' + T.captura + '%') : '') +
+      tarjetaInv('CPL real (CRM)', fmtSolesInv(T.cplReal), T.cplMeta != null ? ('Meta: ' + fmtSolesInv(T.cplMeta)) : '') +
+      tarjetaInv('Costo por cierre', fmtSolesInv(T.costoCierre), (T.cierre || 0) + ' cierres') +
+    '</div>';
+  const esDia = INV_NIVEL === 'dia';
+  const head = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
+    (esDia ? '<th>Fecha</th>' : '') +
+    '<th class="inv-l">Anuncio</th><th>Gasto</th><th>Impr.</th><th>Leads Meta</th><th>Leads CRM</th><th>CPL real</th><th>Agend.</th><th>Cierres</th><th>S//cierre</th>' +
+    '</tr></thead><tbody>' +
+    filas.map(f => {
+      const thumb = '<div class="inv-thumb">' + (f.creativeUrl ? '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">' : '<span>📷</span>') + '</div>';
+      const stat = invStatusBadge(f.status);
+      const cplRealCol = (f.cplReal != null && T.cplReal != null && f.cplReal > T.cplReal * 1.3) ? 'inv-malo' : '';
+      return '<tr>' +
+        (esDia ? '<td>' + (f.fecha ? fmtFecha(f.fecha) : '—') + '</td>' : '') +
+        '<td class="inv-l"><div class="inv-an">' + thumb + '<div class="inv-an-txt"><div class="inv-nom">' + (f.anuncio || '(sin dato)') + '</div><div class="inv-sub">' + stat + (f.tipo ? ' · ' + f.tipo : '') + '</div></div></div></td>' +
+        '<td>' + fmtSolesInv(f.costo) + '</td>' +
+        '<td>' + (f.impresiones || 0).toLocaleString('es-PE') + '</td>' +
+        '<td class="inv-muted">' + (f.resultadosMeta || 0) + '</td>' +
+        '<td><b>' + (f.leadsCRM || 0) + '</b></td>' +
+        '<td class="' + cplRealCol + '">' + fmtSolesInv(f.cplReal) + '</td>' +
+        '<td class="inv-agend">' + (f.agendado || 0) + '</td>' +
+        '<td><b>' + (f.cierre || 0) + '</b></td>' +
+        '<td>' + (f.costoCierre != null ? fmtSolesInv(f.costoCierre) : '<span class="inv-muted">—</span>') + '</td>' +
+        '</tr>';
+    }).join('') +
+    '</tbody></table></div>';
+  cont.innerHTML = head;
+}
+
+function tarjetaInv(label, valor, sub) {
+  return '<div class="inv-card"><div class="inv-card-l">' + label + '</div><div class="inv-card-v">' + valor + '</div>' + (sub ? '<div class="inv-card-s">' + sub + '</div>' : '') + '</div>';
+}
+
+function invStatusBadge(s) {
+  if (!s) return '<span class="inv-st off">—</span>';
+  const up = String(s).toUpperCase();
+  if (up.includes('ACTIVE') || up.includes('OK')) return '<span class="inv-st on">● activo</span>';
+  if (up.includes('PAUSED')) return '<span class="inv-st off">○ pausado</span>';
+  return '<span class="inv-st off">' + s + '</span>';
 }

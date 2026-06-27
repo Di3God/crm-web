@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <header class="topbar" id="rolBox" style="display:none">
@@ -298,6 +299,7 @@
     <div class="atr-tabs">
       <button class="atr-tab act" data-tab="embudo" onclick="setTabMkt('embudo')">Embudo por anuncio</button>
       <button class="atr-tab" data-tab="leads" onclick="setTabMkt('leads')">Detalle de leads</button>
+      <button class="atr-tab" data-tab="inversion" onclick="setTabMkt('inversion')">Inversión</button>
     </div>
     <div id="mktEmbudo">
       <div class="atr-ctrl">
@@ -323,6 +325,19 @@
         <button class="btn sec" onclick="descargarMktLeads()">⬇ Descargar tabla (CSV)</button>
       </div>
       <div id="mktLeadsCont"><div class="vacio">Cargando…</div></div>
+    </div>
+    <div id="mktInversion" style="display:none">
+      <div class="atr-ctrl">
+        <div class="atr-niveles">
+          <button class="atr-niv act" data-inv="anuncio" onclick="setNivelInv('anuncio')">Por anuncio</button>
+          <button class="atr-niv" data-inv="dia" onclick="setNivelInv('dia')">Por anuncio y día</button>
+        </div>
+        <span id="invStatus" class="sub" style="margin-left:auto"></span>
+        <input type="file" id="invFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="cargarExcelGasto(this)">
+        <button class="btn sec" onclick="document.getElementById('invFile').click()">⬆ Cargar Excel de costos</button>
+      </div>
+      <div id="invCards"></div>
+      <div id="invCont"><div class="vacio">Carga el Excel de costos para ver el cruce con el embudo.</div></div>
     </div>
   </section>
 

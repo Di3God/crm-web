@@ -455,6 +455,33 @@ db.exec(`CREATE TABLE IF NOT EXISTS anuncios_meta (
   actualizadoEn TEXT,
   UNIQUE(campana, conjunto, anuncio)
 );`);
+// Gasto/rendimiento diario por anuncio (de Meta/Make). Clave única (fecha, anuncio) para upsert.
+db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fecha TEXT,
+  campana TEXT,
+  conjunto TEXT,
+  anuncio TEXT,
+  adId TEXT,
+  creativeUrl TEXT,
+  igLink TEXT,
+  objective TEXT,
+  status TEXT,
+  costo REAL,
+  impresiones INTEGER,
+  clicks INTEGER,
+  fbLeads INTEGER,
+  mensajes INTEGER,
+  landingB2C INTEGER,
+  landingB2B INTEGER,
+  resultados INTEGER,
+  nomenclatura TEXT,
+  mes TEXT,
+  tipoCampana TEXT,
+  objetivoCampana TEXT,
+  actualizadoEn TEXT,
+  UNIQUE(fecha, anuncio)
+);`);
 // Recuperación/recálculo de atribución: relee el rawJson de cada lead y reescribe campaña/conjunto/anuncio
 // con el mapeo correcto por UTM (utm_campaign/utm_term/utm_content). Reprocesa TODOS (mapeo corregido).
 (function backfillAtribucion() {
@@ -2788,6 +2815,155 @@ app.put('/api/anuncios/imagen', soloAdminOJefa, (req, res) => {
   res.json({ ok: true });
 });
 
+// Carga de gasto/rendimiento diario por anuncio (manual desde Excel o desde Make).
+// Acepta { filas: [ { fecha, campana, conjunto, anuncio, adId, ... } ] }. Upsert por (fecha, anuncio).
+app.post('/api/marketing/gasto/cargar', soloAdminOJefa, (req, res) => {
+  try {
+    const filas = (req.body && req.body.filas) || [];
+    if (!Array.isArray(filas) || !filas.length) return res.status(400).json({ error: 'No llegaron filas' });
+    const ahora = new Date().toISOString();
+    const num = v => { const n = Number(v); return isNaN(n) ? null : n; };
+    const ent = v => { const n = parseInt(v, 10); return isNaN(n) ? null : n; };
+    const txt = v => (v == null ? null : String(v).trim() || null);
+    const fechaISO = v => {
+      if (!v) return null;
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const s = String(v).trim();
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
+    };
+    const up = db.prepare(`INSERT INTO marketing_gasto
+      (fecha,campana,conjunto,anuncio,adId,creativeUrl,igLink,objective,status,costo,impresiones,clicks,fbLeads,mensajes,landingB2C,landingB2B,resultados,nomenclatura,mes,tipoCampana,objetivoCampana,actualizadoEn)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(fecha, anuncio) DO UPDATE SET
+        campana=excluded.campana, conjunto=excluded.conjunto, adId=excluded.adId,
+        creativeUrl=excluded.creativeUrl, igLink=excluded.igLink, objective=excluded.objective, status=excluded.status,
+        costo=excluded.costo, impresiones=excluded.impresiones, clicks=excluded.clicks, fbLeads=excluded.fbLeads,
+        mensajes=excluded.mensajes, landingB2C=excluded.landingB2C, landingB2B=excluded.landingB2B, resultados=excluded.resultados,
+        nomenclatura=excluded.nomenclatura, mes=excluded.mes, tipoCampana=excluded.tipoCampana, objetivoCampana=excluded.objetivoCampana,
+        actualizadoEn=excluded.actualizadoEn`);
+    let ok = 0, omitidas = 0;
+    db.exec('BEGIN');
+    try {
+      for (const f of filas) {
+        const fecha = fechaISO(f.fecha), anuncio = txt(f.anuncio);
+        if (!fecha || !anuncio) { omitidas++; continue; }
+        up.run(fecha, txt(f.campana), txt(f.conjunto), anuncio, txt(f.adId), txt(f.creativeUrl), txt(f.igLink),
+          txt(f.objective), txt(f.status), num(f.costo), ent(f.impresiones), ent(f.clicks), ent(f.fbLeads), ent(f.mensajes),
+          ent(f.landingB2C), ent(f.landingB2B), ent(f.resultados), txt(f.nomenclatura), txt(f.mes), txt(f.tipoCampana), txt(f.objetivoCampana), ahora);
+        // Registra el anuncio en el catálogo y guarda su creativo como imagen si no tiene.
+        try { registrarAnuncioCatalogo(txt(f.campana), txt(f.conjunto), anuncio, txt(f.adId)); } catch (e) { }
+        ok++;
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    // Adjunta el creativo al catálogo (imagen) para los anuncios que aún no tienen.
+    try {
+      db.prepare(`UPDATE anuncios_meta SET imagenUrl = (
+        SELECT g.creativeUrl FROM marketing_gasto g WHERE g.anuncio = anuncios_meta.anuncio AND g.creativeUrl IS NOT NULL ORDER BY g.fecha DESC LIMIT 1
+      ) WHERE (imagenUrl IS NULL OR imagenUrl='')`).run();
+    } catch (e) { }
+    try { auditar(req, 'cargar_gasto_marketing', String(ok) + ' filas', null); } catch (e) { }
+    res.json({ ok: true, cargadas: ok, omitidas });
+  } catch (e) {
+    console.error('Error en /api/marketing/gasto/cargar:', e.message);
+    res.status(500).json({ error: 'Carga de gasto: ' + e.message });
+  }
+});
+
+// Cruce inversión × embudo: gasto por anuncio (o por anuncio+día) contra los leads reales del CRM.
+// Usa fechaCarga (creación) del lead, NO la de asignación. Solo leads de campaña (origenCreacion='make').
+app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
+  try {
+    const nivel = req.query.nivel === 'dia' ? 'dia' : 'anuncio';
+    const desde = req.query.desde || null, hasta = req.query.hasta || null;
+    const norm = s => String(s || '').trim().toLowerCase();
+    const claveDe = (anuncioNorm, fecha) => nivel === 'dia' ? (anuncioNorm + '|' + fecha) : anuncioNorm;
+
+    // 1) Gasto agregado
+    let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
+    if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
+    if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
+    const filas = {};
+    const ultStatus = {}; // anuncioNorm -> {fecha, status} para tomar el status más reciente
+    gastoRows.forEach(g => {
+      const an = norm(g.anuncio);
+      const k = claveDe(an, g.fecha);
+      if (!filas[k]) filas[k] = {
+        clave: k, fecha: nivel === 'dia' ? g.fecha : null, anuncio: g.anuncio, campana: g.campana, conjunto: g.conjunto,
+        adId: g.adId, creativeUrl: g.creativeUrl, igLink: g.igLink, tipo: g.objetivoCampana, status: g.status,
+        costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
+        leadsCRM: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0
+      };
+      const f = filas[k];
+      f.costo += g.costo || 0; f.impresiones += g.impresiones || 0; f.clicks += g.clicks || 0; f.resultadosMeta += g.resultados || 0;
+      if (!f.creativeUrl && g.creativeUrl) f.creativeUrl = g.creativeUrl;
+      if (!f.igLink && g.igLink) f.igLink = g.igLink;
+      // status más reciente
+      if (!ultStatus[an] || g.fecha > ultStatus[an].fecha) ultStatus[an] = { fecha: g.fecha, status: g.status };
+    });
+    if (nivel === 'anuncio') Object.values(filas).forEach(f => { const u = ultStatus[norm(f.anuncio)]; if (u) f.status = u.status; });
+
+    // 2) Leads del CRM (solo make), agrupados por anuncio (+día si aplica), con su embudo
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+    let leads = db.prepare("SELECT * FROM leads WHERE origenCreacion='make'").all();
+    leads.forEach(l => {
+      const dia = (l.fechaCarga || '').slice(0, 10);
+      if (desde && dia < desde) return;
+      if (hasta && dia > hasta) return;
+      const an = norm(l.anuncio);
+      if (!an) return;
+      const k = claveDe(an, dia);
+      if (!filas[k]) filas[k] = {
+        clave: k, fecha: nivel === 'dia' ? dia : null, anuncio: l.anuncio, campana: l.campana, conjunto: l.conjunto,
+        adId: l.adId, creativeUrl: null, igLink: null, tipo: null, status: null,
+        costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
+        leadsCRM: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0
+      };
+      const f = filas[k];
+      const gs = gPorCod[l.codigo] || [];
+      const cons = leadConsolidado(l, gs);
+      const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+      f.leadsCRM++;
+      if (gs.some(x => !SIN.includes(x.resultado))) f.contactado++;
+      if (ord >= 2) f.calificado++;
+      if (ord >= 3) f.agendado++;
+      if (ord >= 4) f.reunion++;
+      if (cons.etapa === 'Cerrado ganado') f.cierre++;
+    });
+
+    // 3) Métricas de costo
+    const r2 = n => Math.round(n * 100) / 100;
+    const arr = Object.values(filas).map(f => {
+      f.costo = r2(f.costo);
+      f.cplMeta = f.resultadosMeta ? r2(f.costo / f.resultadosMeta) : null;
+      f.cplReal = f.leadsCRM ? r2(f.costo / f.leadsCRM) : null;
+      f.costoAgendado = f.agendado ? r2(f.costo / f.agendado) : null;
+      f.costoCierre = f.cierre ? r2(f.costo / f.cierre) : null;
+      f.captura = f.resultadosMeta ? Math.round((f.leadsCRM / f.resultadosMeta) * 100) : null;
+      return f;
+    }).sort((a, b) => (b.costo - a.costo) || (b.leadsCRM - a.leadsCRM));
+
+    // 4) Totales
+    const T = arr.reduce((t, f) => {
+      t.costo += f.costo; t.impresiones += f.impresiones; t.clicks += f.clicks; t.resultadosMeta += f.resultadosMeta;
+      t.leadsCRM += f.leadsCRM; t.agendado += f.agendado; t.cierre += f.cierre; return t;
+    }, { costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0, leadsCRM: 0, agendado: 0, cierre: 0 });
+    T.costo = r2(T.costo);
+    T.cplReal = T.leadsCRM ? r2(T.costo / T.leadsCRM) : null;
+    T.cplMeta = T.resultadosMeta ? r2(T.costo / T.resultadosMeta) : null;
+    T.costoCierre = T.cierre ? r2(T.costo / T.cierre) : null;
+    T.captura = T.resultadosMeta ? Math.round((T.leadsCRM / T.resultadosMeta) * 100) : null;
+
+    res.json({ nivel, desde, hasta, totales: T, filas: arr });
+  } catch (e) {
+    console.error('Error en /api/marketing/inversion:', e.message);
+    res.status(500).json({ error: 'Inversión: ' + e.message });
+  }
+});
+
 // Detalle lead por lead con su atribución y fechas (para rastrear/cuadrar y descargar).
 app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
   try {
@@ -3558,7 +3734,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.171 (Ingresos: boton Editar por lead -> modal para corregir campana/conjunto/anuncio (utm_campaign/term/content); PUT /api/leads/:codigo/atribucion actualiza lead + marketing_ingresos + catalogo) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.172 (Marketing Inversion Fase 1: tabla marketing_gasto, carga manual de Excel (SheetJS en navegador -> JSON, upsert por fecha+anuncio), cruce gasto x embudo CRM por fechaCarga (solo make), CPL real vs Meta, costo por agendado/cierre, pestana Inversion con selector anuncio/dia y tarjetas) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
