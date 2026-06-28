@@ -3577,8 +3577,9 @@ async function cargarRanking() {
       const mio = g.asesor === yo ? ' rk-mio-row' : '';
       const pos = i < 3 ? medalla[i] : (i + 1);
       const tag = i === 0 ? ' <span class="rk-lider">Líder del día</span>' : (g.asesor === yo ? ' <span class="rk-tu">tú</span>' : '');
+      const ult = g.ultimaGestion ? ' <span class="rk-ult" title="Hora de su última gestión hoy">⏱ ' + rkHora(g.ultimaGestion) + '</span>' : '';
       return '<div class="rk-row' + mio + '">' +
-        '<span class="rk-n"><span class="rk-pos">' + pos + '</span> ' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + '</span>' +
+        '<span class="rk-n"><span class="rk-pos">' + pos + '</span> ' + rkAvatar(g.asesor, 'rk-av') + g.asesor + tag + ult + '</span>' +
         '<span class="rk-big">' + rkFmt(g.puntaje) + '</span>' +
         '<span>' + g.intentos + '</span>' +
         '<span>' + g.conectados + '</span>' +
@@ -3593,6 +3594,7 @@ async function cargarRanking() {
   }
 }
 function primerNombre(n) { return String(n || '').trim().split(/\s+/)[0] || n; }
+function rkHora(iso) { if (!iso) return ''; const d = new Date(iso); const p = n => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); }
 
 // ---- Tira rotativa de ranking en Mis Leads (siempre visible, rota cada 10s) ----
 let RK_DATA = null, TIRA_DATA = null, TIRA_VISTA = 0, TIRA_ROT = null, TIRA_REFRESH = null;
@@ -4787,19 +4789,26 @@ function renderInversion() {
       tarjetaInv('Costo por cierre', fmtSolesInv(T.costoCierre), (T.cierre || 0) + ' cierres') +
     '</div>';
   const esDia = INV_NIVEL === 'dia';
+  const colNivel = INV_NIVEL === 'campana' ? 'Campaña' : INV_NIVEL === 'conjunto' ? 'Conjunto' : 'Anuncio';
   const head = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
     (esDia ? '<th>Fecha</th>' : '') +
-    '<th class="inv-l">Anuncio</th><th>Gasto</th>' +
+    '<th class="inv-l">' + colNivel + '</th><th>Gasto</th>' +
     '<th>Leads</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Negociación</th><th>Cierre</th>' +
     '<th>CPL real</th><th>S//cierre</th>' +
     '</tr></thead><tbody>' +
     filas.map(f => {
-      const thumb = '<div class="inv-thumb">' + (f.creativeUrl ? '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">' : '<span>📷</span>') + '</div>';
-      const stat = invStatusBadge(f.status);
+      const etiqueta = f.etiqueta || f.anuncio || '(sin dato)';
+      let icono;
+      if (f.creativeUrl) icono = '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">';
+      else if (INV_NIVEL === 'campana') icono = '<span>📣</span>';
+      else if (INV_NIVEL === 'conjunto') icono = '<span>📁</span>';
+      else icono = '<span>📷</span>';
+      const thumb = '<div class="inv-thumb">' + icono + '</div>';
+      const sub = (f.status ? invStatusBadge(f.status) : '') + (f.tipo ? (f.status ? ' · ' : '') + f.tipo : '');
       const cplRealCol = (f.cplReal != null && T.cplReal != null && f.cplReal > T.cplReal * 1.3) ? 'inv-malo' : '';
       return '<tr>' +
         (esDia ? '<td>' + (f.fecha ? fmtFecha(f.fecha) : '—') + '</td>' : '') +
-        '<td class="inv-l"><div class="inv-an">' + thumb + '<div class="inv-an-txt"><div class="inv-nom">' + (f.anuncio || '(sin dato)') + '</div><div class="inv-sub">' + stat + (f.tipo ? ' · ' + f.tipo : '') + '</div></div></div></td>' +
+        '<td class="inv-l"><div class="inv-an">' + thumb + '<div class="inv-an-txt"><div class="inv-nom">' + etiqueta + '</div>' + (sub ? '<div class="inv-sub">' + sub + '</div>' : '') + '</div></div></td>' +
         '<td>' + fmtSolesInv(f.costo) + '</td>' +
         '<td><b>' + (f.leadsCRM || 0) + '</b></td>' +
         '<td>' + (f.tocados || 0) + '</td>' +

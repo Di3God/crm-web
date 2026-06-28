@@ -3025,34 +3025,41 @@ app.post('/api/marketing/gasto/cargar', soloAdminOJefa, (req, res) => {
 // Usa fechaCarga (creación) del lead, NO la de asignación. Solo leads de campaña (origenCreacion='make').
 app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
   try {
-    const nivel = req.query.nivel === 'dia' ? 'dia' : 'anuncio';
+    const nivelesOk = ['campana', 'conjunto', 'anuncio', 'dia'];
+    const nivel = nivelesOk.includes(req.query.nivel) ? req.query.nivel : 'anuncio';
+    const esDia = nivel === 'dia';
+    const campoNivel = (nivel === 'campana') ? 'campana' : (nivel === 'conjunto') ? 'conjunto' : 'anuncio';
+    const sinDato = '(sin ' + (campoNivel === 'campana' ? 'campaña' : campoNivel) + ')';
     const desde = req.query.desde || null, hasta = req.query.hasta || null;
     const norm = s => String(s || '').trim().toLowerCase();
-    const claveDe = (anuncioNorm, fecha) => nivel === 'dia' ? (anuncioNorm + '|' + fecha) : anuncioNorm;
+    const claveDe = (valNorm, fecha) => esDia ? (valNorm + '|' + fecha) : valNorm;
 
-    // 1) Gasto agregado
+    // 1) Gasto agregado por el nivel elegido
     let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
     if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
     if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
     const filas = {};
-    const ultStatus = {}; // anuncioNorm -> {fecha, status} para tomar el status más reciente
+    const ultStatus = {}; // solo a nivel anuncio: valNorm -> {fecha, status}
     gastoRows.forEach(g => {
-      const an = norm(g.anuncio);
-      const k = claveDe(an, g.fecha);
+      const val = norm(g[campoNivel]);
+      const k = claveDe(val, g.fecha);
       if (!filas[k]) filas[k] = {
-        clave: k, fecha: nivel === 'dia' ? g.fecha : null, anuncio: g.anuncio, campana: g.campana, conjunto: g.conjunto,
-        adId: g.adId, creativeUrl: g.creativeUrl, igLink: g.igLink, tipo: g.objetivoCampana, status: g.status,
+        clave: k, fecha: esDia ? g.fecha : null,
+        etiqueta: g[campoNivel] || sinDato, anuncio: g.anuncio, campana: g.campana, conjunto: g.conjunto,
+        adId: g.adId, creativeUrl: campoNivel === 'anuncio' ? g.creativeUrl : null, igLink: campoNivel === 'anuncio' ? g.igLink : null,
+        tipo: g.objetivoCampana, status: campoNivel === 'anuncio' ? g.status : null,
         costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
         leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
       };
       const f = filas[k];
       f.costo += g.costo || 0; f.impresiones += g.impresiones || 0; f.clicks += g.clicks || 0; f.resultadosMeta += g.resultados || 0;
-      if (!f.creativeUrl && g.creativeUrl) f.creativeUrl = g.creativeUrl;
-      if (!f.igLink && g.igLink) f.igLink = g.igLink;
-      // status más reciente
-      if (!ultStatus[an] || g.fecha > ultStatus[an].fecha) ultStatus[an] = { fecha: g.fecha, status: g.status };
+      if (campoNivel === 'anuncio') {
+        if (!f.creativeUrl && g.creativeUrl) f.creativeUrl = g.creativeUrl;
+        if (!f.igLink && g.igLink) f.igLink = g.igLink;
+        if (!ultStatus[val] || g.fecha > ultStatus[val].fecha) ultStatus[val] = { fecha: g.fecha, status: g.status };
+      }
     });
-    if (nivel === 'anuncio') Object.values(filas).forEach(f => { const u = ultStatus[norm(f.anuncio)]; if (u) f.status = u.status; });
+    if (!esDia && campoNivel === 'anuncio') Object.values(filas).forEach(f => { const u = ultStatus[norm(f.etiqueta)]; if (u) f.status = u.status; });
 
     // 2) Leads del CRM (solo make), agrupados por anuncio (+día si aplica), con su embudo
     const SIN = L.RESULTADOS_SIN_CONTACTO || [];
@@ -3063,10 +3070,11 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
       const dia = peruFecha(l.fechaCarga);  // fecha LOCAL de Perú (coincide con lo que se muestra y con el Excel)
       if (desde && (!dia || dia < desde)) return;
       if (hasta && (!dia || dia > hasta)) return;
-      const an = norm(l.anuncio) || '(sin anuncio)';  // leads sin atribución cuentan igual, agrupados aparte
-      const k = claveDe(an, dia);
+      const val = norm(l[campoNivel]) || sinDato;  // agrupado por el nivel elegido; sin atribución cuenta aparte
+      const k = claveDe(val, dia);
       if (!filas[k]) filas[k] = {
-        clave: k, fecha: nivel === 'dia' ? dia : null, anuncio: l.anuncio || '(sin anuncio)', campana: l.campana, conjunto: l.conjunto,
+        clave: k, fecha: esDia ? dia : null,
+        etiqueta: l[campoNivel] || sinDato, anuncio: l.anuncio, campana: l.campana, conjunto: l.conjunto,
         adId: l.adId, creativeUrl: null, igLink: null, tipo: null, status: null,
         costo: 0, impresiones: 0, clicks: 0, resultadosMeta: 0,
         leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0
@@ -3181,6 +3189,7 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
     if (!m[g.asesor]) m[g.asesor] = { asesor: g.asesor, intentos: 0, llamadas: 0, conectados: 0, calificados: 0, agendados: 0, verificadas: 0, puntosIntento: 0 };
     const r = m[g.asesor];
     r.intentos++;
+    if (!r.ultimaGestion || g.fecha > r.ultimaGestion) r.ultimaGestion = g.fecha;  // hora de la última gestión de hoy
     // Agrupar intento por lead + franja (corazón del 3x5: 1er intento de la franja vale 1, repetir +0.5)
     const fr = franjaDe(peruHM(g.fecha));
     const key = (g.codigo || '?') + '|' + fr;
@@ -3892,7 +3901,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.180 (Nuevo lead manual: campo de fecha de creacion elegible (se guarda al mediodia de Peru para caer en ese dia), atribucion campana/conjunto/anuncio y selector de origen make/manual/relead para que cuente en Marketing) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.181 (Inversion agrupable por campana/conjunto/anuncio/dia con embudo en cada nivel; ranking muestra la hora de la ultima gestion de hoy por GP) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -1205,3 +1205,6 @@
   .inv-malo { color: #C0392B; font-weight: 700; }
   .inv-st.on { color: #1D9E75; }
   .inv-st.off { color: #94a3b8; }
+
+  /* hora de última gestión en el ranking */
+  .rk-ult { font-size: 10.5px; color: #94a3b8; font-weight: 600; margin-left: 6px; white-space: nowrap; }
