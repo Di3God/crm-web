@@ -3142,13 +3142,14 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
 
     // Gasto por día (gasto.fecha es fecha plana del Excel) + acumulado por anuncio
     const porAnuncio = {};
-    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, cierre: 0 });
+    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, creativeUrl: null, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, cierre: 0 });
     let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
     if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
     if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
     gastoRows.filter(matchCC).forEach(g => {
       const d = D(g.fecha); d.gasto += g.costo || 0; d.leadsAd += g.resultados || 0;
       const A = Afila(norm(g.anuncio) || '(sin anuncio)', g); A.costo += g.costo || 0; A.leadsAd += g.resultados || 0;
+      if (!A.creativeUrl && g.creativeUrl) A.creativeUrl = g.creativeUrl;
     });
 
     // Leads por día + embudo total + por anuncio
@@ -3193,7 +3194,13 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
     const campanas = Object.keys(campSet).sort();
     const conjuntos = Object.keys(conjMap).map(c => ({ conjunto: c, campana: conjMap[c] })).sort((a, b) => a.conjunto.localeCompare(b.conjunto));
 
-    const anuncios = Object.values(porAnuncio).map(a => { a.costo = r2(a.costo); return a; });
+    const catImg = {};
+    try { db.prepare("SELECT anuncio, imagenUrl FROM anuncios_meta WHERE imagenUrl IS NOT NULL AND imagenUrl<>''").all().forEach(r => { catImg[norm(r.anuncio)] = r.imagenUrl; }); } catch (e) { }
+    const anuncios = Object.values(porAnuncio).map(a => {
+      a.costo = r2(a.costo);
+      if (!a.creativeUrl) a.creativeUrl = catImg[norm(a.anuncio)] || null;
+      return a;
+    });
     res.json({ dias, embudo: emb, anuncios, campanas, conjuntos });
   } catch (e) {
     console.error('Error en /api/marketing/tendencias:', e.message);
@@ -3978,7 +3985,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.186 (Cuadrante: ejes desde 0 con escala limpia (fix decimales feos en costo), opcion Costo por lead en eje X (excluye anuncios sin leads), foto del anuncio dentro de la burbuja con tamano minimo 15px) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.187 (Cuadrante: fix imagen del anuncio (faltaba creativeUrl en datos + se quito no-referrer); ejes y cortes manuales (max X/Y, corte X/Y); clic en burbuja muestra tarjeta flotante con campana/conjunto + metricas; tooltip incluye campana/conjunto) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

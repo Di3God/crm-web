@@ -5007,6 +5007,8 @@ function setVistaTend(v) {
   document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
   if ($('tendMetricaY')) $('tendMetricaY').style.display = (v === 'cuadrante') ? '' : 'none';
   if ($('tendMetricaX')) $('tendMetricaX').style.display = (v === 'cuadrante') ? '' : 'none';
+  if ($('tendEjes')) $('tendEjes').style.display = (v === 'cuadrante') ? '' : 'none';
+  if ($('tendCard')) $('tendCard').style.display = 'none';
   renderTendencias();
 }
 
@@ -5148,21 +5150,38 @@ function renderCuadrante(ctx) {
     return '#e34948';                         // pausar (flojo + caro)
   };
   const rawMaxX = Math.max(...ans.map(a => valX(a) || 0), 1);
-  const maxX = Math.max(1, Math.ceil((rawMaxX * 1.12) / (rawMaxX > 20 ? 5 : 1)) * (rawMaxX > 20 ? 5 : 1));
-  const maxY = Math.max(2, Math.ceil(Math.max(...ans.map(a => a[metricaY] || 0)) + 1));
+  let maxX = Math.max(1, Math.ceil((rawMaxX * 1.12) / (rawMaxX > 20 ? 5 : 1)) * (rawMaxX > 20 ? 5 : 1));
+  let maxY = Math.max(2, Math.ceil(Math.max(...ans.map(a => a[metricaY] || 0)) + 1));
+  let corteX = MX, corteY = MY;
+  // Overrides manuales (vacío = automático)
+  const numIn = id => { const v = $(id) ? $(id).value : ''; return v !== '' && !isNaN(Number(v)) ? Number(v) : null; };
+  const oMaxX = numIn('tendMaxX'), oMaxY = numIn('tendMaxY'), oCorteX = numIn('tendCorteX'), oCorteY = numIn('tendCorteY');
+  if (oMaxX != null) maxX = oMaxX;
+  if (oMaxY != null) maxY = oMaxY;
+  if (oCorteX != null) corteX = oCorteX;
+  if (oCorteY != null) corteY = oCorteY;
   const radio = a => Math.max(15, 9 + (a.leadsCRM || 0) * 1.3);  // mínimo 15px para que se vea la foto
+  const colorCorte = a => {
+    const altoY = (a[metricaY] || 0) >= corteY, caro = (valX(a) || 0) >= corteX;
+    if (altoY && !caro) return '#1baf7a';
+    if (altoY && caro) return '#2a78d6';
+    if (!altoY && !caro) return '#888780';
+    return '#e34948';
+  };
 
   tendLeyenda([
     { label: 'Escalar (rinde + barato)', color: '#1baf7a' }, { label: 'Optimizar (rinde + caro)', color: '#2a78d6' },
     { label: 'Observar (flojo + barato)', color: '#888780' }, { label: 'Pausar (flojo + caro)', color: '#e34948' }
   ]);
   $('tendMsg').textContent = esCPL && excluidos ? (excluidos + ' anuncio(s) sin leads no se muestran en modo CPL.') : '';
+  if ($('tendCard')) $('tendCard').style.display = 'none';
 
   // Precarga de imágenes de los anuncios (se redibuja al cargar cada una)
   ans.forEach(a => {
     if (a.creativeUrl && !TEND_IMGS[a.creativeUrl]) {
-      const im = new Image(); im.referrerPolicy = 'no-referrer';
+      const im = new Image();
       im.onload = () => { try { if (TEND_CHART) TEND_CHART.draw(); } catch (e) {} };
+      im.onerror = () => {};
       im.src = a.creativeUrl; TEND_IMGS[a.creativeUrl] = im;
     }
   });
@@ -5171,7 +5190,7 @@ function renderCuadrante(ctx) {
     id: 'quadBg',
     beforeDraw(ch) {
       const { ctx: c, chartArea: a, scales: { x, y } } = ch; if (!a) return;
-      const px = x.getPixelForValue(MX), py = y.getPixelForValue(MY);
+      const px = x.getPixelForValue(corteX), py = y.getPixelForValue(corteY);
       const fill = (x0, y0, x1, y1, col) => { c.fillStyle = col; c.fillRect(x0, y0, x1 - x0, y1 - y0); };
       fill(a.left, a.top, px, py, 'rgba(27,175,122,.07)');
       fill(px, a.top, a.right, py, 'rgba(42,120,214,.07)');
@@ -5199,10 +5218,10 @@ function renderCuadrante(ctx) {
         if (img && img.complete && img.naturalWidth) {
           c.save();
           c.beginPath(); c.arc(pt.x, pt.y, r - 1.5, 0, Math.PI * 2); c.closePath(); c.clip();
-          const s = Math.max(img.naturalWidth, img.naturalHeight), sc = (r * 2) / s;
+          const s = Math.min(img.naturalWidth, img.naturalHeight), sc = (r * 2) / s;
           c.drawImage(img, pt.x - (img.naturalWidth * sc) / 2, pt.y - (img.naturalHeight * sc) / 2, img.naturalWidth * sc, img.naturalHeight * sc);
           c.restore();
-          c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2); c.strokeStyle = colorDe(a); c.lineWidth = 2.5; c.stroke();
+          c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2); c.strokeStyle = colorCorte(a); c.lineWidth = 2.5; c.stroke();
         }
       });
     }
@@ -5210,10 +5229,14 @@ function renderCuadrante(ctx) {
 
   TEND_CHART = new Chart(ctx, {
     type: 'bubble',
-    data: { datasets: ans.map(a => ({ label: a.anuncio, clip: false, data: [{ x: valX(a) || 0, y: a[metricaY] || 0, r: radio(a) }], backgroundColor: colorDe(a) + 'cc', borderColor: colorDe(a), borderWidth: 1 })) },
+    data: { datasets: ans.map(a => ({ label: a.anuncio, clip: false, data: [{ x: valX(a) || 0, y: a[metricaY] || 0, r: radio(a) }], backgroundColor: colorCorte(a) + 'cc', borderColor: colorCorte(a), borderWidth: 1 })) },
     options: {
       responsive: true, maintainAspectRatio: false, layout: { padding: { top: 6, right: 18, bottom: 16, left: 6 } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; const xv = valX(a); return a.anuncio + ' · ' + (esCPL ? 'CPL S/' + (xv != null ? xv : '—') : 'S/' + (a.costo || 0)) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; } } } },
+      onClick: (ev, els) => {
+        if (els && els.length) mostrarTarjetaAnuncio(ans[els[0].datasetIndex], ev, esCPL, etiquetaY);
+        else if ($('tendCard')) $('tendCard').style.display = 'none';
+      },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; const xv = valX(a); return a.anuncio + ' · ' + (esCPL ? 'CPL S/' + (xv != null ? xv : '—') : 'S/' + (a.costo || 0)) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; }, afterLabel: c => { const a = ans[c.datasetIndex]; return '📣 ' + (a.campana || '—') + '\n📁 ' + (a.conjunto || '—'); } } } },
       scales: {
         x: { title: { display: true, text: (esCPL ? 'Costo por lead (S/)' : 'Costo (gasto S/)') + '  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', callback: v => 'S/' + Math.round(v) }, min: 0, max: maxX },
         y: { title: { display: true, text: 'Desempeño (' + etiquetaY + ')  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', stepSize: 1, precision: 0, callback: v => v < 0 ? '' : v }, min: 0, max: maxY }
@@ -5221,6 +5244,29 @@ function renderCuadrante(ctx) {
     },
     plugins: [quadBg, fotos]
   });
+}
+
+// Tarjeta flotante al hacer clic en una burbuja: muestra a qué campaña/conjunto pertenece + métricas
+function mostrarTarjetaAnuncio(a, ev, esCPL, etiquetaY) {
+  const card = $('tendCard'); if (!card || !a) return;
+  const cpl = a.leadsCRM ? (Math.round((a.costo / a.leadsCRM) * 100) / 100) : null;
+  card.innerHTML =
+    '<div style="font-weight:600;margin-bottom:6px;word-break:break-word">' + (a.anuncio || '(sin anuncio)') + '</div>' +
+    '<div style="color:var(--muted);margin-bottom:2px">📣 <b style="color:var(--ink);font-weight:600">Campaña:</b> ' + (a.campana || '—') + '</div>' +
+    '<div style="color:var(--muted);margin-bottom:6px">📁 <b style="color:var(--ink);font-weight:600">Conjunto:</b> ' + (a.conjunto || '—') + '</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;color:#475569">' +
+      '<span>Gasto: <b>S/' + (a.costo || 0) + '</b></span>' +
+      '<span>Leads: <b>' + (a.leadsCRM || 0) + '</b></span>' +
+      '<span>Agend.: <b>' + (a.agendado || 0) + '</b></span>' +
+      '<span>Cierres: <b>' + (a.cierre || 0) + '</b></span>' +
+      '<span>CPL: <b>' + (cpl != null ? 'S/' + cpl : '—') + '</b></span>' +
+    '</div>' +
+    '<div style="text-align:right;margin-top:4px"><span style="cursor:pointer;color:#94a3b8" onclick="$(\'tendCard\').style.display=\'none\'">cerrar ✕</span></div>';
+  const wrap = card.parentNode.getBoundingClientRect();
+  let left = (ev.x || 60) + 12, top = (ev.y || 60) + 12;
+  if (left + 248 > wrap.width) left = Math.max(4, (ev.x || 60) - 252);
+  if (top + 150 > wrap.height) top = Math.max(4, (ev.y || 60) - 150);
+  card.style.left = left + 'px'; card.style.top = top + 'px'; card.style.display = 'block';
 }
 
 function fmtDiaCorto(f) { if (!f) return ''; const p = f.split('-'); return p.length === 3 ? (p[2] + '/' + p[1]) : f; }
