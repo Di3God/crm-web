@@ -5005,6 +5005,7 @@ function limpiarFechasTend() {
 function setVistaTend(v) {
   TEND_VISTA = v;
   document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
+  if ($('tendMetricaY')) $('tendMetricaY').style.display = (v === 'cuadrante') ? '' : 'none';
   renderTendencias();
 }
 
@@ -5059,7 +5060,8 @@ function renderTendencias() {
   const dias = TEND_DATA.dias || [];
   if (TEND_CHART) { TEND_CHART.destroy(); TEND_CHART = null; }
   const ctx = $('tendChart');
-  if (TEND_VISTA !== 'embudo' && !dias.length) { $('tendMsg').textContent = 'No hay datos en este rango/filtro.'; return; }
+  if ((TEND_VISTA === 'leads' || TEND_VISTA === 'costo') && !dias.length) { $('tendMsg').textContent = 'No hay datos en este rango/filtro.'; return; }
+  if (TEND_VISTA === 'cuadrante' && !((TEND_DATA.anuncios || []).length)) { $('tendMsg').textContent = 'No hay anuncios con datos en este rango/filtro.'; return; }
   $('tendMsg').textContent = '';
   const ejeBase = { grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', font: { size: 11 } }, beginAtZero: true };
 
@@ -5094,7 +5096,7 @@ function renderTendencias() {
         scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }, y: { ...ejeBase, title: { display: true, text: 'Gasto S/', color: '#94a3b8' } }, y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => 'S/' + v }, title: { display: true, text: 'CPL', color: '#94a3b8' } } }
       }
     });
-  } else {
+  } else if (TEND_VISTA === 'embudo') {
     // Embudo del periodo (barras horizontales descendentes)
     const e = TEND_DATA.embudo || {};
     const etapas = [['Leads', e.leadsCRM], ['Tocados', e.tocados], ['Contactados', e.contactado], ['Calificados', e.calificado], ['Agendados', e.agendado], ['Reunión', e.reunion], ['Negociación', e.negociacion], ['Cierre', e.cierre]];
@@ -5108,7 +5110,73 @@ function renderTendencias() {
         scales: { x: { ...ejeBase }, y: { grid: { display: false }, ticks: { color: '#475569', font: { size: 12 } } } }
       }
     });
+  } else {
+    renderCuadrante(ctx);
   }
+}
+
+// Mediana de un arreglo de números
+function tendMediana(arr) {
+  if (!arr.length) return 0;
+  const s = arr.slice().sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function renderCuadrante(ctx) {
+  const metricaY = $('tendMetricaY') ? $('tendMetricaY').value : 'agendado';
+  const etiquetaY = metricaY === 'leadsCRM' ? 'Leads CRM' : metricaY === 'cierre' ? 'Cierres' : 'Agendados';
+  const ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a[metricaY] || 0) > 0);
+  const MX = tendMediana(ans.map(a => a.costo || 0));
+  const MY = tendMediana(ans.map(a => a[metricaY] || 0));
+  const colorDe = a => {
+    const altoY = (a[metricaY] || 0) >= MY, altoX = (a.costo || 0) >= MX;
+    if (altoY && !altoX) return '#1baf7a';   // escalar
+    if (altoY && altoX) return '#2a78d6';     // optimizar
+    if (!altoY && !altoX) return '#888780';   // observar
+    return '#e34948';                          // pausar
+  };
+  const maxX = Math.max(10, ...ans.map(a => a.costo || 0)) * 1.1;
+  const maxY = Math.max(2, ...ans.map(a => a[metricaY] || 0)) + 1;
+  tendLeyenda([
+    { label: 'Escalar (barato + rinde)', color: '#1baf7a' }, { label: 'Optimizar (caro + rinde)', color: '#2a78d6' },
+    { label: 'Observar (barato + flojo)', color: '#888780' }, { label: 'Pausar (caro + flojo)', color: '#e34948' }
+  ]);
+  const quadBg = {
+    id: 'quadBg',
+    beforeDraw(ch) {
+      const { ctx: c, chartArea: a, scales: { x, y } } = ch;
+      if (!a) return;
+      const px = x.getPixelForValue(MX), py = y.getPixelForValue(MY);
+      const fill = (x0, y0, x1, y1, col) => { c.fillStyle = col; c.fillRect(x0, y0, x1 - x0, y1 - y0); };
+      fill(a.left, a.top, px, py, 'rgba(27,175,122,.07)');
+      fill(px, a.top, a.right, py, 'rgba(42,120,214,.07)');
+      fill(a.left, py, px, a.bottom, 'rgba(136,135,128,.06)');
+      fill(px, py, a.right, a.bottom, 'rgba(227,73,72,.07)');
+      c.save(); c.strokeStyle = '#c3c2b7'; c.setLineDash([5, 4]); c.lineWidth = 1;
+      c.beginPath(); c.moveTo(px, a.top); c.lineTo(px, a.bottom); c.stroke();
+      c.beginPath(); c.moveTo(a.left, py); c.lineTo(a.right, py); c.stroke();
+      c.setLineDash([]); c.font = '600 11px sans-serif';
+      c.fillStyle = '#0F6E56'; c.textAlign = 'left'; c.fillText('Escalar', a.left + 6, a.top + 14);
+      c.fillStyle = '#185FA5'; c.textAlign = 'right'; c.fillText('Optimizar', a.right - 6, a.top + 14);
+      c.fillStyle = '#5F5E5A'; c.textAlign = 'left'; c.fillText('Observar', a.left + 6, a.bottom - 8);
+      c.fillStyle = '#A32D2D'; c.textAlign = 'right'; c.fillText('Pausar', a.right - 6, a.bottom - 8);
+      c.restore();
+    }
+  };
+  TEND_CHART = new Chart(ctx, {
+    type: 'bubble',
+    data: { datasets: ans.map(a => ({ label: a.anuncio, data: [{ x: a.costo || 0, y: a[metricaY] || 0, r: 6 + (a.leadsCRM || 0) * 1.2 }], backgroundColor: colorDe(a) + 'cc', borderColor: colorDe(a), borderWidth: 1 })) },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; return a.anuncio + ' · S/' + (a.costo || 0) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; } } } },
+      scales: {
+        x: { title: { display: true, text: 'Costo (gasto S/)  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', callback: v => 'S/' + v }, min: 0, max: maxX },
+        y: { title: { display: true, text: 'Desempeño (' + etiquetaY + ')  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', precision: 0 }, min: -0.5, max: maxY }
+      },
+      layout: { padding: 6 }
+    },
+    plugins: [quadBg]
+  });
 }
 
 function fmtDiaCorto(f) { if (!f) return ''; const p = f.split('-'); return p.length === 3 ? (p[2] + '/' + p[1]) : f; }

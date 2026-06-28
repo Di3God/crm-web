@@ -3140,13 +3140,18 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
     const porDia = {};
     const D = f => (porDia[f] = porDia[f] || { fecha: f, gasto: 0, leadsAd: 0, leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 });
 
-    // Gasto por día (gasto.fecha es fecha plana del Excel)
+    // Gasto por día (gasto.fecha es fecha plana del Excel) + acumulado por anuncio
+    const porAnuncio = {};
+    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, cierre: 0 });
     let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
     if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
     if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
-    gastoRows.filter(matchCC).forEach(g => { const d = D(g.fecha); d.gasto += g.costo || 0; d.leadsAd += g.resultados || 0; });
+    gastoRows.filter(matchCC).forEach(g => {
+      const d = D(g.fecha); d.gasto += g.costo || 0; d.leadsAd += g.resultados || 0;
+      const A = Afila(norm(g.anuncio) || '(sin anuncio)', g); A.costo += g.costo || 0; A.leadsAd += g.resultados || 0;
+    });
 
-    // Leads por día + embudo total
+    // Leads por día + embudo total + por anuncio
     const SIN = L.RESULTADOS_SIN_CONTACTO || [];
     const gPorCod = {};
     db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
@@ -3157,7 +3162,8 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
       if (hasta && (!dia || dia > hasta)) return;
       if (!matchCC(l)) return;
       const d = D(dia);
-      d.leadsCRM++; emb.leadsCRM++;
+      const A = Afila(norm(l.anuncio) || '(sin anuncio)', l);
+      d.leadsCRM++; emb.leadsCRM++; A.leadsCRM++;
       if (l.esDuplicadoActivo) return;
       const gs = gPorCod[l.codigo] || [];
       const cons = leadConsolidado(l, gs);
@@ -3165,10 +3171,10 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
       if (gs.length > 0) { d.tocados++; emb.tocados++; }
       if (gs.some(x => !SIN.includes(x.resultado))) { d.contactado++; emb.contactado++; }
       if (ord >= 2) { d.calificado++; emb.calificado++; }
-      if (ord >= 3) { d.agendado++; emb.agendado++; }
+      if (ord >= 3) { d.agendado++; emb.agendado++; A.agendado++; }
       if (ord >= 4) { d.reunion++; emb.reunion++; }
       if (ord >= 5) { d.negociacion++; emb.negociacion++; }
-      if (cons.etapa === 'Cerrado ganado') { d.cierre++; emb.cierre++; }
+      if (cons.etapa === 'Cerrado ganado') { d.cierre++; emb.cierre++; A.cierre++; }
     });
 
     const r2 = n => Math.round(n * 100) / 100;
@@ -3187,7 +3193,8 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
     const campanas = Object.keys(campSet).sort();
     const conjuntos = Object.keys(conjMap).map(c => ({ conjunto: c, campana: conjMap[c] })).sort((a, b) => a.conjunto.localeCompare(b.conjunto));
 
-    res.json({ dias, embudo: emb, campanas, conjuntos });
+    const anuncios = Object.values(porAnuncio).map(a => { a.costo = r2(a.costo); return a; });
+    res.json({ dias, embudo: emb, anuncios, campanas, conjuntos });
   } catch (e) {
     console.error('Error en /api/marketing/tendencias:', e.message);
     res.status(500).json({ error: 'Tendencias: ' + e.message });
@@ -3971,7 +3978,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.184 (modal Tendencias con 3 vistas: Leads Ad vs CRM + captacion, Gasto y CPL diario, Embudo del periodo; filtros por fecha + campana + conjunto; endpoint /api/marketing/tendencias; Chart.js) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.185 (Tendencias: 4a vista Cuadrante Costo vs Desempeno (burbujas por anuncio, ejes costo vs agendados/leads/cierres, lineas de mediana, 4 segmentos Escalar/Optimizar/Observar/Pausar); endpoint tendencias ahora devuelve por anuncio) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

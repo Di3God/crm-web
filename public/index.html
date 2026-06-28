@@ -815,7 +815,13 @@
         <button class="atr-niv act" data-tv="leads" onclick="setVistaTend('leads')">Leads</button>
         <button class="atr-niv" data-tv="costo" onclick="setVistaTend('costo')">Gasto y CPL</button>
         <button class="atr-niv" data-tv="embudo" onclick="setVistaTend('embudo')">Embudo</button>
+        <button class="atr-niv" data-tv="cuadrante" onclick="setVistaTend('cuadrante')">Cuadrante</button>
       </div>
+      <select id="tendMetricaY" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
+        <option value="agendado">Y: Agendados</option>
+        <option value="leadsCRM">Y: Leads CRM</option>
+        <option value="cierre">Y: Cierres</option>
+      </select>
     </div>
     <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
       <span class="sub">Del</span><input id="tendDesde" class="inp" type="date" style="width:auto" onchange="cargarTendencias()">
