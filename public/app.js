@@ -5006,6 +5006,7 @@ function setVistaTend(v) {
   TEND_VISTA = v;
   document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
   if ($('tendMetricaY')) $('tendMetricaY').style.display = (v === 'cuadrante') ? '' : 'none';
+  if ($('tendMetricaX')) $('tendMetricaX').style.display = (v === 'cuadrante') ? '' : 'none';
   renderTendencias();
 }
 
@@ -5122,30 +5123,54 @@ function tendMediana(arr) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+let TEND_IMGS = {};
 function renderCuadrante(ctx) {
   const metricaY = $('tendMetricaY') ? $('tendMetricaY').value : 'agendado';
+  const metricaX = $('tendMetricaX') ? $('tendMetricaX').value : 'costo';
   const etiquetaY = metricaY === 'leadsCRM' ? 'Leads CRM' : metricaY === 'cierre' ? 'Cierres' : 'Agendados';
-  const ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a[metricaY] || 0) > 0);
-  const MX = tendMediana(ans.map(a => a.costo || 0));
+  const esCPL = metricaX === 'cpl';
+  const valX = a => esCPL ? (a.leadsCRM ? Math.round((a.costo / a.leadsCRM) * 100) / 100 : null) : (a.costo || 0);
+  // En modo CPL, los anuncios sin leads no tienen CPL: se excluyen (se avisa).
+  let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a[metricaY] || 0) > 0);
+  let excluidos = 0;
+  if (esCPL) { const total = ans.length; ans = ans.filter(a => a.leadsCRM > 0); excluidos = total - ans.length; }
+  if (!ans.length) { $('tendMsg').textContent = 'No hay anuncios con datos para esta métrica.'; return; }
+
+  const MX = tendMediana(ans.map(valX).filter(v => v != null));
   const MY = tendMediana(ans.map(a => a[metricaY] || 0));
   const colorDe = a => {
-    const altoY = (a[metricaY] || 0) >= MY, altoX = (a.costo || 0) >= MX;
-    if (altoY && !altoX) return '#1baf7a';   // escalar
-    if (altoY && altoX) return '#2a78d6';     // optimizar
-    if (!altoY && !altoX) return '#888780';   // observar
-    return '#e34948';                          // pausar
+    const altoY = (a[metricaY] || 0) >= MY, altoX = (valX(a) || 0) >= MX;
+    // En CPL, "bueno" es BAJO costo: invertimos la lógica de X para los colores.
+    const caro = esCPL ? altoX : altoX;
+    if (altoY && !caro) return '#1baf7a';   // escalar (rinde + barato)
+    if (altoY && caro) return '#2a78d6';     // optimizar (rinde + caro)
+    if (!altoY && !caro) return '#888780';   // observar (flojo + barato)
+    return '#e34948';                         // pausar (flojo + caro)
   };
-  const maxX = Math.max(10, ...ans.map(a => a.costo || 0)) * 1.1;
-  const maxY = Math.max(2, ...ans.map(a => a[metricaY] || 0)) + 1;
+  const rawMaxX = Math.max(...ans.map(a => valX(a) || 0), 1);
+  const maxX = Math.max(1, Math.ceil((rawMaxX * 1.12) / (rawMaxX > 20 ? 5 : 1)) * (rawMaxX > 20 ? 5 : 1));
+  const maxY = Math.max(2, Math.ceil(Math.max(...ans.map(a => a[metricaY] || 0)) + 1));
+  const radio = a => Math.max(15, 9 + (a.leadsCRM || 0) * 1.3);  // mínimo 15px para que se vea la foto
+
   tendLeyenda([
-    { label: 'Escalar (barato + rinde)', color: '#1baf7a' }, { label: 'Optimizar (caro + rinde)', color: '#2a78d6' },
-    { label: 'Observar (barato + flojo)', color: '#888780' }, { label: 'Pausar (caro + flojo)', color: '#e34948' }
+    { label: 'Escalar (rinde + barato)', color: '#1baf7a' }, { label: 'Optimizar (rinde + caro)', color: '#2a78d6' },
+    { label: 'Observar (flojo + barato)', color: '#888780' }, { label: 'Pausar (flojo + caro)', color: '#e34948' }
   ]);
+  $('tendMsg').textContent = esCPL && excluidos ? (excluidos + ' anuncio(s) sin leads no se muestran en modo CPL.') : '';
+
+  // Precarga de imágenes de los anuncios (se redibuja al cargar cada una)
+  ans.forEach(a => {
+    if (a.creativeUrl && !TEND_IMGS[a.creativeUrl]) {
+      const im = new Image(); im.referrerPolicy = 'no-referrer';
+      im.onload = () => { try { if (TEND_CHART) TEND_CHART.draw(); } catch (e) {} };
+      im.src = a.creativeUrl; TEND_IMGS[a.creativeUrl] = im;
+    }
+  });
+
   const quadBg = {
     id: 'quadBg',
     beforeDraw(ch) {
-      const { ctx: c, chartArea: a, scales: { x, y } } = ch;
-      if (!a) return;
+      const { ctx: c, chartArea: a, scales: { x, y } } = ch; if (!a) return;
       const px = x.getPixelForValue(MX), py = y.getPixelForValue(MY);
       const fill = (x0, y0, x1, y1, col) => { c.fillStyle = col; c.fillRect(x0, y0, x1 - x0, y1 - y0); };
       fill(a.left, a.top, px, py, 'rgba(27,175,122,.07)');
@@ -5163,19 +5188,38 @@ function renderCuadrante(ctx) {
       c.restore();
     }
   };
+  const fotos = {
+    id: 'fotos',
+    afterDatasetsDraw(ch) {
+      const c = ch.ctx;
+      ch.data.datasets.forEach((ds, i) => {
+        const pt = ch.getDatasetMeta(i).data[0]; if (!pt) return;
+        const a = ans[i]; const img = a.creativeUrl ? TEND_IMGS[a.creativeUrl] : null;
+        const r = (pt.options && pt.options.radius) || 12;
+        if (img && img.complete && img.naturalWidth) {
+          c.save();
+          c.beginPath(); c.arc(pt.x, pt.y, r - 1.5, 0, Math.PI * 2); c.closePath(); c.clip();
+          const s = Math.max(img.naturalWidth, img.naturalHeight), sc = (r * 2) / s;
+          c.drawImage(img, pt.x - (img.naturalWidth * sc) / 2, pt.y - (img.naturalHeight * sc) / 2, img.naturalWidth * sc, img.naturalHeight * sc);
+          c.restore();
+          c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2); c.strokeStyle = colorDe(a); c.lineWidth = 2.5; c.stroke();
+        }
+      });
+    }
+  };
+
   TEND_CHART = new Chart(ctx, {
     type: 'bubble',
-    data: { datasets: ans.map(a => ({ label: a.anuncio, data: [{ x: a.costo || 0, y: a[metricaY] || 0, r: 6 + (a.leadsCRM || 0) * 1.2 }], backgroundColor: colorDe(a) + 'cc', borderColor: colorDe(a), borderWidth: 1 })) },
+    data: { datasets: ans.map(a => ({ label: a.anuncio, clip: false, data: [{ x: valX(a) || 0, y: a[metricaY] || 0, r: radio(a) }], backgroundColor: colorDe(a) + 'cc', borderColor: colorDe(a), borderWidth: 1 })) },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; return a.anuncio + ' · S/' + (a.costo || 0) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; } } } },
+      responsive: true, maintainAspectRatio: false, layout: { padding: { top: 6, right: 18, bottom: 16, left: 6 } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; const xv = valX(a); return a.anuncio + ' · ' + (esCPL ? 'CPL S/' + (xv != null ? xv : '—') : 'S/' + (a.costo || 0)) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; } } } },
       scales: {
-        x: { title: { display: true, text: 'Costo (gasto S/)  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', callback: v => 'S/' + v }, min: 0, max: maxX },
-        y: { title: { display: true, text: 'Desempeño (' + etiquetaY + ')  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', precision: 0 }, min: -0.5, max: maxY }
-      },
-      layout: { padding: 6 }
+        x: { title: { display: true, text: (esCPL ? 'Costo por lead (S/)' : 'Costo (gasto S/)') + '  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', callback: v => 'S/' + Math.round(v) }, min: 0, max: maxX },
+        y: { title: { display: true, text: 'Desempeño (' + etiquetaY + ')  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', stepSize: 1, precision: 0, callback: v => v < 0 ? '' : v }, min: 0, max: maxY }
+      }
     },
-    plugins: [quadBg]
+    plugins: [quadBg, fotos]
   });
 }
 

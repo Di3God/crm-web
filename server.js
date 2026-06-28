@@ -3978,7 +3978,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.185 (Tendencias: 4a vista Cuadrante Costo vs Desempeno (burbujas por anuncio, ejes costo vs agendados/leads/cierres, lineas de mediana, 4 segmentos Escalar/Optimizar/Observar/Pausar); endpoint tendencias ahora devuelve por anuncio) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.186 (Cuadrante: ejes desde 0 con escala limpia (fix decimales feos en costo), opcion Costo por lead en eje X (excluye anuncios sin leads), foto del anuncio dentro de la burbuja con tamano minimo 15px) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

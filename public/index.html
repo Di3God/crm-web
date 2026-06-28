@@ -817,6 +817,10 @@
         <button class="atr-niv" data-tv="embudo" onclick="setVistaTend('embudo')">Embudo</button>
         <button class="atr-niv" data-tv="cuadrante" onclick="setVistaTend('cuadrante')">Cuadrante</button>
       </div>
+      <select id="tendMetricaX" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
+        <option value="costo">X: Costo total</option>
+        <option value="cpl">X: Costo por lead</option>
+      </select>
       <select id="tendMetricaY" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
         <option value="agendado">Y: Agendados</option>
         <option value="leadsCRM">Y: Leads CRM</option>
