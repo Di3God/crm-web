@@ -5132,23 +5132,13 @@ function renderCuadrante(ctx) {
   const etiquetaY = metricaY === 'leadsCRM' ? 'Leads CRM' : metricaY === 'cierre' ? 'Cierres' : 'Agendados';
   const esCPL = metricaX === 'cpl';
   const valX = a => esCPL ? (a.leadsCRM ? Math.round((a.costo / a.leadsCRM) * 100) / 100 : null) : (a.costo || 0);
-  // En modo CPL, los anuncios sin leads no tienen CPL: se excluyen (se avisa).
-  let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a[metricaY] || 0) > 0);
+  let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a.leadsCRM || 0) > 0 || (a[metricaY] || 0) > 0);
   let excluidos = 0;
   if (esCPL) { const total = ans.length; ans = ans.filter(a => a.leadsCRM > 0); excluidos = total - ans.length; }
   if (!ans.length) { $('tendMsg').textContent = 'No hay anuncios con datos para esta métrica.'; return; }
 
   const MX = tendMediana(ans.map(valX).filter(v => v != null));
   const MY = tendMediana(ans.map(a => a[metricaY] || 0));
-  const colorDe = a => {
-    const altoY = (a[metricaY] || 0) >= MY, altoX = (valX(a) || 0) >= MX;
-    // En CPL, "bueno" es BAJO costo: invertimos la lógica de X para los colores.
-    const caro = esCPL ? altoX : altoX;
-    if (altoY && !caro) return '#1baf7a';   // escalar (rinde + barato)
-    if (altoY && caro) return '#2a78d6';     // optimizar (rinde + caro)
-    if (!altoY && !caro) return '#888780';   // observar (flojo + barato)
-    return '#e34948';                         // pausar (flojo + caro)
-  };
   const rawMaxX = Math.max(...ans.map(a => valX(a) || 0), 1);
   let maxX = Math.max(1, Math.ceil((rawMaxX * 1.12) / (rawMaxX > 20 ? 5 : 1)) * (rawMaxX > 20 ? 5 : 1));
   let maxY = Math.max(2, Math.ceil(Math.max(...ans.map(a => a[metricaY] || 0)) + 1));
@@ -5189,6 +5179,7 @@ function renderCuadrante(ctx) {
   const quadBg = {
     id: 'quadBg',
     beforeDraw(ch) {
+      try {
       const { ctx: c, chartArea: a, scales: { x, y } } = ch; if (!a) return;
       const px = x.getPixelForValue(corteX), py = y.getPixelForValue(corteY);
       const fill = (x0, y0, x1, y1, col) => { c.fillStyle = col; c.fillRect(x0, y0, x1 - x0, y1 - y0); };
@@ -5205,6 +5196,7 @@ function renderCuadrante(ctx) {
       c.fillStyle = '#5F5E5A'; c.textAlign = 'left'; c.fillText('Observar', a.left + 6, a.bottom - 8);
       c.fillStyle = '#A32D2D'; c.textAlign = 'right'; c.fillText('Pausar', a.right - 6, a.bottom - 8);
       c.restore();
+      } catch (e) { /* el fondo de cuadrantes nunca debe tumbar el gráfico */ }
     }
   };
   const fotos = {
@@ -5212,21 +5204,28 @@ function renderCuadrante(ctx) {
     afterDatasetsDraw(ch) {
       const c = ch.ctx;
       ch.data.datasets.forEach((ds, i) => {
-        const pt = ch.getDatasetMeta(i).data[0]; if (!pt) return;
-        const a = ans[i]; const img = a.creativeUrl ? TEND_IMGS[a.creativeUrl] : null;
-        const r = (pt.options && pt.options.radius) || 12;
-        if (img && img.complete && img.naturalWidth) {
-          c.save();
-          c.beginPath(); c.arc(pt.x, pt.y, r - 1.5, 0, Math.PI * 2); c.closePath(); c.clip();
-          const s = Math.min(img.naturalWidth, img.naturalHeight), sc = (r * 2) / s;
-          c.drawImage(img, pt.x - (img.naturalWidth * sc) / 2, pt.y - (img.naturalHeight * sc) / 2, img.naturalWidth * sc, img.naturalHeight * sc);
-          c.restore();
-          c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2); c.strokeStyle = colorCorte(a); c.lineWidth = 2.5; c.stroke();
-        }
+        try {
+          const pt = ch.getDatasetMeta(i).data[0]; if (!pt) return;
+          const a = ans[i]; const img = a && a.creativeUrl ? TEND_IMGS[a.creativeUrl] : null;
+          const r = (pt.options && pt.options.radius) || 12;
+          if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+            const s = Math.min(img.naturalWidth, img.naturalHeight);
+            const sc = s > 0 ? (r * 2) / s : 0;
+            const w = img.naturalWidth * sc, h = img.naturalHeight * sc;
+            if (isFinite(w) && isFinite(h) && w > 0 && h > 0) {
+              c.save();
+              c.beginPath(); c.arc(pt.x, pt.y, r - 1.5, 0, Math.PI * 2); c.closePath(); c.clip();
+              c.drawImage(img, pt.x - w / 2, pt.y - h / 2, w, h);
+              c.restore();
+              c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2); c.strokeStyle = colorCorte(a); c.lineWidth = 2.5; c.stroke();
+            }
+          }
+        } catch (e) { /* una imagen problemática nunca debe tumbar el gráfico */ }
       });
     }
   };
 
+  try {
   TEND_CHART = new Chart(ctx, {
     type: 'bubble',
     data: { datasets: ans.map(a => ({ label: a.anuncio, clip: false, data: [{ x: valX(a) || 0, y: a[metricaY] || 0, r: radio(a) }], backgroundColor: colorCorte(a) + 'cc', borderColor: colorCorte(a), borderWidth: 1 })) },
@@ -5236,7 +5235,7 @@ function renderCuadrante(ctx) {
         if (els && els.length) mostrarTarjetaAnuncio(ans[els[0].datasetIndex], ev, esCPL, etiquetaY);
         else if ($('tendCard')) $('tendCard').style.display = 'none';
       },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; const xv = valX(a); return a.anuncio + ' · ' + (esCPL ? 'CPL S/' + (xv != null ? xv : '—') : 'S/' + (a.costo || 0)) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; }, afterLabel: c => { const a = ans[c.datasetIndex]; return '📣 ' + (a.campana || '—') + '\n📁 ' + (a.conjunto || '—'); } } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const a = ans[c.datasetIndex]; const xv = valX(a); const sl = esCPL && !a.leadsCRM ? ' (sin leads)' : ''; return a.anuncio + ' · ' + (esCPL ? 'CPL S/' + xv + sl : 'S/' + (a.costo || 0)) + ' · ' + (a[metricaY] || 0) + ' ' + etiquetaY.toLowerCase() + ' · ' + (a.leadsCRM || 0) + ' leads'; }, afterLabel: c => { const a = ans[c.datasetIndex]; return '📣 ' + (a.campana || '—') + '\n📁 ' + (a.conjunto || '—'); } } } },
       scales: {
         x: { title: { display: true, text: (esCPL ? 'Costo por lead (S/)' : 'Costo (gasto S/)') + '  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', callback: v => 'S/' + Math.round(v) }, min: 0, max: maxX },
         y: { title: { display: true, text: 'Desempeño (' + etiquetaY + ')  →', color: '#94a3b8', font: { size: 11 } }, grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', stepSize: 1, precision: 0, callback: v => v < 0 ? '' : v }, min: 0, max: maxY }
@@ -5244,6 +5243,7 @@ function renderCuadrante(ctx) {
     },
     plugins: [quadBg, fotos]
   });
+  } catch (e) { $('tendMsg').textContent = 'No se pudo dibujar el cuadrante: ' + e.message; console.error('renderCuadrante:', e); }
 }
 
 // Tarjeta flotante al hacer clic en una burbuja: muestra a qué campaña/conjunto pertenece + métricas

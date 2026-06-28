@@ -4047,7 +4047,7 @@ app.post('/api/admin/reporte-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: REPORTE_EMAIL || '(no configurado)', mailerActivo: mailer.activo() });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.188 (reporte diario por correo: ranking del dia enviado a las 23:59 Peru via Resend a REPORTE_EMAIL; construirRankingDia() reutilizable; boton Probar reporte en Auditoria; endpoint reporte-prueba) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.190 (Cuadrante: fix lienzo en blanco — el dibujo de la foto del anuncio (drawImage) lanzaba excepcion y tumbaba todo el grafico; plugins fotos/quadBg blindados con try/catch + validacion de dimensiones; CPL vuelto a su comportamiento estable; filtro inicial incluye anuncios con leads sin gasto) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
