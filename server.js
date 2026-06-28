@@ -3238,7 +3238,7 @@ app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
 });
 
 // Ranking de contactabilidad del día (visible para todas). Cuenta gestiones de hoy por GP.
-app.get('/api/ranking/contactabilidad', (req, res) => {
+function construirRankingDia() {
   const peruDia = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
   const hoy = peruDia(new Date().toISOString());
   const META = 8; // meta GLOBAL del equipo: agendamientos del día (ya no es individual)
@@ -3329,8 +3329,9 @@ app.get('/api/ranking/contactabilidad', (req, res) => {
   const diasRacha = [];
   for (let i = 0; i < 7; i++) { const dd = new Date(ahoraPeru); dd.setUTCDate(dd.getUTCDate() + i); diasRacha.push(INI[dd.getUTCDay()]); }
   const agendadosEquipo = Object.values(m).reduce((s, r) => s + (r.agendados || 0), 0);
-  res.json({ fecha: hoy, actualizado: new Date().toISOString(), meta: META, metaGlobal: META, agendadosEquipo, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 2.5, calificado: 5, agendado: 15, call: 1 }, ranking });
-});
+  return { fecha: hoy, actualizado: new Date().toISOString(), meta: META, metaGlobal: META, agendadosEquipo, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 2.5, calificado: 5, agendado: 15, call: 1 }, ranking };
+}
+app.get('/api/ranking/contactabilidad', (req, res) => { res.json(construirRankingDia()); });
 
 // Diagnóstico Aircall (admin): muestra los campos crudos de las últimas llamadas para
 // confirmar qué campo marca el buzón de voz y afinar la detección si hiciera falta.
@@ -3985,7 +3986,68 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.187 (Cuadrante: fix imagen del anuncio (faltaba creativeUrl en datos + se quito no-referrer); ejes y cortes manuales (max X/Y, corte X/Y); clic en burbuja muestra tarjeta flotante con campana/conjunto + metricas; tooltip incluye campana/conjunto) corriendo en puerto ${PORT}`));
+// ===== Reporte diario por correo (Ranking del día), a las 23:59 hora Perú, antes del reinicio =====
+const REPORTE_EMAIL = process.env.REPORTE_EMAIL || process.env.CORREO_PRUEBA || '';
+let _reporteEnviadoDia = null;
+const peruAhora = () => new Date(new Date().getTime() - 5 * 3600000);
+
+function htmlRankingDia(r) {
+  const rk = r.ranking || [], medalla = ['🥇', '🥈', '🥉'], g0 = rk[0];
+  const filas = rk.map((g, i) => {
+    const pos = i < 3 ? medalla[i] : (i + 1);
+    return `<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${pos} ${g.asesor}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;font-weight:700">${g.puntaje}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${g.intentos}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${g.conectados}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${g.calificados}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center;color:#1D9E75;font-weight:700">${g.agendados}</td>
+    </tr>`;
+  }).join('');
+  const meta = r.metaGlobal || 8, equipo = r.agendadosEquipo || 0;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:580px;margin:0 auto;color:#222">
+    <h2 style="margin:0 0 4px">🏆 Ranking del día</h2>
+    <div style="color:#888;font-size:13px;margin-bottom:10px">${r.fecha}</div>
+    ${g0 ? `<div style="background:#FFF7E6;border:1px solid #F0D9A0;border-radius:10px;padding:12px 14px;margin:10px 0">
+      <div style="font-size:13px;color:#8a6d3b">Líder del día</div>
+      <div style="font-size:21px;font-weight:700">${g0.asesor}</div>
+      <div style="font-size:13px;color:#555">${g0.puntaje} puntos · ${g0.agendados} agendamientos · ${g0.conectados} conectados</div>
+    </div>` : '<p>No hubo actividad registrada hoy.</p>'}
+    <div style="margin:8px 0;font-size:14px">🎯 Meta del equipo: <b>${equipo}/${meta}</b> agendamientos ${equipo >= meta ? '✅' : ''}</div>
+    <table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:8px">
+      <thead><tr style="background:#F7F8FA;color:#666">
+        <th style="padding:6px 8px;text-align:left">Gestora</th><th style="padding:6px 8px">Puntos</th><th style="padding:6px 8px">Intentos</th><th style="padding:6px 8px">Conect.</th><th style="padding:6px 8px">Calif.</th><th style="padding:6px 8px">Agend.</th>
+      </tr></thead><tbody>${filas}</tbody>
+    </table>
+    <p style="color:#aaa;font-size:11px;margin-top:14px">MiTasaTop · enviado automáticamente al cierre del día (23:59 Perú)</p>
+  </div>`;
+}
+
+async function enviarReporteDiario() {
+  if (!mailer.activo()) { console.log('[reporte] mailer inactivo'); return; }
+  if (!REPORTE_EMAIL) { console.log('[reporte] falta REPORTE_EMAIL'); return; }
+  try {
+    const r = construirRankingDia();
+    const destinos = REPORTE_EMAIL.split(',').map(s => s.trim()).filter(Boolean);
+    for (const d of destinos) await mailer.enviar(d, `🏆 Ranking del día — ${r.fecha}`, htmlRankingDia(r));
+    console.log('[reporte] Ranking del día enviado a', destinos.join(', '));
+  } catch (e) { console.error('[reporte] error:', e.message); }
+}
+
+setInterval(() => {
+  const a = peruAhora(), dia = a.toISOString().slice(0, 10);
+  if (a.getUTCHours() === 23 && a.getUTCMinutes() >= 59 && _reporteEnviadoDia !== dia) {
+    _reporteEnviadoDia = dia;
+    enviarReporteDiario();
+  }
+}, 60 * 1000);
+// Endpoint para probar el envío manualmente (admin)
+app.post('/api/admin/reporte-prueba', soloAdmin, async (req, res) => {
+  await enviarReporteDiario();
+  res.json({ ok: true, enviadoA: REPORTE_EMAIL || '(no configurado)', mailerActivo: mailer.activo() });
+});
+
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.188 (reporte diario por correo: ranking del dia enviado a las 23:59 Peru via Resend a REPORTE_EMAIL; construirRankingDia() reutilizable; boton Probar reporte en Auditoria; endpoint reporte-prueba) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

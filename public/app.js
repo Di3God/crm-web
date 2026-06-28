@@ -5270,3 +5270,13 @@ function mostrarTarjetaAnuncio(a, ev, esCPL, etiquetaY) {
 }
 
 function fmtDiaCorto(f) { if (!f) return ''; const p = f.split('-'); return p.length === 3 ? (p[2] + '/' + p[1]) : f; }
+
+async function probarReporte() {
+  if (!confirm('¿Enviar ahora el reporte del Ranking del día al correo configurado?')) return;
+  try {
+    const r = await api('/api/admin/reporte-prueba', { method: 'POST' });
+    if (!r.mailerActivo) alert('El correo no está configurado (falta RESEND_API_KEY en Railway).');
+    else if (!r.enviadoA || r.enviadoA === '(no configurado)') alert('Falta configurar REPORTE_EMAIL en Railway con tu correo.');
+    else alert('Reporte enviado a: ' + r.enviadoA + '\n\nRevisa tu bandeja (y spam).');
+  } catch (e) { alert('Error: ' + e.message); }
+}
