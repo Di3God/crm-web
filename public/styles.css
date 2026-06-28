@@ -1208,3 +1208,14 @@
 
   /* hora de última gestión en el ranking */
   .rk-ult { font-size: 10.5px; color: #94a3b8; font-weight: 600; margin-left: 6px; white-space: nowrap; }
+
+  /* Inversión: árbol expandible */
+  .inv-row.inv-camp { background: #F4F7FB; cursor: pointer; }
+  .inv-row.inv-camp:hover { background: #EAF1F9; }
+  .inv-row.inv-camp td { font-weight: 600; color: var(--ink); border-top: 2px solid #E2E8F0; }
+  .inv-row.inv-conj { cursor: pointer; }
+  .inv-row.inv-conj:hover { background: #F8FAFC; }
+  .inv-row.inv-conj td { color: #334155; }
+  .inv-tg { display: inline-block; width: 14px; color: #94a3b8; font-size: 10px; }
+  .inv-ic { margin-right: 5px; }
+  .inv-cnt { font-size: 10px; color: #94a3b8; font-weight: 500; margin-left: 4px; }

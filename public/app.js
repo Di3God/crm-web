@@ -4753,7 +4753,7 @@ async function cargarInversion() {
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   const desde = $('invDesde') ? $('invDesde').value : '';
   const hasta = $('invHasta') ? $('invHasta').value : '';
-  let url = '/api/marketing/inversion?nivel=' + INV_NIVEL;
+  let url = '/api/marketing/inversion?nivel=anuncio';  // siempre a nivel anuncio; el árbol se arma en el cliente
   if (desde) url += '&desde=' + desde;
   if (hasta) url += '&hasta=' + hasta;
   try {
@@ -4772,6 +4772,61 @@ function limpiarFechasInv() {
 
 function fmtSolesInv(v) { return v == null ? '—' : 'S/ ' + Number(v).toLocaleString('es-PE', { maximumFractionDigits: v < 100 ? 1 : 0 }); }
 
+// Estado de expansión del árbol (claves de campaña y conjunto abiertos)
+let INV_EXPAND = {};
+
+function invAggNuevo() { return { costo: 0, resultadosMeta: 0, leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 }; }
+function invAggSumar(a, f) {
+  a.costo += f.costo || 0; a.resultadosMeta += f.resultadosMeta || 0; a.leadsCRM += f.leadsCRM || 0;
+  a.tocados += f.tocados || 0; a.contactado += f.contactado || 0; a.calificado += f.calificado || 0;
+  a.agendado += f.agendado || 0; a.reunion += f.reunion || 0; a.negociacion += f.negociacion || 0; a.cierre += f.cierre || 0;
+}
+function invMetricas(a) {
+  const r2 = n => Math.round(n * 100) / 100;
+  return { cplReal: a.leadsCRM ? r2(a.costo / a.leadsCRM) : null, costoCierre: a.cierre ? r2(a.costo / a.cierre) : null };
+}
+
+function invArbol(filas) {
+  const camps = {};
+  filas.forEach(f => {
+    const cK = f.campana || '(sin campaña)';
+    const jK = f.conjunto || '(sin conjunto)';
+    if (!camps[cK]) camps[cK] = { nombre: cK, agg: invAggNuevo(), conjuntos: {} };
+    const C = camps[cK];
+    if (!C.conjuntos[jK]) C.conjuntos[jK] = { nombre: jK, agg: invAggNuevo(), anuncios: [] };
+    C.conjuntos[jK].anuncios.push(f);
+    invAggSumar(C.conjuntos[jK].agg, f);
+    invAggSumar(C.agg, f);
+  });
+  return Object.values(camps).sort((a, b) => b.agg.costo - a.agg.costo);
+}
+
+function invExpandirTodo(abrir) {
+  INV_EXPAND = {};
+  if (abrir) {
+    const filas = (INV_DATA && INV_DATA.filas) || [];
+    invArbol(filas).forEach(C => { INV_EXPAND['c:' + C.nombre] = true; Object.values(C.conjuntos).forEach(J => { INV_EXPAND['j:' + C.nombre + '|' + J.nombre] = true; }); });
+  }
+  renderInversion();
+}
+function invToggle(key) { INV_EXPAND[key] = !INV_EXPAND[key]; renderInversion(); }
+
+function invCeldasMetricas(a, T) {
+  const m = invMetricas(a);
+  const cplMal = (m.cplReal != null && T.cplReal != null && m.cplReal > T.cplReal * 1.3) ? 'inv-malo' : '';
+  return '<td>' + fmtSolesInv(a.costo) + '</td>' +
+    '<td><b>' + a.leadsCRM + '</b></td>' +
+    '<td>' + a.tocados + '</td>' +
+    '<td>' + a.contactado + '</td>' +
+    '<td>' + a.calificado + '</td>' +
+    '<td class="inv-agend">' + a.agendado + '</td>' +
+    '<td>' + a.reunion + '</td>' +
+    '<td>' + a.negociacion + '</td>' +
+    '<td><b>' + a.cierre + '</b></td>' +
+    '<td class="' + cplMal + '">' + fmtSolesInv(m.cplReal) + '</td>' +
+    '<td>' + (m.costoCierre != null ? fmtSolesInv(m.costoCierre) : '<span class="inv-muted">—</span>') + '</td>';
+}
+
 function renderInversion() {
   const cont = $('invCont'), cards = $('invCards');
   const filas = (INV_DATA && INV_DATA.filas) || [];
@@ -4788,42 +4843,36 @@ function renderInversion() {
       tarjetaInv('CPL real (CRM)', fmtSolesInv(T.cplReal), T.cplMeta != null ? ('Meta: ' + fmtSolesInv(T.cplMeta)) : '') +
       tarjetaInv('Costo por cierre', fmtSolesInv(T.costoCierre), (T.cierre || 0) + ' cierres') +
     '</div>';
-  const esDia = INV_NIVEL === 'dia';
-  const colNivel = INV_NIVEL === 'campana' ? 'Campaña' : INV_NIVEL === 'conjunto' ? 'Conjunto' : 'Anuncio';
-  const head = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
-    (esDia ? '<th>Fecha</th>' : '') +
-    '<th class="inv-l">' + colNivel + '</th><th>Gasto</th>' +
+
+  const arbol = invArbol(filas);
+  let body = '';
+  arbol.forEach(C => {
+    const cKey = 'c:' + C.nombre, cAbierto = !!INV_EXPAND[cKey];
+    const nConj = Object.keys(C.conjuntos).length;
+    body += '<tr class="inv-row inv-camp" onclick="invToggle(\'' + cKey.replace(/'/g, "\\'") + '\')">' +
+      '<td class="inv-l"><span class="inv-tg">' + (cAbierto ? '▾' : '▸') + '</span><span class="inv-ic">📣</span><b>' + C.nombre + '</b> <span class="inv-cnt">' + nConj + ' conj.</span></td>' +
+      invCeldasMetricas(C.agg, T) + '</tr>';
+    if (!cAbierto) return;
+    Object.values(C.conjuntos).sort((a, b) => b.agg.costo - a.agg.costo).forEach(J => {
+      const jKey = 'j:' + C.nombre + '|' + J.nombre, jAbierto = !!INV_EXPAND[jKey];
+      body += '<tr class="inv-row inv-conj" onclick="invToggle(\'' + jKey.replace(/'/g, "\\'") + '\')">' +
+        '<td class="inv-l" style="padding-left:26px"><span class="inv-tg">' + (jAbierto ? '▾' : '▸') + '</span><span class="inv-ic">📁</span>' + J.nombre + ' <span class="inv-cnt">' + J.anuncios.length + ' anun.</span></td>' +
+        invCeldasMetricas(J.agg, T) + '</tr>';
+      if (!jAbierto) return;
+      J.anuncios.slice().sort((a, b) => (b.costo || 0) - (a.costo || 0)).forEach(f => {
+        const icono = f.creativeUrl ? '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">' : '<span>📷</span>';
+        body += '<tr class="inv-row inv-anun">' +
+          '<td class="inv-l" style="padding-left:50px"><div class="inv-an"><div class="inv-thumb">' + icono + '</div><div class="inv-an-txt"><div class="inv-nom">' + (f.etiqueta || f.anuncio || '(sin dato)') + '</div>' + (f.status ? '<div class="inv-sub">' + invStatusBadge(f.status) + '</div>' : '') + '</div></div></td>' +
+          invCeldasMetricas(f, T) + '</tr>';
+      });
+    });
+  });
+
+  cont.innerHTML = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
+    '<th class="inv-l">Campaña / Conjunto / Anuncio</th><th>Gasto</th>' +
     '<th>Leads</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Negociación</th><th>Cierre</th>' +
     '<th>CPL real</th><th>S//cierre</th>' +
-    '</tr></thead><tbody>' +
-    filas.map(f => {
-      const etiqueta = f.etiqueta || f.anuncio || '(sin dato)';
-      let icono;
-      if (f.creativeUrl) icono = '<img src="' + f.creativeUrl + '" alt="" onerror="this.parentNode.classList.add(\'inv-thumb-err\')">';
-      else if (INV_NIVEL === 'campana') icono = '<span>📣</span>';
-      else if (INV_NIVEL === 'conjunto') icono = '<span>📁</span>';
-      else icono = '<span>📷</span>';
-      const thumb = '<div class="inv-thumb">' + icono + '</div>';
-      const sub = (f.status ? invStatusBadge(f.status) : '') + (f.tipo ? (f.status ? ' · ' : '') + f.tipo : '');
-      const cplRealCol = (f.cplReal != null && T.cplReal != null && f.cplReal > T.cplReal * 1.3) ? 'inv-malo' : '';
-      return '<tr>' +
-        (esDia ? '<td>' + (f.fecha ? fmtFecha(f.fecha) : '—') + '</td>' : '') +
-        '<td class="inv-l"><div class="inv-an">' + thumb + '<div class="inv-an-txt"><div class="inv-nom">' + etiqueta + '</div>' + (sub ? '<div class="inv-sub">' + sub + '</div>' : '') + '</div></div></td>' +
-        '<td>' + fmtSolesInv(f.costo) + '</td>' +
-        '<td><b>' + (f.leadsCRM || 0) + '</b></td>' +
-        '<td>' + (f.tocados || 0) + '</td>' +
-        '<td>' + (f.contactado || 0) + '</td>' +
-        '<td>' + (f.calificado || 0) + '</td>' +
-        '<td class="inv-agend">' + (f.agendado || 0) + '</td>' +
-        '<td>' + (f.reunion || 0) + '</td>' +
-        '<td>' + (f.negociacion || 0) + '</td>' +
-        '<td><b>' + (f.cierre || 0) + '</b></td>' +
-        '<td class="' + cplRealCol + '">' + fmtSolesInv(f.cplReal) + '</td>' +
-        '<td>' + (f.costoCierre != null ? fmtSolesInv(f.costoCierre) : '<span class="inv-muted">—</span>') + '</td>' +
-        '</tr>';
-    }).join('') +
-    '</tbody></table></div>';
-  cont.innerHTML = head;
+    '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
 function tarjetaInv(label, valor, sub) {

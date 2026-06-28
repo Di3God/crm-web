@@ -498,8 +498,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
         conj = norm.conjunto; anun = norm.anuncio; camp = norm.campana; adId = adId || norm.adId;
       } catch (e) { continue; }
       if (conj || anun || camp) {
-        // Reescribe la atribución (mapeo corregido); conserva campaña si la nueva viene vacía.
-        db.prepare("UPDATE leads SET campana=COALESCE(?,campana), conjunto=?, anuncio=?, adId=COALESCE(?,adId) WHERE codigo=?")
+        // Solo RELLENA lo que esté vacío; nunca pisa valores ya puestos (incluye ediciones manuales).
+        db.prepare(`UPDATE leads SET
+            campana  = CASE WHEN (campana  IS NULL OR campana='')  THEN ? ELSE campana  END,
+            conjunto = CASE WHEN (conjunto IS NULL OR conjunto='') THEN ? ELSE conjunto END,
+            anuncio  = CASE WHEN (anuncio  IS NULL OR anuncio='')  THEN ? ELSE anuncio  END,
+            adId     = COALESCE(adId, ?)
+          WHERE codigo=?`)
           .run(camp || null, conj || null, anun || null, adId || null, l.codigo);
         updated++;
       }
@@ -3901,7 +3906,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.181 (Inversion agrupable por campana/conjunto/anuncio/dia con embudo en cada nivel; ranking muestra la hora de la ultima gestion de hoy por GP) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.182 (FIX critico: el backfill ya NO pisa conjunto/anuncio editados a mano (solo rellena vacios); Inversion ahora es arbol expandible campana>conjunto>anuncio con +/- y embudo en cada nivel) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
