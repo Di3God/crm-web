@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </head>
 <body>
 <header class="topbar" id="rolBox" style="display:none">
@@ -294,7 +295,8 @@
     <div class="barra">
       <h2>Marketing</h2>
       <span class="sub">Atribución de leads: de qué campaña, conjunto y anuncio vienen, y cuánto convierten.</span>
-      <button class="btn sec" style="margin-left:auto" onclick="cargarMarketing()">⟳ Actualizar</button>
+      <button class="btn sec" style="margin-left:auto" onclick="abrirTendencias()">📈 Tendencias</button>
+      <button class="btn sec" onclick="cargarMarketing()">⟳ Actualizar</button>
     </div>
     <div class="atr-tabs">
       <button class="atr-tab act" data-tab="embudo" onclick="setTabMkt('embudo')">Embudo por anuncio</button>
@@ -802,6 +804,32 @@
 </div>
 
 <!-- ===== MODAL: NUEVO LEAD ===== -->
+<div class="overlay" id="ovTend">
+  <div class="modal" style="max-width:780px">
+    <div class="mg-head">
+      <div style="flex:1"><h3>📈 Tendencias de marketing</h3></div>
+      <button class="mg-x" title="Cerrar" onclick="cerrar('ovTend')">✕</button>
+    </div>
+    <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
+      <div class="atr-niveles">
+        <button class="atr-niv act" data-tv="leads" onclick="setVistaTend('leads')">Leads</button>
+        <button class="atr-niv" data-tv="costo" onclick="setVistaTend('costo')">Gasto y CPL</button>
+        <button class="atr-niv" data-tv="embudo" onclick="setVistaTend('embudo')">Embudo</button>
+      </div>
+    </div>
+    <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
+      <span class="sub">Del</span><input id="tendDesde" class="inp" type="date" style="width:auto" onchange="cargarTendencias()">
+      <span class="sub">al</span><input id="tendHasta" class="inp" type="date" style="width:auto" onchange="cargarTendencias()">
+      <button class="btn sec" onclick="limpiarFechasTend()">Todo</button>
+      <select id="tendCampana" class="inp" style="min-width:150px" onchange="tendCampanaCambio()"><option value="">Todas las campañas</option></select>
+      <select id="tendConjunto" class="inp" style="min-width:150px" onchange="cargarTendencias()"><option value="">Todos los conjuntos</option></select>
+    </div>
+    <div id="tendLegend" style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:6px;font-size:12px;color:var(--muted)"></div>
+    <div style="position:relative;height:340px"><canvas id="tendChart"></canvas></div>
+    <div id="tendMsg" class="sub" style="margin-top:8px"></div>
+  </div>
+</div>
+
 <div class="overlay" id="ovNuevo">
   <div class="modal" style="max-width:480px">
     <h3>Nuevo lead</h3>

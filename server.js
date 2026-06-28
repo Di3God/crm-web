@@ -3129,6 +3129,71 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
   }
 });
 
+// Series diarias para el modal de Tendencias: gasto, leads (Ad y CRM), embudo y CPL por día.
+// Filtra por fechas (Perú) + campaña + conjunto. Devuelve además las listas para los selectores.
+app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
+  try {
+    const desde = req.query.desde || null, hasta = req.query.hasta || null;
+    const norm = s => String(s || '').trim().toLowerCase();
+    const fCamp = norm(req.query.campana), fConj = norm(req.query.conjunto);
+    const matchCC = o => (!fCamp || norm(o.campana) === fCamp) && (!fConj || norm(o.conjunto) === fConj);
+    const porDia = {};
+    const D = f => (porDia[f] = porDia[f] || { fecha: f, gasto: 0, leadsAd: 0, leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 });
+
+    // Gasto por día (gasto.fecha es fecha plana del Excel)
+    let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
+    if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
+    if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
+    gastoRows.filter(matchCC).forEach(g => { const d = D(g.fecha); d.gasto += g.costo || 0; d.leadsAd += g.resultados || 0; });
+
+    // Leads por día + embudo total
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+    const emb = { leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 };
+    db.prepare("SELECT * FROM leads WHERE origenCreacion='make'").all().forEach(l => {
+      const dia = peruFecha(l.fechaCarga);
+      if (desde && (!dia || dia < desde)) return;
+      if (hasta && (!dia || dia > hasta)) return;
+      if (!matchCC(l)) return;
+      const d = D(dia);
+      d.leadsCRM++; emb.leadsCRM++;
+      if (l.esDuplicadoActivo) return;
+      const gs = gPorCod[l.codigo] || [];
+      const cons = leadConsolidado(l, gs);
+      const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+      if (gs.length > 0) { d.tocados++; emb.tocados++; }
+      if (gs.some(x => !SIN.includes(x.resultado))) { d.contactado++; emb.contactado++; }
+      if (ord >= 2) { d.calificado++; emb.calificado++; }
+      if (ord >= 3) { d.agendado++; emb.agendado++; }
+      if (ord >= 4) { d.reunion++; emb.reunion++; }
+      if (ord >= 5) { d.negociacion++; emb.negociacion++; }
+      if (cons.etapa === 'Cerrado ganado') { d.cierre++; emb.cierre++; }
+    });
+
+    const r2 = n => Math.round(n * 100) / 100;
+    const dias = Object.values(porDia).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(d => {
+      d.gasto = r2(d.gasto);
+      d.cpl = d.leadsCRM ? r2(d.gasto / d.leadsCRM) : null;
+      d.captura = d.leadsAd ? Math.round((d.leadsCRM / d.leadsAd) * 100) : null;
+      return d;
+    });
+
+    // Listas para los selectores
+    const campSet = {}, conjMap = {};
+    const recoger = r => { if (r.campana) campSet[r.campana] = 1; if (r.conjunto) conjMap[r.conjunto] = r.campana || ''; };
+    db.prepare('SELECT DISTINCT campana, conjunto FROM marketing_gasto').all().forEach(recoger);
+    db.prepare("SELECT DISTINCT campana, conjunto FROM leads WHERE origenCreacion='make'").all().forEach(recoger);
+    const campanas = Object.keys(campSet).sort();
+    const conjuntos = Object.keys(conjMap).map(c => ({ conjunto: c, campana: conjMap[c] })).sort((a, b) => a.conjunto.localeCompare(b.conjunto));
+
+    res.json({ dias, embudo: emb, campanas, conjuntos });
+  } catch (e) {
+    console.error('Error en /api/marketing/tendencias:', e.message);
+    res.status(500).json({ error: 'Tendencias: ' + e.message });
+  }
+});
+
 // Detalle lead por lead con su atribución y fechas (para rastrear/cuadrar y descargar).
 app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
   try {
@@ -3906,7 +3971,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.182 (FIX critico: el backfill ya NO pisa conjunto/anuncio editados a mano (solo rellena vacios); Inversion ahora es arbol expandible campana>conjunto>anuncio con +/- y embudo en cada nivel) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.184 (modal Tendencias con 3 vistas: Leads Ad vs CRM + captacion, Gasto y CPL diario, Embudo del periodo; filtros por fecha + campana + conjunto; endpoint /api/marketing/tendencias; Chart.js) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

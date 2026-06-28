@@ -4815,6 +4815,7 @@ function invCeldasMetricas(a, T) {
   const m = invMetricas(a);
   const cplMal = (m.cplReal != null && T.cplReal != null && m.cplReal > T.cplReal * 1.3) ? 'inv-malo' : '';
   return '<td>' + fmtSolesInv(a.costo) + '</td>' +
+    '<td class="inv-muted" title="Resultados que reporta Meta (Excel de gasto)">' + a.resultadosMeta + '</td>' +
     '<td><b>' + a.leadsCRM + '</b></td>' +
     '<td>' + a.tocados + '</td>' +
     '<td>' + a.contactado + '</td>' +
@@ -4870,7 +4871,7 @@ function renderInversion() {
 
   cont.innerHTML = '<div style="overflow-x:auto"><table class="inv-tabla"><thead><tr>' +
     '<th class="inv-l">Campaña / Conjunto / Anuncio</th><th>Gasto</th>' +
-    '<th>Leads</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Negociación</th><th>Cierre</th>' +
+    '<th>Leads Ad</th><th>Leads CRM</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Negociación</th><th>Cierre</th>' +
     '<th>CPL real</th><th>S//cierre</th>' +
     '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
@@ -4984,3 +4985,130 @@ async function correrRecuperar(soloPreview) {
     $('recResultado').innerHTML = '<div style="color:#C0392B">Error: ' + e.message + '</div>';
   }
 }
+
+// ===================== MODAL TENDENCIAS (gráficos) =====================
+let TEND_DATA = null, TEND_VISTA = 'leads', TEND_CHART = null;
+
+function abrirTendencias() {
+  $('ovTend').classList.add('act');
+  // hereda el filtro de fechas de Inversión si lo hay
+  if ($('tendDesde') && $('invDesde')) $('tendDesde').value = $('invDesde').value || '';
+  if ($('tendHasta') && $('invHasta')) $('tendHasta').value = $('invHasta').value || '';
+  cargarTendencias();
+}
+
+function limpiarFechasTend() {
+  $('tendDesde').value = ''; $('tendHasta').value = '';
+  cargarTendencias();
+}
+
+function setVistaTend(v) {
+  TEND_VISTA = v;
+  document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
+  renderTendencias();
+}
+
+function tendCampanaCambio() {
+  // refiltra el selector de conjuntos según la campaña elegida, luego recarga
+  poblarConjuntosTend();
+  cargarTendencias();
+}
+
+function poblarCamposTend() {
+  if (!TEND_DATA) return;
+  const selC = $('tendCampana'), prevC = selC.value;
+  selC.innerHTML = '<option value="">Todas las campañas</option>';
+  (TEND_DATA.campanas || []).forEach(c => selC.add(new Option(c, c)));
+  selC.value = prevC || '';
+  poblarConjuntosTend();
+}
+
+function poblarConjuntosTend() {
+  if (!TEND_DATA) return;
+  const selJ = $('tendConjunto'), prevJ = selJ.value, camp = $('tendCampana').value;
+  selJ.innerHTML = '<option value="">Todos los conjuntos</option>';
+  (TEND_DATA.conjuntos || []).filter(x => !camp || x.campana === camp).forEach(x => selJ.add(new Option(x.conjunto, x.conjunto)));
+  selJ.value = prevJ || '';
+}
+
+async function cargarTendencias() {
+  $('tendMsg').textContent = 'Cargando…';
+  const qs = [];
+  if ($('tendDesde').value) qs.push('desde=' + $('tendDesde').value);
+  if ($('tendHasta').value) qs.push('hasta=' + $('tendHasta').value);
+  if ($('tendCampana').value) qs.push('campana=' + encodeURIComponent($('tendCampana').value));
+  if ($('tendConjunto').value) qs.push('conjunto=' + encodeURIComponent($('tendConjunto').value));
+  try {
+    TEND_DATA = await api('/api/marketing/tendencias' + (qs.length ? '?' + qs.join('&') : ''));
+    poblarCamposTend();
+    $('tendMsg').textContent = '';
+    renderTendencias();
+  } catch (e) {
+    $('tendMsg').textContent = 'No se pudo cargar: ' + e.message;
+  }
+}
+
+function tendLeyenda(items) {
+  $('tendLegend').innerHTML = items.map(it =>
+    '<span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:' + (it.line ? '3px' : '11px') + ';border-radius:2px;background:' + it.color + '"></span>' + it.label + '</span>'
+  ).join('');
+}
+
+function renderTendencias() {
+  if (!TEND_DATA) return;
+  const dias = TEND_DATA.dias || [];
+  if (TEND_CHART) { TEND_CHART.destroy(); TEND_CHART = null; }
+  const ctx = $('tendChart');
+  if (TEND_VISTA !== 'embudo' && !dias.length) { $('tendMsg').textContent = 'No hay datos en este rango/filtro.'; return; }
+  $('tendMsg').textContent = '';
+  const ejeBase = { grid: { color: '#EEF1F4' }, ticks: { color: '#94a3b8', font: { size: 11 } }, beginAtZero: true };
+
+  if (TEND_VISTA === 'leads') {
+    tendLeyenda([{ label: 'Leads Ad (Meta)', color: '#2a78d6', line: 1 }, { label: 'Leads CRM', color: '#1baf7a', line: 1 }, { label: 'Captación %', color: '#eda100' }]);
+    TEND_CHART = new Chart(ctx, {
+      data: {
+        labels: dias.map(d => fmtDiaCorto(d.fecha)),
+        datasets: [
+          { type: 'line', label: 'Leads Ad', data: dias.map(d => d.leadsAd), borderColor: '#2a78d6', backgroundColor: '#2a78d6', borderWidth: 2, tension: .3, pointRadius: 3, yAxisID: 'y' },
+          { type: 'line', label: 'Leads CRM', data: dias.map(d => d.leadsCRM), borderColor: '#1baf7a', backgroundColor: '#1baf7a', borderWidth: 2, borderDash: [6, 4], tension: .3, pointRadius: 3, yAxisID: 'y' },
+          { type: 'bar', label: 'Captación %', data: dias.map(d => d.captura), backgroundColor: 'rgba(237,161,0,.22)', borderColor: '#eda100', borderWidth: 1, yAxisID: 'y2' }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }, y: { ...ejeBase, title: { display: true, text: 'Leads', color: '#94a3b8' } }, y2: { position: 'right', beginAtZero: true, max: 100, grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => v + '%' } } }
+      }
+    });
+  } else if (TEND_VISTA === 'costo') {
+    tendLeyenda([{ label: 'Gasto (S/)', color: '#534AB7' }, { label: 'CPL real (S/)', color: '#D85A30', line: 1 }]);
+    TEND_CHART = new Chart(ctx, {
+      data: {
+        labels: dias.map(d => fmtDiaCorto(d.fecha)),
+        datasets: [
+          { type: 'bar', label: 'Gasto', data: dias.map(d => d.gasto), backgroundColor: 'rgba(83,74,183,.25)', borderColor: '#534AB7', borderWidth: 1, yAxisID: 'y' },
+          { type: 'line', label: 'CPL real', data: dias.map(d => d.cpl), borderColor: '#D85A30', backgroundColor: '#D85A30', borderWidth: 2, tension: .3, pointRadius: 3, yAxisID: 'y2' }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }, y: { ...ejeBase, title: { display: true, text: 'Gasto S/', color: '#94a3b8' } }, y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => 'S/' + v }, title: { display: true, text: 'CPL', color: '#94a3b8' } } }
+      }
+    });
+  } else {
+    // Embudo del periodo (barras horizontales descendentes)
+    const e = TEND_DATA.embudo || {};
+    const etapas = [['Leads', e.leadsCRM], ['Tocados', e.tocados], ['Contactados', e.contactado], ['Calificados', e.calificado], ['Agendados', e.agendado], ['Reunión', e.reunion], ['Negociación', e.negociacion], ['Cierre', e.cierre]];
+    tendLeyenda([{ label: 'Leads que llegan a cada etapa (periodo filtrado)', color: '#185FA5' }]);
+    TEND_CHART = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: etapas.map(x => x[0]), datasets: [{ label: 'Leads', data: etapas.map(x => x[1] || 0), backgroundColor: '#378ADD', borderColor: '#185FA5', borderWidth: 1 }] },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const base = etapas[0][1] || 0; const pct = base ? Math.round((c.parsed.x / base) * 100) : 0; return c.parsed.x + ' leads (' + pct + '% del total)'; } } } },
+        scales: { x: { ...ejeBase }, y: { grid: { display: false }, ticks: { color: '#475569', font: { size: 12 } } } }
+      }
+    });
+  }
+}
+
+function fmtDiaCorto(f) { if (!f) return ''; const p = f.split('-'); return p.length === 3 ? (p[2] + '/' + p[1]) : f; }
