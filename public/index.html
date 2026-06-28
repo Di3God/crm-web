@@ -320,7 +320,12 @@
           <button class="atr-niv" data-org="relead" onclick="setOrigenMkt('relead')">Releads</button>
           <button class="atr-niv" data-org="todos" onclick="setOrigenMkt('todos')">Todos</button>
         </div>
-        <input id="mktBuscar" class="inp" placeholder="Buscar por nombre, código, campaña, anuncio…" style="flex:1;min-width:200px" oninput="renderMktLeads()">
+        <span class="sub">Creación del</span>
+        <input id="mktDesde" class="inp" type="date" onchange="cargarMktLeads()" style="width:auto">
+        <span class="sub">al</span>
+        <input id="mktHasta" class="inp" type="date" onchange="cargarMktLeads()" style="width:auto">
+        <button class="btn sec" onclick="limpiarFechasMkt()" title="Quitar el filtro de fechas">Todo</button>
+        <input id="mktBuscar" class="inp" placeholder="Buscar nombre, código, anuncio…" style="flex:1;min-width:160px" oninput="renderMktLeads()">
         <span id="mktTotal" class="sub"></span>
         <button class="btn sec" onclick="descargarMktLeads()">⬇ Descargar tabla (CSV)</button>
       </div>

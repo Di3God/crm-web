@@ -2122,8 +2122,19 @@ function recuperarLeads(req, res, soloPreview) {
           gs.forEach(g => insertarFila('gestiones', stripId(g)));
           trans.forEach(t => insertarFila('transiciones_etapa', stripId(t)));
           ings.forEach(i => insertarFila('marketing_ingresos', stripId(i)));
+          // Marca el origen para que cuente en Marketing (los leads viejos vienen sin esa columna).
+          const tieneIngreso = !!db.prepare('SELECT 1 FROM marketing_ingresos WHERE codigoLead=? LIMIT 1').get(cod);
+          let enHistorial = false; try { enHistorial = !!db.prepare('SELECT 1 FROM marketing_historial WHERE codigoLead=? LIMIT 1').get(cod); } catch (e) { }
+          const origen = tieneIngreso ? 'make' : (enHistorial ? 'relead' : 'manual');
+          db.prepare("UPDATE leads SET origenCreacion=? WHERE codigo=? AND (origenCreacion IS NULL OR origenCreacion='')").run(origen, cod);
+          // Alinea la fecha de creación con la llegada real del ingreso (si lo tiene).
+          if (tieneIngreso) {
+            const ingFecha = db.prepare('SELECT fechaRecepcion FROM marketing_ingresos WHERE codigoLead=? AND fechaRecepcion IS NOT NULL ORDER BY id ASC LIMIT 1').get(cod);
+            if (ingFecha && ingFecha.fechaRecepcion) db.prepare('UPDATE leads SET fechaCarga=? WHERE codigo=?').run(ingFecha.fechaRecepcion, cod);
+          }
+          item.origen = origen;
           db.exec('COMMIT');
-          auditar(req, 'recuperar lead de backup', cod, `${item.lead} (${gs.length} gestiones) desde ${archivo}`);
+          auditar(req, 'recuperar lead de backup', cod, `${item.lead} (${gs.length} gestiones, origen ${origen}) desde ${archivo}`);
         } catch (e) { try { db.exec('ROLLBACK'); } catch (e2) { } item.error = 'No se pudo insertar: ' + e.message; }
       }
       resultado.push(item);
@@ -3099,10 +3110,15 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
 // Detalle lead por lead con su atribución y fechas (para rastrear/cuadrar y descargar).
 app.get('/api/marketing/leads', soloAdminOJefa, (req, res) => {
   try {
+    const desde = req.query.desde || null, hasta = req.query.hasta || null;
     const SIN = L.RESULTADOS_SIN_CONTACTO || [];
     const gPorCod = {};
     db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(g => { (gPorCod[g.codigo] = gPorCod[g.codigo] || []).push(g); });
-    const filas = db.prepare('SELECT * FROM leads ORDER BY fechaCarga DESC').all().map(l => {
+    let leadsRaw = db.prepare('SELECT * FROM leads ORDER BY fechaCarga DESC').all();
+    // Filtro por fecha de CREACIÓN (fechaCarga), en hora local de Perú, igual que Ingresos.
+    if (desde) leadsRaw = leadsRaw.filter(l => { const pf = peruFecha(l.fechaCarga); return pf && pf >= desde; });
+    if (hasta) leadsRaw = leadsRaw.filter(l => { const pf = peruFecha(l.fechaCarga); return pf && pf <= hasta; });
+    const filas = leadsRaw.map(l => {
       const cons = leadConsolidado(l, gPorCod[l.codigo] || []);
       return {
         codigo: l.codigo, nombre: l.nombre, telefono: l.telefono,
@@ -3867,7 +3883,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.178 (recuperacion de leads borrados desde snapshot diario: GET /api/admin/backups, POST recuperar-leads(+preview) copia lead+gestiones+transiciones+ingreso; panel en Auditoria) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.179 (Detalle de leads ahora tiene filtro de fecha de creacion (Peru) para conversar con Ingresos; recuperacion de backup marca origenCreacion(make/relead/manual)+alinea fechaCarga para que los leads restaurados cuenten en Marketing) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

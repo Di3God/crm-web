@@ -4503,13 +4503,26 @@ function setTabMkt(t) {
 async function cargarMktLeads() {
   const cont = $('mktLeadsCont');
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  const desde = $('mktDesde') ? $('mktDesde').value : '';
+  const hasta = $('mktHasta') ? $('mktHasta').value : '';
+  let url = '/api/marketing/leads';
+  const qs = [];
+  if (desde) qs.push('desde=' + desde);
+  if (hasta) qs.push('hasta=' + hasta);
+  if (qs.length) url += '?' + qs.join('&');
   try {
-    const d = await api('/api/marketing/leads');
+    const d = await api(url);
     MKT_LEADS = d.filas || [];
     renderMktLeads();
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>';
   }
+}
+
+function limpiarFechasMkt() {
+  if ($('mktDesde')) $('mktDesde').value = '';
+  if ($('mktHasta')) $('mktHasta').value = '';
+  cargarMktLeads();
 }
 
 function mktFiltrados() {
