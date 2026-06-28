@@ -810,9 +810,15 @@
       <div class="full"><label>Nombre</label><input id="nNombre" placeholder="Nombre del lead"></div>
       <div><label>Teléfono</label><input id="nTeléfono"></div>
       <div><label>Email</label><input id="nEmail"></div>
+      <div><label>Fecha de creación</label><input id="nFecha" type="date"></div>
+      <div><label>Origen</label><select id="nOrigen"><option value="manual">Manual</option><option value="make">Campaña (cuenta en Marketing)</option><option value="relead">Relead</option></select></div>
       <div><label>Fuente</label><select id="nFuente"></select></div>
       <div><label>Asignar a</label><select id="nAsesor"></select></div>
+      <div><label>Campaña</label><input id="nCampana" placeholder="utm_campaign"></div>
+      <div><label>Conjunto</label><input id="nConjunto" placeholder="utm_term"></div>
+      <div class="full"><label>Anuncio</label><input id="nAnuncio" placeholder="utm_content (nombre del anuncio)"></div>
     </div>
+    <div class="sub" style="margin-top:-4px">La fecha de creación define en qué día cuenta el lead (déjala vacía para hoy). Para que aparezca en Marketing/Inversión, elige origen <b>Campaña</b> y pon el anuncio.</div>
     <div class="error" id="nError"></div>
     <div class="acciones">
       <button class="btn sec" onclick="cerrar('ovNuevo')">Cancelar</button>

@@ -1418,20 +1418,29 @@ app.get('/api/catalogos', (req, res) => {
 
 // ---------- Leads ----------
 app.post('/api/leads', soloAdmin, (req, res) => {
-  const { nombre, telefono, email, fuente, campana, asesor, montoReal, montoPotencial } = req.body;
+  const { nombre, telefono, email, fuente, campana, conjunto, anuncio, adId, asesor, montoReal, montoPotencial, fechaCreacion, origenCreacion } = req.body;
   if (!nombre) return res.status(400).json({ error: 'Falta nombre del lead' });
   if (asesor && !L.ASESORES.includes(asesor)) {
     return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + L.ASESORES.join(', ') });
   }
   const codigo = generarCodigo();
   const ahora = new Date().toISOString();
+  // Fecha de creación: si la eligen, se guarda al mediodía de Perú (17:00 UTC) para que caiga en ese día.
+  let fechaCarga = ahora;
+  if (fechaCreacion && /^\d{4}-\d{2}-\d{2}/.test(String(fechaCreacion))) {
+    fechaCarga = String(fechaCreacion).slice(0, 10) + 'T17:00:00.000Z';
+  }
+  const origen = ['make', 'relead', 'manual'].includes(origenCreacion) ? origenCreacion : 'manual';
   const montoIn = montoReal != null ? montoReal : (montoPotencial != null ? montoPotencial : null);
   const monto = (montoIn != null && String(montoIn).trim() !== '') ? Number(String(montoIn).replace(/[^\d.]/g, '')) : null;
   const rango = (monto != null && isFinite(monto)) ? L.montoARango(monto) : null;
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, nombre, L.normalizarCelular(telefono) || telefono || null, email || null,
-         fuente || null, campana || null, asesor || null, monto, monto, rango, ahora, asesor ? ahora : null);
+         fuente || null, campana || null, conjunto || null, anuncio || null, adId || null,
+         asesor || null, monto, monto, rango, fechaCarga, asesor ? fechaCarga : null, origen);
+  if (campana || anuncio) { try { registrarAnuncioCatalogo(campana, conjunto, anuncio, adId); } catch (e) { } }
+  auditar(req, 'crear lead manual', codigo, `${nombre} · ${fechaCarga.slice(0, 10)} · ${origen}`);
   res.json(leadConsolidado(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo)));
 });
 
@@ -3883,7 +3892,7 @@ function snapshotDiario() {
 setTimeout(snapshotDiario, 30000);                 // 30s despues de arrancar
 setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.179 (Detalle de leads ahora tiene filtro de fecha de creacion (Peru) para conversar con Ingresos; recuperacion de backup marca origenCreacion(make/relead/manual)+alinea fechaCarga para que los leads restaurados cuenten en Marketing) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.180 (Nuevo lead manual: campo de fecha de creacion elegible (se guarda al mediodia de Peru para caer en ese dia), atribucion campana/conjunto/anuncio y selector de origen make/manual/relead para que cuente en Marketing) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

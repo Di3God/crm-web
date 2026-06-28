@@ -1941,7 +1941,12 @@ async function crearLead() {
       body: JSON.stringify({
         nombre: $('nNombre').value, telefono: $('nTeléfono').value,
         email: $('nEmail').value, fuente: $('nFuente').value || null,
-        asesor: $('nAsesor').value || null
+        asesor: $('nAsesor').value || null,
+        fechaCreacion: ($('nFecha') && $('nFecha').value) || null,
+        origenCreacion: ($('nOrigen') && $('nOrigen').value) || 'manual',
+        campana: ($('nCampana') && $('nCampana').value) || null,
+        conjunto: ($('nConjunto') && $('nConjunto').value) || null,
+        anuncio: ($('nAnuncio') && $('nAnuncio').value) || null
       })
     });
     cerrar('ovNuevo');
