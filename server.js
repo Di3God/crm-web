@@ -1112,6 +1112,20 @@ function notificarAsignacion(lead, asesorNombre) {
   if (correo) mailer.correoLeadAsignado(lead, correo).catch(() => {});
 }
 
+// Alerta one-way a WhatsApp vía microservicio (Di3God/whatsapp-bot). Falla en silencio:
+// si el bot está caído o faltan envs, no rompe nada del CRM. Reutilizable por todas las alertas.
+async function enviarAlertaWA(texto, jid) {
+  const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
+  if (!url || !token || !texto) return;
+  const destino = jid || process.env.WA_GRUPO_PRUEBAS_JID || undefined; // en prod sin jid → grupo por defecto del bot
+  try {
+    await fetch(url.replace(/\/$/, '') + '/alerta', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, texto, ...(destino ? { jid: destino } : {}) })
+    });
+  } catch (e) { console.error('[WA] alerta falló:', e.message); }
+}
+
 // =============================================================
 // FASE 2: RECEPCION Y PROCESAMIENTO DE LEADS DE MARKETING
 // =============================================================
@@ -1214,7 +1228,14 @@ function procesarLeadMarketing(norm, opts = {}) {
          norm.fuente || null, norm.campana || null, norm.conjunto || null, norm.anuncio || null, norm.adId || null,
          gp || null, monto, monto, rango, ahora, gp ? ahora : null);
   registrarAnuncioCatalogo(norm.campana, norm.conjunto, norm.anuncio, norm.adId);
-  if (gp) notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
+  if (gp) {
+    notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
+    const txt = `🆕 *Nuevo lead* — ${norm.nombre}\n👤 Asignado a: *${gp}*\n📲 ${norm.telefonoNormalizado || '—'}`
+      + `\n🎯 ${norm.campana || norm.fuente || 'Sin campaña'}`
+      + (monto != null ? `\n💰 Potencial: S/ ${Number(monto).toLocaleString('es-PE')}` : '')
+      + `\n⏱ ¡Contáctalo en los primeros minutos!`;
+    enviarAlertaWA(txt); // fire-and-forget: no bloquea la respuesta del webhook
+  }
   return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
 }
 
@@ -4169,7 +4190,28 @@ app.post('/api/admin/reporte-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: REPORTE_EMAIL || '(no configurado)', mailerActivo: mailer.activo() });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.191 (Modo Supervisor: presencia en vivo del equipo GP via heartbeat en memoria + tablero auto-refresco; Panel de control por GP en Mis Leads: tiles accionables (velocidad 1er contacto, frescos sin tocar, calientes en riesgo, reuniones hoy, vencidos, cerrados hoy, sin asignar), franja requiere-accion-ahora, tabla reformada (sin tocar +24h, calientes, agendados hoy/mañana, monto en riesgo, semaforo de salud + punto de presencia); Dashboard B2C habilitado para la jefa) corriendo en puerto ${PORT}`));
+// Pruebas de alertas WhatsApp (admin): manda mensajes de muestra al grupo de pruebas.
+app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
+  const tipo = String((req.body || {}).tipo || 'conexion');
+  const libre = (req.body || {}).texto;
+  const hoy = new Date(new Date().getTime() - 5 * 3600000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('/');
+  const muestras = {
+    conexion: `✅ *Prueba de conexión* — CRM → bot OK\n🕒 ${new Date(new Date().getTime() - 5 * 3600000).toLocaleString('es-PE')}`,
+    nuevo_lead: `🆕 *Nuevo lead* — Juan Pérez\n👤 Asignado a: *Mafer Lujan*\n📲 +51 999 888 777\n🎯 Camp. Junio-Inversión\n💰 Potencial: S/ 50,000\n⏱ ¡Contáctalo en los primeros minutos!`,
+    venta: `🎉 *¡Cierre ganado!*\n👤 Mafer Lujan cerró a Juan Pérez\n💰 Monto: S/ 50,000\n👏 ¡Felicitaciones, equipo!`,
+    tarea: `⏰ *Tarea vencida* — Mafer Lujan\n📌 Ana López · "Llamar para agendar"\n🗓 Venció hace 1 día\n👉 Reprográmala o gestiónala hoy.`,
+    ranking: `🏆 *Ranking del día* — ${hoy}\n🥇 Mafer Lujan — 120 pts\n🥈 Breezy Ortega — 95 pts\n🥉 Dora Barreto — 80 pts\n🎯 Equipo: 7/8 agendamientos · ¡Mañana lo cerramos! 💪`,
+    libre: libre || '🔔 Mensaje de prueba desde el CRM.'
+  };
+  const texto = muestras[tipo] || muestras.conexion;
+  const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
+  if (!url || !token) return res.json({ ok: false, error: 'Faltan WA_BOT_URL / WA_BOT_TOKEN en Railway.' });
+  await enviarAlertaWA(texto);
+  const destino = process.env.WA_GRUPO_PRUEBAS_JID ? 'grupo de pruebas' : 'grupo por defecto del bot';
+  res.json({ ok: true, enviadoA: destino, tipo });
+});
+
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.192 (Alertas WhatsApp: helper enviarAlertaWA (POST /alerta al microservicio, falla en silencio, jid de pruebas mientras valido); 1a alerta cableada = lead nuevo + asignacion en procesarLeadMarketing; panel Pruebas WhatsApp en Auditoria (conexion + simular lead/venta/tarea/ranking + mensaje libre) via /api/admin/wa-prueba) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

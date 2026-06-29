@@ -5397,3 +5397,15 @@ async function probarReporte() {
     else alert('Reporte enviado a: ' + r.enviadoA + '\n\nRevisa tu bandeja (y spam).');
   } catch (e) { alert('Error: ' + e.message); }
 }
+
+async function waPrueba(tipo, texto) {
+  try {
+    const r = await api('/api/admin/wa-prueba', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipo, texto }) });
+    if (!r.ok) alert('No se envió: ' + (r.error || 'error') + '\n\nConfigura WA_BOT_URL, WA_BOT_TOKEN y WA_GRUPO_PRUEBAS_JID en Railway.');
+    else alert('Enviado al ' + r.enviadoA + ' ✅\n\nRevisa el grupo de WhatsApp.');
+  } catch (e) { alert('Error: ' + e.message); }
+}
+function waPruebaLibre() {
+  const t = prompt('Mensaje a enviar al grupo de pruebas (acepta *negrita* y saltos de línea):');
+  if (t && t.trim()) waPrueba('libre', t.trim());
+}
