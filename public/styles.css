@@ -1219,3 +1219,49 @@
   .inv-tg { display: inline-block; width: 14px; color: #94a3b8; font-size: 10px; }
   .inv-ic { margin-right: 5px; }
   .inv-cnt { font-size: 10px; color: #94a3b8; font-weight: 500; margin-left: 4px; }
+
+/* ===== Modo Supervisor (tablero de presencia) ===== */
+.sup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.sup-card { background: var(--card, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 12px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+.sup-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sup-nom { font-weight: 600; font-size: 15px; }
+.sup-est { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sup-tag { font-size: 10px; font-weight: 600; color: #6b7280; background: #f1f3f5; border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
+.sup-sub { color: #94a3b8; font-size: 12px; margin-top: 2px; }
+.sup-lead { margin-top: 8px; font-size: 13px; padding-top: 8px; border-top: 1px dashed var(--line, #e5e7eb); }
+.sup-lead .muted { color: #9aa0a6; }
+
+/* ===== Panel de control por GP (tiles + alertas + tabla) ===== */
+.rp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.rp-tile { display: flex; align-items: center; gap: 8px; background: var(--card, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: 8px 10px; }
+.rp-tile.rp-clic { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+.rp-tile.rp-clic:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); transform: translateY(-1px); }
+.rp-tile-ic { font-size: 18px; }
+.rp-tile-v { font-size: 18px; font-weight: 700; line-height: 1.1; }
+.rp-tile-l { font-size: 11.5px; color: #475569; font-weight: 600; }
+.rp-tile-s { font-size: 10.5px; color: #94a3b8; }
+.rp-tile.rojo { border-color: #f3c0c0; background: #fdf3f3; }
+.rp-tile.naranja { border-color: #f3ddb8; background: #fdf8ee; }
+.rp-tile.verde { border-color: #b9e6d3; background: #f1faf6; }
+.rp-tile.azul { border-color: #bcd6f0; background: #f2f7fc; }
+.rp-tile.celeste { border-color: #bcd6f0; background: #f2f7fc; }
+
+.rp-alerts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; }
+.rp-alerts-tit { font-weight: 700; color: #b4530b; }
+.rp-alert { background: #fff6ec; border: 1px solid #f3ddb8; color: #7a4a12; border-radius: 999px; padding: 3px 10px; }
+.rp-alert.rp-clic { cursor: pointer; }
+.rp-alert.rp-clic:hover { background: #fdedd6; }
+.rp-ok { color: #1baf7a; font-weight: 600; }
+
+.rp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+.rp-dot-en_linea { background: #1baf7a; }
+.rp-dot-ausente { background: #e0a106; }
+.rp-dot-desconectada { background: #c3c6cb; }
+
+.rp-ctrl .rp-cal { color: #c2410c; font-weight: 700; }
+.rp-ctrl .rp-ok { color: #1baf7a; font-weight: 700; }
+.rp-ctrl tr.rp-row { border-left: 3px solid transparent; }
+.rp-sal-verde { border-left-color: #1baf7a !important; }
+.rp-sal-ambar { border-left-color: #e0a106 !important; }
+.rp-sal-rojo { border-left-color: #e34948 !important; }
+.rp-sal-gris { border-left-color: #e5e7eb !important; }

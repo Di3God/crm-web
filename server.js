@@ -2216,31 +2216,118 @@ function fechaPeruISO(d) {
 // Reparto por GP (solo jefa/admin): distribución de carga para gestionar y reasignar el día.
 app.get('/api/reparto', (req, res) => {
   if (!veTodo(req.user)) return res.status(403).json({ error: 'No autorizado' });
-  const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l));
-  const ahora = new Date();
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const gAll = db.prepare('SELECT codigo,fecha,resultado FROM gestiones ORDER BY fecha').all();
+  const gPorCod = {};
+  gAll.forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+  const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l, gPorCod[l.codigo] || []));
+  const ahora = new Date(), ms = ahora.getTime();
   const hoyP = fechaPeruISO(ahora);
-  const esCerrado = e => e === 'Cerrado ganado' || e === 'Cerrado perdido';
-  const antesDeCalificar = e => e === 'Contactabilidad 3x5' || e === 'Contactado - por calificar';
+  const mananaP = fechaPeruISO(new Date(ms + 24 * 3600000));
   const num = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
-  const init = () => ({ asignadosHoy: 0, cartera: 0, sinContactar: 0, vencidos: 0, monto: 0 });
+  const montoLead = l => Number(l.pipelineEstimado) || num(l.montoPotencial);
+  const ORD = { 'Contactabilidad 3x5': 0, 'Contactado - por calificar': 1, 'Calificado - pendiente agendar': 2, 'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5, 'Cerrado ganado': 6, 'Cerrado perdido': -1 };
+  const ord = e => (ORD[e] != null ? ORD[e] : 0);
+  const esCerrado = e => e === 'Cerrado ganado' || e === 'Cerrado perdido';
+  const horas = d => d ? (ms - new Date(d).getTime()) / 3600000 : Infinity;
+  const dias = d => d ? (ms - new Date(d).getTime()) / 86400000 : Infinity;
+
+  const init = () => ({ asignadosHoy: 0, cartera: 0, sinTocar24h: 0, vencidos: 0, calientes: 0, calientesMonto: 0, agendHM: 0, montoRiesgo: 0, monto: 0 });
   const porGP = {}; L.ASESORES.forEach(a => porGP[a] = init());
   const sinAsig = init();
+
+  let frescosTotal = 0, frescos2h = 0, frescos24h = 0, calGlobN = 0, calGlobMonto = 0;
+  let reunionesHoy = 0, cerradosHoyN = 0, cerradosHoyMonto = 0, vencGlob = 0, sinAsignarN = 0, reunionPasadaN = 0;
+  const velocidades = []; // minutos asignación -> primer contacto (últimos 7 días)
+
   leads.forEach(l => {
     const dest = (l.asesor && porGP[l.asesor]) ? porGP[l.asesor] : sinAsig;
-    const activo = !esCerrado(l.etapa);
-    if (activo) dest.cartera++;
-    if (l.etapa === 'Contactabilidad 3x5') dest.sinContactar++;
-    if (activo && l.fechaProxAccion && new Date(l.fechaProxAccion) < ahora) dest.vencidos++;
-    if (antesDeCalificar(l.etapa)) dest.monto += num(l.montoPotencial);
+    const act = !esCerrado(l.etapa);
+    const gs = gPorCod[l.codigo] || [];
+    const sinTocar = gs.length === 0;
+    const oe = ord(l.etapa);
+    const vencido = act && l.fechaProxAccion && new Date(l.fechaProxAccion) < ahora;
+    const caliente = act && oe >= 2;
+    const calienteFrio = caliente && dias(l.ultimaGestion) >= 3;
+    const reunFecha = l.fechaReunion || l.fechaProxAccion;
+    const reunP = reunFecha ? fechaPeruISO(new Date(reunFecha)) : null;
+    const agendado = l.etapa === 'Agendado - pendiente reunion';
+    const agendHM = agendado && (reunP === hoyP || reunP === mananaP);
+
+    if (act) { dest.cartera++; dest.monto += montoLead(l); }
+    if (act && sinTocar && horas(l.fechaAsignacion) > 24) dest.sinTocar24h++;
+    if (vencido) dest.vencidos++;
+    if (calienteFrio) { dest.calientes++; dest.calientesMonto += montoLead(l); }
+    if (agendHM) dest.agendHM++;
+    if (vencido || calienteFrio) dest.montoRiesgo += montoLead(l);
     if (l.asesor && porGP[l.asesor]) {
       const asignadoHoy = l.fechaAsignacion && fechaPeruISO(new Date(l.fechaAsignacion)) === hoyP;
       if (asignadoHoy && (l.intentos || 0) === 0 && l.etapa === 'Contactabilidad 3x5') dest.asignadosHoy++;
     }
+
+    // Globales (tiles + alertas)
+    if (act && sinTocar) { frescosTotal++; if (horas(l.fechaAsignacion) > 2) frescos2h++; if (horas(l.fechaAsignacion) > 24) frescos24h++; }
+    if (calienteFrio) { calGlobN++; calGlobMonto += montoLead(l); }
+    if (agendado && reunP === hoyP) reunionesHoy++;
+    if (l.etapa === 'Cerrado ganado' && fechaPeruISO(new Date(l.ultimaGestion || l.fechaCarga)) === hoyP) { cerradosHoyN++; cerradosHoyMonto += montoLead(l); }
+    if (vencido) vencGlob++;
+    if (!l.asesor && act) sinAsignarN++;
+    if (agendado && reunP && reunP < hoyP) reunionPasadaN++;
+
+    // Velocidad: primer contacto (gestión con resultado de contacto real)
+    const pc = gs.find(x => !SIN.includes(x.resultado));
+    if (pc && l.fechaAsignacion) {
+      const dmin = (new Date(pc.fecha).getTime() - new Date(l.fechaAsignacion).getTime()) / 60000;
+      if (dmin >= 0 && (ms - new Date(pc.fecha).getTime()) <= 7 * 86400000) velocidades.push(dmin);
+    }
   });
-  const filas = L.ASESORES.map(a => Object.assign({ asesor: a }, porGP[a]));
+
+  const mediana = arr => { if (!arr.length) return null; const s = arr.slice().sort((a, b) => a - b), m = Math.floor(s.length / 2); return Math.round(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2); };
+
+  // Presencia por nombre (Modo Supervisor) para el semáforo de actividad
+  const presNombre = {};
+  Object.values(PRESENCIA).forEach(p => { if (p && p.nombre) presNombre[p.nombre] = p; });
+  const estadoGP = nombre => {
+    const p = presNombre[nombre];
+    if (!p || !p.lastSeen) return 'desconectada';
+    const seg = (ms - p.lastSeen) / 1000;
+    return seg < 90 ? 'en_linea' : seg < 300 ? 'ausente' : 'desconectada';
+  };
+  const saludGP = f => {
+    if (!f.cartera) return 'gris';
+    const prob = f.sinTocar24h + f.vencidos + f.calientes;
+    const ratio = prob / f.cartera;
+    if (ratio >= 0.4 || prob >= 8) return 'rojo';
+    if (ratio >= 0.15 || prob >= 3) return 'ambar';
+    return 'verde';
+  };
+
+  const filas = L.ASESORES.map(a => {
+    const f = Object.assign({ asesor: a, estado: estadoGP(a) }, porGP[a]);
+    f.salud = saludGP(f);
+    return f;
+  });
   const equipo = init();
-  filas.forEach(f => { equipo.asignadosHoy += f.asignadosHoy; equipo.cartera += f.cartera; equipo.sinContactar += f.sinContactar; equipo.vencidos += f.vencidos; equipo.monto += f.monto; });
-  res.json({ filas, equipo, sinAsignar: sinAsig });
+  filas.forEach(f => ['asignadosHoy', 'cartera', 'sinTocar24h', 'vencidos', 'calientes', 'calientesMonto', 'agendHM', 'montoRiesgo', 'monto'].forEach(k => equipo[k] += f[k]));
+
+  const alertas = [];
+  if (frescos2h) alertas.push({ tipo: 'frescos', icono: '🆕', texto: 'leads frescos sin tocar +2h', n: frescos2h, filtro: 'sincontactar' });
+  if (reunionPasadaN) alertas.push({ tipo: 'reunion_pasada', icono: '📅', texto: 'reuniones que ya pasaron sin resultado', n: reunionPasadaN, filtro: '' });
+  if (calGlobN) alertas.push({ tipo: 'calientes', icono: '🔥', texto: 'leads calientes sin seguimiento +3d', n: calGlobN, filtro: '' });
+  if (sinAsignarN) alertas.push({ tipo: 'sin_asignar', icono: '📥', texto: 'leads sin asignar', n: sinAsignarN, filtro: 'sin-asignar' });
+  if (vencGlob) alertas.push({ tipo: 'vencidos', icono: '⏳', texto: 'acciones vencidas', n: vencGlob, filtro: 'vencidos' });
+
+  const tiles = {
+    velocidadMin: mediana(velocidades),
+    frescos: { total: frescosTotal, mas2h: frescos2h, mas24h: frescos24h },
+    calientes: { count: calGlobN, monto: Math.round(calGlobMonto) },
+    reunionesHoy,
+    cerradosHoy: { count: cerradosHoyN, monto: Math.round(cerradosHoyMonto) },
+    vencidos: vencGlob,
+    sinAsignar: sinAsignarN
+  };
+
+  res.json({ filas, equipo, sinAsignar: sinAsig, tiles, alertas });
 });
 // ===== Mensajería (Chatwoot) — bandeja de WhatsApp embebida (Nivel 2) =====
 const cw = require('./chatwoot');
@@ -3333,6 +3420,41 @@ function construirRankingDia() {
 }
 app.get('/api/ranking/contactabilidad', (req, res) => { res.json(construirRankingDia()); });
 
+// ===== Modo Supervisor: presencia en tiempo real (heartbeat en memoria) =====
+const PRESENCIA = {}; // usuario -> { nombre, rol, lastSeen(ms), leadCodigo, leadNombre, etapa }
+
+app.post('/api/presencia/latido', (req, res) => {
+  const u = req.user; if (!u) return res.status(401).json({ error: 'no_auth' });
+  const b = req.body || {};
+  PRESENCIA[u.usuario] = {
+    nombre: u.nombre, rol: u.rol, lastSeen: Date.now(),
+    leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null
+  };
+  res.json({ ok: true });
+});
+
+app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
+  const ahora = Date.now();
+  const equipo = db.prepare("SELECT usuario,nombre,rol FROM usuarios WHERE activo=1 AND ((rol='gestora' AND COALESCE(rankingVisible,1)=1) OR rol='jefa') ORDER BY CASE rol WHEN 'gestora' THEN 0 ELSE 1 END, id").all();
+  const filas = equipo.map(g => {
+    const p = PRESENCIA[g.usuario];
+    let estado = 'desconectada', segundos = null;
+    if (p && p.lastSeen) {
+      segundos = Math.round((ahora - p.lastSeen) / 1000);
+      estado = segundos < 90 ? 'en_linea' : segundos < 300 ? 'ausente' : 'desconectada';
+    }
+    // El lead solo es relevante si la actividad es reciente (si está desconectada, no mostramos lead viejo)
+    const leadVigente = p && estado !== 'desconectada';
+    return {
+      usuario: g.usuario, nombre: g.nombre, rol: g.rol, estado, segundos,
+      leadCodigo: leadVigente ? p.leadCodigo : null,
+      leadNombre: leadVigente ? p.leadNombre : null,
+      etapa: leadVigente ? p.etapa : null
+    };
+  });
+  res.json({ actualizado: new Date().toISOString(), equipo: filas });
+});
+
 // Diagnóstico Aircall (admin): muestra los campos crudos de las últimas llamadas para
 // confirmar qué campo marca el buzón de voz y afinar la detección si hiciera falta.
 app.get('/api/aircall/diagnostico', soloAdmin, (req, res) => {
@@ -4047,7 +4169,7 @@ app.post('/api/admin/reporte-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: REPORTE_EMAIL || '(no configurado)', mailerActivo: mailer.activo() });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.190 (Cuadrante: fix lienzo en blanco — el dibujo de la foto del anuncio (drawImage) lanzaba excepcion y tumbaba todo el grafico; plugins fotos/quadBg blindados con try/catch + validacion de dimensiones; CPL vuelto a su comportamiento estable; filtro inicial incluye anuncios con leads sin gasto) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.191 (Modo Supervisor: presencia en vivo del equipo GP via heartbeat en memoria + tablero auto-refresco; Panel de control por GP en Mis Leads: tiles accionables (velocidad 1er contacto, frescos sin tocar, calientes en riesgo, reuniones hoy, vencidos, cerrados hoy, sin asignar), franja requiere-accion-ahora, tabla reformada (sin tocar +24h, calientes, agendados hoy/mañana, monto en riesgo, semaforo de salud + punto de presencia); Dashboard B2C habilitado para la jefa) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

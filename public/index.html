@@ -26,6 +26,7 @@
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
         <button class="mundo-item oculto" id="mi-atribucion" onclick="navB2C('atribucion')">Marketing</button>
+        <button class="mundo-item oculto" id="mi-supervisor" onclick="navB2C('supervisor')">Supervisor</button>
         <button class="mundo-item oculto" id="mi-audit" onclick="navB2C('audit')">Auditoría</button>
       </div>
     </div>
@@ -351,6 +352,17 @@
       <div id="invCards"></div>
       <div id="invCont"><div class="vacio">Carga el Excel de costos para ver el cruce con el embudo.</div></div>
     </div>
+  </section>
+
+  <!-- ===== MODO SUPERVISOR (presencia en tiempo real, solo admin/jefa) ===== -->
+  <section id="v-supervisor" class="vista">
+    <div class="barra" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">👁 Modo Supervisor</h2>
+      <span id="supResumen" class="pill" style="font-weight:600"></span>
+      <span id="supActualizado" class="muted" style="margin-left:auto;font-size:12px"></span>
+    </div>
+    <p class="muted" style="margin:4px 0 12px;font-size:13px">Estado en vivo del equipo GP · 🟢 activa (&lt;90s) · 🟡 ausente (90s–5min) · ⚫ desconectada (&gt;5min). Se actualiza solo.</p>
+    <div id="supTablero" class="sup-grid"></div>
   </section>
 
   <!-- ===== AUDITORIA (solo admin) ===== -->

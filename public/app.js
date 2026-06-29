@@ -509,6 +509,7 @@ async function arrancar() {
   $('rolBox').style.display = 'flex';
   if ($('acFab')) $('acFab').classList.remove('oculto'); // mostrar teléfono Aircall tras login
   iniciarTira(); // tira de ranking en Mis Leads
+  iniciarHeartbeat(); // latido de presencia (Modo Supervisor)
   const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP', asistente_creditos: 'Asistente de Créditos', funcionario_b2b: 'Funcionario B2B', jefe_creditos: 'Jefe de Créditos', jefe_b2b: 'Jefe B2B' };
   $('rolNombre').textContent = YO.nombre;
   $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
@@ -538,13 +539,13 @@ async function arrancar() {
   const r = YO.rol;
   if (r === 'admin') {
     verMundo('B2C'); verMundo('B2B');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-audit']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
     verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-brutos', 'mi-releads', 'mi-atribucion', 'mi-audit']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-atribucion', 'mi-supervisor', 'mi-audit']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -596,6 +597,7 @@ function initFlatpickr() {
 function ir(v) {
   document.querySelectorAll('.vista').forEach(x => x.classList.remove('act'));
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('act'));
+  if (SUP_TIMER) { clearInterval(SUP_TIMER); SUP_TIMER = null; }  // detener refresco del tablero al salir
   const vista = $('v-' + v); if (vista) vista.classList.add('act');
   const nvBtn = $('nv-' + v); if (nvBtn) nvBtn.classList.add('act');
   if (v === 'dash') cargarDashboard();
@@ -608,6 +610,7 @@ function ir(v) {
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
   if (v === 'atribucion') cargarMarketing();
+  if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); }
 }
 
 // ===== Navegación de dos mundos (B2C / B2B) =====
@@ -637,6 +640,71 @@ document.addEventListener('click', (e) => {
 });
 
 function cerrar(id) { $(id).classList.remove('act'); }
+
+// ===== Heartbeat de presencia (Modo Supervisor) =====
+let HB_TIMER = null, _hbActivo = false;
+['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(ev =>
+  document.addEventListener(ev, () => { _hbActivo = true; }, { passive: true }));
+async function enviarLatido(forzar) {
+  if (!YO) return;
+  if (!forzar && !(_hbActivo && document.visibilityState === 'visible')) return;
+  _hbActivo = false;
+  // El lead solo cuenta como "gestionando" si el modal de gestión está abierto ahora.
+  const modal = $('ovGestion');
+  const abierto = modal && modal.classList.contains('act');
+  try {
+    await api('/api/presencia/latido', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leadCodigo: abierto ? (gCodigo || null) : null,
+        leadNombre: abierto && gLead ? (gLead.nombre || null) : null,
+        etapa: abierto && gLead ? (gLead.etapa || null) : null
+      })
+    });
+  } catch (e) { /* silencioso: el latido no debe molestar al usuario */ }
+}
+function iniciarHeartbeat() {
+  if (HB_TIMER) clearInterval(HB_TIMER);
+  enviarLatido(true);                              // un latido al entrar (aparece en línea de inmediato)
+  HB_TIMER = setInterval(() => enviarLatido(false), 30000);
+}
+
+// ===== Tablero Supervisor =====
+let SUP_TIMER = null;
+function supTiempo(seg) {
+  if (seg == null) return 'sin actividad registrada';
+  if (seg < 60) return 'activa hace ' + seg + 's';
+  const m = Math.floor(seg / 60); if (m < 60) return 'hace ' + m + ' min';
+  const h = Math.floor(m / 60); return 'hace ' + h + ' h';
+}
+async function cargarSupervisor() {
+  try {
+    const d = await api('/api/supervisor/presencia');
+    renderSupervisor(d);
+  } catch (e) {
+    if ($('supTablero')) $('supTablero').innerHTML = '<div class="muted">No se pudo cargar la presencia.</div>';
+  }
+}
+function renderSupervisor(d) {
+  const cont = $('supTablero'); if (!cont) return;
+  const col = { en_linea: '#1baf7a', ausente: '#e0a106', desconectada: '#9aa0a6' };
+  const txt = { en_linea: '🟢 En línea', ausente: '🟡 Ausente', desconectada: '⚫ Desconectada' };
+  const eq = d.equipo || [];
+  const enLinea = eq.filter(g => g.estado === 'en_linea').length;
+  cont.innerHTML = eq.map(g => `
+    <div class="sup-card" style="border-left:4px solid ${col[g.estado]}">
+      <div class="sup-top">
+        <span class="sup-nom">${g.nombre}${g.rol === 'jefa' ? ' <span class="sup-tag">jefa</span>' : ''}</span>
+        <span class="sup-est" style="color:${col[g.estado]}">${txt[g.estado]}</span>
+      </div>
+      <div class="sup-sub">${supTiempo(g.segundos)}</div>
+      <div class="sup-lead">${g.leadNombre
+        ? '📋 Gestionando: <b>' + g.leadNombre + '</b>' + (g.leadCodigo ? ' <span class="muted">' + g.leadCodigo + '</span>' : '')
+        : '<span class="muted">Sin lead abierto</span>'}</div>
+    </div>`).join('');
+  if ($('supResumen')) $('supResumen').textContent = enLinea + ' de ' + eq.length + ' en línea';
+  if ($('supActualizado')) $('supActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE');
+}
 
 // ---------- Mis Leads ----------
 let LEADS = [], ordenCampo = 'prioridad', ordenDir = 1;
@@ -2598,26 +2666,75 @@ function renderReparto(d) {
   const selA = ($('selAsesor') || {}).value || '';
   const selF = ($('selFiltro') || {}).value || '';
   const num = n => Number(n || 0).toLocaleString('es-PE');
-  const venc = v => v > 0 ? '<span class="rp-venc">' + v + '</span>' : '<span class="rp-cero">0</span>';
-  let h = '<div class="rp-head"><div class="rp-tit">Reparto por GP</div><div class="rp-sub">Click en una GP para filtrar la tabla y reasignar</div></div>';
-  h += '<div class="rp-wrap"><table class="rp-tabla"><thead><tr>' +
-    '<th class="rp-gp">GP</th><th>Asig. hoy</th><th>Cartera</th><th>Sin contactar</th><th>Vencidos</th><th class="rp-monto">Monto potencial</th>' +
+  const money = n => 'S/ ' + Math.round(n || 0).toLocaleString('es-PE');
+  const t = d.tiles || {};
+  const vel = (t.velocidadMin == null) ? '—' : (t.velocidadMin < 60 ? t.velocidadMin + ' min' : (t.velocidadMin / 60).toFixed(1) + ' h');
+
+  // ---- Tiles accionables ----
+  const tile = (ico, tono, val, lbl, sub, filtro) => {
+    const oc = filtro ? ' onclick="repartoTileFiltro(\'' + filtro + '\')" role="button" tabindex="0"' : '';
+    return '<div class="rp-tile ' + tono + (filtro ? ' rp-clic' : '') + '"' + oc + '>' +
+      '<span class="rp-tile-ic">' + ico + '</span><div class="rp-tile-tx">' +
+      '<div class="rp-tile-v">' + val + '</div><div class="rp-tile-l">' + lbl + '</div>' +
+      (sub ? '<div class="rp-tile-s">' + sub + '</div>' : '') + '</div></div>';
+  };
+  let tiles = '<div class="rp-tiles">';
+  tiles += tile('⏱', 'azul', vel, 'Velocidad 1er contacto', 'asignación → contacto (7d)', '');
+  tiles += tile('🆕', t.frescos && t.frescos.mas24h > 0 ? 'rojo' : '', (t.frescos ? t.frescos.total : 0), 'Frescos sin tocar', (t.frescos ? t.frescos.mas24h : 0) + ' llevan +24h', 'sincontactar');
+  tiles += tile('🔥', t.calientes && t.calientes.count > 0 ? 'naranja' : '', (t.calientes ? t.calientes.count : 0), 'Calientes en riesgo', money(t.calientes ? t.calientes.monto : 0), '');
+  tiles += tile('📅', '', t.reunionesHoy || 0, 'Reuniones hoy', 'agendadas para hoy', '');
+  tiles += tile('⏳', t.vencidos > 0 ? 'rojo' : '', t.vencidos || 0, 'Vencidos', 'acción atrasada', 'vencidos');
+  tiles += tile('✅', 'verde', (t.cerradosHoy ? t.cerradosHoy.count : 0), 'Cerrados hoy', money(t.cerradosHoy ? t.cerradosHoy.monto : 0), '');
+  tiles += tile('📥', t.sinAsignar > 0 ? 'azul' : '', t.sinAsignar || 0, 'Sin asignar', 'por distribuir', 'sin-asignar');
+  tiles += '</div>';
+
+  // ---- Franja "requiere acción ahora" ----
+  let franja = '';
+  const al = d.alertas || [];
+  if (!al.length) {
+    franja = '<div class="rp-alerts"><span class="rp-ok">✓ Todo al día — sin pendientes urgentes</span></div>';
+  } else {
+    franja = '<div class="rp-alerts"><span class="rp-alerts-tit">Requiere acción ahora:</span>' +
+      al.map(a => {
+        const oc = a.filtro ? ' onclick="repartoTileFiltro(\'' + a.filtro + '\')" role="button" tabindex="0"' : '';
+        return '<span class="rp-alert' + (a.filtro ? ' rp-clic' : '') + '"' + oc + '>' + a.icono + ' <b>' + a.n + '</b> ' + a.texto + '</span>';
+      }).join('') + '</div>';
+  }
+
+  // ---- Tabla de control por GP ----
+  const dot = est => '<span class="rp-dot rp-dot-' + (est || 'desconectada') + '" title="' + (est === 'en_linea' ? 'En línea' : est === 'ausente' ? 'Ausente' : 'Desconectada') + '"></span>';
+  const cR = (v, tono) => v > 0 ? '<span class="rp-' + tono + '">' + v + '</span>' : '<span class="rp-cero">0</span>';
+  let h = '<div class="rp-head"><div class="rp-tit">Control por GP</div><div class="rp-sub">Click en una GP para filtrar la tabla y reasignar · el punto = actividad en vivo</div></div>';
+  h += '<div class="rp-wrap"><table class="rp-tabla rp-ctrl"><thead><tr>' +
+    '<th class="rp-gp">GP</th><th>Asig. hoy</th><th>Cartera</th><th>Sin tocar +24h</th><th>Vencidos</th><th>🔥 Calientes</th><th>Agend. hoy/mñ</th><th class="rp-monto">Monto en riesgo</th>' +
     '</tr></thead><tbody>';
   d.filas.forEach(f => {
     const activa = selA === f.asesor && selF !== 'sin-asignar';
-    h += '<tr class="rp-row' + (activa ? ' rp-activa' : '') + '" onclick="repartoFiltrar(\'' + f.asesor.replace(/'/g, "\\'") + '\')">' +
-      '<td class="rp-gp">' + f.asesor + '</td><td>' + f.asignadosHoy + '</td><td>' + f.cartera + '</td>' +
-      '<td>' + f.sinContactar + '</td><td>' + venc(f.vencidos) + '</td><td class="rp-monto">S/ ' + num(f.monto) + '</td></tr>';
+    h += '<tr class="rp-row rp-sal-' + (f.salud || 'gris') + (activa ? ' rp-activa' : '') + '" onclick="repartoFiltrar(\'' + f.asesor.replace(/'/g, "\\'") + '\')">' +
+      '<td class="rp-gp">' + dot(f.estado) + f.asesor + '</td>' +
+      '<td>' + f.asignadosHoy + '</td><td>' + f.cartera + '</td>' +
+      '<td>' + cR(f.sinTocar24h, 'venc') + '</td><td>' + cR(f.vencidos, 'venc') + '</td>' +
+      '<td>' + cR(f.calientes, 'cal') + '</td><td>' + cR(f.agendHM, 'ok') + '</td>' +
+      '<td class="rp-monto">' + money(f.montoRiesgo) + '</td></tr>';
   });
   const eq = d.equipo;
   h += '<tr class="rp-eq"><td class="rp-gp">Equipo</td><td>' + eq.asignadosHoy + '</td><td>' + eq.cartera + '</td>' +
-    '<td>' + eq.sinContactar + '</td><td>' + (eq.vencidos > 0 ? '<span class="rp-venc">' + eq.vencidos + '</span>' : '0') + '</td><td class="rp-monto">S/ ' + num(eq.monto) + '</td></tr>';
+    '<td>' + (eq.sinTocar24h > 0 ? '<span class="rp-venc">' + eq.sinTocar24h + '</span>' : '0') + '</td>' +
+    '<td>' + (eq.vencidos > 0 ? '<span class="rp-venc">' + eq.vencidos + '</span>' : '0') + '</td>' +
+    '<td>' + (eq.calientes > 0 ? '<span class="rp-cal">' + eq.calientes + '</span>' : '0') + '</td>' +
+    '<td>' + eq.agendHM + '</td><td class="rp-monto">' + money(eq.montoRiesgo) + '</td></tr>';
   const s = d.sinAsignar; const sinAct = selF === 'sin-asignar';
   h += '<tr class="rp-row rp-sin' + (sinAct ? ' rp-activa' : '') + '" onclick="repartoSinAsignar()">' +
-    '<td class="rp-gp">Sin asignar</td><td>—</td><td>' + s.cartera + '</td><td>' + s.sinContactar + '</td><td>—</td>' +
-    '<td class="rp-monto">S/ ' + num(s.monto) + '</td></tr>';
+    '<td class="rp-gp">Sin asignar</td><td>—</td><td>' + s.cartera + '</td><td>—</td><td>—</td><td>—</td><td>—</td>' +
+    '<td class="rp-monto">' + money(s.monto) + '</td></tr>';
   h += '</tbody></table></div>';
-  $('reparto').innerHTML = h;
+
+  $('reparto').innerHTML = tiles + franja + h;
+}
+function repartoTileFiltro(filtro) {
+  if (!filtro) return;
+  if (filtro === 'sin-asignar') { repartoSinAsignar(); return; }
+  filtroRapido(filtro); // sincontactar / vencidos / parahoy
 }
 function repartoFiltrar(asesor) {
   const selA = $('selAsesor'), selF = $('selFiltro');
