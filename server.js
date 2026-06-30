@@ -4237,14 +4237,15 @@ function textoMatutinoWA() {
   msg += bloque('🕒 *Rezagados (+2 días)*', buckets.rezagados);
   msg += bloque('📌 *De ayer sin tocar*', buckets.ayer);
   msg += bloque('🌅 *De hoy, antes de las 9*', buckets.hoy);
-  msg += '\n\n💪 ¡Arranquemos por ellos!';
+  msg += '\n\n💪 ¡Vamos a por ellos!';
   return msg;
 }
 
-// Texto del pulso del equipo (1pm / 6pm): totales + línea por GP.
+// Texto del pulso del equipo (1pm / 6pm): saludo + totales en filas + línea por GP.
 function textoPulsoWA(horaLabel, emoji, titulo) {
   const rk = construirRankingDia();
-  const agendPorGP = {}; (rk.ranking || []).forEach(r => { agendPorGP[r.asesor] = r.agendados || 0; });
+  const agendPorGP = {}, califPorGP = {};
+  (rk.ranking || []).forEach(r => { agendPorGP[r.asesor] = r.agendados || 0; califPorGP[r.asesor] = r.calificados || 0; });
   const gAll = db.prepare('SELECT codigo FROM gestiones').all();
   const conGestion = new Set(gAll.map(g => g.codigo));
   const leadsGanados = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l));
@@ -4252,7 +4253,7 @@ function textoPulsoWA(horaLabel, emoji, titulo) {
   const num = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
   const montoLead = l => Number(l.pipelineEstimado) || num(l.montoPotencial);
 
-  const porGP = {}; L.ASESORES.forEach(a => porGP[a] = { leadsHoy: 0, atendidos: 0, agend: agendPorGP[a] || 0, cierres: 0 });
+  const porGP = {}; L.ASESORES.forEach(a => porGP[a] = { leadsHoy: 0, atendidos: 0, calif: califPorGP[a] || 0, agend: agendPorGP[a] || 0, cierres: 0 });
   let cierresMonto = 0, cierresN = 0;
   leadsGanados.forEach(l => {
     const dest = (l.asesor && porGP[l.asesor]) ? porGP[l.asesor] : null;
@@ -4265,21 +4266,31 @@ function textoPulsoWA(horaLabel, emoji, titulo) {
       if (dest) dest.cierres++;
     }
   });
-  const tot = { leadsHoy: 0, atendidos: 0, agend: 0 };
-  L.ASESORES.forEach(a => { tot.leadsHoy += porGP[a].leadsHoy; tot.atendidos += porGP[a].atendidos; tot.agend += porGP[a].agend; });
-  const sinTocar = tot.leadsHoy - tot.atendidos;
+  const tot = { leadsHoy: 0, atendidos: 0, calif: 0, agend: 0 };
+  L.ASESORES.forEach(a => { tot.leadsHoy += porGP[a].leadsHoy; tot.atendidos += porGP[a].atendidos; tot.calif += porGP[a].calif; tot.agend += porGP[a].agend; });
 
-  let msg = (emoji || '📊') + ' *' + (titulo || 'Cómo va el equipo') + '* — ' + horaLabel + '\n';
-  msg += '🆕 Leads hoy: ' + tot.leadsHoy + ' · ✅ Atendidos: ' + tot.atendidos + ' · ⏳ Sin tocar: ' + (sinTocar < 0 ? 0 : sinTocar) + '\n';
-  msg += '📅 Agendamientos hoy: ' + tot.agend + ' · 🏆 Cierres: ' + cierresN + (cierresN ? ' (S/ ' + Math.round(cierresMonto).toLocaleString('es-PE') + ')' : '') + '\n\n';
+  // Saludo según la hora de Perú al enviar
+  const h = peruAhora().getUTCHours();
+  const saludo = h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
+  // Etiqueta de hora: si no se pasa (preview), usa la hora actual de Perú
+  const label = horaLabel || peruAhora().toISOString().slice(11, 16);
+
+  let msg = saludo + ', equipo 👋\n';
+  msg += (emoji || '📊') + ' *' + (titulo || 'Cómo Vamos') + '* — ' + label + '\n\n';
+  msg += '🆕 Leads hoy: ' + tot.leadsHoy + '\n';
+  msg += '✅ Atendidos: ' + tot.atendidos + '\n';
+  msg += '⭐ Calificados: ' + tot.calif + '\n';
+  msg += '📅 Agendados: ' + tot.agend + '\n';
+  msg += '🏆 Cierres: ' + cierresN + (cierresN ? ' (S/ ' + Math.round(cierresMonto).toLocaleString('es-PE') + ')' : '') + '\n\n';
   msg += '👥 *Por GP:*\n';
   msg += L.ASESORES.map(a => {
     const g = porGP[a], nom = primerNombreWA(a);
+    if (g.leadsHoy === 0 && g.atendidos === 0 && !g.calif && !g.agend && !g.cierres) return null;
     const partes = [g.leadsHoy + ' leads', g.atendidos + ' atend'];
+    if (g.calif) partes.push(g.calif + ' calif');
     if (g.agend) partes.push(g.agend + ' agend');
     if (g.cierres) partes.push('🏆' + g.cierres);
-    const linea = nom + ' — ' + partes.join(' · ');
-    return (g.leadsHoy === 0 && g.atendidos === 0 && !g.agend && !g.cierres) ? null : linea;
+    return nom + ' — ' + partes.join(' · ');
   }).filter(Boolean).join('\n');
   return msg;
 }
@@ -4317,8 +4328,8 @@ setInterval(() => {
 setInterval(() => {
   const a = peruAhora(), dia = a.toISOString().slice(0, 10), h = a.getUTCHours();
   if (h === 9 && _waMatutino !== dia) { _waMatutino = dia; enviarMatutinoWA(); }
-  if (h === 13 && _waPulso13 !== dia) { _waPulso13 = dia; enviarPulsoWA('1:00 pm', '📊', 'Cómo va el equipo'); }
-  if (h === 18 && _waPulso18 !== dia) { _waPulso18 = dia; enviarPulsoWA('6:00 pm', '🌙', 'Cierre del día'); }
+  if (h === 13 && _waPulso13 !== dia) { _waPulso13 = dia; enviarPulsoWA('1:00 pm', '📊', 'Cómo Vamos'); }
+  if (h === 18 && _waPulso18 !== dia) { _waPulso18 = dia; enviarPulsoWA('6:00 pm', '🌙', 'Cómo Vamos'); }
 }, 60 * 1000);
 
 // Endpoint para probar el envío manualmente (admin)
@@ -4341,7 +4352,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   };
   let texto;
   if (tipo === 'matutino') texto = textoMatutinoWA() || '☀️ (Prueba) Por ahora no hay leads sin atender.';
-  else if (tipo === 'pulso') texto = textoPulsoWA('(prueba)', '📊', 'Cómo va el equipo');
+  else if (tipo === 'pulso') texto = textoPulsoWA(null, '📊', 'Cómo Vamos');
   else texto = muestras[tipo] || muestras.conexion;
   const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
   if (!url || !token) return res.json({ ok: false, error: 'Faltan WA_BOT_URL / WA_BOT_TOKEN en Railway.' });
@@ -4350,7 +4361,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: destino, tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.194 (WhatsApp: pulso por fecha de asignacion; chequeo sin-atender a los 10 min (1 sola vez, con nombre de GP, solo L-V 9am-6pm, silencio fuera de horario) para leads en tiempo real; releads asignados en bloque -> 1 mensaje agregado por GP con monto (anti-spam), no entran al chequeo de 10 min) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.195 (WhatsApp textos: saludo matutino cierra Vamos a por ellos; pulsos con saludo segun hora (Buenos dias/Buenas tardes), titulo Como Vamos, metricas en filas Leads/Atendidos/Calificados/Agendados/Cierres y por GP con calificados; preview sin prueba con hora real) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
