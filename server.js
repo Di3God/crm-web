@@ -4230,8 +4230,12 @@ setInterval(snapshotDiario, 24 * 60 * 60 * 1000);  // cada 24h
 
 // ===== Reporte diario por correo (Ranking del día), a las 23:59 hora Perú, antes del reinicio =====
 const REPORTE_EMAIL = process.env.REPORTE_EMAIL || process.env.CORREO_PRUEBA || '';
-let _reporteEnviadoDia = null;
 const peruAhora = () => new Date(new Date().getTime() - 5 * 3600000);
+
+// Marca persistente de "ya enviado hoy": evita que un reinicio (deploy) reenvíe los cortes.
+db.exec('CREATE TABLE IF NOT EXISTS meta_kv (clave TEXT PRIMARY KEY, valor TEXT)');
+const kvGet = c => { try { const r = db.prepare('SELECT valor FROM meta_kv WHERE clave=?').get(c); return r ? r.valor : null; } catch (e) { return null; } };
+const kvSet = (c, v) => { try { db.prepare('INSERT INTO meta_kv (clave,valor) VALUES (?,?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor').run(c, v); } catch (e) { } };
 
 function htmlRankingDia(r) {
   const rk = r.ranking || [], medalla = ['🥇', '🥈', '🥉'], g0 = rk[0];
@@ -4278,14 +4282,13 @@ async function enviarReporteDiario() {
 
 setInterval(() => {
   const a = peruAhora(), dia = a.toISOString().slice(0, 10);
-  if (a.getUTCHours() === 23 && a.getUTCMinutes() >= 59 && _reporteEnviadoDia !== dia) {
-    _reporteEnviadoDia = dia;
+  if (a.getUTCHours() === 23 && a.getUTCMinutes() >= 59 && kvGet('reporte_dia') !== dia) {
+    kvSet('reporte_dia', dia);
     enviarReporteDiario();
   }
 }, 60 * 1000);
 
 // ===== Alertas WhatsApp programadas (matutino 9am + pulsos 1pm/6pm) =====
-let _waMatutino = null, _waPulso13 = null, _waPulso18 = null;
 const primerNombreWA = n => String(n || '').trim().split(/\s+/)[0] || n;
 
 // Texto del saludo matutino: leads sin tocar (ayer + hoy<9am + rezagados +2d), por GP.
@@ -4295,6 +4298,7 @@ function textoMatutinoWA() {
   const leads = db.prepare("SELECT codigo,nombre,asesor,fechaCarga FROM leads WHERE COALESCE(archivado,0)=0 AND COALESCE(origenCreacion,'') <> 'manual'").all();
   const hoy = peruFecha(new Date().toISOString());
   const ayer = peruFecha(new Date(Date.now() - 24 * 3600000).toISOString());
+  const horaPeru = iso => new Date(new Date(iso).getTime() - 5 * 3600000).getUTCHours();
   const buckets = { ayer: {}, hoy: {}, rezagados: {} };
   let total = 0;
   leads.forEach(l => {
@@ -4302,7 +4306,7 @@ function textoMatutinoWA() {
     if (!l.asesor) return;                          // sin asignar se ve en el panel, no aquí
     const dia = peruFecha(l.fechaCarga);
     let b = null;
-    if (dia === hoy) b = 'hoy';
+    if (dia === hoy) { if (horaPeru(l.fechaCarga) < 9) b = 'hoy'; else return; } // solo los que llegaron antes de las 9
     else if (dia === ayer) b = 'ayer';
     else if (dia < ayer) b = 'rezagados';
     if (!b) return;
@@ -4417,9 +4421,9 @@ setInterval(() => {
 
 setInterval(() => {
   const a = peruAhora(), dia = a.toISOString().slice(0, 10), h = a.getUTCHours();
-  if (h === 9 && _waMatutino !== dia) { _waMatutino = dia; enviarMatutinoWA(); }
-  if (h === 13 && _waPulso13 !== dia) { _waPulso13 = dia; enviarPulsoWA('1:00 pm', '📊', 'Cómo Vamos'); }
-  if (h === 18 && _waPulso18 !== dia) { _waPulso18 = dia; enviarPulsoWA('6:00 pm', '🌙', 'Cómo Vamos'); }
+  if (h === 9 && kvGet('wa_matutino') !== dia) { kvSet('wa_matutino', dia); enviarMatutinoWA(); }
+  if (h === 13 && kvGet('wa_pulso13') !== dia) { kvSet('wa_pulso13', dia); enviarPulsoWA('1:00 pm', '📊', 'Cómo Vamos'); }
+  if (h === 18 && kvGet('wa_pulso18') !== dia) { kvSet('wa_pulso18', dia); enviarPulsoWA('6:00 pm', '🌙', 'Cómo Vamos'); }
 }, 60 * 1000);
 
 // Endpoint para probar el envío manualmente (admin)
@@ -4454,7 +4458,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.198 (Supervisor: Tiempo en CRM ahora suma tramos reales del dia (no el corrido), via tabla presencia_log + segundosAcum, reinicio diario; Jenny sin Ultima gestion ni linea de lead; nuevo grafico Momentos de conexion (minutos conectados por hora del dia, una serie por persona en el mismo grafico, etiqueta de pico, filtro de fechas + modo acumulado/promedio)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.199 (FIX reenvio: marcas de envio (matutino 9am, pulsos 1pm/6pm, reporte 23:59) ahora PERSISTEN en tabla meta_kv -> un reinicio/deploy ya no reenvia el corte del dia; FIX matutino: bucket De hoy ahora solo incluye leads llegados antes de las 9am (no los posteriores)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
