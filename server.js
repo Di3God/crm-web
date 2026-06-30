@@ -4356,12 +4356,15 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   else texto = muestras[tipo] || muestras.conexion;
   const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
   if (!url || !token) return res.json({ ok: false, error: 'Faltan WA_BOT_URL / WA_BOT_TOKEN en Railway.' });
-  await enviarAlertaWA(texto);
-  const destino = process.env.WA_GRUPO_PRUEBAS_JID ? 'grupo de pruebas' : 'grupo por defecto del bot';
-  res.json({ ok: true, enviadoA: destino, tipo });
+  // Las pruebas SIEMPRE van al grupo de pruebas; si no hay uno configurado, se niegan
+  // (así los botones de simulación nunca pueden postear al grupo oficial de ventas).
+  const jidPrueba = process.env.WA_GRUPO_PRUEBAS_JID;
+  if (!jidPrueba) return res.json({ ok: false, error: 'Configura WA_GRUPO_PRUEBAS_JID para probar sin tocar el grupo oficial.' });
+  await enviarAlertaWA(texto, jidPrueba);
+  res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.195 (WhatsApp textos: saludo matutino cierra Vamos a por ellos; pulsos con saludo segun hora (Buenos dias/Buenas tardes), titulo Como Vamos, metricas en filas Leads/Atendidos/Calificados/Agendados/Cierres y por GP con calificados; preview sin prueba con hora real) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.196 (WhatsApp: tarea vencida confirmada SIN disparador automatico y removida del panel; botones de prueba ahora SIEMPRE van al grupo de pruebas (se niegan si no hay WA_GRUPO_PRUEBAS_JID), nunca al grupo oficial; 5 alertas automaticas activas: lead nuevo, releads agregado, saludo 9am, pulsos 1pm/6pm, sin atender 10min) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
