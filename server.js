@@ -442,6 +442,8 @@ try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 // Catálogo de anuncios: junta cada anuncio único y permite guardar su imagen (creativo).
@@ -2046,6 +2048,101 @@ app.put('/api/leads/:codigo/restaurar', soloAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== Depuración de Contactabilidad (protocolo 3x5) =====
+// Franjas Perú: 0=00:00-12:00, 1=12:00-16:00, 2=16:00-24:00. Dentro de una franja solo cuenta 1 intento.
+function franjaDe3x5(iso) { const h = new Date(new Date(iso).getTime() - 5 * 3600000).getUTCHours(); return h < 12 ? 0 : h < 16 ? 1 : 2; }
+function diasHabilesPeru(desdeStr, hastaStr, contarSabado) { // entre dos fechas Perú 'YYYY-MM-DD', inclusivo; domingo nunca cuenta; sábado solo si contarSabado
+  let n = 0, d = new Date(desdeStr + 'T12:00:00Z'); const fin = new Date(hastaStr + 'T12:00:00Z');
+  while (d <= fin) { const dow = d.getUTCDay(); if (dow !== 0 && (contarSabado || dow !== 6)) n++; d.setUTCDate(d.getUTCDate() + 1); }
+  return n;
+}
+
+app.get('/api/depuracion', soloAdminOJefa, (req, res) => {
+  const hoyP = peruFecha(new Date().toISOString());
+  // Sábado OPCIONAL: el contrato de ventas es L-V, así que por defecto NO cuenta (no presionar).
+  // Se puede activar como trabajo voluntario; la elección queda persistida (global).
+  let contarSabado;
+  if (req.query.sabados === '0' || req.query.sabados === '1') { contarSabado = req.query.sabados === '1'; kvSet('depu_contar_sabado', contarSabado ? '1' : '0'); }
+  else { contarSabado = kvGet('depu_contar_sabado') === '1'; }
+  const gAll = db.prepare('SELECT codigo, fecha, resultado FROM gestiones ORDER BY fecha').all();
+  const gPorCod = {}; gAll.forEach(x => (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x));
+  const ocultas = new Set(db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND COALESCE(rankingVisible,1)=0").all().map(r => r.nombre));
+  const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND COALESCE(cuarentena,0)=0').all().map(l => leadConsolidado(l, gPorCod[l.codigo] || []));
+
+  const filas = []; let cumplieron = 0, noCumplieron = 0; const porGP = {};
+  leads.forEach(l => {
+    if (l.etapa !== 'Contactabilidad 3x5') return;          // solo los que siguen en contactabilidad
+    if (!l.asesor || ocultas.has(l.asesor)) return;          // GP visibles
+    if (!l.fechaAsignacion) return;
+    const asignP = peruFecha(l.fechaAsignacion);
+    const diasHab = diasHabilesPeru(asignP, hoyP, contarSabado);
+    if (diasHab < 5) return;                                 // ya pasaron 5 días hábiles
+    // Máximo posible: franjas del día 1 (según hora de asignación) + 3 por cada uno de los otros 4 días.
+    const maxPosibles = Math.min(15, (3 - franjaDe3x5(l.fechaAsignacion)) + 12);
+    // Intentos válidos: combinaciones distintas (día hábil 0-4, franja) en los primeros 5 días hábiles.
+    const set = new Set();
+    const grid = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    (gPorCod[l.codigo] || []).forEach(g => {
+      const gP = peruFecha(g.fecha);
+      if (gP < asignP) return;
+      const dowG = new Date(gP + 'T12:00:00Z').getUTCDay();
+      if (dowG === 0 || (!contarSabado && dowG === 6)) return; // gestión en día no hábil -> no cuenta
+      const bd = diasHabilesPeru(asignP, gP, contarSabado) - 1; // índice 0-based de día hábil
+      if (bd < 0 || bd > 4) return;
+      const fr = franjaDe3x5(g.fecha);
+      set.add(bd + '-' + fr); grid[bd][fr] = 1;
+    });
+    const intentos = Math.min(set.size, maxPosibles);
+    const cumplio = intentos >= maxPosibles;
+    if (cumplio) cumplieron++; else noCumplieron++;
+    const gp = l.asesor;
+    (porGP[gp] = porGP[gp] || { asesor: gp, total: 0, cumplieron: 0, noCumplieron: 0 });
+    porGP[gp].total++; cumplio ? porGP[gp].cumplieron++ : porGP[gp].noCumplieron++;
+    filas.push({
+      codigo: l.codigo, nombre: l.nombre, asesor: gp, telefono: l.telefono,
+      diasHabiles: diasHab, intentos, maxPosibles, cumplio,
+      ultimoResultado: l.ultimoResultado, ultimaGestion: l.ultimaGestion, grid
+    });
+  });
+  // Más críticos primero: menos intentos respecto del total posible.
+  filas.sort((a, b) => (a.intentos / a.maxPosibles) - (b.intentos / b.maxPosibles) || a.intentos - b.intentos);
+
+  const cuar = db.prepare("SELECT codigo, nombre, asesor, telefono, cuarentenaFecha FROM leads WHERE COALESCE(cuarentena,0)=1 ORDER BY cuarentenaFecha DESC").all();
+  res.json({
+    total: filas.length, cumplieron, noCumplieron, contarSabado,
+    porGP: Object.values(porGP).sort((a, b) => b.total - a.total),
+    filas, enCuarentena: cuar
+  });
+});
+
+// Enviar a cuarentena: sale del pipeline activo (archivado=1) pero queda marcado como reactivable.
+app.post('/api/leads/:codigo/cuarentena', soloAdminOJefa, (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  db.prepare('UPDATE leads SET cuarentena = 1, archivado = 1, cuarentenaFecha = ? WHERE codigo = ?').run(new Date().toISOString(), req.params.codigo);
+  auditar(req, 'cuarentena', req.params.codigo, lead.nombre);
+  res.json({ ok: true });
+});
+
+// Reactivar desde cuarentena: vuelve al pipeline activo para segundo abordaje.
+app.post('/api/leads/:codigo/reactivar', soloAdminOJefa, (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  db.prepare('UPDATE leads SET cuarentena = 0, archivado = 0, cuarentenaFecha = NULL WHERE codigo = ?').run(req.params.codigo);
+  auditar(req, 'reactivar-cuarentena', req.params.codigo, lead.nombre);
+  res.json({ ok: true });
+});
+
+// Descartar desde depuración: archiva (sin marca de cuarentena).
+app.post('/api/leads/:codigo/descartar', soloAdminOJefa, (req, res) => {
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  db.prepare('UPDATE leads SET archivado = 1, cuarentena = 0 WHERE codigo = ?').run(req.params.codigo);
+  auditar(req, 'descartar', req.params.codigo, lead.nombre);
+  res.json({ ok: true });
+});
+
+
 // Eliminar definitivo: borra el lead y todas sus gestiones. Irreversible.
 app.delete('/api/leads/:codigo', soloAdmin, (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(req.params.codigo);
@@ -2257,7 +2354,7 @@ app.get('/api/reparto', (req, res) => {
   const sinAsig = init();
 
   let frescosTotal = 0, frescos2h = 0, frescos24h = 0, calGlobN = 0, calGlobMonto = 0;
-  let reunionesHoy = 0, cerradosHoyN = 0, cerradosHoyMonto = 0, vencGlob = 0, sinAsignarN = 0, reunionPasadaN = 0;
+  let reunionesHoy = 0, cerradosHoyN = 0, cerradosHoyMonto = 0, vencGlob = 0, sinAsignarN = 0, reunionPasadaN = 0, accionesHoyN = 0;
   const velocidades = []; // minutos asignación -> primer contacto (últimos 7 días)
 
   leads.forEach(l => {
@@ -2272,13 +2369,11 @@ app.get('/api/reparto', (req, res) => {
     const reunFecha = l.fechaReunion || l.fechaProxAccion;
     const reunP = reunFecha ? fechaPeruISO(new Date(reunFecha)) : null;
     const agendado = l.etapa === 'Agendado - pendiente reunion';
-    const agendHM = agendado && reunP === hoyP;
 
     if (act) { dest.cartera++; dest.monto += montoLead(l); }
     if (act && sinTocar && horas(l.fechaAsignacion) > 24) dest.sinTocar24h++;
     if (vencido) dest.vencidos++;
     if (calienteFrio) { dest.calientes++; dest.calientesMonto += montoLead(l); }
-    if (agendHM) dest.agendHM++;
     if (vencido || calienteFrio) dest.montoRiesgo += montoLead(l);
     if (l.asesor && porGP[l.asesor]) {
       const asignadoHoy = l.fechaAsignacion && fechaPeruISO(new Date(l.fechaAsignacion)) === hoyP;
@@ -2289,6 +2384,7 @@ app.get('/api/reparto', (req, res) => {
     if (act && sinTocar) { frescosTotal++; if (horas(l.fechaAsignacion) > 2) frescos2h++; if (horas(l.fechaAsignacion) > 24) frescos24h++; }
     if (calienteFrio) { calGlobN++; calGlobMonto += montoLead(l); }
     if (agendado && reunP === hoyP) reunionesHoy++;
+    if (act && l.fechaProxAccion && fechaPeruISO(new Date(l.fechaProxAccion)) === hoyP) accionesHoyN++;
     if (l.etapa === 'Cerrado ganado' && fechaPeruISO(new Date(l.ultimaGestion || l.fechaCarga)) === hoyP) { cerradosHoyN++; cerradosHoyMonto += montoLead(l); }
     if (vencido) vencGlob++;
     if (!l.asesor && act) sinAsignarN++;
@@ -2322,8 +2418,23 @@ app.get('/api/reparto', (req, res) => {
     return 'verde';
   };
 
-  const filas = L.ASESORES.map(a => {
+  // "Agendados hoy" = agendamientos HECHOS hoy (acto de agendar/confirmar/reprogramar),
+  // misma métrica que el ranking. NO reuniones programadas para hoy desde días pasados.
+  const AGEND_RES = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'];
+  const agendHoyPorGP = {};
+  gAll.forEach(g => {
+    if (AGEND_RES.includes(g.resultado) && fechaPeruISO(new Date(g.fecha)) === hoyP) {
+      agendHoyPorGP[g.asesor] = (agendHoyPorGP[g.asesor] || 0) + 1;
+    }
+  });
+
+  // Ocultar de la tabla a las GP no visibles (cuentas de prueba, rankingVisible=0).
+  const ocultas = new Set(db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND COALESCE(rankingVisible,1)=0").all().map(r => r.nombre));
+  const ASESORES_VIS = L.ASESORES.filter(a => !ocultas.has(a));
+
+  const filas = ASESORES_VIS.map(a => {
     const f = Object.assign({ asesor: a, estado: estadoGP(a) }, porGP[a]);
+    f.agendHM = agendHoyPorGP[a] || 0;
     f.salud = saludGP(f);
     return f;
   });
@@ -2342,6 +2453,7 @@ app.get('/api/reparto', (req, res) => {
     frescos: { total: frescosTotal, mas2h: frescos2h, mas24h: frescos24h },
     calientes: { count: calGlobN, monto: Math.round(calGlobMonto) },
     reunionesHoy,
+    accionesHoy: accionesHoyN,
     cerradosHoy: { count: cerradosHoyN, monto: Math.round(cerradosHoyMonto) },
     vencidos: vencGlob,
     sinAsignar: sinAsignarN
@@ -4458,7 +4570,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.199 (FIX reenvio: marcas de envio (matutino 9am, pulsos 1pm/6pm, reporte 23:59) ahora PERSISTEN en tabla meta_kv -> un reinicio/deploy ya no reenvia el corte del dia; FIX matutino: bucket De hoy ahora solo incluye leads llegados antes de las 9am (no los posteriores)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.202 (Depuracion 3x5: sabado OPCIONAL en el conteo de dias habiles -> por defecto NO cuenta (contrato L-V, evita presionar/riesgo legal), activable como trabajo voluntario con checkbox persistente; gestiones en dia no habil no suman al 3x5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

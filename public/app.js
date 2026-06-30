@@ -822,22 +822,9 @@ async function cargarLeads() {
 }
 
 async function cargarTarjetas() {
-  if (!veTodoJS()) { const t = $('tarjetas'); if (t) t.innerHTML = ''; return; }  // GP usa "Mi día"
-  let q = [];
-  const desde = $('fDesde').value, hasta = $('fHasta').value;
-  if (desde) q.push('desde=' + desde);
-  if (hasta) q.push('hasta=' + hasta);
-  try {
-    const cards = await api('/api/highlights' + (q.length ? '?' + q.join('&') : ''));
-    $('tarjetas').innerHTML = cards.map(c =>
-      '<div class="tarjeta ' + c.tono + '">' +
-        '<span class="hl-ico">' + (ICO_HL[c.ico] || '') + '</span>' +
-        '<div class="hl-txt"><div class="hl-et">' + c.etiqueta + '</div>' +
-        '<div class="hl-v">' + c.valor + '</div>' +
-        (c.sub ? '<div class="hl-sub">' + c.sub + '</div>' : '') + '</div>' +
-      '</div>'
-    ).join('');
-  } catch (e) {}
+  // Los scorecards bajo la tabla Control por GP se retiraron; la métrica útil ("Acciones para hoy")
+  // ahora vive como tile encima de la tabla. Mantenemos el contenedor vacío.
+  const t = $('tarjetas'); if (t) t.innerHTML = '';
 }
 const ICO_HL = {
   reloj: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 11h-5V7h2v4h3v2z"/></svg>',
@@ -2465,6 +2452,115 @@ async function cargarDashboard() {
       <td><span class="db-prob"><b>${a.cumplimiento}%</b><span class="db-bar"><span style="width:${a.cumplimiento}%;background:var(--azul)"></span></span></span></td>
     </tr>`
   ).join('') || '<tr><td colspan="8" class="vacio">Sin datos.</td></tr>';
+  cargarDepuracion();
+}
+
+// ===== Depuración de Contactabilidad (3x5) =====
+let DEPU = null, DEPU_PAG = 1, DEPU_ORD = 'critico', DEPU_TAB = 'depurar', DEPU_SEL = null, DEPU_SAB = null;
+async function cargarDepuracion() {
+  const cont = $('depuracion'); if (!cont) return;
+  if (!veTodoJS()) { cont.innerHTML = ''; return; }   // solo admin/jefa
+  const q = (DEPU_SAB === '0' || DEPU_SAB === '1') ? '?sabados=' + DEPU_SAB : '';
+  try { DEPU = await api('/api/depuracion' + q); } catch (e) { cont.innerHTML = ''; return; }
+  renderDepuracion();
+}
+function depuToggleSabado(on) { DEPU_SAB = on ? '1' : '0'; DEPU_PAG = 1; cargarDepuracion(); }
+function depuOrdenar(filas) {
+  const f = filas.slice();
+  if (DEPU_ORD === 'dias') f.sort((a, b) => b.diasHabiles - a.diasHabiles);
+  else if (DEPU_ORD === 'gp') f.sort((a, b) => a.asesor.localeCompare(b.asesor) || (a.intentos / a.maxPosibles) - (b.intentos / b.maxPosibles));
+  else f.sort((a, b) => (a.intentos / a.maxPosibles) - (b.intentos / b.maxPosibles) || a.intentos - b.intentos); // críticos
+  return f;
+}
+function renderDepuracion() {
+  const cont = $('depuracion'); if (!cont || !DEPU) return;
+  const d = DEPU, nCuar = d.enCuarentena ? d.enCuarentena.length : 0;
+  let h = '<div class="db-tit">🧹 Depuración de Contactabilidad <span class="db-sub-inline">leads con +5 días hábiles aún en contactabilidad</span>' +
+    '<label class="depu-sab" title="El contrato de ventas es L-V; el sábado es trabajo voluntario y por defecto no se cuenta.">' +
+    '<input type="checkbox"' + (d.contarSabado ? ' checked' : '') + ' onchange="depuToggleSabado(this.checked)"> Contar sábados (voluntario)</label></div>';
+  h += '<div class="depu-kpis">' +
+    '<div class="depu-kpi"><div class="depu-kpi-v">' + d.total + '</div><div class="depu-kpi-l">Por depurar</div></div>' +
+    '<div class="depu-kpi ok"><div class="depu-kpi-v">' + d.cumplieron + '</div><div class="depu-kpi-l">Cumplieron 3x5 · cuarentena/descarte</div></div>' +
+    '<div class="depu-kpi warn"><div class="depu-kpi-v">' + d.noCumplieron + '</div><div class="depu-kpi-l">No cumplieron · falta protocolo</div></div>' +
+    '<div class="depu-kpi"><div class="depu-kpi-v">' + nCuar + '</div><div class="depu-kpi-l">En cuarentena</div></div>' +
+    '</div>';
+  if (d.porGP && d.porGP.length) {
+    h += '<div class="depu-porgp">';
+    d.porGP.forEach(g => h += '<span class="depu-gp-chip"><b>' + primerNombre(g.asesor) + '</b> ' + g.total + ' <small>(' + g.cumplieron + ' cumpl · ' + g.noCumplieron + ' no)</small></span>');
+    h += '</div>';
+  }
+  h += '<div class="depu-tabs">' +
+    '<button class="depu-tab' + (DEPU_TAB === 'depurar' ? ' act' : '') + '" onclick="depuTab(\'depurar\')">Por depurar (' + d.total + ')</button>' +
+    '<button class="depu-tab' + (DEPU_TAB === 'cuarentena' ? ' act' : '') + '" onclick="depuTab(\'cuarentena\')">En cuarentena (' + nCuar + ')</button>' +
+    '</div>';
+  h += DEPU_TAB === 'depurar' ? depuTablaDepurar() : depuTablaCuarentena();
+  cont.innerHTML = h;
+}
+function depuTablaDepurar() {
+  const filas = depuOrdenar(DEPU.filas), PP = 10, tot = filas.length, pags = Math.max(1, Math.ceil(tot / PP));
+  if (DEPU_PAG > pags) DEPU_PAG = pags;
+  const ini = (DEPU_PAG - 1) * PP, pagina = filas.slice(ini, ini + PP);
+  let h = '<div class="depu-orden">Ordenar: <select onchange="DEPU_ORD=this.value;DEPU_PAG=1;renderDepuracion()">' +
+    [['critico', 'Más críticos (menos contactos)'], ['dias', 'Más días hábiles'], ['gp', 'Por gestora']]
+      .map(o => '<option value="' + o[0] + '"' + (DEPU_ORD === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+    '</select></div>';
+  if (!tot) return h + '<div class="depu-vacio">✓ Nada por depurar — ningún lead lleva +5 días hábiles en contactabilidad.</div>';
+  h += '<div style="overflow-x:auto"><table class="depu-tabla"><thead><tr><th>Lead</th><th>GP</th><th>Días háb.</th><th>Contactos</th><th>3x5</th><th>Último resultado</th><th>Acciones</th></tr></thead><tbody>';
+  pagina.forEach(f => {
+    const pct = Math.round(f.intentos / f.maxPosibles * 100);
+    const col = pct >= 100 ? '#16A34A' : pct >= 60 ? '#F59E0B' : '#CC0000';
+    h += '<tr class="depu-row' + (DEPU_SEL === f.codigo ? ' sel' : '') + '" onclick="depuSel(\'' + f.codigo + '\')">' +
+      '<td><b>' + f.nombre + '</b><br><small class="muted">' + f.codigo + '</small></td>' +
+      '<td>' + primerNombre(f.asesor) + '</td>' +
+      '<td>' + f.diasHabiles + '</td>' +
+      '<td><div class="depu-bar"><div class="depu-bar-in" style="width:' + pct + '%;background:' + col + '"></div></div><small>' + f.intentos + ' / ' + f.maxPosibles + '</small></td>' +
+      '<td>' + (f.cumplio ? '<span class="depu-badge ok">Cumplió</span>' : '<span class="depu-badge no">Incompleto</span>') + '</td>' +
+      '<td><small>' + (f.ultimoResultado || '—') + '</small></td>' +
+      '<td class="depu-acc" onclick="event.stopPropagation()">' +
+      '<button class="btn-mini sec" onclick="depuAccion(\'' + f.codigo + '\',\'cuarentena\')">Cuarentena</button>' +
+      '<button class="btn-mini rojo" onclick="depuAccion(\'' + f.codigo + '\',\'descartar\')">Descartar</button>' +
+      '</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '<div class="depu-pag">' +
+    '<button class="btn-mini sec" ' + (DEPU_PAG <= 1 ? 'disabled' : '') + ' onclick="DEPU_PAG--;renderDepuracion()">‹</button>' +
+    '<span>' + DEPU_PAG + ' / ' + pags + '</span>' +
+    '<button class="btn-mini sec" ' + (DEPU_PAG >= pags ? 'disabled' : '') + ' onclick="DEPU_PAG++;renderDepuracion()">›</button>' +
+    '<small class="muted">' + tot + ' leads</small></div>';
+  if (DEPU_SEL) { const f = DEPU.filas.find(x => x.codigo === DEPU_SEL); if (f) h += depuDetalle(f); }
+  return h;
+}
+function depuDetalle(f) {
+  const fr = ['Mañana (00–12)', 'Tarde (12–16)', 'Noche (16–24)'];
+  let h = '<div class="depu-detalle"><div class="depu-det-tit">Cobertura 3x5 de ' + f.nombre + (f.telefono ? ' · ' + f.telefono : '') + '</div>';
+  h += '<table class="depu-grid"><thead><tr><th></th>';
+  for (let dia = 1; dia <= 5; dia++) h += '<th>Día ' + dia + '</th>';
+  h += '</tr></thead><tbody>';
+  fr.forEach((nom, fi) => {
+    h += '<tr><td class="depu-fr">' + nom + '</td>';
+    for (let dia = 0; dia < 5; dia++) { const on = f.grid[dia][fi]; h += '<td class="depu-cell ' + (on ? 'on' : 'off') + '">' + (on ? '✓' : '·') + '</td>'; }
+    h += '</tr>';
+  });
+  h += '</tbody></table><div class="depu-det-acc"><button class="btn sec" onclick="verLeadDesdeBruto(\'' + f.codigo + '\')">Ver lead / reasignar</button></div></div>';
+  return h;
+}
+function depuTablaCuarentena() {
+  const cs = DEPU.enCuarentena || [];
+  if (!cs.length) return '<div class="depu-vacio">No hay leads en cuarentena.</div>';
+  let h = '<div style="overflow-x:auto"><table class="depu-tabla"><thead><tr><th>Lead</th><th>GP</th><th>Desde</th><th></th></tr></thead><tbody>';
+  cs.forEach(c => h += '<tr><td><b>' + c.nombre + '</b><br><small class="muted">' + c.codigo + '</small></td><td>' + (c.asesor ? primerNombre(c.asesor) : '—') + '</td><td><small>' + (c.cuarentenaFecha ? fmtFecha(c.cuarentenaFecha) : '—') + '</small></td><td><button class="btn-mini" onclick="depuAccion(\'' + c.codigo + '\',\'reactivar\')">Reactivar</button></td></tr>');
+  h += '</tbody></table></div>';
+  return h;
+}
+function depuTab(t) { DEPU_TAB = t; DEPU_PAG = 1; DEPU_SEL = null; renderDepuracion(); }
+function depuSel(cod) { DEPU_SEL = (DEPU_SEL === cod ? null : cod); renderDepuracion(); }
+async function depuAccion(cod, accion) {
+  const lbl = { cuarentena: 'enviar a cuarentena', descartar: 'descartar', reactivar: 'reactivar' };
+  if (!confirm('¿Seguro de ' + lbl[accion] + ' este lead?')) return;
+  const ep = '/api/leads/' + cod + '/' + accion;
+  try { await api(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch (e) { alert('No se pudo completar la acción.'); return; }
+  DEPU_SEL = null; await cargarDepuracion();
 }
 
 // Ir a la cola filtrada desde una alerta del dashboard
@@ -2769,7 +2865,7 @@ function renderReparto(d) {
   tiles += tile('⏱', 'azul', vel, 'Velocidad 1er contacto', 'asignación → contacto (7d)', '');
   tiles += tile('🆕', t.frescos && t.frescos.mas24h > 0 ? 'rojo' : '', (t.frescos ? t.frescos.total : 0), 'Frescos sin tocar', (t.frescos ? t.frescos.mas24h : 0) + ' llevan +24h', 'sincontactar');
   tiles += tile('🔥', t.calientes && t.calientes.count > 0 ? 'naranja' : '', (t.calientes ? t.calientes.count : 0), 'Calientes en riesgo', money(t.calientes ? t.calientes.monto : 0), '');
-  tiles += tile('📅', '', t.reunionesHoy || 0, 'Reuniones hoy', 'agendadas para hoy', 'parahoy');
+  tiles += tile('📅', '', t.accionesHoy || 0, 'Acciones para hoy', 'tareas programadas hoy', 'parahoy');
   tiles += tile('⏳', t.vencidos > 0 ? 'rojo' : '', t.vencidos || 0, 'Vencidos', 'acción atrasada', 'vencidos');
   tiles += tile('✅', 'verde', (t.cerradosHoy ? t.cerradosHoy.count : 0), 'Cerrados hoy', money(t.cerradosHoy ? t.cerradosHoy.monto : 0), '');
   tiles += tile('📥', t.sinAsignar > 0 ? 'azul' : '', t.sinAsignar || 0, 'Sin asignar', 'por distribuir', 'sin-asignar');

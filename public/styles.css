@@ -1284,3 +1284,49 @@
 .rp-sal-ambar { border-left-color: #e0a106 !important; }
 .rp-sal-rojo { border-left-color: #e34948 !important; }
 .rp-sal-gris { border-left-color: #e5e7eb !important; }
+
+/* ===== Depuración de Contactabilidad (3x5) ===== */
+.depu-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 10px 0; }
+.depu-sab { float: right; font-size: 12px; font-weight: 500; color: var(--muted, #6B7A8D); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.depu-sab input { width: auto; cursor: pointer; }
+.depu-kpi { background: #F7F9FC; border: 1px solid var(--line, #DDE4EC); border-radius: 10px; padding: 10px 12px; }
+.depu-kpi.ok { background: #ECFDF5; border-color: #A7F3D0; }
+.depu-kpi.warn { background: #FFFBEB; border-color: #FDE68A; }
+.depu-kpi-v { font-size: 24px; font-weight: 800; color: var(--ink, #1F2D3D); }
+.depu-kpi-l { font-size: 11px; color: var(--muted, #6B7A8D); }
+.depu-porgp { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.depu-gp-chip { font-size: 12px; background: #fff; border: 1px solid var(--line, #DDE4EC); border-radius: 999px; padding: 3px 10px; }
+.depu-gp-chip small { color: var(--muted, #6B7A8D); }
+.depu-tabs { display: flex; gap: 6px; margin: 6px 0 10px; }
+.depu-tab { border: 1px solid var(--line, #DDE4EC); background: #fff; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.depu-tab.act { background: var(--azul, #0B72E8); color: #fff; border-color: var(--azul, #0B72E8); }
+.depu-orden { font-size: 12px; color: var(--muted, #6B7A8D); margin-bottom: 6px; }
+.depu-orden select { padding: 4px 8px; border: 1px solid var(--line, #DDE4EC); border-radius: 7px; font-size: 12px; }
+.depu-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.depu-tabla th { text-align: left; font-size: 11px; color: var(--muted, #6B7A8D); text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--line, #DDE4EC); }
+.depu-tabla td { padding: 8px; border-bottom: 1px solid #EEF2F7; vertical-align: middle; }
+.depu-row { cursor: pointer; }
+.depu-row:hover { background: #F7F9FC; }
+.depu-row.sel { background: #EAF3FE; }
+.depu-bar { width: 80px; height: 7px; background: #E5EBF2; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+.depu-bar-in { height: 100%; border-radius: 4px; }
+.depu-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.depu-badge.ok { background: #ECFDF5; color: #16A34A; }
+.depu-badge.no { background: #FFF7ED; color: #C2410C; }
+.depu-acc { white-space: nowrap; }
+.btn-mini { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--azul, #0B72E8); background: var(--azul, #0B72E8); color: #fff; cursor: pointer; margin-left: 4px; }
+.btn-mini.sec { background: #fff; color: var(--ink, #1F2D3D); border-color: var(--line, #DDE4EC); }
+.btn-mini.rojo { background: #fff; color: var(--rojo, #CC0000); border-color: #F3C0C0; }
+.btn-mini:disabled { opacity: .4; cursor: default; }
+.depu-pag { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; }
+.depu-vacio { padding: 18px; text-align: center; color: var(--muted, #6B7A8D); background: #F7F9FC; border-radius: 10px; }
+.depu-detalle { margin-top: 12px; padding: 12px 14px; background: #F7F9FC; border: 1px solid var(--line, #DDE4EC); border-radius: 10px; }
+.depu-det-tit { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+.depu-grid { border-collapse: collapse; font-size: 12px; }
+.depu-grid th { padding: 4px 10px; color: var(--muted, #6B7A8D); font-size: 11px; }
+.depu-grid td { padding: 4px 10px; text-align: center; }
+.depu-fr { text-align: left !important; color: var(--muted, #6B7A8D); }
+.depu-cell { font-weight: 700; }
+.depu-cell.on { color: #16A34A; }
+.depu-cell.off { color: #CBD5E1; }
+.depu-det-acc { margin-top: 10px; }
