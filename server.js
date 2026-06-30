@@ -1029,8 +1029,9 @@ function normalizarB2B(origen, body) {
       const kl = k.toLowerCase();
       if (kl.includes('ruc') || kl.includes('telefono') || kl.includes('celular') || kl.includes('phone') || kl.includes('dni')) continue;
       // Evitar IDs de anuncio, el rango (Capital Requerido), atribución y área: no son el monto.
-      if (kl.includes('anuncio') || kl.includes('conjunto') || kl.includes('campan') || kl.includes('campañ')
-        || kl.includes('formulario') || kl.includes('utm') || kl.includes('capital') || kl.includes('requerido')
+      if (kl.includes('anuncio') || kl.includes('conjunto') || kl.includes('campan') || kl.includes('campaign') || kl.includes('campañ')
+        || kl.includes('adset') || kl.includes('formulario') || kl.includes('utm') || kl.includes('capital') || kl.includes('requerido')
+        || kl.includes('rango') || kl.includes('source') || kl.includes('platform') || kl.includes('name') || kl.includes('id')
         || kl.includes('area') || kl.includes('área') || kl.includes('sunarp') || kl.includes('inmueble')
         || kl.includes('propiedad') || kl.includes('garant') || kl.includes('adid')) continue;
       const digits = String(b[k]).replace(/[^0-9.]/g, '');
@@ -1068,12 +1069,12 @@ function normalizarB2B(origen, body) {
   let departamentoInmueble = val('departamentoInmueble', 'departamento_inmueble', 'ubicacionInmueble', 'ubicacion_inmueble');
   if (!departamentoInmueble) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('departamento') || (kl.includes('encuentra') && kl.includes('inmueble'))) { departamentoInmueble = String(b[k]).trim(); break; } } }
   // Atribución de anuncio (Meta/TikTok)
-  let conjunto = val('conjunto', 'conjunto_anuncio', 'conjuntoAnuncio', 'adset', 'adSet', 'utm_term', 'utmTerm', 'Conjunto de Anuncio');
-  let anuncio = val('anuncio', 'Anuncio', 'ad', 'utm_content', 'utmContent');
+  let conjunto = val('conjunto', 'conjunto_anuncio', 'conjuntoAnuncio', 'adset', 'adSet', 'adset_name', 'adsetName', 'utm_term', 'utmTerm', 'Conjunto de Anuncio');
+  let anuncio = val('anuncio', 'Anuncio', 'ad', 'ad_name', 'adName', 'utm_content', 'utmContent');
   const adId = val('adId', 'ad_id', 'idAnuncio', 'id_anuncio', 'ID Anuncio');
   if (!conjunto) { for (const k of keys) { if (k.toLowerCase().includes('conjunto')) { conjunto = String(b[k]).trim(); break; } } }
   if (!anuncio) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('anuncio') && !kl.includes('conjunto') && !kl.includes('id')) { anuncio = String(b[k]).trim(); break; } } }
-  const campana = val('campana', 'campaign', 'Campaña', 'campaña', 'utm_campaign', 'utmCampaign');
+  const campana = val('campana', 'campaign', 'campaign_name', 'campaignName', 'Campaña', 'campaña', 'utm_campaign', 'utmCampaign');
   return {
     origen: String(origen || 'landing').toLowerCase(),
     ruc,
@@ -4757,7 +4758,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.208 (Reuniones agendadas movido a un bloque DENTRO de Mis Leads (entre Control por GP y Gestion de oportunidades), ya no en el menu; columna Reprogramada para con la nueva fecha cuando aplica (col 1 = fecha original, col nueva = reprogramada), ordenado por fecha efectiva) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.209 (normalizarB2B ahora acepta los nombres nativos de Meta/Make: campaign_name->campana, adset_name->conjunto, ad_name->anuncio (ad_id ya entraba); fix: el auto-detector de monto ya no confunde el texto del rango ni los IDs/nombres de campaign/adset/ad como monto. Payload de Cristian validado end-to-end) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
