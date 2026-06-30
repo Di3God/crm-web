@@ -610,7 +610,7 @@ function ir(v) {
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
   if (v === 'atribucion') cargarMarketing();
-  if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); }
+  if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
 }
 
 // ===== Navegación de dos mundos (B2C / B2B) =====
@@ -699,31 +699,98 @@ function renderSupervisor(d) {
   const enLinea = eq.filter(g => g.estado === 'en_linea').length;
   cont.innerHTML = eq.map(g => {
     const ini = primerNombre(g.nombre).charAt(0) + (g.nombre.split(/\s+/)[1] ? g.nombre.split(/\s+/)[1].charAt(0) : '');
+    const esJefa = g.rol === 'jefa';
+    const met = (l, v) => '<div class="sup-met"><span class="sup-met-l">' + l + '</span><span class="sup-met-v">' + v + '</span></div>';
+    let grid = met('Primera conexión', supHora(g.primeraConexion)) + met('Tiempo en CRM', supDur(g.tiempoDentroSeg));
+    // La jefa no gestiona leads: no mostramos "Última gestión" ni la línea de lead.
+    if (!esJefa) grid += met('Última gestión', supHora(g.ultimaGestion));
+    grid += met('Última actividad', supHora(g.ultimaInteraccion));
+    const leadLinea = esJefa ? '' : ('<div class="sup-lead">' + (g.leadNombre
+      ? '📋 Gestionando: <b>' + g.leadNombre + '</b>'
+      : '<span class="muted">Sin lead abierto ahora</span>') + '</div>');
     return `
     <div class="sup-card sup-${g.estado}">
       <div class="sup-top">
         <div class="sup-id">
           <span class="sup-ava">${ini.toUpperCase()}</span>
           <div>
-            <div class="sup-nom">${primerNombre(g.nombre)}${g.rol === 'jefa' ? ' <span class="sup-tag">Jefa</span>' : ''}</div>
+            <div class="sup-nom">${primerNombre(g.nombre)}${esJefa ? ' <span class="sup-tag">Jefa</span>' : ''}</div>
             <div class="sup-nom2">${g.nombre}</div>
           </div>
         </div>
         <span class="sup-pill" style="background:${col[g.estado]}1a;color:${col[g.estado]}"><span class="sup-bolita" style="background:${col[g.estado]}"></span>${txt[g.estado]}</span>
       </div>
-      <div class="sup-grid2">
-        <div class="sup-met"><span class="sup-met-l">Primera conexión</span><span class="sup-met-v">${supHora(g.primeraConexion)}</span></div>
-        <div class="sup-met"><span class="sup-met-l">Tiempo en CRM</span><span class="sup-met-v">${supDur(g.tiempoDentroSeg)}</span></div>
-        <div class="sup-met"><span class="sup-met-l">Última gestión</span><span class="sup-met-v">${supHora(g.ultimaGestion)}</span></div>
-        <div class="sup-met"><span class="sup-met-l">Última actividad</span><span class="sup-met-v">${supHora(g.ultimaInteraccion)}</span></div>
-      </div>
-      <div class="sup-lead">${g.leadNombre
-        ? '📋 Gestionando: <b>' + g.leadNombre + '</b>'
-        : '<span class="muted">Sin lead abierto ahora</span>'}</div>
+      <div class="sup-grid2">${grid}</div>
+      ${leadLinea}
     </div>`;
   }).join('');
   if ($('supResumen')) $('supResumen').textContent = enLinea + ' de ' + eq.length + ' en línea';
   if ($('supActualizado')) $('supActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE');
+}
+
+let SUP_CHART = null;
+const SUP_COLORES = ['#0B72E8', '#16A34A', '#F59E0B', '#9333EA', '#E11D48', '#0891B2', '#CA8A04'];
+async function cargarConexiones() {
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  if ($('supDesde') && !$('supDesde').value) $('supDesde').value = hoy;
+  if ($('supHasta') && !$('supHasta').value) $('supHasta').value = hoy;
+  const desde = $('supDesde') ? $('supDesde').value : hoy;
+  const hasta = $('supHasta') ? $('supHasta').value : hoy;
+  const modo = $('supModo') ? $('supModo').value : 'acumulado';
+  let d;
+  try { d = await api('/api/supervisor/conexiones?desde=' + desde + '&hasta=' + hasta); }
+  catch (e) { return; }
+  const labels = (d.horas || []).map(h => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? 'am' : 'pm'));
+  const div = (modo === 'promedio') ? Math.max(1, d.dias || 1) : 1;
+  const datasets = (d.series || []).map((s, i) => {
+    const color = SUP_COLORES[i % SUP_COLORES.length];
+    const esJefa = s.rol === 'jefa';
+    return {
+      label: primerNombre(s.nombre) + (esJefa ? ' (Jefa)' : ''),
+      data: s.datos.map(v => Math.round((v / div) * 10) / 10),
+      borderColor: color, backgroundColor: color,
+      borderDash: esJefa ? [6, 4] : [], tension: 0.35, borderWidth: 2,
+      pointRadius: 3, pointHoverRadius: 5, fill: false
+    };
+  });
+  // Plugin: etiqueta de datos en el punto pico de cada serie (la hora más activa).
+  const picos = {
+    id: 'picos',
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      chart.data.datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di); if (meta.hidden) return;
+        let maxV = -1, maxI = -1;
+        ds.data.forEach((v, i) => { if (v > maxV) { maxV = v; maxI = i; } });
+        if (maxV <= 0 || maxI < 0) return;
+        const pt = meta.data[maxI]; if (!pt) return;
+        ctx.save();
+        ctx.font = '700 11px -apple-system, Segoe UI, Roboto, Arial';
+        ctx.fillStyle = ds.borderColor; ctx.textAlign = 'center';
+        ctx.fillText(maxV + ' min', pt.x, pt.y - 8);
+        ctx.restore();
+      });
+    }
+  };
+  if (SUP_CHART) SUP_CHART.destroy();
+  const cv = $('supChart'); if (!cv) return;
+  SUP_CHART = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, font: { size: 12 } } },
+        tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y + ' min' } }
+      },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Minutos conectados' }, ticks: { precision: 0 } },
+        x: { title: { display: true, text: 'Hora del día' }, grid: { display: false } }
+      }
+    },
+    plugins: [picos]
+  });
 }
 
 // ---------- Mis Leads ----------

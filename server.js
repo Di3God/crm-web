@@ -3457,25 +3457,43 @@ db.exec(`CREATE TABLE IF NOT EXISTS presencia (
   usuario TEXT PRIMARY KEY, dia TEXT, primeraConexion TEXT, ultimaConexion TEXT,
   leadCodigo TEXT, leadNombre TEXT, etapa TEXT
 )`);
+try { db.exec('ALTER TABLE presencia ADD COLUMN segundosAcum INTEGER DEFAULT 0'); } catch (e) { /* ya existe */ }
+db.exec(`CREATE TABLE IF NOT EXISTS presencia_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, dia TEXT, inicio TEXT, fin TEXT
+)`);
+const UMBRAL_TRAMO = 120; // seg: huecos de hasta 2 min se cuentan como el mismo tramo
 
 app.post('/api/presencia/latido', (req, res) => {
   const u = req.user; if (!u) return res.status(401).json({ error: 'no_auth' });
   const b = req.body || {};
-  const ahoraIso = new Date().toISOString();
-  PRESENCIA[u.usuario] = { nombre: u.nombre, rol: u.rol, lastSeen: Date.now(), leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null };
-  // Persistencia: primera conexión del día queda grabada; última conexión se actualiza siempre.
+  const ahoraIso = new Date().toISOString(); const nowMs = Date.now();
+  PRESENCIA[u.usuario] = { nombre: u.nombre, rol: u.rol, lastSeen: nowMs, leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null };
   try {
     const hoy = peruFecha(ahoraIso);
-    const row = db.prepare('SELECT dia FROM presencia WHERE usuario = ?').get(u.usuario);
+    const row = db.prepare('SELECT dia, ultimaConexion FROM presencia WHERE usuario = ?').get(u.usuario);
     if (!row || row.dia !== hoy) {
-      db.prepare(`INSERT INTO presencia (usuario,dia,primeraConexion,ultimaConexion,leadCodigo,leadNombre,etapa)
-        VALUES (?,?,?,?,?,?,?)
+      // Nuevo día (o primera vez): reinicia acumulado y abre un tramo nuevo.
+      db.prepare(`INSERT INTO presencia (usuario,dia,primeraConexion,ultimaConexion,segundosAcum,leadCodigo,leadNombre,etapa)
+        VALUES (?,?,?,?,0,?,?,?)
         ON CONFLICT(usuario) DO UPDATE SET dia=excluded.dia, primeraConexion=excluded.primeraConexion,
-          ultimaConexion=excluded.ultimaConexion, leadCodigo=excluded.leadCodigo, leadNombre=excluded.leadNombre, etapa=excluded.etapa`)
+          ultimaConexion=excluded.ultimaConexion, segundosAcum=0, leadCodigo=excluded.leadCodigo, leadNombre=excluded.leadNombre, etapa=excluded.etapa`)
         .run(u.usuario, hoy, ahoraIso, ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null);
+      db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
     } else {
-      db.prepare('UPDATE presencia SET ultimaConexion=?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
-        .run(ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+      const delta = Math.round((nowMs - Date.parse(row.ultimaConexion)) / 1000);
+      if (delta > 0 && delta <= UMBRAL_TRAMO) {
+        // Mismo tramo: suma el delta al acumulado y extiende el tramo abierto.
+        db.prepare('UPDATE presencia SET ultimaConexion=?, segundosAcum=COALESCE(segundosAcum,0)+?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
+          .run(ahoraIso, delta, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+        const ult = db.prepare('SELECT id FROM presencia_log WHERE usuario=? AND dia=? ORDER BY inicio DESC LIMIT 1').get(u.usuario, hoy);
+        if (ult) db.prepare('UPDATE presencia_log SET fin=? WHERE id=?').run(ahoraIso, ult.id);
+        else db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
+      } else {
+        // Hueco largo (estuvo desconectada): nuevo tramo, no se cuenta el hueco.
+        db.prepare('UPDATE presencia SET ultimaConexion=?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
+          .run(ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+        db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
+      }
     }
   } catch (e) { /* no romper el latido por la persistencia */ }
   res.json({ ok: true });
@@ -3483,13 +3501,11 @@ app.post('/api/presencia/latido', (req, res) => {
 
 app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
   const ahora = Date.now();
-  // Scope: la jefa solo ve a las 4 GPs; los admins ven a las GPs + la jefa.
   const soloGestoras = req.user.rol === 'jefa';
   const where = soloGestoras
     ? "rol='gestora' AND COALESCE(rankingVisible,1)=1"
     : "((rol='gestora' AND COALESCE(rankingVisible,1)=1) OR rol='jefa')";
   const equipo = db.prepare("SELECT usuario,nombre,rol FROM usuarios WHERE activo=1 AND " + where + " ORDER BY CASE rol WHEN 'gestora' THEN 0 ELSE 1 END, id").all();
-  // Última gestión por asesor (nombre)
   const ultGest = {};
   db.prepare('SELECT asesor, MAX(fecha) AS ult FROM gestiones GROUP BY asesor').all().forEach(r => { ultGest[r.asesor] = r.ult; });
   const hoy = peruFecha(new Date(ahora).toISOString());
@@ -3500,7 +3516,8 @@ app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
     let estado = 'desconectada', segundos = null;
     if (lastSeenMs) { segundos = Math.round((ahora - lastSeenMs) / 1000); estado = segundos < 90 ? 'en_linea' : segundos < 300 ? 'ausente' : 'desconectada'; }
     const primeraConexion = mismaDia ? row.primeraConexion : null;
-    const tiempoDentroSeg = primeraConexion ? Math.round((ahora - Date.parse(primeraConexion)) / 1000) : null;
+    // Tiempo en CRM = suma de tramos del día (no el corrido desde la 1ra conexión). Si está en línea, suma el tramo vivo.
+    const tiempoDentroSeg = mismaDia ? (row.segundosAcum || 0) + (estado === 'en_linea' ? (segundos || 0) : 0) : null;
     const ultimaGestion = ultGest[g.nombre] || null;
     const ultimaInteraccion = [row && row.ultimaConexion, ultimaGestion].filter(Boolean).sort().slice(-1)[0] || null;
     const vigente = estado !== 'desconectada' && row;
@@ -3511,6 +3528,41 @@ app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
     };
   });
   res.json({ actualizado: new Date().toISOString(), equipo: filas });
+});
+
+// Gráfico: minutos conectados por hora del día (acumulado en un rango de fechas), una serie por persona.
+app.get('/api/supervisor/conexiones', soloAdminOJefa, (req, res) => {
+  const soloGestoras = req.user.rol === 'jefa';
+  const where = soloGestoras
+    ? "rol='gestora' AND COALESCE(rankingVisible,1)=1"
+    : "((rol='gestora' AND COALESCE(rankingVisible,1)=1) OR rol='jefa')";
+  const equipo = db.prepare("SELECT usuario,nombre,rol FROM usuarios WHERE activo=1 AND " + where + " ORDER BY CASE rol WHEN 'gestora' THEN 0 ELSE 1 END, id").all();
+  const hoy = peruFecha(new Date().toISOString());
+  const desde = String(req.query.desde || hoy).slice(0, 10);
+  const hasta = String(req.query.hasta || desde).slice(0, 10);
+  const H0 = 6, H1 = 22; // franja mostrada (6am–10pm)
+  const horas = []; for (let h = H0; h <= H1; h++) horas.push(h);
+  const porU = {}; equipo.forEach(g => porU[g.usuario] = horas.map(() => 0));
+  const logs = db.prepare('SELECT usuario,inicio,fin FROM presencia_log WHERE dia >= ? AND dia <= ?').all(desde, hasta);
+  logs.forEach(t => {
+    if (!porU[t.usuario]) return;
+    let cur = Date.parse(t.inicio); const fin = Date.parse(t.fin);
+    if (!(fin > cur)) return;
+    for (let guard = 0; guard < 60 && cur < fin; guard++) {
+      const dPeru = new Date(cur - 5 * 3600000);
+      const h = dPeru.getUTCHours();
+      const bordePeru = new Date(dPeru); bordePeru.setUTCMinutes(60, 0, 0);
+      const bordeMs = bordePeru.getTime() + 5 * 3600000;
+      const trozoFin = Math.min(fin, bordeMs);
+      const min = (trozoFin - cur) / 60000;
+      const idx = h - H0; if (idx >= 0 && idx < horas.length) porU[t.usuario][idx] += min;
+      cur = trozoFin;
+    }
+  });
+  // Número de días del rango (para el modo "promedio diario")
+  const dias = Math.max(1, Math.round((Date.parse(hasta + 'T12:00:00Z') - Date.parse(desde + 'T12:00:00Z')) / 86400000) + 1);
+  const series = equipo.map(g => ({ usuario: g.usuario, nombre: g.nombre, rol: g.rol, datos: porU[g.usuario].map(v => Math.round(v)) }));
+  res.json({ desde, hasta, dias, horas, series });
 });
 
 // Diagnóstico Aircall (admin): muestra los campos crudos de las últimas llamadas para
@@ -4402,7 +4454,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.197 (Jenny sin Marketing/Auditoria; Supervisor persistente: primera conexion del dia, tiempo en CRM, ultima gestion/interaccion (tabla presencia) + scope (jefa ve 4 GPs, admin 4+Jenny) + tarjetas Tasatop; ranking racha = historial 6 dias con check/ambar; fix vencidos en Control por GP (cargaba gestion completa); Agendados hoy, sin Monto en riesgo; tiles filtran; meta dice Agendemos reuniones) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.198 (Supervisor: Tiempo en CRM ahora suma tramos reales del dia (no el corrido), via tabla presencia_log + segundosAcum, reinicio diario; Jenny sin Ultima gestion ni linea de lead; nuevo grafico Momentos de conexion (minutos conectados por hora del dia, una serie por persona en el mismo grafico, etiqueta de pico, filtro de fechas + modo acumulado/promedio)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
