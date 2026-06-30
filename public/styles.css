@@ -975,6 +975,8 @@
   .rk-dotw small { font-size: 9px; opacity: .7; }
   .rk-dot { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,.12); display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; }
   .rk-dot.on { background: #1D9E75; box-shadow: 0 0 0 3px rgba(29,158,117,.25); }
+  .rk-dot.off { background: #F59E0B; }
+  .rk-dot.hoy { background: rgba(245,158,11,.45); box-shadow: 0 0 0 3px rgba(245,158,11,.2); }
 
   .rk-podio { display: flex; align-items: flex-end; justify-content: center; gap: 10px; align-self: end; }
   .rk-pod { width: 142px; border-radius: 13px 13px 0 0; padding: 14px 10px 14px; color: #fff; position: relative; box-shadow: 0 8px 26px rgba(0,0,0,.3);
@@ -1221,15 +1223,26 @@
   .inv-cnt { font-size: 10px; color: #94a3b8; font-weight: 500; margin-left: 4px; }
 
 /* ===== Modo Supervisor (tablero de presencia) ===== */
-.sup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.sup-card { background: var(--card, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 12px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
-.sup-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.sup-nom { font-weight: 600; font-size: 15px; }
-.sup-est { font-size: 12px; font-weight: 600; white-space: nowrap; }
-.sup-tag { font-size: 10px; font-weight: 600; color: #6b7280; background: #f1f3f5; border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
-.sup-sub { color: #94a3b8; font-size: 12px; margin-top: 2px; }
-.sup-lead { margin-top: 8px; font-size: 13px; padding-top: 8px; border-top: 1px dashed var(--line, #e5e7eb); }
-.sup-lead .muted { color: #9aa0a6; }
+.sup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.sup-card { background: var(--card, #fff); border: 1px solid var(--line, #DDE4EC); border-top: 3px solid var(--gris); border-radius: 14px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(31,45,61,.05); transition: box-shadow .15s; }
+.sup-card:hover { box-shadow: 0 6px 18px rgba(11,114,232,.10); }
+.sup-card.sup-en_linea { border-top-color: #16A34A; }
+.sup-card.sup-ausente { border-top-color: #F59E0B; }
+.sup-card.sup-desconectada { border-top-color: #9AA5B1; opacity: .82; }
+.sup-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.sup-id { display: flex; align-items: center; gap: 10px; }
+.sup-ava { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #0B72E8, #1F2D3D); color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none; }
+.sup-nom { font-weight: 700; font-size: 15px; color: var(--ink, #1F2D3D); }
+.sup-nom2 { font-size: 11px; color: var(--muted, #6B7A8D); }
+.sup-tag { font-size: 9.5px; font-weight: 700; color: #0B72E8; background: #0B72E81a; border-radius: 5px; padding: 1px 5px; vertical-align: middle; }
+.sup-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.sup-bolita { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.sup-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-bottom: 12px; }
+.sup-met { display: flex; flex-direction: column; background: #F7F9FC; border-radius: 8px; padding: 6px 9px; }
+.sup-met-l { font-size: 10px; color: var(--muted, #6B7A8D); text-transform: uppercase; letter-spacing: .3px; }
+.sup-met-v { font-size: 15px; font-weight: 700; color: var(--ink, #1F2D3D); }
+.sup-lead { font-size: 12.5px; padding-top: 10px; border-top: 1px dashed var(--line, #DDE4EC); }
+.sup-lead .muted { color: #9AA5B1; }
 
 /* ===== Panel de control por GP (tiles + alertas + tabla) ===== */
 .rp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }

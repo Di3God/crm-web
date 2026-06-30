@@ -545,7 +545,7 @@ async function arrancar() {
   } else if (r === 'gestora') {
     verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-atribucion', 'mi-supervisor', 'mi-audit']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -685,23 +685,43 @@ async function cargarSupervisor() {
     if ($('supTablero')) $('supTablero').innerHTML = '<div class="muted">No se pudo cargar la presencia.</div>';
   }
 }
+function supHora(iso) { return iso ? new Date(iso).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) : '—'; }
+function supDur(seg) {
+  if (seg == null) return '—';
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60);
+  return h > 0 ? (h + 'h ' + m + 'm') : (m + ' min');
+}
 function renderSupervisor(d) {
   const cont = $('supTablero'); if (!cont) return;
-  const col = { en_linea: '#1baf7a', ausente: '#e0a106', desconectada: '#9aa0a6' };
-  const txt = { en_linea: '🟢 En línea', ausente: '🟡 Ausente', desconectada: '⚫ Desconectada' };
+  const col = { en_linea: '#16A34A', ausente: '#F59E0B', desconectada: '#9AA5B1' };
+  const txt = { en_linea: 'En línea', ausente: 'Ausente', desconectada: 'Desconectada' };
   const eq = d.equipo || [];
   const enLinea = eq.filter(g => g.estado === 'en_linea').length;
-  cont.innerHTML = eq.map(g => `
-    <div class="sup-card" style="border-left:4px solid ${col[g.estado]}">
+  cont.innerHTML = eq.map(g => {
+    const ini = primerNombre(g.nombre).charAt(0) + (g.nombre.split(/\s+/)[1] ? g.nombre.split(/\s+/)[1].charAt(0) : '');
+    return `
+    <div class="sup-card sup-${g.estado}">
       <div class="sup-top">
-        <span class="sup-nom">${g.nombre}${g.rol === 'jefa' ? ' <span class="sup-tag">jefa</span>' : ''}</span>
-        <span class="sup-est" style="color:${col[g.estado]}">${txt[g.estado]}</span>
+        <div class="sup-id">
+          <span class="sup-ava">${ini.toUpperCase()}</span>
+          <div>
+            <div class="sup-nom">${primerNombre(g.nombre)}${g.rol === 'jefa' ? ' <span class="sup-tag">Jefa</span>' : ''}</div>
+            <div class="sup-nom2">${g.nombre}</div>
+          </div>
+        </div>
+        <span class="sup-pill" style="background:${col[g.estado]}1a;color:${col[g.estado]}"><span class="sup-bolita" style="background:${col[g.estado]}"></span>${txt[g.estado]}</span>
       </div>
-      <div class="sup-sub">${supTiempo(g.segundos)}</div>
+      <div class="sup-grid2">
+        <div class="sup-met"><span class="sup-met-l">Primera conexión</span><span class="sup-met-v">${supHora(g.primeraConexion)}</span></div>
+        <div class="sup-met"><span class="sup-met-l">Tiempo en CRM</span><span class="sup-met-v">${supDur(g.tiempoDentroSeg)}</span></div>
+        <div class="sup-met"><span class="sup-met-l">Última gestión</span><span class="sup-met-v">${supHora(g.ultimaGestion)}</span></div>
+        <div class="sup-met"><span class="sup-met-l">Última actividad</span><span class="sup-met-v">${supHora(g.ultimaInteraccion)}</span></div>
+      </div>
       <div class="sup-lead">${g.leadNombre
-        ? '📋 Gestionando: <b>' + g.leadNombre + '</b>' + (g.leadCodigo ? ' <span class="muted">' + g.leadCodigo + '</span>' : '')
-        : '<span class="muted">Sin lead abierto</span>'}</div>
-    </div>`).join('');
+        ? '📋 Gestionando: <b>' + g.leadNombre + '</b>'
+        : '<span class="muted">Sin lead abierto ahora</span>'}</div>
+    </div>`;
+  }).join('');
   if ($('supResumen')) $('supResumen').textContent = enLinea + ' de ' + eq.length + ' en línea';
   if ($('supActualizado')) $('supActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE');
 }
@@ -2682,7 +2702,7 @@ function renderReparto(d) {
   tiles += tile('⏱', 'azul', vel, 'Velocidad 1er contacto', 'asignación → contacto (7d)', '');
   tiles += tile('🆕', t.frescos && t.frescos.mas24h > 0 ? 'rojo' : '', (t.frescos ? t.frescos.total : 0), 'Frescos sin tocar', (t.frescos ? t.frescos.mas24h : 0) + ' llevan +24h', 'sincontactar');
   tiles += tile('🔥', t.calientes && t.calientes.count > 0 ? 'naranja' : '', (t.calientes ? t.calientes.count : 0), 'Calientes en riesgo', money(t.calientes ? t.calientes.monto : 0), '');
-  tiles += tile('📅', '', t.reunionesHoy || 0, 'Reuniones hoy', 'agendadas para hoy', '');
+  tiles += tile('📅', '', t.reunionesHoy || 0, 'Reuniones hoy', 'agendadas para hoy', 'parahoy');
   tiles += tile('⏳', t.vencidos > 0 ? 'rojo' : '', t.vencidos || 0, 'Vencidos', 'acción atrasada', 'vencidos');
   tiles += tile('✅', 'verde', (t.cerradosHoy ? t.cerradosHoy.count : 0), 'Cerrados hoy', money(t.cerradosHoy ? t.cerradosHoy.monto : 0), '');
   tiles += tile('📥', t.sinAsignar > 0 ? 'azul' : '', t.sinAsignar || 0, 'Sin asignar', 'por distribuir', 'sin-asignar');
@@ -2706,7 +2726,7 @@ function renderReparto(d) {
   const cR = (v, tono) => v > 0 ? '<span class="rp-' + tono + '">' + v + '</span>' : '<span class="rp-cero">0</span>';
   let h = '<div class="rp-head"><div class="rp-tit">Control por GP</div><div class="rp-sub">Click en una GP para filtrar la tabla y reasignar · el punto = actividad en vivo</div></div>';
   h += '<div class="rp-wrap"><table class="rp-tabla rp-ctrl"><thead><tr>' +
-    '<th class="rp-gp">GP</th><th>Asig. hoy</th><th>Cartera</th><th>Sin tocar +24h</th><th>Vencidos</th><th>🔥 Calientes</th><th>Agend. hoy/mñ</th><th class="rp-monto">Monto en riesgo</th>' +
+    '<th class="rp-gp">GP</th><th>Asig. hoy</th><th>Cartera</th><th>Sin tocar +24h</th><th>Vencidos</th><th>🔥 Calientes</th><th>Agendados hoy</th>' +
     '</tr></thead><tbody>';
   d.filas.forEach(f => {
     const activa = selA === f.asesor && selF !== 'sin-asignar';
@@ -2714,19 +2734,17 @@ function renderReparto(d) {
       '<td class="rp-gp">' + dot(f.estado) + f.asesor + '</td>' +
       '<td>' + f.asignadosHoy + '</td><td>' + f.cartera + '</td>' +
       '<td>' + cR(f.sinTocar24h, 'venc') + '</td><td>' + cR(f.vencidos, 'venc') + '</td>' +
-      '<td>' + cR(f.calientes, 'cal') + '</td><td>' + cR(f.agendHM, 'ok') + '</td>' +
-      '<td class="rp-monto">' + money(f.montoRiesgo) + '</td></tr>';
+      '<td>' + cR(f.calientes, 'cal') + '</td><td>' + cR(f.agendHM, 'ok') + '</td></tr>';
   });
   const eq = d.equipo;
   h += '<tr class="rp-eq"><td class="rp-gp">Equipo</td><td>' + eq.asignadosHoy + '</td><td>' + eq.cartera + '</td>' +
     '<td>' + (eq.sinTocar24h > 0 ? '<span class="rp-venc">' + eq.sinTocar24h + '</span>' : '0') + '</td>' +
     '<td>' + (eq.vencidos > 0 ? '<span class="rp-venc">' + eq.vencidos + '</span>' : '0') + '</td>' +
     '<td>' + (eq.calientes > 0 ? '<span class="rp-cal">' + eq.calientes + '</span>' : '0') + '</td>' +
-    '<td>' + eq.agendHM + '</td><td class="rp-monto">' + money(eq.montoRiesgo) + '</td></tr>';
+    '<td>' + eq.agendHM + '</td></tr>';
   const s = d.sinAsignar; const sinAct = selF === 'sin-asignar';
   h += '<tr class="rp-row rp-sin' + (sinAct ? ' rp-activa' : '') + '" onclick="repartoSinAsignar()">' +
-    '<td class="rp-gp">Sin asignar</td><td>—</td><td>' + s.cartera + '</td><td>—</td><td>—</td><td>—</td><td>—</td>' +
-    '<td class="rp-monto">' + money(s.monto) + '</td></tr>';
+    '<td class="rp-gp">Sin asignar</td><td>—</td><td>' + s.cartera + '</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>';
   h += '</tbody></table></div>';
 
   $('reparto').innerHTML = tiles + franja + h;
@@ -3665,7 +3683,7 @@ async function cargarRanking() {
     const metaGlobal = d.metaGlobal || META;
     const agEquipo = d.agendadosEquipo || 0;
     const pctMeta = Math.min(100, Math.round((agEquipo / metaGlobal) * 100));
-    const metaMsg = agEquipo >= metaGlobal ? '¡Meta del equipo cumplida! 🎉' : (pctMeta >= 50 ? 'El equipo va por buen camino ↑' : '¡A empujar agendamientos!');
+    const metaMsg = agEquipo >= metaGlobal ? '¡Meta del equipo cumplida! 🎉' : (pctMeta >= 50 ? 'El equipo va por buen camino ↑' : '¡Agendemos reuniones!');
     if ($('rkMeta')) $('rkMeta').innerHTML =
       '<div class="rk-card-tit">🎯 Meta del equipo (hoy)</div>' +
       '<div class="rk-card-big">' + metaGlobal + ' <small>agendamientos</small></div>' +
@@ -3674,18 +3692,22 @@ async function cargarRanking() {
       '<div class="rk-meta-msg">' + metaMsg + '</div>';
 
     // Tarjeta RACHA — los círculos arrancan HOY hacia adelante (J,V,S,D...)
-    const miReg = rk.find(g => g.asesor === yo) || rk[0] || { racha: 0, intentos: 0 };
-    const racha = miReg.racha || 0;
-    const labels = d.diasRacha || ['', '', '', '', '', '', ''];
-    const hoyActivo = (miReg.intentos || 0) > 0; // hoy se enciende con la 1ra llamada
-    const dots = labels.map((dn, i) => {
-      const on = i === 0 ? hoyActivo : false; // hoy: por actividad; futuros: vacíos hasta que lleguen
-      return '<span class="rk-dotw"><span class="rk-dot ' + (on ? 'on' : '') + '">' + (on ? '✓' : '') + '</span><small>' + dn + '</small></span>';
+    const miReg = rk.find(g => g.asesor === yo) || rk[0] || { dias: [], intentos: 0 };
+    const hist = d.diasHist || [];
+    const misDias = miReg.dias || [];
+    const diasActivos = misDias.filter(Boolean).length;
+    const hoyActivo = misDias.length ? misDias[misDias.length - 1] : false;
+    const dots = hist.map((dd, i) => {
+      const on = misDias[i];
+      const esHoy = i === hist.length - 1;
+      // check verde si gestionó ese día; ámbar si no gestionó; hoy pendiente = ámbar hasta su 1ra gestión
+      const cls = on ? 'on' : (esHoy ? 'hoy' : 'off');
+      return '<span class="rk-dotw"><span class="rk-dot ' + cls + '">' + (on ? '✓' : '') + '</span><small>' + dd.label + '</small></span>';
     }).join('');
     if ($('rkRacha')) $('rkRacha').innerHTML =
-      '<div class="rk-card-tit">🔥 Racha</div>' +
-      '<div class="rk-card-big">' + racha + ' <small>días seguidos</small></div>' +
-      '<div class="rk-racha-msg">' + (hoyActivo ? '¡Hoy ya arrancaste! 💪' : 'Haz tu primera llamada y enciende el día') + '</div>' +
+      '<div class="rk-card-tit">🔥 Constancia</div>' +
+      '<div class="rk-card-big">' + diasActivos + ' <small>de ' + hist.length + ' días</small></div>' +
+      '<div class="rk-racha-msg">' + (hoyActivo ? '¡Hoy ya gestionaste! 💪' : 'Haz tu primera gestión y enciende el día') + '</div>' +
       '<div class="rk-dots">' + dots + '</div>';
 
     // Tabla completa

@@ -2237,7 +2237,7 @@ function fechaPeruISO(d) {
 app.get('/api/reparto', (req, res) => {
   if (!veTodo(req.user)) return res.status(403).json({ error: 'No autorizado' });
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
-  const gAll = db.prepare('SELECT codigo,fecha,resultado FROM gestiones ORDER BY fecha').all();
+  const gAll = db.prepare('SELECT * FROM gestiones ORDER BY fecha').all();
   const gPorCod = {};
   gAll.forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
   const leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l, gPorCod[l.codigo] || []));
@@ -2272,7 +2272,7 @@ app.get('/api/reparto', (req, res) => {
     const reunFecha = l.fechaReunion || l.fechaProxAccion;
     const reunP = reunFecha ? fechaPeruISO(new Date(reunFecha)) : null;
     const agendado = l.etapa === 'Agendado - pendiente reunion';
-    const agendHM = agendado && (reunP === hoyP || reunP === mananaP);
+    const agendHM = agendado && reunP === hoyP;
 
     if (act) { dest.cartera++; dest.monto += montoLead(l); }
     if (act && sinTocar && horas(l.fechaAsignacion) > 24) dest.sinTocar24h++;
@@ -3431,45 +3431,83 @@ function construirRankingDia() {
   const ahoraPeru = new Date(new Date().getTime() - 5 * 3600000);
   const finDia = new Date(ahoraPeru); finDia.setUTCHours(24, 0, 0, 0);
   const segundosReinicio = Math.max(0, Math.round((finDia - ahoraPeru) / 1000));
-  // Etiquetas de los días de la racha, empezando por HOY hacia adelante (J, V, S, D...)
+  // Historial de los últimos 6 días (incluye hoy): por cada GP, si gestionó ese día.
   const INI = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+  const diasHist = [];
+  for (let i = 5; i >= 0; i--) {
+    const f = diaMenos(hoy, i);
+    const dd = new Date(f + 'T12:00:00Z');
+    diasHist.push({ fecha: f, label: INI[dd.getUTCDay()] + ' ' + f.slice(8, 10) });
+  }
+  Object.values(m).forEach(r => {
+    const dias = intentoDia[r.asesor] || {};
+    r.dias = diasHist.map(d => !!dias[d.fecha]);
+  });
+  // Etiquetas de los días de la racha, empezando por HOY hacia adelante (compat.)
   const diasRacha = [];
   for (let i = 0; i < 7; i++) { const dd = new Date(ahoraPeru); dd.setUTCDate(dd.getUTCDate() + i); diasRacha.push(INI[dd.getUTCDay()]); }
   const agendadosEquipo = Object.values(m).reduce((s, r) => s + (r.agendados || 0), 0);
-  return { fecha: hoy, actualizado: new Date().toISOString(), meta: META, metaGlobal: META, agendadosEquipo, segundosReinicio, diasRacha, pesos: { intento: 1, conexion: 2.5, calificado: 5, agendado: 15, call: 1 }, ranking };
+  return { fecha: hoy, actualizado: new Date().toISOString(), meta: META, metaGlobal: META, agendadosEquipo, segundosReinicio, diasRacha, diasHist, pesos: { intento: 1, conexion: 2.5, calificado: 5, agendado: 15, call: 1 }, ranking };
 }
 app.get('/api/ranking/contactabilidad', (req, res) => { res.json(construirRankingDia()); });
 
 // ===== Modo Supervisor: presencia en tiempo real (heartbeat en memoria) =====
-const PRESENCIA = {}; // usuario -> { nombre, rol, lastSeen(ms), leadCodigo, leadNombre, etapa }
+const PRESENCIA = {}; // usuario -> { nombre, rol, lastSeen(ms), leadCodigo, leadNombre, etapa } (vivo, para el dot del panel)
+db.exec(`CREATE TABLE IF NOT EXISTS presencia (
+  usuario TEXT PRIMARY KEY, dia TEXT, primeraConexion TEXT, ultimaConexion TEXT,
+  leadCodigo TEXT, leadNombre TEXT, etapa TEXT
+)`);
 
 app.post('/api/presencia/latido', (req, res) => {
   const u = req.user; if (!u) return res.status(401).json({ error: 'no_auth' });
   const b = req.body || {};
-  PRESENCIA[u.usuario] = {
-    nombre: u.nombre, rol: u.rol, lastSeen: Date.now(),
-    leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null
-  };
+  const ahoraIso = new Date().toISOString();
+  PRESENCIA[u.usuario] = { nombre: u.nombre, rol: u.rol, lastSeen: Date.now(), leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null };
+  // Persistencia: primera conexión del día queda grabada; última conexión se actualiza siempre.
+  try {
+    const hoy = peruFecha(ahoraIso);
+    const row = db.prepare('SELECT dia FROM presencia WHERE usuario = ?').get(u.usuario);
+    if (!row || row.dia !== hoy) {
+      db.prepare(`INSERT INTO presencia (usuario,dia,primeraConexion,ultimaConexion,leadCodigo,leadNombre,etapa)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(usuario) DO UPDATE SET dia=excluded.dia, primeraConexion=excluded.primeraConexion,
+          ultimaConexion=excluded.ultimaConexion, leadCodigo=excluded.leadCodigo, leadNombre=excluded.leadNombre, etapa=excluded.etapa`)
+        .run(u.usuario, hoy, ahoraIso, ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null);
+    } else {
+      db.prepare('UPDATE presencia SET ultimaConexion=?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
+        .run(ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+    }
+  } catch (e) { /* no romper el latido por la persistencia */ }
   res.json({ ok: true });
 });
 
 app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
   const ahora = Date.now();
-  const equipo = db.prepare("SELECT usuario,nombre,rol FROM usuarios WHERE activo=1 AND ((rol='gestora' AND COALESCE(rankingVisible,1)=1) OR rol='jefa') ORDER BY CASE rol WHEN 'gestora' THEN 0 ELSE 1 END, id").all();
+  // Scope: la jefa solo ve a las 4 GPs; los admins ven a las GPs + la jefa.
+  const soloGestoras = req.user.rol === 'jefa';
+  const where = soloGestoras
+    ? "rol='gestora' AND COALESCE(rankingVisible,1)=1"
+    : "((rol='gestora' AND COALESCE(rankingVisible,1)=1) OR rol='jefa')";
+  const equipo = db.prepare("SELECT usuario,nombre,rol FROM usuarios WHERE activo=1 AND " + where + " ORDER BY CASE rol WHEN 'gestora' THEN 0 ELSE 1 END, id").all();
+  // Última gestión por asesor (nombre)
+  const ultGest = {};
+  db.prepare('SELECT asesor, MAX(fecha) AS ult FROM gestiones GROUP BY asesor').all().forEach(r => { ultGest[r.asesor] = r.ult; });
+  const hoy = peruFecha(new Date(ahora).toISOString());
   const filas = equipo.map(g => {
-    const p = PRESENCIA[g.usuario];
+    const row = db.prepare('SELECT * FROM presencia WHERE usuario = ?').get(g.usuario);
+    const mismaDia = row && row.dia === hoy;
+    const lastSeenMs = row && row.ultimaConexion ? Date.parse(row.ultimaConexion) : (PRESENCIA[g.usuario] ? PRESENCIA[g.usuario].lastSeen : null);
     let estado = 'desconectada', segundos = null;
-    if (p && p.lastSeen) {
-      segundos = Math.round((ahora - p.lastSeen) / 1000);
-      estado = segundos < 90 ? 'en_linea' : segundos < 300 ? 'ausente' : 'desconectada';
-    }
-    // El lead solo es relevante si la actividad es reciente (si está desconectada, no mostramos lead viejo)
-    const leadVigente = p && estado !== 'desconectada';
+    if (lastSeenMs) { segundos = Math.round((ahora - lastSeenMs) / 1000); estado = segundos < 90 ? 'en_linea' : segundos < 300 ? 'ausente' : 'desconectada'; }
+    const primeraConexion = mismaDia ? row.primeraConexion : null;
+    const tiempoDentroSeg = primeraConexion ? Math.round((ahora - Date.parse(primeraConexion)) / 1000) : null;
+    const ultimaGestion = ultGest[g.nombre] || null;
+    const ultimaInteraccion = [row && row.ultimaConexion, ultimaGestion].filter(Boolean).sort().slice(-1)[0] || null;
+    const vigente = estado !== 'desconectada' && row;
     return {
       usuario: g.usuario, nombre: g.nombre, rol: g.rol, estado, segundos,
-      leadCodigo: leadVigente ? p.leadCodigo : null,
-      leadNombre: leadVigente ? p.leadNombre : null,
-      etapa: leadVigente ? p.etapa : null
+      primeraConexion, tiempoDentroSeg, ultimaGestion, ultimaInteraccion,
+      leadCodigo: vigente ? row.leadCodigo : null, leadNombre: vigente ? row.leadNombre : null, etapa: vigente ? row.etapa : null
     };
   });
   res.json({ actualizado: new Date().toISOString(), equipo: filas });
@@ -4364,7 +4402,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.196 (WhatsApp: tarea vencida confirmada SIN disparador automatico y removida del panel; botones de prueba ahora SIEMPRE van al grupo de pruebas (se niegan si no hay WA_GRUPO_PRUEBAS_JID), nunca al grupo oficial; 5 alertas automaticas activas: lead nuevo, releads agregado, saludo 9am, pulsos 1pm/6pm, sin atender 10min) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.197 (Jenny sin Marketing/Auditoria; Supervisor persistente: primera conexion del dia, tiempo en CRM, ultima gestion/interaccion (tabla presencia) + scope (jefa ve 4 GPs, admin 4+Jenny) + tarjetas Tasatop; ranking racha = historial 6 dias con check/ambar; fix vencidos en Control por GP (cargaba gestion completa); Agendados hoy, sin Monto en riesgo; tiles filtran; meta dice Agendemos reuniones) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
