@@ -1745,11 +1745,24 @@ app.get('/api/reuniones', (req, res) => {
     const c = L.consolidarLead(l, gs);
     if (!c.fechaReunion || c.estadoReunion !== 'Agendada') return;
     if (c.etapa === 'Cerrado ganado' || c.etapa === 'Cerrado perdido') return;
-    let estadoLabel = 'Agendada';
+    // Recorre las gestiones de agendamiento: fecha original (la primera) y reprogramación (la última 'Reprogramo')
+    let estadoLabel = 'Agendada', fechaOriginal = null, fechaReprog = null;
+    for (const g of gs) {
+      if (g.fechaReunion && AGEND_ACTS[g.resultado]) {
+        if (!fechaOriginal) fechaOriginal = g.fechaReunion;
+        if (g.resultado === 'Reprogramo reunion') fechaReprog = g.fechaReunion;
+      }
+    }
     for (let i = gs.length - 1; i >= 0; i--) { if (AGEND_ACTS[gs[i].resultado]) { estadoLabel = AGEND_ACTS[gs[i].resultado]; break; } }
-    out.push({ codigo: l.codigo, nombre: l.nombre, telefono: l.telefono, asesor: l.asesor, etapa: c.etapa, estadoLabel, fechaReunion: c.fechaReunion });
+    const fechaOrden = c.fechaReunion; // la efectiva (más reciente) — para ordenar cronológicamente
+    out.push({
+      codigo: l.codigo, nombre: l.nombre, telefono: l.telefono, asesor: l.asesor, estadoLabel,
+      fechaReunion: fechaOriginal || fechaOrden,
+      fechaReprogramada: estadoLabel === 'Reprogramada' ? (fechaReprog || fechaOrden) : null,
+      fechaOrden
+    });
   });
-  out.sort((a, b) => new Date(a.fechaReunion) - new Date(b.fechaReunion));
+  out.sort((a, b) => new Date(a.fechaOrden) - new Date(b.fechaOrden));
   res.json({ reuniones: out });
 });
 
@@ -4744,7 +4757,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.207 (Nueva vista B2C Reuniones agendadas: lista todas las reuniones programadas (estadoReunion Agendada) ordenadas por fecha/hora, con estado Agendada/Confirmada/Reprogramada, GP, telefono, badges Hoy/Paso; endpoint GET /api/reuniones con scope por rol (GP ve solo las suyas); item de menu Reuniones en B2C) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.208 (Reuniones agendadas movido a un bloque DENTRO de Mis Leads (entre Control por GP y Gestion de oportunidades), ya no en el menu; columna Reprogramada para con la nueva fecha cuando aplica (col 1 = fecha original, col nueva = reprogramada), ordenado por fecha efectiva) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

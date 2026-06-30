@@ -539,13 +539,13 @@ async function arrancar() {
   const r = YO.rol;
   if (r === 'admin') {
     verMundo('B2C'); verMundo('B2B');
-    ver(['mi-leads', 'mi-reuniones', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-reuniones']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-reuniones', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -607,7 +607,6 @@ function ir(v) {
   if (v === 'releads') cargarReleads();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
-  if (v === 'reuniones') cargarReuniones();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
   if (v === 'atribucion') cargarMarketing();
@@ -820,6 +819,7 @@ async function cargarLeads() {
   cargarTarjetas();
   cargarMiDia();
   cargarReparto();
+  cargarReuniones();
 }
 
 async function cargarTarjetas() {
@@ -3068,41 +3068,44 @@ function irALead(codigo) {
   if (l) { setTimeout(() => { try { verTrazabilidad(codigo); } catch (e) {} }, 200); }
 }
 
-// ===== Vista: Reuniones agendadas (ordenadas por fecha/hora) =====
+// ===== Reuniones agendadas (bloque dentro de Mis Leads, entre Control por GP y Gestión de oportunidades) =====
 async function cargarReuniones() {
-  const cont = $('reuTabla'); if (!cont) return;
-  cont.innerHTML = '<div class="cargando" style="padding:24px;color:var(--muted)">Cargando…</div>';
+  const cont = $('reuBloque'); if (!cont) return;
   let d;
-  try { d = await api('/api/reuniones'); } catch (e) { cont.innerHTML = '<div style="padding:24px;color:var(--muted)">No se pudo cargar.</div>'; return; }
+  try { d = await api('/api/reuniones'); } catch (e) { cont.classList.add('oculto'); return; }
   const rs = d.reuniones || [];
-  const resumen = $('reuResumen');
-  if (!rs.length) {
-    if (resumen) resumen.textContent = '';
-    cont.innerHTML = '<div style="padding:24px;color:var(--muted)">No hay reuniones agendadas por ahora.</div>';
-    return;
-  }
+  if (!rs.length) { cont.classList.add('oculto'); cont.innerHTML = ''; return; }
+  cont.classList.remove('oculto');
   const ahora = new Date();
   const hoyClave = fmtFechaHora(new Date().toISOString()).slice(0, 10); // dd/mm/yyyy
-  let pasadas = 0, hoyN = 0;
+  let pasadas = 0, hoyN = 0, hayReprog = false;
   const estPill = { 'Confirmada': '#1D9E75', 'Reprogramada': '#EF9F27', 'Agendada': '#0B72E8' };
+  rs.forEach(r => { if (r.fechaReprogramada) hayReprog = true; });
   const filas = rs.map(r => {
-    const f = new Date(r.fechaReunion);
+    const f = new Date(r.fechaOrden || r.fechaReunion);
     const vencida = f < ahora;
-    const esHoy = fmtFechaHora(r.fechaReunion).slice(0, 10) === hoyClave;
+    const esHoy = fmtFechaHora(r.fechaOrden || r.fechaReunion).slice(0, 10) === hoyClave;
     if (vencida && !esHoy) pasadas++; if (esHoy) hoyN++;
     const badge = (vencida && !esHoy) ? '<span class="badge-venc">⚠ Pasó</span>'
       : (esHoy ? '<span class="tz-pill rosa">Hoy</span>' : '');
     const cEst = estPill[r.estadoLabel] || '#6B7A8D';
+    const colReprog = hayReprog
+      ? '<td>' + (r.fechaReprogramada ? '<b style="color:#B26A00">' + fmtFechaHora(r.fechaReprogramada) + '</b>' : '—') + '</td>'
+      : '';
     return '<tr>' +
       '<td><b>' + fmtFechaHora(r.fechaReunion) + '</b> ' + badge + '</td>' +
+      colReprog +
       '<td onclick="irALead(\'' + r.codigo + '\')" style="cursor:pointer"><b style="color:var(--azul)">' + (r.nombre || r.codigo) + '</b></td>' +
       '<td>' + (r.asesor || '—') + '</td>' +
       '<td><span class="b2b-pill" style="background:' + cEst + '22;color:' + cEst + '">' + (r.estadoLabel || 'Agendada') + '</span></td>' +
       '<td>' + (r.telefono || '—') + '</td>' +
       '</tr>';
   }).join('');
-  if (resumen) resumen.textContent = rs.length + ' reunión(es)' + (hoyN ? ' · ' + hoyN + ' hoy' : '') + (pasadas ? ' · ' + pasadas + ' por actualizar' : '');
-  cont.innerHTML = '<table class="tabla"><thead><tr><th>Fecha y hora</th><th>Lead</th><th>GP</th><th>Estado</th><th>Teléfono</th></tr></thead><tbody>' + filas + '</tbody></table>';
+  const thReprog = hayReprog ? '<th>Reprogramada para</th>' : '';
+  const resumen = rs.length + ' reunión(es)' + (hoyN ? ' · ' + hoyN + ' hoy' : '') + (pasadas ? ' · ' + pasadas + ' por actualizar' : '');
+  cont.innerHTML =
+    '<div class="barra barra-leads" style="margin-bottom:8px"><h2>Reuniones agendadas</h2><span class="sub" style="color:var(--muted)">' + resumen + '</span></div>' +
+    '<table class="tabla"><thead><tr><th>Fecha y hora</th>' + thReprog + '<th>Lead</th><th>GP</th><th>Estado</th><th>Teléfono</th></tr></thead><tbody>' + filas + '</tbody></table>';
 }
 
 // ---- Tiempo real del chat: SSE (escucha webhooks de Chatwoot) ----
