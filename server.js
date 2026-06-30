@@ -1230,11 +1230,10 @@ function procesarLeadMarketing(norm, opts = {}) {
   registrarAnuncioCatalogo(norm.campana, norm.conjunto, norm.anuncio, norm.adId);
   if (gp) {
     notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
-    const txt = `🆕 *Nuevo lead* — ${norm.nombre}\n👤 Asignado a: *${gp}*\n📲 ${norm.telefonoNormalizado || '—'}`
-      + `\n🎯 ${norm.campana || norm.fuente || 'Sin campaña'}`
-      + (monto != null ? `\n💰 Potencial: S/ ${Number(monto).toLocaleString('es-PE')}` : '')
-      + `\n⏱ ¡Contáctalo en los primeros minutos!`;
+    const gpCorto = String(gp).trim().split(/\s+/)[0] || gp;
+    const txt = `🆕 *Nuevo lead* — ${norm.nombre}\n👤 ${gpCorto} · 💰 ${monto != null ? 'S/ ' + Number(monto).toLocaleString('es-PE') : 'sin monto'}`;
     enviarAlertaWA(txt); // fire-and-forget: no bloquea la respuesta del webhook
+    enColaVerificacion(codigo, gp, norm.nombre); // chequeo "¿atendido?" a los 10 min (solo leads en tiempo real)
   }
   return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
 }
@@ -4005,7 +4004,7 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
   const insLead = db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'relead')`);
   const updRe = db.prepare("UPDATE marketing_historial SET estado='asignado', codigoLead=?, asignadoA=?, fechaAsignado=? WHERE telefono=?");
-  let creados = 0, yaExistian = 0, noEncontrados = 0;
+  let creados = 0, yaExistian = 0, noEncontrados = 0, montoTotal = 0;
   const nuevosCods = [];
   db.exec('BEGIN');
   try {
@@ -4021,6 +4020,7 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
           asesor, re.montoReal, re.montoReal, re.montoRango, ahora, ahora);
         creados++; nuevosCods.push(codigo);
       }
+      montoTotal += Number(re.montoReal) || 0;
       updRe.run(codigo, asesor, ahora, tel);
     }
     db.exec('COMMIT');
@@ -4030,6 +4030,15 @@ app.post('/api/releads/asignar', puedeAsignar, (req, res) => {
   }
   // Aviso por correo a la GP por cada lead nuevo creado desde releads.
   nuevosCods.forEach(c => notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(c), asesor));
+  // Aviso WhatsApp AGREGADO (un solo mensaje por lote, para no spamear el grupo con asignaciones masivas).
+  const totalAsig = creados + yaExistian;
+  if (totalAsig > 0) {
+    const gpCorto = String(asesor).trim().split(/\s+/)[0] || asesor;
+    const txt = `♻️ *Releads asignados* — ${gpCorto}\nSe te asignaron *${totalAsig} lead${totalAsig === 1 ? '' : 's'}* de campañas anteriores`
+      + (montoTotal > 0 ? ` (S/ ${Math.round(montoTotal).toLocaleString('es-PE')} en potencial)` : '')
+      + `.\n👉 Revísalos en tu cartera y contáctalos.`;
+    enviarAlertaWA(txt);
+  }
   auditar(req, 'asignar-relead', `${creados + yaExistian} releads`, 'a ' + asesor);
   res.json({ ok: true, creados, yaExistian, noEncontrados, asesor });
 });
@@ -4184,6 +4193,134 @@ setInterval(() => {
     enviarReporteDiario();
   }
 }, 60 * 1000);
+
+// ===== Alertas WhatsApp programadas (matutino 9am + pulsos 1pm/6pm) =====
+let _waMatutino = null, _waPulso13 = null, _waPulso18 = null;
+const primerNombreWA = n => String(n || '').trim().split(/\s+/)[0] || n;
+
+// Texto del saludo matutino: leads sin tocar (ayer + hoy<9am + rezagados +2d), por GP.
+function textoMatutinoWA() {
+  const gAll = db.prepare('SELECT codigo FROM gestiones').all();
+  const conGestion = new Set(gAll.map(g => g.codigo));
+  const leads = db.prepare("SELECT codigo,nombre,asesor,fechaCarga FROM leads WHERE COALESCE(archivado,0)=0 AND COALESCE(origenCreacion,'') <> 'manual'").all();
+  const hoy = peruFecha(new Date().toISOString());
+  const ayer = peruFecha(new Date(Date.now() - 24 * 3600000).toISOString());
+  const buckets = { ayer: {}, hoy: {}, rezagados: {} };
+  let total = 0;
+  leads.forEach(l => {
+    if (conGestion.has(l.codigo)) return;          // ya fue tocado
+    if (!l.asesor) return;                          // sin asignar se ve en el panel, no aquí
+    const dia = peruFecha(l.fechaCarga);
+    let b = null;
+    if (dia === hoy) b = 'hoy';
+    else if (dia === ayer) b = 'ayer';
+    else if (dia < ayer) b = 'rezagados';
+    if (!b) return;
+    const gp = primerNombreWA(l.asesor);
+    (buckets[b][gp] = buckets[b][gp] || []).push(l.nombre);
+    total++;
+  });
+  if (!total) return null;
+  const bloque = (titulo, mapa) => {
+    const gps = Object.keys(mapa); if (!gps.length) return '';
+    const n = gps.reduce((s, g) => s + mapa[g].length, 0);
+    let t = '\n' + titulo + ' (' + n + '):\n';
+    t += gps.map(g => {
+      const nombres = mapa[g];
+      const muestra = nombres.slice(0, 3).join(', ') + (nombres.length > 3 ? ' +' + (nombres.length - 3) + ' más' : '');
+      return '• ' + g + ': ' + muestra;
+    }).join('\n');
+    return t;
+  };
+  const fechaTxt = hoy.split('-').reverse().slice(0, 2).join('/');
+  let msg = '☀️ *Buenos días, equipo* — ' + fechaTxt + '\nEstos leads están esperando:\n';
+  msg += bloque('🕒 *Rezagados (+2 días)*', buckets.rezagados);
+  msg += bloque('📌 *De ayer sin tocar*', buckets.ayer);
+  msg += bloque('🌅 *De hoy, antes de las 9*', buckets.hoy);
+  msg += '\n\n💪 ¡Arranquemos por ellos!';
+  return msg;
+}
+
+// Texto del pulso del equipo (1pm / 6pm): totales + línea por GP.
+function textoPulsoWA(horaLabel, emoji, titulo) {
+  const rk = construirRankingDia();
+  const agendPorGP = {}; (rk.ranking || []).forEach(r => { agendPorGP[r.asesor] = r.agendados || 0; });
+  const gAll = db.prepare('SELECT codigo FROM gestiones').all();
+  const conGestion = new Set(gAll.map(g => g.codigo));
+  const leadsGanados = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0').all().map(l => leadConsolidado(l));
+  const hoy = peruFecha(new Date().toISOString());
+  const num = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
+  const montoLead = l => Number(l.pipelineEstimado) || num(l.montoPotencial);
+
+  const porGP = {}; L.ASESORES.forEach(a => porGP[a] = { leadsHoy: 0, atendidos: 0, agend: agendPorGP[a] || 0, cierres: 0 });
+  let cierresMonto = 0, cierresN = 0;
+  leadsGanados.forEach(l => {
+    const dest = (l.asesor && porGP[l.asesor]) ? porGP[l.asesor] : null;
+    if (l.fechaAsignacion && peruFecha(l.fechaAsignacion) === hoy && dest) {
+      dest.leadsHoy++;
+      if ((l.totalGestiones || 0) > 0) dest.atendidos++;
+    }
+    if (l.etapa === 'Cerrado ganado' && peruFecha(l.ultimaGestion || l.fechaCarga) === hoy) {
+      cierresN++; cierresMonto += montoLead(l);
+      if (dest) dest.cierres++;
+    }
+  });
+  const tot = { leadsHoy: 0, atendidos: 0, agend: 0 };
+  L.ASESORES.forEach(a => { tot.leadsHoy += porGP[a].leadsHoy; tot.atendidos += porGP[a].atendidos; tot.agend += porGP[a].agend; });
+  const sinTocar = tot.leadsHoy - tot.atendidos;
+
+  let msg = (emoji || '📊') + ' *' + (titulo || 'Cómo va el equipo') + '* — ' + horaLabel + '\n';
+  msg += '🆕 Leads hoy: ' + tot.leadsHoy + ' · ✅ Atendidos: ' + tot.atendidos + ' · ⏳ Sin tocar: ' + (sinTocar < 0 ? 0 : sinTocar) + '\n';
+  msg += '📅 Agendamientos hoy: ' + tot.agend + ' · 🏆 Cierres: ' + cierresN + (cierresN ? ' (S/ ' + Math.round(cierresMonto).toLocaleString('es-PE') + ')' : '') + '\n\n';
+  msg += '👥 *Por GP:*\n';
+  msg += L.ASESORES.map(a => {
+    const g = porGP[a], nom = primerNombreWA(a);
+    const partes = [g.leadsHoy + ' leads', g.atendidos + ' atend'];
+    if (g.agend) partes.push(g.agend + ' agend');
+    if (g.cierres) partes.push('🏆' + g.cierres);
+    const linea = nom + ' — ' + partes.join(' · ');
+    return (g.leadsHoy === 0 && g.atendidos === 0 && !g.agend && !g.cierres) ? null : linea;
+  }).filter(Boolean).join('\n');
+  return msg;
+}
+
+function enviarMatutinoWA() { const t = textoMatutinoWA(); if (t) enviarAlertaWA(t); }
+function enviarPulsoWA(horaLabel, emoji, titulo) { enviarAlertaWA(textoPulsoWA(horaLabel, emoji, titulo)); }
+
+// ===== Chequeo "¿atendido?" a los 10 min (solo leads en tiempo real, L-V 9am-6pm) =====
+const WA_PENDIENTES = []; // { codigo, asesor, nombre, ts }
+function enColaVerificacion(codigo, asesor, nombre) {
+  if (codigo && asesor) WA_PENDIENTES.push({ codigo, asesor, nombre: nombre || 'el lead', ts: Date.now() });
+}
+function esHorarioLaboralWA() {
+  const a = peruAhora(), d = a.getUTCDay(), h = a.getUTCHours();
+  return d >= 1 && d <= 5 && h >= 9 && h < 18; // Lunes a Viernes, 9am-6pm Perú
+}
+setInterval(() => {
+  const ahora = Date.now();
+  for (let i = WA_PENDIENTES.length - 1; i >= 0; i--) {
+    const p = WA_PENDIENTES[i];
+    if (ahora - p.ts < 10 * 60 * 1000) continue;   // aún no cumple 10 min
+    WA_PENDIENTES.splice(i, 1);                      // procesar una sola vez
+    try {
+      const tocado = db.prepare('SELECT 1 FROM gestiones WHERE codigo = ? LIMIT 1').get(p.codigo);
+      if (tocado) continue;                          // ya fue atendido -> silencio
+      if (!esHorarioLaboralWA()) continue;           // fuera de horario -> nada (lo recoge el saludo 9am)
+      const lead = db.prepare('SELECT archivado FROM leads WHERE codigo = ?').get(p.codigo);
+      if (!lead || lead.archivado) continue;         // lead ya no aplica
+      const gpCorto = String(p.asesor).trim().split(/\s+/)[0] || p.asesor;
+      enviarAlertaWA(`⚠️ *Sin atender (10 min)* — ${p.nombre}\n👤 ${gpCorto}, ¡no lo dejes enfriar! ⏱`);
+    } catch (e) { /* silencioso */ }
+  }
+}, 60 * 1000);
+
+setInterval(() => {
+  const a = peruAhora(), dia = a.toISOString().slice(0, 10), h = a.getUTCHours();
+  if (h === 9 && _waMatutino !== dia) { _waMatutino = dia; enviarMatutinoWA(); }
+  if (h === 13 && _waPulso13 !== dia) { _waPulso13 = dia; enviarPulsoWA('1:00 pm', '📊', 'Cómo va el equipo'); }
+  if (h === 18 && _waPulso18 !== dia) { _waPulso18 = dia; enviarPulsoWA('6:00 pm', '🌙', 'Cierre del día'); }
+}, 60 * 1000);
+
 // Endpoint para probar el envío manualmente (admin)
 app.post('/api/admin/reporte-prueba', soloAdmin, async (req, res) => {
   await enviarReporteDiario();
@@ -4197,13 +4334,15 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   const hoy = new Date(new Date().getTime() - 5 * 3600000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('/');
   const muestras = {
     conexion: `✅ *Prueba de conexión* — CRM → bot OK\n🕒 ${new Date(new Date().getTime() - 5 * 3600000).toLocaleString('es-PE')}`,
-    nuevo_lead: `🆕 *Nuevo lead* — Juan Pérez\n👤 Asignado a: *Mafer Lujan*\n📲 +51 999 888 777\n🎯 Camp. Junio-Inversión\n💰 Potencial: S/ 50,000\n⏱ ¡Contáctalo en los primeros minutos!`,
+    nuevo_lead: `🆕 *Nuevo lead* — Juan Pérez\n👤 Mafer · 💰 S/ 50,000`,
     venta: `🎉 *¡Cierre ganado!*\n👤 Mafer Lujan cerró a Juan Pérez\n💰 Monto: S/ 50,000\n👏 ¡Felicitaciones, equipo!`,
     tarea: `⏰ *Tarea vencida* — Mafer Lujan\n📌 Ana López · "Llamar para agendar"\n🗓 Venció hace 1 día\n👉 Reprográmala o gestiónala hoy.`,
-    ranking: `🏆 *Ranking del día* — ${hoy}\n🥇 Mafer Lujan — 120 pts\n🥈 Breezy Ortega — 95 pts\n🥉 Dora Barreto — 80 pts\n🎯 Equipo: 7/8 agendamientos · ¡Mañana lo cerramos! 💪`,
     libre: libre || '🔔 Mensaje de prueba desde el CRM.'
   };
-  const texto = muestras[tipo] || muestras.conexion;
+  let texto;
+  if (tipo === 'matutino') texto = textoMatutinoWA() || '☀️ (Prueba) Por ahora no hay leads sin atender.';
+  else if (tipo === 'pulso') texto = textoPulsoWA('(prueba)', '📊', 'Cómo va el equipo');
+  else texto = muestras[tipo] || muestras.conexion;
   const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
   if (!url || !token) return res.json({ ok: false, error: 'Faltan WA_BOT_URL / WA_BOT_TOKEN en Railway.' });
   await enviarAlertaWA(texto);
@@ -4211,7 +4350,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: destino, tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.192 (Alertas WhatsApp: helper enviarAlertaWA (POST /alerta al microservicio, falla en silencio, jid de pruebas mientras valido); 1a alerta cableada = lead nuevo + asignacion en procesarLeadMarketing; panel Pruebas WhatsApp en Auditoria (conexion + simular lead/venta/tarea/ranking + mensaje libre) via /api/admin/wa-prueba) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.194 (WhatsApp: pulso por fecha de asignacion; chequeo sin-atender a los 10 min (1 sola vez, con nombre de GP, solo L-V 9am-6pm, silencio fuera de horario) para leads en tiempo real; releads asignados en bloque -> 1 mensaje agregado por GP con monto (anti-spam), no entran al chequeo de 10 min) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
