@@ -1780,6 +1780,23 @@ app.post('/api/gestiones', (req, res) => {
       .run(g.codigo, etapaAntes || null, estadoFinal.etapa, ahoraISO, g.asesor);
   }
 
+  // Aviso WhatsApp instantaneo cuando se agenda/confirma/reprograma una reunion.
+  const TITULO_AGENDA = { 'Agendo reunion': '📅 *Reunión agendada*', 'Confirmo reunion': '✅ *Reunión confirmada*', 'Reprogramo reunion': '🔄 *Reunión reprogramada*' };
+  if (TITULO_AGENDA[g.resultado]) {
+    const fmtReunionWA = iso => {
+      if (!iso) return 'sin fecha';
+      const dd = new Date(new Date(iso).getTime() - 5 * 3600000);
+      const dias = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'], meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+      const fecha = dias[dd.getUTCDay()] + ' ' + dd.getUTCDate() + ' ' + meses[dd.getUTCMonth()];
+      let h = dd.getUTCHours(); const m = dd.getUTCMinutes();
+      if (h === 0 && m === 0) return fecha; // sin hora definida
+      const ap = h < 12 ? 'am' : 'pm'; let h12 = h % 12; if (h12 === 0) h12 = 12;
+      return fecha + ', ' + h12 + ':' + String(m).padStart(2, '0') + ' ' + ap;
+    };
+    const gpCorto = String(g.asesor).trim().split(/\s+/)[0] || g.asesor;
+    enviarAlertaWA(`${TITULO_AGENDA[g.resultado]} — ${lead.nombre}\n👤 ${gpCorto} · 🗓 ${fmtReunionWA(g.fechaReunion)}`);
+  }
+
   res.json(estadoFinal);
 });
 
@@ -2420,7 +2437,7 @@ app.get('/api/reparto', (req, res) => {
 
   // "Agendados hoy" = agendamientos HECHOS hoy (acto de agendar/confirmar/reprogramar),
   // misma métrica que el ranking. NO reuniones programadas para hoy desde días pasados.
-  const AGEND_RES = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'];
+  const AGEND_RES = ['Agendo reunion']; // "Agendados" = solo el acto de agendar (no confirmar/reprogramar)
   const agendHoyPorGP = {};
   gAll.forEach(g => {
     if (AGEND_RES.includes(g.resultado) && fechaPeruISO(new Date(g.fecha)) === hoyP) {
@@ -3463,9 +3480,9 @@ function construirRankingDia() {
   const META = 8; // meta GLOBAL del equipo: agendamientos del día (ya no es individual)
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const CALIF = ['Respondio - calificado', 'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva', 'En negociacion', 'Venta ganada'];
-  // Agendado de HOY: solo el acto de agendar/confirmar/reprogramar. NO reunión/negociación/cierre,
-  // porque esas vienen de agendamientos pasados y no evidencian gestión de hoy.
-  const AGEND = ['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'];
+  // Agendado de HOY: SOLO el acto de "Agendó reunión" (nuevo agendamiento).
+  // Confirmó -> pasa a reunión efectiva (seguimiento). Reprogramó -> no es un nuevo agendamiento.
+  const AGEND = ['Agendo reunion'];
   const m = {};
   // GPs ocultas del ranking (interruptor por usuario, sin tocar el código)
   const ocultas = new Set(
@@ -4504,6 +4521,83 @@ function textoPulsoWA(horaLabel, emoji, titulo) {
 function enviarMatutinoWA() { const t = textoMatutinoWA(); if (t) enviarAlertaWA(t); }
 function enviarPulsoWA(horaLabel, emoji, titulo) { enviarAlertaWA(textoPulsoWA(horaLabel, emoji, titulo)); }
 
+// Cierre del día (6pm): 2 reportes -> (1) gestión del día (leads trabajados hoy, nuevos + anteriores)
+// y (2) seguimiento (pipeline post-agendamiento). Más completo que el pulso de la 1pm.
+function textoCierreDiaWA() {
+  const hoy = peruFecha(new Date().toISOString());
+  const rk = construirRankingDia();
+  const rkPorGP = {}; (rk.ranking || []).forEach(r => rkPorGP[r.asesor] = r);
+  const ocultas = new Set(db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND COALESCE(rankingVisible,1)=0").all().map(u => u.nombre));
+  const VIS = (L.ASESORES || []).filter(a => !ocultas.has(a));
+
+  // ----- Reporte 1: Gestión del día (todos los leads trabajados hoy, no solo los nuevos) -----
+  const leadAsign = {};
+  db.prepare('SELECT codigo, fechaAsignacion, fechaCarga FROM leads').all().forEach(l => leadAsign[l.codigo] = l.fechaAsignacion || l.fechaCarga);
+  const gestSet = {}; // asesor -> Set(codigos gestionados hoy)
+  db.prepare('SELECT codigo, asesor, fecha FROM gestiones').all().forEach(g => {
+    if (peruFecha(g.fecha) !== hoy) return;
+    if (!g.asesor || ocultas.has(g.asesor)) return;
+    (gestSet[g.asesor] = gestSet[g.asesor] || new Set()).add(g.codigo);
+  });
+  const gestPorGP = {}; VIS.forEach(a => gestPorGP[a] = { total: 0, hoy: 0, ant: 0 });
+  Object.entries(gestSet).forEach(([a, set]) => {
+    if (!gestPorGP[a]) gestPorGP[a] = { total: 0, hoy: 0, ant: 0 };
+    set.forEach(cod => {
+      gestPorGP[a].total++;
+      const fa = leadAsign[cod];
+      if (fa && peruFecha(fa) === hoy) gestPorGP[a].hoy++; else gestPorGP[a].ant++;
+    });
+  });
+  const t1 = { total: 0, hoy: 0, ant: 0, llam: 0, conx: 0, calif: 0, agend: 0 };
+  VIS.forEach(a => {
+    const g = gestPorGP[a] || {}, r = rkPorGP[a] || {};
+    t1.total += g.total || 0; t1.hoy += g.hoy || 0; t1.ant += g.ant || 0;
+    t1.llam += r.llamadas || 0; t1.conx += r.conectados || 0; t1.calif += r.calificados || 0; t1.agend += r.agendados || 0;
+  });
+
+  // ----- Reporte 2: Seguimiento (pipeline post-agendamiento) -----
+  const gFull = db.prepare('SELECT * FROM gestiones ORDER BY fecha').all();
+  const gByCod = {}; gFull.forEach(x => (gByCod[x.codigo] = gByCod[x.codigo] || []).push(x));
+  const activos = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND COALESCE(cuarentena,0)=0').all().map(l => leadConsolidado(l, gByCod[l.codigo] || []));
+  const num = v => Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, '')) || 0;
+  const montoLead = l => Number(l.pipelineEstimado) || num(l.montoPotencial);
+  const segPorGP = {}; VIS.forEach(a => segPorGP[a] = { ag: 0, reu: 0, neg: 0 });
+  const t2 = { ag: 0, reu: 0, neg: 0 }; let cierresN = 0, cierresMonto = 0;
+  activos.forEach(l => {
+    if (l.asesor && ocultas.has(l.asesor)) return;
+    const dest = (l.asesor && segPorGP[l.asesor]) ? segPorGP[l.asesor] : null;
+    if (l.etapa === 'Agendado - pendiente reunion') { t2.ag++; if (dest) dest.ag++; }
+    else if (l.etapa === 'Reunion efectiva - seguimiento') { t2.reu++; if (dest) dest.reu++; }
+    else if (l.etapa === 'Cierre pendiente') { t2.neg++; if (dest) dest.neg++; }
+    if (l.etapa === 'Cerrado ganado' && peruFecha(l.ultimaGestion || l.fechaCarga) === hoy) { cierresN++; cierresMonto += montoLead(l); }
+  });
+
+  // ----- Armado -----
+  let msg = 'Buenas tardes, equipo 👋\n🌙 *Cierre del día* — 6:00 pm\n\n';
+  msg += '📊 *Gestión del día*\n';
+  msg += '👥 Leads gestionados: ' + t1.total + ' (' + t1.hoy + ' hoy · ' + t1.ant + ' anteriores)\n';
+  msg += '📞 Llamadas: ' + t1.llam + '\n🔗 Conexiones: ' + t1.conx + '\n⭐ Calificados: ' + t1.calif + '\n📅 Agendados: ' + t1.agend + '\n';
+  const l1 = VIS.map(a => {
+    const g = gestPorGP[a] || {}, r = rkPorGP[a] || {};
+    if (!(g.total) && !(r.llamadas) && !(r.agendados)) return null;
+    return primerNombreWA(a) + ' — ' + (g.total || 0) + ' leads · ' + (r.llamadas || 0) + ' llam · ' + (r.conectados || 0) + ' conex · ' + (r.calificados || 0) + ' calif · ' + (r.agendados || 0) + ' agend';
+  }).filter(Boolean);
+  if (l1.length) msg += '\n👤 *Por GP:*\n' + l1.join('\n') + '\n';
+
+  msg += '\n🔭 *Seguimiento (pipeline)*\n';
+  msg += '📅 Agendados x reunir: ' + t2.ag + '\n🤝 En reunión: ' + t2.reu + '\n💼 En negociación: ' + t2.neg + '\n';
+  msg += '🏆 Cierres hoy: ' + cierresN + (cierresN ? ' (S/ ' + Math.round(cierresMonto).toLocaleString('es-PE') + ')' : '') + '\n';
+  const l2 = VIS.map(a => {
+    const s = segPorGP[a] || {};
+    if (!s.ag && !s.reu && !s.neg) return null;
+    return primerNombreWA(a) + ' — 📅' + (s.ag || 0) + ' 🤝' + (s.reu || 0) + ' 💼' + (s.neg || 0);
+  }).filter(Boolean);
+  if (l2.length) msg += '\n👤 *Por GP:*\n' + l2.join('\n') + '\n';
+
+  msg += '\n💪 ¡Buen cierre, mañana lo rematamos!';
+  return msg;
+}
+
 // ===== Chequeo "¿atendido?" a los 10 min (solo leads en tiempo real, L-V 9am-6pm) =====
 const WA_PENDIENTES = []; // { codigo, asesor, nombre, ts }
 function enColaVerificacion(codigo, asesor, nombre) {
@@ -4535,7 +4629,7 @@ setInterval(() => {
   const a = peruAhora(), dia = a.toISOString().slice(0, 10), h = a.getUTCHours();
   if (h === 9 && kvGet('wa_matutino') !== dia) { kvSet('wa_matutino', dia); enviarMatutinoWA(); }
   if (h === 13 && kvGet('wa_pulso13') !== dia) { kvSet('wa_pulso13', dia); enviarPulsoWA('1:00 pm', '📊', 'Cómo Vamos'); }
-  if (h === 18 && kvGet('wa_pulso18') !== dia) { kvSet('wa_pulso18', dia); enviarPulsoWA('6:00 pm', '🌙', 'Cómo Vamos'); }
+  if (h === 18 && kvGet('wa_pulso18') !== dia) { kvSet('wa_pulso18', dia); enviarAlertaWA(textoCierreDiaWA()); }
 }, 60 * 1000);
 
 // Endpoint para probar el envío manualmente (admin)
@@ -4559,6 +4653,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   let texto;
   if (tipo === 'matutino') texto = textoMatutinoWA() || '☀️ (Prueba) Por ahora no hay leads sin atender.';
   else if (tipo === 'pulso') texto = textoPulsoWA(null, '📊', 'Cómo Vamos');
+  else if (tipo === 'cierre') texto = textoCierreDiaWA();
   else texto = muestras[tipo] || muestras.conexion;
   const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
   if (!url || !token) return res.json({ ok: false, error: 'Faltan WA_BOT_URL / WA_BOT_TOKEN en Railway.' });
@@ -4570,7 +4665,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.202 (Depuracion 3x5: sabado OPCIONAL en el conteo de dias habiles -> por defecto NO cuenta (contrato L-V, evita presionar/riesgo legal), activable como trabajo voluntario con checkbox persistente; gestiones en dia no habil no suman al 3x5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.205 (Agendamiento afinado: Agendados cuenta SOLO Agendo reunion (ranking, pulso, cierre, Control por GP); Confirmo reunion ahora mueve el lead a etapa Reunion efectiva (seguimiento); Reprogramo se queda en Agendado pero no suma como nuevo agendamiento) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

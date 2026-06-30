@@ -241,9 +241,9 @@ function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
   if (r === 'Venta ganada') return 'Cerrado ganado';
   if (['Respondio - no interesado', 'Respondio - no califica', 'Desistio', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(r)) return 'Cerrado perdido';
   if (r === 'Cierre pendiente' || r === 'En negociacion') return 'Cierre pendiente';
-  if (r === 'Reunion efectiva' || r === 'Seguimiento post reunion' || r === 'Evaluando' || estadoReunion === 'Efectiva') return 'Reunion efectiva - seguimiento';
-  if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(r) ||
-      ['Agendada', 'Confirmada', 'Reprogramada'].includes(estadoReunion)) return 'Agendado - pendiente reunion';
+  if (r === 'Reunion efectiva' || r === 'Confirmo reunion' || r === 'Seguimiento post reunion' || r === 'Evaluando' || estadoReunion === 'Efectiva' || estadoReunion === 'Confirmada') return 'Reunion efectiva - seguimiento';
+  if (['Agendo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(r) ||
+      ['Agendada', 'Reprogramada'].includes(estadoReunion)) return 'Agendado - pendiente reunion';
   // Seguimiento post contacto: aun no hay reunion, se mantiene en calificado.
   if (r === 'Seguimiento post contacto') return 'Calificado - pendiente agendar';
   // Si el ultimo resultado significativo es "respondio sin calificar", el lead esta
@@ -665,8 +665,8 @@ function etapaDeGestion(resultado) {
   if (resultado === 'Venta ganada') return 'Cerrado ganado';
   if (['Respondio - no interesado', 'Respondio - no califica', 'Desistio', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'].includes(resultado)) return 'Cerrado perdido';
   if (resultado === 'Cierre pendiente' || resultado === 'En negociacion') return 'Cierre pendiente';
-  if (resultado === 'Reunion efectiva' || resultado === 'Seguimiento post reunion' || resultado === 'Evaluando') return 'Reunion efectiva - seguimiento';
-  if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(resultado)) return 'Agendado - pendiente reunion';
+  if (resultado === 'Reunion efectiva' || resultado === 'Confirmo reunion' || resultado === 'Seguimiento post reunion' || resultado === 'Evaluando') return 'Reunion efectiva - seguimiento';
+  if (['Agendo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(resultado)) return 'Agendado - pendiente reunion';
   if (['Respondio - calificado', 'Respondio - interesado'].includes(resultado)) return 'Calificado - pendiente agendar';
   if (['Respondio - no pudo hablar', 'Respondio - sin calificar',
        'Respondio - pidio informacion'].includes(resultado)) return 'Contactado - por calificar';
