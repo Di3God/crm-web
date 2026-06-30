@@ -436,6 +436,19 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); 
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch (e) { }
+// Campos nuevos B2B: monto en rango (Meta/TikTok), SUNARP y ubicación del inmueble, atribución de anuncio.
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN montoRango TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN departamentoInmueble TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN conjunto TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN anuncio TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN adId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN montoRango TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
 // Atribución completa de marketing (conjunto = adset, anuncio = ad)
 try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
@@ -977,6 +990,22 @@ function normalizarTelefonoB2B(t) {
 }
 // Normaliza el payload del webhook B2B. Acepta claves limpias (ruc, telefono, email, monto…)
 // y cae a heurística para landings tipo Elementor (email por regex, garantía por nombre de campo).
+// Convierte un rango de texto ("De S/ 50 mil a S/ 1 millón") al límite inferior numérico (50000).
+// Toma el PRIMER número con multiplicador (mil/millón) = piso del rango en soles.
+function rangoANumero(txt) {
+  if (!txt) return null;
+  const t = String(txt).toLowerCase().replace(/_/g, ' ');
+  const m = t.match(/(\d+(?:[.,]\d+)?)\s*(mill[oó]n(?:es)?|mil)/);
+  if (m) {
+    let n = parseFloat(m[1].replace(/,/g, '.'));
+    if (!isFinite(n)) return null;
+    n *= m[2].startsWith('mill') ? 1000000 : 1000;
+    return Math.round(n);
+  }
+  const solo = Number(String(txt).replace(/[^0-9]/g, ''));
+  return isFinite(solo) && solo >= 1000 ? solo : null;
+}
+
 function normalizarB2B(origen, body) {
   const b = body || {};
   const keys = Object.keys(b);
@@ -991,7 +1020,7 @@ function normalizarB2B(origen, body) {
     for (const k of keys) { if (re.test(String(b[k] || '').trim())) { email = String(b[k]).trim(); break; } }
   }
   const telefono = normalizarTelefonoB2B(val('telefono', 'Telefono', 'celular', 'Celular', 'phone'));
-  const ruc = val('ruc', 'RUC');
+  const ruc = val('ruc', 'RUC', 'ruc_empresa', 'rucEmpresa', 'RUC de la empresa');
   // monto: clave directa; si no, barrido excluyendo RUC, teléfono, DNI y números con pinta de esos.
   let montoRaw = val('monto', 'montoSolicitado', 'Monto');
   if (!montoRaw) {
@@ -999,18 +1028,23 @@ function normalizarB2B(origen, body) {
     for (const k of keys) {
       const kl = k.toLowerCase();
       if (kl.includes('ruc') || kl.includes('telefono') || kl.includes('celular') || kl.includes('phone') || kl.includes('dni')) continue;
+      // Evitar IDs de anuncio, el rango (Capital Requerido), atribución y área: no son el monto.
+      if (kl.includes('anuncio') || kl.includes('conjunto') || kl.includes('campan') || kl.includes('campañ')
+        || kl.includes('formulario') || kl.includes('utm') || kl.includes('capital') || kl.includes('requerido')
+        || kl.includes('area') || kl.includes('área') || kl.includes('sunarp') || kl.includes('inmueble')
+        || kl.includes('propiedad') || kl.includes('garant') || kl.includes('adid')) continue;
       const digits = String(b[k]).replace(/[^0-9.]/g, '');
       const entero = digits.replace(/\./g, '');
       const n = Number(digits);
       if (!isFinite(n) || n < 10000) continue;
-      if (entero.length === 11 || entero.length === 9) continue; // pinta de RUC o teléfono
+      if (entero.length === 11 || entero.length === 9 || entero.length > 12) continue; // RUC, teléfono o ID de anuncio
       if (entero === ruc || entero === telRaw) continue;
       montoRaw = String(b[k]); break;
     }
   }
-  const monto = montoRaw != null ? (Number(String(montoRaw).replace(/[^0-9.]/g, '')) || null) : null;
+  let monto = montoRaw != null ? (Number(String(montoRaw).replace(/[^0-9.]/g, '')) || null) : null;
   // nombre/contacto: si coincide con el teléfono (error típico de landing), se ignora
-  let contacto = val('contacto', 'nombre', 'Nombre', 'nombres');
+  let contacto = val('contacto', 'nombre', 'Nombre', 'nombres', 'Nombres', 'persona_contacto', 'Persona de Contacto');
   if (contacto && normalizarTelefonoB2B(contacto) === telefono) contacto = null;
   // garantía: por nombre de campo (preguntas largas del formulario)
   let tieneInmueble = val('tieneInmueble', 'tiene_inmueble');
@@ -1020,14 +1054,34 @@ function normalizarB2B(origen, body) {
     const kl = k.toLowerCase();
     if (!tieneInmueble && (kl.includes('propiedad') || kl.includes('cuenta con'))) tieneInmueble = String(b[k]).trim();
     if (!tipoInmueble && kl.includes('tipo') && kl.includes('inmueble')) tipoInmueble = String(b[k]).trim();
+    if (!areaInmueble && (kl.includes('area') || kl.includes('área')) && kl.includes('inmueble')) areaInmueble = String(b[k]).trim();
   }
+  // Monto en rango (Meta/TikTok: "Capital Requerido" llega como texto, p.ej. "De S/ 50 mil a S/ 299 mil")
+  let montoRango = val('montoRango', 'monto_rango', 'capitalRequerido', 'capital_requerido', 'rangoMonto');
+  if (!montoRango) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('capital') || kl.includes('requerido')) { montoRango = String(b[k]).trim(); break; } } }
+  // Si no vino monto numérico pero sí un rango, estimamos el piso del rango para tener ticket.
+  if (monto == null && montoRango) { const est = rangoANumero(montoRango); if (est) monto = est; }
+  // Registrado en SUNARP (landing)
+  let registradoSunarp = val('registradoSunarp', 'registrado_sunarp', 'sunarp');
+  if (!registradoSunarp) { for (const k of keys) { if (k.toLowerCase().includes('sunarp')) { registradoSunarp = String(b[k]).trim(); break; } } }
+  // Departamento/ubicación del inmueble (Meta/TikTok Pregunta 2). OJO: es ubicación geográfica, NO el tipo.
+  let departamentoInmueble = val('departamentoInmueble', 'departamento_inmueble', 'ubicacionInmueble', 'ubicacion_inmueble');
+  if (!departamentoInmueble) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('departamento') || (kl.includes('encuentra') && kl.includes('inmueble'))) { departamentoInmueble = String(b[k]).trim(); break; } } }
+  // Atribución de anuncio (Meta/TikTok)
+  let conjunto = val('conjunto', 'conjunto_anuncio', 'conjuntoAnuncio', 'adset', 'adSet', 'utm_term', 'utmTerm', 'Conjunto de Anuncio');
+  let anuncio = val('anuncio', 'Anuncio', 'ad', 'utm_content', 'utmContent');
+  const adId = val('adId', 'ad_id', 'idAnuncio', 'id_anuncio', 'ID Anuncio');
+  if (!conjunto) { for (const k of keys) { if (k.toLowerCase().includes('conjunto')) { conjunto = String(b[k]).trim(); break; } } }
+  if (!anuncio) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('anuncio') && !kl.includes('conjunto') && !kl.includes('id')) { anuncio = String(b[k]).trim(); break; } } }
+  const campana = val('campana', 'campaign', 'Campaña', 'campaña', 'utm_campaign', 'utmCampaign');
   return {
     origen: String(origen || 'landing').toLowerCase(),
     ruc,
     razonSocial: val('razonSocial', 'razon_social', 'empresa', 'Empresa', 'razonsocial'),
-    contacto, telefono, email, monto,
-    tieneInmueble, tipoInmueble, areaInmueble,
-    formulario: val('form_name', 'formulario', 'form_id'),
+    contacto, telefono, email, monto, montoRango,
+    tieneInmueble, tipoInmueble, areaInmueble, registradoSunarp, departamentoInmueble,
+    formulario: val('form_name', 'formulario', 'form_id', 'Formulario'),
+    campana, conjunto, anuncio, adId,
     utmSource: val('utm_source', 'utmSource'),
     utmMedium: val('utm_medium', 'utmMedium'),
     utmCampaign: val('utm_campaign', 'utmCampaign'),
@@ -1039,13 +1093,15 @@ function normalizarB2B(origen, body) {
 // Guarda el ingreso bruto B2B en la bandeja (nada se pierde).
 function guardarIngresoB2B(norm, estado, mensajeError, codigoSolicitud, asignadoA) {
   const r = db.prepare(`INSERT INTO b2b_ingresos
-    (fechaRecepcion,origen,estado,ruc,razonSocial,contacto,telefono,email,monto,
-     tieneInmueble,tipoInmueble,areaInmueble,formulario,utmSource,utmMedium,utmCampaign,
+    (fechaRecepcion,origen,estado,ruc,razonSocial,contacto,telefono,email,monto,montoRango,
+     tieneInmueble,tipoInmueble,areaInmueble,registradoSunarp,departamentoInmueble,
+     formulario,utmSource,utmMedium,utmCampaign,conjunto,anuncio,adId,
      codigoSolicitud,asignadoA,mensajeError,rawJson)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(new Date().toISOString(), norm.origen, estado, norm.ruc, norm.razonSocial, norm.contacto,
-      norm.telefono, norm.email, norm.monto, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
-      norm.formulario, norm.utmSource, norm.utmMedium, norm.utmCampaign,
+      norm.telefono, norm.email, norm.monto, norm.montoRango, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
+      norm.registradoSunarp, norm.departamentoInmueble,
+      norm.formulario, norm.utmSource, norm.utmMedium, norm.utmCampaign, norm.conjunto, norm.anuncio, norm.adId,
       codigoSolicitud || null, asignadoA || null, mensajeError || null, norm.rawJson);
   return r.lastInsertRowid;
 }
@@ -1074,11 +1130,14 @@ function procesarSolicitudB2B(norm, opts = {}) {
   const ticket = norm.monto != null ? ticketDeMonto(norm.monto) : null;
   const op = opts.sinAutoasignar ? null : elegirOperadorB2BRoundRobin();
   db.prepare(`INSERT INTO b2b_solicitudes
-    (codigo, ruc, razonSocial, contacto, telefono, email, fuente, montoSolicitado, ticket,
-     tieneInmueble, tipoInmueble, areaInmueble, estado, asistente, responsableActual, fechaIngreso)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    (codigo, ruc, razonSocial, contacto, telefono, email, fuente, montoSolicitado, montoRango, ticket,
+     tieneInmueble, tipoInmueble, areaInmueble, registradoSunarp, departamentoInmueble,
+     campana, conjunto, anuncio, adId, estado, asistente, responsableActual, fechaIngreso)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, norm.ruc, norm.razonSocial, norm.contacto, norm.telefono, norm.email, norm.origen,
-      norm.monto, ticket, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
+      norm.monto, norm.montoRango, ticket, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
+      norm.registradoSunarp, norm.departamentoInmueble,
+      norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
   enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano (no bloquea el webhook)
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
@@ -1672,6 +1731,26 @@ app.get('/api/leads', (req, res) => {
     (new Date(a.fechaProxAccion || '9999') - new Date(b.fechaProxAccion || '9999'))
   );
   res.json(lista);
+});
+
+// Reuniones agendadas (programadas, aún no realizadas), ordenadas por fecha/hora.
+// estadoReunion 'Agendada' = agendó/confirmó/reprogramó (pendiente); 'Efectiva' = ya se realizó (se excluye).
+app.get('/api/reuniones', (req, res) => {
+  let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND COALESCE(cuarentena,0)=0').all();
+  if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
+  const AGEND_ACTS = { 'Agendo reunion': 'Agendada', 'Confirmo reunion': 'Confirmada', 'Reprogramo reunion': 'Reprogramada' };
+  const out = [];
+  leads.forEach(l => {
+    const gs = gestionesDeLead(l.codigo);
+    const c = L.consolidarLead(l, gs);
+    if (!c.fechaReunion || c.estadoReunion !== 'Agendada') return;
+    if (c.etapa === 'Cerrado ganado' || c.etapa === 'Cerrado perdido') return;
+    let estadoLabel = 'Agendada';
+    for (let i = gs.length - 1; i >= 0; i--) { if (AGEND_ACTS[gs[i].resultado]) { estadoLabel = AGEND_ACTS[gs[i].resultado]; break; } }
+    out.push({ codigo: l.codigo, nombre: l.nombre, telefono: l.telefono, asesor: l.asesor, etapa: c.etapa, estadoLabel, fechaReunion: c.fechaReunion });
+  });
+  out.sort((a, b) => new Date(a.fechaReunion) - new Date(b.fechaReunion));
+  res.json({ reuniones: out });
 });
 
 app.get('/api/leads/:codigo', (req, res) => {
@@ -4665,7 +4744,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.205 (Agendamiento afinado: Agendados cuenta SOLO Agendo reunion (ranking, pulso, cierre, Control por GP); Confirmo reunion ahora mueve el lead a etapa Reunion efectiva (seguimiento); Reprogramo se queda en Agendado pero no suma como nuevo agendamiento) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.207 (Nueva vista B2C Reuniones agendadas: lista todas las reuniones programadas (estadoReunion Agendada) ordenadas por fecha/hora, con estado Agendada/Confirmada/Reprogramada, GP, telefono, badges Hoy/Paso; endpoint GET /api/reuniones con scope por rol (GP ve solo las suyas); item de menu Reuniones en B2C) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

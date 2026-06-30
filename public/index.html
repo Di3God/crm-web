@@ -21,6 +21,7 @@
       <button class="mundo-btn" onclick="toggleMundo('B2C', event)"><span class="mundo-ic">👥</span> B2C <span class="tu-caret">▾</span></button>
       <div class="mundo-menu oculto" id="menuB2C">
         <button class="mundo-item oculto" id="mi-leads" onclick="navB2C('leads')">Mis Leads</button>
+        <button class="mundo-item oculto" id="mi-reuniones" onclick="navB2C('reuniones')">Reuniones</button>
         <button class="mundo-item oculto" id="mi-chat" onclick="navB2C('chat')">Mensajería</button>
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
@@ -385,6 +386,13 @@
   </section>
 
   <!-- ===== AUDITORIA (solo admin) ===== -->
+  <section id="v-reuniones" class="vista">
+    <div class="barra">
+      <h2>Reuniones agendadas</h2>
+      <span id="reuResumen" class="sub" style="margin-left:auto;color:var(--muted)"></span>
+    </div>
+    <div id="reuTabla"></div>
+  </section>
   <section id="v-audit" class="vista">
     <div class="barra">
       <h2>Auditoría y administración</h2>

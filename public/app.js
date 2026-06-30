@@ -539,13 +539,13 @@ async function arrancar() {
   const r = YO.rol;
   if (r === 'admin') {
     verMundo('B2C'); verMundo('B2B');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
+    ver(['mi-leads', 'mi-reuniones', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
-    verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-reuniones']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
+    verMundo('B2C'); ver(['mi-leads', 'mi-reuniones', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -607,6 +607,7 @@ function ir(v) {
   if (v === 'releads') cargarReleads();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
+  if (v === 'reuniones') cargarReuniones();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
   if (v === 'atribucion') cargarMarketing();
@@ -3067,6 +3068,43 @@ function irALead(codigo) {
   if (l) { setTimeout(() => { try { verTrazabilidad(codigo); } catch (e) {} }, 200); }
 }
 
+// ===== Vista: Reuniones agendadas (ordenadas por fecha/hora) =====
+async function cargarReuniones() {
+  const cont = $('reuTabla'); if (!cont) return;
+  cont.innerHTML = '<div class="cargando" style="padding:24px;color:var(--muted)">Cargando…</div>';
+  let d;
+  try { d = await api('/api/reuniones'); } catch (e) { cont.innerHTML = '<div style="padding:24px;color:var(--muted)">No se pudo cargar.</div>'; return; }
+  const rs = d.reuniones || [];
+  const resumen = $('reuResumen');
+  if (!rs.length) {
+    if (resumen) resumen.textContent = '';
+    cont.innerHTML = '<div style="padding:24px;color:var(--muted)">No hay reuniones agendadas por ahora.</div>';
+    return;
+  }
+  const ahora = new Date();
+  const hoyClave = fmtFechaHora(new Date().toISOString()).slice(0, 10); // dd/mm/yyyy
+  let pasadas = 0, hoyN = 0;
+  const estPill = { 'Confirmada': '#1D9E75', 'Reprogramada': '#EF9F27', 'Agendada': '#0B72E8' };
+  const filas = rs.map(r => {
+    const f = new Date(r.fechaReunion);
+    const vencida = f < ahora;
+    const esHoy = fmtFechaHora(r.fechaReunion).slice(0, 10) === hoyClave;
+    if (vencida && !esHoy) pasadas++; if (esHoy) hoyN++;
+    const badge = (vencida && !esHoy) ? '<span class="badge-venc">⚠ Pasó</span>'
+      : (esHoy ? '<span class="tz-pill rosa">Hoy</span>' : '');
+    const cEst = estPill[r.estadoLabel] || '#6B7A8D';
+    return '<tr>' +
+      '<td><b>' + fmtFechaHora(r.fechaReunion) + '</b> ' + badge + '</td>' +
+      '<td onclick="irALead(\'' + r.codigo + '\')" style="cursor:pointer"><b style="color:var(--azul)">' + (r.nombre || r.codigo) + '</b></td>' +
+      '<td>' + (r.asesor || '—') + '</td>' +
+      '<td><span class="b2b-pill" style="background:' + cEst + '22;color:' + cEst + '">' + (r.estadoLabel || 'Agendada') + '</span></td>' +
+      '<td>' + (r.telefono || '—') + '</td>' +
+      '</tr>';
+  }).join('');
+  if (resumen) resumen.textContent = rs.length + ' reunión(es)' + (hoyN ? ' · ' + hoyN + ' hoy' : '') + (pasadas ? ' · ' + pasadas + ' por actualizar' : '');
+  cont.innerHTML = '<table class="tabla"><thead><tr><th>Fecha y hora</th><th>Lead</th><th>GP</th><th>Estado</th><th>Teléfono</th></tr></thead><tbody>' + filas + '</tbody></table>';
+}
+
 // ---- Tiempo real del chat: SSE (escucha webhooks de Chatwoot) ----
 let CHAT_SSE = null, CHAT_LISTA_PEND = null;
 function iniciarChatSSE() {
@@ -4273,7 +4311,7 @@ async function eliminarB2B(codigo, nombre) {
 
 // ========================= FICHA DE SOLICITUD B2B =========================
 let FICHA = null;          // datos cargados de la ficha actual
-let FICHA_ETAPA_OPEN = 'garantia';  // etapa abierta en el acordeón
+let FICHA_ETAPA_OPEN = 'solicitud';  // etapa abierta en el acordeón
 
 const FB_CHECKLIST_GARANTIA = [
   ['tipo', 'Tipo de inmueble identificado'],
@@ -4312,6 +4350,7 @@ function renderFichaB2B() {
   const finanzasDesbloqueada = semGarantia === 'Verde' || ['Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
 
   const panels = [
+    panelSolicitud(s),
     panelEmpresa(s),
     panelCredito(semCredito),
     panelGarantia(garantiaDesbloqueada, semGarantia),
@@ -4326,6 +4365,35 @@ function fbPill(sem) {
   if (!sem) return '';
   const c = { Verde: '#1D9E75', Amarillo: '#EF9F27', Rojo: '#E24B4A' }[sem] || '#888';
   return '<span class="b2b-pill" style="background:' + c + '22;color:' + c + '">' + sem + '</span>';
+}
+
+function panelSolicitud(s) {
+  const open = FICHA_ETAPA_OPEN === 'solicitud';
+  let cuerpo = '';
+  if (open) {
+    const montoStr = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
+    const montoExtra = (s.montoSolicitado != null && s.montoRango) ? ' <span class="sub">(' + s.montoRango + ')</span>' : '';
+    const garantia = '<div class="fb-sec">Garantía declarada</div>' +
+      fbCampo('¿Tiene inmueble?', s.tieneInmueble) +
+      fbCampoOpt('Tipo de inmueble', s.tipoInmueble) +
+      fbCampoOpt('Área (m²)', s.areaInmueble) +
+      fbCampoOpt('Registrado SUNARP', s.registradoSunarp) +
+      fbCampoOpt('Ubicación del inmueble', s.departamentoInmueble);
+    const marketing = '<div class="fb-sec">Origen / Marketing</div>' +
+      fbCampo('Fuente', s.fuente) +
+      fbCampoOpt('Campaña', s.campana) +
+      fbCampoOpt('Conjunto', s.conjunto) +
+      fbCampoOpt('Anuncio', s.anuncio) +
+      fbCampoOpt('ID anuncio', s.adId) +
+      fbCampoOpt('Formulario', s.formulario);
+    cuerpo = '<div class="fb-body">' +
+      fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampo('Email', s.email) +
+      fbCampo('Monto solicitado', montoStr + montoExtra) +
+      fbCampoOpt('Destino de fondos', s.destinoFondos) +
+      garantia + marketing +
+      '</div>';
+  }
+  return fbPanelWrap('solicitud', '📥', 'Solicitud (del formulario)', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
 }
 
 function panelEmpresa(s) {
@@ -4526,6 +4594,9 @@ function sincronizarFichaDOM() {
 
 function fbCampo(label, val) {
   return '<div class="fb-campo"><span>' + label + '</span><b>' + (val || '—') + '</b></div>';
+}
+function fbCampoOpt(label, val) {
+  return (val != null && String(val).trim() !== '') ? fbCampo(label, val) : '';
 }
 function fbInput(id, label, val, tipo) {
   return '<label class="fb-in"><span>' + label + '</span><input id="fb_' + id + '" type="' + (tipo || 'text') + '" value="' + (val != null ? String(val).replace(/"/g, '&quot;') : '') + '"></label>';
