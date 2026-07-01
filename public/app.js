@@ -4690,8 +4690,65 @@ function renderFichaB2B() {
     panelFinanzas(finanzasDesbloqueada, semFinanzas),
     panelBusinessCase(bcDesbloqueada)
   ];
-  $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('');
+  $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('') + panelGestionesB2B(s);
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });  // el resaltado solo en el primer render
+  cargarGestionesB2B(s.codigo);
+}
+
+// ===== Bitácora de gestiones (trazabilidad, próxima acción obligatoria) =====
+function panelGestionesB2B(s) {
+  const open = FICHA_ETAPA_OPEN === 'gestiones';
+  if (!open) return fbPanelWrap('gestiones', '🗒️', 'Registro de gestión', '<span class="sub">trazabilidad</span>', false, '');
+  const hoy = new Date().toISOString().slice(0, 16);
+  const form = '<div class="fb-body"><div class="fb-gest-form">' +
+    '<div class="mtr-row"><span class="mtr-lbl">Canal</span><span class="mtr-ctrl"><select id="gestCanal" class="mtr-in"><option value="Llamada">Llamada</option><option value="WhatsApp">WhatsApp</option><option value="Correo">Correo</option><option value="Reunión">Reunión</option><option value="Otro">Otro</option></select></span></div>' +
+    '<div class="mtr-row"><span class="mtr-lbl">Resultado</span><span class="mtr-ctrl"><input id="gestResultado" class="mtr-in" style="max-width:none;width:220px" placeholder="Qué pasó en esta gestión"></span></div>' +
+    '<div class="mtr-row"><span class="mtr-lbl">Comentario</span><span class="mtr-ctrl"><input id="gestComentario" class="mtr-in" style="max-width:none;width:220px" placeholder="Detalle (opcional)"></span></div>' +
+    '<div class="fb-sec">Próxima acción (obligatoria)</div>' +
+    '<div class="mtr-row"><span class="mtr-lbl">¿Qué sigue?</span><span class="mtr-ctrl"><input id="gestProxAccion" class="mtr-in" style="max-width:none;width:220px" placeholder="Ej. Pedir copia literal"></span></div>' +
+    '<div class="mtr-row"><span class="mtr-lbl">¿Cuándo?</span><span class="mtr-ctrl"><input id="gestProxFecha" type="datetime-local" class="mtr-in" value="' + hoy + '"></span></div>' +
+    '<div class="error" id="gestMsg"></div>' +
+    '<div class="fb-acc"><button class="btn" onclick="registrarGestionB2B()">Registrar gestión</button></div>' +
+    '</div><div class="fb-sec">Historial</div><div id="fbGestLista"><div class="sub">Cargando…</div></div></div>';
+  return fbPanelWrap('gestiones', '🗒️', 'Registro de gestión', '<span class="sub">trazabilidad</span>', true, form);
+}
+async function cargarGestionesB2B(codigo) {
+  const cont = $('fbGestLista'); if (!cont) return;
+  try {
+    const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/gestiones');
+    const g = d.gestiones || [];
+    if (!g.length) { cont.innerHTML = '<div class="sub">Sin gestiones registradas.</div>'; return; }
+    cont.innerHTML = g.map(x => {
+      const f = new Date(x.fecha), fp = x.fechaProxAccion ? new Date(x.fechaProxAccion) : null;
+      const fFmt = f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const fpFmt = fp ? fp.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+      return '<div class="fb-gest-item">' +
+        '<div class="fb-gest-top"><b>' + (x.canal || 'Gestión') + '</b> · ' + (x.resultado || '—') + '<span class="fb-gest-fecha">' + fFmt + ' · ' + primerNombre(x.responsable || '') + '</span></div>' +
+        (x.comentario ? '<div class="fb-gest-com">' + x.comentario + '</div>' : '') +
+        '<div class="fb-gest-prox">➡ <b>' + (x.proximaAccion || '') + '</b> · 📅 ' + fpFmt + '</div>' +
+        '</div>';
+    }).join('');
+  } catch (e) { cont.innerHTML = '<div class="sub">No se pudo cargar el historial.</div>'; }
+}
+async function registrarGestionB2B() {
+  const proximaAccion = ($('gestProxAccion') && $('gestProxAccion').value || '').trim();
+  const fechaProxAccion = ($('gestProxFecha') && $('gestProxFecha').value || '').trim();
+  const msg = $('gestMsg');
+  if (!proximaAccion) { if (msg) msg.textContent = 'Define la próxima acción.'; return; }
+  if (!fechaProxAccion) { if (msg) msg.textContent = 'Define la fecha de la próxima acción.'; return; }
+  try {
+    const body = {
+      canal: $('gestCanal').value, resultado: $('gestResultado').value.trim(),
+      comentario: $('gestComentario').value.trim(), proximaAccion,
+      fechaProxAccion: new Date(fechaProxAccion).toISOString(), etapa: FICHA.solicitud.estado
+    };
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/gestiones', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    $('gestResultado').value = ''; $('gestComentario').value = ''; $('gestProxAccion').value = '';
+    if (msg) msg.textContent = '';
+    cargarGestionesB2B(FICHA.solicitud.codigo);
+  } catch (e) { if (msg) msg.textContent = e.message || 'No se pudo registrar.'; }
 }
 
 function fbPill(sem) {
@@ -4712,10 +4769,11 @@ const RANGOS_VENTAS_TK = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], 
 const ANTIG_MIN_TK = { Bajo: 18, Medio: 24, Alto: 36 };
 function evalGateJS(g, valores, ticket) {
   const val = valores[g.clave]; const vacio = (val === undefined || val === null || val === '');
+  if (g.tipo === 'textoReq') { if (g.requiereSi && valores[g.requiereSi.clave] === g.requiereSi.val) { return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; } return { resultado: 'ok' }; }
   if (g.tipo === 'numMinTicket') { if (vacio) return { resultado: 'ok' }; const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo; return Number(val) < min ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'numMaxTicket') { if (vacio) return { resultado: 'ok' }; const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo; return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'docTicket') { const req = g.requeridoTicket && g.requeridoTicket[ticket]; if (!req) return { resultado: 'ok' }; return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
-  if (vacio) return { resultado: 'ok' };
+  if (vacio) { if (g.oblig) return { resultado: 'escalado', motivo: g.motivo || ('Falta ' + (g.etiqueta || g.clave)) }; return { resultado: 'ok' }; }
   const op = (g.opciones || []).find(o => o.v === val); return op ? { resultado: op.resultado || 'ok', motivo: op.motivo } : { resultado: 'ok' };
 }
 function evalScoreJS(it, valores, ticket) {
@@ -4746,7 +4804,8 @@ function evaluarFiltro2JS(cat, valores, ticket) {
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo';
-  if (observados.length && semaforo === 'Verde') semaforo = 'Amarillo';
+  if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo';
+  else if (observados.length && semaforo === 'Rojo' && !kos.length) semaforo = 'Amarillo';
   return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
 }
 function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
@@ -4761,8 +4820,8 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
   if (campo.tipo === 'select') {
     let h = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"><option value="">—</option>' +
       campo.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
-    // Sub-control que se despliega cuando el valor es "si".
-    if (campo.despliega) h += subControlFiltro2(campo.despliega, valores, prefijo, tipo, ticket, val === 'si');
+    // Sub-control que se despliega según el valor gatillo del gate (por defecto 'si').
+    if (campo.despliega) { const gatillo = campo.despliegaSi || 'si'; h += subControlFiltro2(campo.despliega, valores, prefijo, tipo, ticket, val === gatillo); }
     return h;
   }
   // Antigüedad en años y meses (solo lectura del cálculo; el número real va en hidden).
@@ -4785,7 +4844,10 @@ function subControlFiltro2(clave, valores, prefijo, tipo, ticket, visible) {
   const val = valores[clave];
   const defs = {
     protestadosCant: { tipo: 'num', ph: '¿cuántos?', suf: 'docs' },
-    coactivaMonto: { tipo: 'sel', opciones: [{ v: 'm1', label: '< S/ 1,000' }, { v: 'm2', label: 'S/ 1,000 – 5,000' }, { v: 'm3', label: '> S/ 5,000' }] }
+    coactivaMonto: { tipo: 'sel', opciones: [{ v: 'm1', label: '< S/ 1,000' }, { v: 'm2', label: 'S/ 1,000 – 5,000' }, { v: 'm3', label: '> S/ 5,000' }] },
+    partidaRegistral: { tipo: 'txt', ph: 'N.º de partida registral' },
+    dniNumero: { tipo: 'txt', ph: 'N.º de DNI', maxlength: 8 },
+    zonaMaps: { tipo: 'txt', ph: 'https://maps.google.com/…' }
   };
   const d = defs[clave]; if (!d) return '';
   const style = visible ? '' : 'display:none';
@@ -4793,6 +4855,8 @@ function subControlFiltro2(clave, valores, prefijo, tipo, ticket, visible) {
   if (d.tipo === 'sel') {
     inner = '<select class="mtr-in mtr-sub" data-f2="' + prefijo + '" data-k="' + clave + '" onchange="' + cb + '"><option value="">—</option>' +
       d.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
+  } else if (d.tipo === 'txt') {
+    inner = '<input type="text" class="mtr-in mtr-sub mtr-txt" data-f2="' + prefijo + '" data-k="' + clave + '" value="' + (val != null ? String(val).replace(/"/g, '&quot;') : '') + '"' + (d.maxlength ? ' maxlength="' + d.maxlength + '"' : '') + ' placeholder="' + d.ph + '" oninput="' + cb + '">';
   } else {
     inner = '<input type="number" step="1" min="0" class="mtr-in mtr-num mtr-sub" data-f2="' + prefijo + '" data-k="' + clave + '" value="' + (val != null ? val : '') + '" placeholder="' + d.ph + '" oninput="' + cb + '">' + (d.suf ? '<span class="mtr-suf">' + d.suf + '</span>' : '');
   }
@@ -4822,7 +4886,7 @@ function bandaFiltro2HTML(ev) {
 function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return '<div class="sub">Catálogo no disponible.</div>';
   valores = valores || {};
-  const gatesHtml = cat.gates.map(g =>
+  const gatesHtml = cat.gates.filter(g => g.tipo !== 'textoReq').map(g =>
     '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + '</span>' +
     '<span class="mtr-ctrl">' + inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo && g.formato !== 'aniosMeses' ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</span></div>').join('');
   const scoreVisibles = cat.score.filter(it => !it.refGate);
@@ -4853,12 +4917,16 @@ function leerFiltro2(prefijo) {
 function recalcFiltro2(prefijo, tipo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return;
   const valores = leerFiltro2(prefijo);
-  // Muestra/oculta sub-controles (protestados→cantidad, coactiva→monto) según el gate padre.
+  // Muestra/oculta sub-controles según la condición de su gate hijo (requiereSi) o, por defecto, padre=='si'.
   (cat.gates || []).forEach(g => {
     if (!g.despliega) return;
-    const wrap = document.querySelector('[data-f2="' + prefijo + '"][data-k="' + g.clave + '"]');
+    const hijo = (cat.gates || []).find(x => x.clave === g.despliega);
     const sub = document.querySelector('.mtr-subwrap[data-subfor="' + g.despliega + '"]');
-    if (sub) sub.style.display = (valores[g.clave] === 'si') ? '' : 'none';
+    if (!sub) return;
+    let mostrar;
+    if (hijo && hijo.requiereSi) mostrar = (valores[hijo.requiereSi.clave] === hijo.requiereSi.val);
+    else mostrar = (valores[g.clave] === 'si');
+    sub.style.display = mostrar ? '' : 'none';
   });
   cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : r.resultado === 'observado' ? 'f2-obs-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
   const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(evaluarFiltro2JS(cat, valores, ticket));
@@ -4885,7 +4953,10 @@ function panelFiltroSunat(s) {
   if (!open) return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, false, '');
   const ticket = s.ticket || 'Bajo';
   const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
-  const valores = Object.assign(autoValoresSunat(s), saved);
+  const auto = autoValoresSunat(s);
+  // El checklist guardado completa/corrige lo demás, pero personaJuridica SIEMPRE se deriva del prefijo del RUC.
+  const valores = Object.assign(auto, saved);
+  if (auto.personaJuridica != null) valores.personaJuridica = auto.personaJuridica;
   // Datos de empresa (antes panel separado) ahora fusionados en la cabecera del filtro.
   let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
   const estadoTxt = raw.estado || null, condTxt = raw.condicion || null;

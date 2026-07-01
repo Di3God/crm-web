@@ -1380,8 +1380,8 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .sc-card.sc-verde { border-color:#B4DEC6; } .sc-card.sc-verde .sc-val { color:#1D9E75; }
 
 /* Filtros compactos del kanban, a la misma altura */
-.b2b-filtros-mini { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.b2b-filtros-mini select { height:32px; padding:0 8px; border:1px solid var(--line); border-radius:7px; font-size:12px; color:var(--ink); background:#fff; }
+.b2b-filtros-mini { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; }
+.b2b-filtros-mini select { height:32px; padding:0 8px; border:1px solid var(--line); border-radius:7px; font-size:12px; color:var(--ink); background:#fff; flex:1 1 0; min-width:120px; }
 
 /* Banda azul de cabecera con letra un poco más grande + total de leads debajo, fuera de la banda */
 .kb-colhead span { font-size:13.5px; }
@@ -1452,6 +1452,14 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 
 /* Link de Drive en crédito */
 .fb-link-drive { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+
+/* Bitácora de gestiones */
+.fb-gest-form { background:#F8FAFC; border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+.fb-gest-item { border-left:3px solid var(--azul); background:#fff; border:1px solid var(--line); border-left-width:3px; border-radius:8px; padding:9px 12px; margin-bottom:8px; }
+.fb-gest-top { font-size:13px; color:var(--ink); display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+.fb-gest-fecha { margin-left:auto; font-size:11px; color:var(--muted); }
+.fb-gest-com { font-size:12px; color:#41505F; margin-top:3px; }
+.fb-gest-prox { font-size:12px; color:#0B72E8; margin-top:5px; background:#EEF5FE; border-radius:6px; padding:4px 8px; display:inline-block; }
 
 .fb-acciones { margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .fb-acciones .btn-descartar { background:#fff; color:var(--rojo); border:1px solid var(--rojo); padding:5px 11px; border-radius:6px; font-size:13px; cursor:pointer; }

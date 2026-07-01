@@ -472,6 +472,22 @@ try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) 
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN creditoLinkDrive TEXT"); } catch (e) { }
+// v1.223: bitácora de gestiones B2B (trazabilidad con próxima acción obligatoria).
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS b2b_gestiones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    fecha TEXT NOT NULL,
+    responsable TEXT NOT NULL,
+    etapa TEXT,
+    canal TEXT,
+    resultado TEXT,
+    comentario TEXT,
+    proximaAccion TEXT NOT NULL,
+    fechaProxAccion TEXT NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_b2bgest_cod ON b2b_gestiones(codigoSolicitud)");
+} catch (e) { }
 // v1.221: recalibración de rangos POTENCIALES a valores fijos por tramo (100k/400k/1M).
 // Recalcula montoSolicitado + ticket de las solicitudes que vinieron por rango (montoRango presente)
 // y cuyo monto guardado no coincide con el valor fijo del tramo. Idempotente: al converger, no cambia nada.
@@ -4195,51 +4211,49 @@ const FILTROS_B2B = {
   },
 
   // ===== GARANTÍA (se evalúa POR INMUEBLE; consolidación = MEJOR caso: basta 1 inmueble que pase) =====
+  // Los "obligatorios" faltantes bloquean el avance a Finanzas (escalado), no descartan.
+  // Gravámenes = killer del inmueble (KO); zona no elegible = observado (excepción por aprobar).
   garantia: {
     titulo: 'Filtro Garantía (por inmueble)',
     gates: [
-      { clave: 'copiaLiteral', etiqueta: 'Copia literal reciente', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibida' }, { v: 'no', label: 'Falta' }], motivo: 'Falta copia literal reciente' },
-      { clave: 'hrPu', etiqueta: 'HR / PU', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibida' }, { v: 'no', label: 'Falta' }], motivo: 'Falta HR/PU' },
-      { clave: 'reciboServicios', etiqueta: 'Recibo de servicios (luz/agua)', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta recibo de servicios' },
-      { clave: 'dniPropietario', etiqueta: 'DNI del propietario', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DNI del propietario' },
-      { clave: 'zonaElegible', etiqueta: 'Zona (elegibilidad)', tipo: 'select', opciones: [
-        { v: 'alta', label: 'Alta preferencia', resultado: 'ok' },
-        { v: 'condicionada', label: 'Condicionada', resultado: 'ok' },
-        { v: 'noelegible', label: 'No elegible', resultado: 'ko', motivo: 'Zona no elegible' }
+      // Copia literal: Sí = OK. No = exige partida registral (sin partida no avanza).
+      { clave: 'copiaLiteral', etiqueta: 'Copia literal', tipo: 'select', despliega: 'partidaRegistral', despliegaSi: 'no', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' },
+        { v: 'no', label: 'No (indicar partida)', resultado: 'ok' }
       ] },
-      { clave: 'titulosSaneados', etiqueta: 'Títulos saneados / inscripción clara', tipo: 'select', opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ko', motivo: 'Títulos no saneados / observados' }
+      { clave: 'partidaRegistral', etiqueta: 'Partida registral', tipo: 'textoReq', requiereSi: { clave: 'copiaLiteral', val: 'no' }, motivo: 'Falta partida registral (obligatoria si no hay copia literal)' },
+      // HR/PU: opcional, se solicita en el proceso.
+      { clave: 'hrPu', etiqueta: 'HR / PU', tipo: 'select', opcional: true, opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No (se solicita)', resultado: 'ok' }
       ] },
-      { clave: 'gravamenes', etiqueta: 'Gravámenes', tipo: 'select', opciones: [
-        { v: 'libre', label: 'Libre', resultado: 'ok' },
-        { v: 'hipotecaCancelable', label: 'Hipoteca previa cancelable', resultado: 'ok' },
-        { v: 'noCancelable', label: 'Gravamen no cancelable', resultado: 'ko', motivo: 'Gravamen no cancelable' }
+      // Recibo de luz: obligatorio (bloquea avance si falta).
+      { clave: 'reciboLuz', etiqueta: 'Recibo de luz', tipo: 'select', oblig: true, opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Falta recibo de luz (obligatorio)' }
       ] },
-      { clave: 'tipoPermitido', etiqueta: 'Tipo de inmueble', tipo: 'select', opciones: [
-        { v: 'departamento', label: 'Departamento', resultado: 'ok' },
-        { v: 'casa', label: 'Casa', resultado: 'ok' },
-        { v: 'oficina', label: 'Oficina', resultado: 'ok' },
-        { v: 'local', label: 'Local comercial', resultado: 'ok' },
-        { v: 'terreno', label: 'Terreno / otro', resultado: 'escalado', motivo: 'Tipo de inmueble sujeto a excepción' }
+      // DNI del propietario: obligatorio. Sí = digitar número; No = queda en No (bloquea).
+      { clave: 'dniPropietario', etiqueta: 'DNI del propietario', tipo: 'select', oblig: true, despliega: 'dniNumero', opciones: [
+        { v: 'si', label: 'Sí (indicar N.º)', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Falta DNI del propietario (obligatorio)' }
       ] },
-      { clave: 'copropiedad', etiqueta: 'Copropiedad', tipo: 'select', opciones: [
-        { v: 'individual', label: 'Propietario único', resultado: 'ok' },
-        { v: 'firmas', label: 'Copropiedad con todas las firmas', resultado: 'ok' },
-        { v: 'sinfirmas', label: 'Copropiedad sin todas las firmas', resultado: 'ko', motivo: 'Copropiedad sin todas las firmas' }
+      { clave: 'dniNumero', etiqueta: 'N.º de DNI', tipo: 'textoReq', requiereSi: { clave: 'dniPropietario', val: 'si' }, motivo: 'Falta el número de DNI del propietario' },
+      // Fotos: opcional.
+      { clave: 'fotos', etiqueta: 'Fotos del inmueble', tipo: 'select', opcional: true, opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ok' }
+      ] },
+      // Zona: Sí = pegar link de Maps. No = observado (excepción por aprobar, no avanza sin excepción).
+      { clave: 'zonaElegible', etiqueta: 'Zona (elegibilidad)', tipo: 'select', despliega: 'zonaMaps', opciones: [
+        { v: 'si', label: 'Sí (adjuntar Maps)', resultado: 'ok' },
+        { v: 'no', label: 'No', resultado: 'observado', motivo: 'Zona no elegible: requiere excepción aprobada' }
+      ] },
+      { clave: 'zonaMaps', etiqueta: 'Link de Google Maps', tipo: 'textoReq', requiereSi: { clave: 'zonaElegible', val: 'si' }, motivo: 'Falta el link de Google Maps de la zona' },
+      // Gravámenes: Sí = killer del inmueble.
+      { clave: 'gravamenes', etiqueta: '¿Gravámenes?', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' },
+        { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Inmueble con gravámenes: esta garantía no va' }
       ] }
     ],
     score: [
-      { clave: 'zonaElegible', etiqueta: 'Preferencia de zona', tipo: 'select', peso: 40, refGate: true, opciones: [
-        { v: 'alta', label: 'Alta preferencia', frac: 1 }, { v: 'condicionada', label: 'Condicionada', frac: 0.5 }, { v: 'noelegible', label: 'No elegible', frac: 0 }
-      ] },
-      { clave: 'tipoPermitido', etiqueta: 'Calidad del tipo de inmueble', tipo: 'select', peso: 25, refGate: true, opciones: [
-        { v: 'departamento', label: 'Departamento', frac: 1 }, { v: 'casa', label: 'Casa', frac: 1 }, { v: 'oficina', label: 'Oficina', frac: 0.7 }, { v: 'local', label: 'Local comercial', frac: 0.7 }, { v: 'terreno', label: 'Terreno / otro', frac: 0.4 }
-      ] },
-      { clave: 'estadoConservacion', etiqueta: 'Estado de conservación', tipo: 'select', peso: 20, opciones: [
-        { v: 'bueno', label: 'Bueno', frac: 1 }, { v: 'regular', label: 'Regular', frac: 0.5 }, { v: 'malo', label: 'Malo', frac: 0.1 }
-      ] },
-      { clave: 'liquidez', etiqueta: 'Liquidez / facilidad de venta', tipo: 'select', peso: 15, opciones: [
-        { v: 'alta', label: 'Alta', frac: 1 }, { v: 'media', label: 'Media', frac: 0.5 }, { v: 'baja', label: 'Baja', frac: 0.2 }
+      { clave: 'zonaElegible', etiqueta: 'Zona elegible', tipo: 'select', peso: 100, refGate: true, opciones: [
+        { v: 'si', label: 'Sí', frac: 1 }, { v: 'no', label: 'No', frac: 0 }
       ] }
     ]
   }
@@ -4248,6 +4262,13 @@ const FILTROS_B2B = {
 function evalGateB2B(g, valores, ticket) {
   const val = valores[g.clave];
   const vacio = (val === undefined || val === null || val === '');
+  // Texto requerido condicionalmente (partida registral, N.º DNI, link Maps).
+  if (g.tipo === 'textoReq') {
+    if (g.requiereSi && valores[g.requiereSi.clave] === g.requiereSi.val) {
+      return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
+    }
+    return { resultado: 'ok' }; // no aplica si la condición no se cumple
+  }
   if (g.tipo === 'numMinTicket') {
     if (vacio) return { resultado: 'ok', pendiente: true };
     const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo;
@@ -4263,7 +4284,11 @@ function evalGateB2B(g, valores, ticket) {
     if (!req) return { resultado: 'ok' };
     return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
   }
-  if (vacio) return { resultado: 'ok', pendiente: true };
+  if (vacio) {
+    // Obligatorio sin responder bloquea el avance; opcional no.
+    if (g.oblig) return { resultado: 'escalado', motivo: g.motivo || ('Falta ' + (g.etiqueta || g.clave)), pendiente: true };
+    return { resultado: 'ok', pendiente: true };
+  }
   const op = (g.opciones || []).find(o => o.v === val);
   return op ? { resultado: op.resultado || 'ok', motivo: op.motivo } : { resultado: 'ok' };
 }
@@ -4331,7 +4356,8 @@ function evaluarFiltroDosCapas(cat, valores, ticket) {
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // excepción pendiente no cierra verde
-  if (observados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // observación no cierra verde
+  if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo'; // observación no cierra verde
+  else if (observados.length && semaforo === 'Rojo' && !kos.length) semaforo = 'Amarillo'; // observado (sin KO) = excepción, topa en Amarillo
   return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
 }
 
@@ -4344,6 +4370,13 @@ function refrescarConsolidadoCredito(codigo, responsable) {
     ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
     .run(codigo, cons, responsable || null, ahora);
   if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoCredito=? WHERE codigo=?').run(cons, codigo);
+  // Auto-avance (v1.223): crédito Verde promueve la solicitud a Filtro garantía sin arrastre manual.
+  if (cons === 'Verde') {
+    const s = db.prepare("SELECT estado FROM b2b_solicitudes WHERE codigo=?").get(codigo);
+    if (s && ['Nuevo', 'Filtro credito', 'Apto credito', 'Amarillo/nurture'].includes(s.estado)) {
+      db.prepare("UPDATE b2b_solicitudes SET estado='Filtro garantia', fechaEtapa=? WHERE codigo=?").run(ahora, codigo);
+    }
+  }
   return cons;
 }
 
@@ -4413,6 +4446,30 @@ app.delete('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res
   const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
   auditar(req, 'b2b_credito_eliminar_sujeto', req.params.codigo, su.tipoSujeto);
   res.json({ ok: true, consolidado: cons });
+});
+
+// ===== BITÁCORA DE GESTIONES B2B (trazabilidad, estilo B2C) =====
+app.get('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
+  const filas = db.prepare('SELECT * FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC, id DESC').all(req.params.codigo);
+  res.json({ gestiones: filas });
+});
+app.post('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const proximaAccion = (b.proximaAccion || '').trim();
+  const fechaProxAccion = (b.fechaProxAccion || '').trim();
+  // Trazabilidad: SIEMPRE exige próxima acción con fecha (como en B2C).
+  if (!proximaAccion) return res.status(400).json({ error: 'Define la próxima acción' });
+  if (!fechaProxAccion) return res.status(400).json({ error: 'Define la fecha de la próxima acción' });
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO b2b_gestiones (codigoSolicitud, fecha, responsable, etapa, canal, resultado, comentario, proximaAccion, fechaProxAccion)
+    VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(s.codigo, ahora, req.user.nombre, b.etapa || s.estado || null, b.canal || null, b.resultado || null,
+      (b.comentario || '').trim() || null, proximaAccion, fechaProxAccion);
+  auditar(req, 'b2b_gestion', s.codigo, (b.resultado || 'gestión') + ' · próx: ' + proximaAccion);
+  const filas = db.prepare('SELECT * FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC, id DESC').all(s.codigo);
+  res.json({ ok: true, gestiones: filas });
 });
 
 // Guarda el link de Google Drive con los archivos de la etapa de crédito.
@@ -5519,7 +5576,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.222 (Vista B2B: barra con filtros a la izquierda + toggles Kanban/Lista a la derecha (Tabla renombrada Lista); se retira barra Solicitudes/Bandeja (la bandeja vive en submenu) y checkbox Ver desestimados; scorecards mismo tamano con icono a la derecha y CLICABLES como filtro; kanban suma MONTOS potenciales (no cantidad); SEGMENTACION por responsable (operadores solo ven sus leads, jefes/admin ven todo); Filtro SUNAT fusionado con Empresa (4 campos: RUC20 auto no editable / RUC10->observado, Estado con baja-provisional->observado, Habido, Antiguedad en anios y meses); Filtro CREDITO recortado con castigos por puntaje (protestados -4/-8/-12, coactiva por monto -4/-8/-12, refis -10, CPP hist -4, morosos por tramo, CPP eval -0.5/%, KO en dudoso-perdida y castigados) + antecedentes ACTIVABLES + link unico de Drive; ficha con boton Cerrar y bandera roja de descartar. REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.223 (Filtros del tablero en una sola fila horizontal; FIX RUC: persona juridica se deriva SIEMPRE del prefijo (20->si, 10->observar) sin que lo pise el guardado; AUTO-AVANCE credito Verde -> Filtro garantia sin arrastre; bitacora de GESTIONES B2B con proxima accion + fecha OBLIGATORIAS (estilo B2C); Filtro GARANTIA recortado por inmueble: copia literal (No->partida registral obligatoria), HR/PU opcional, recibo de luz obligatorio, DNI (Si->numero) obligatorio, fotos opcional, zona (Si->link Maps / No->observado con excepcion), gravamenes = killer del inmueble; obligatorios faltantes BLOQUEAN avance a finanzas (no descartan). REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
