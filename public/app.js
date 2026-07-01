@@ -4316,11 +4316,13 @@ function b2bKanbanCard(c) {
   const sla = c.sla || {};
   let slaHtml = '';
   if (sla.accion) {
-    const cuando = sla.vencido ? '<span class="kb-sla-venc">⚠ vencido</span>'
-      : (sla.diasRestantes != null ? '<span class="kb-sla-dias">' + (sla.diasRestantes <= 0 ? 'hoy' : 'en ' + sla.diasRestantes + 'd') + '</span>' : '');
+    let cuando = '';
+    if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ SLA vencido ' + sla.usados + '/' + sla.dias + 'd</span>';
+    else if (sla.estado === 'porvencer') cuando = '<span class="kb-sla-porv">⏳ ' + sla.usados + '/' + sla.dias + 'd</span>';
+    else if (sla.dias != null) cuando = '<span class="kb-sla-dias">' + sla.usados + '/' + sla.dias + 'd</span>';
     slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
   }
-  return '<div class="kb-card' + (sla.vencido ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
+  return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
     '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket">' + c.ticket + '</span>' : '') + '</div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
@@ -4649,9 +4651,18 @@ function resumenFichaB2B() {
   const prob = pj.banda ? '<span class="fbr-prob fbr-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '% · ' : '') + pj.banda + '</span>' : '';
   let accion = '';
   if (sla.accion) {
-    const cuando = sla.vencido ? '<b style="color:#CC0000">⚠ vencido</b>' : (sla.diasRestantes != null ? (sla.diasRestantes <= 0 ? 'hoy' : 'en ' + sla.diasRestantes + ' día(s)') : '');
-    const fl = sla.fechaLimite ? new Date(sla.fechaLimite).toLocaleDateString('es-PE') : '';
-    accion = '<span class="fbr-accion">📌 <b>' + sla.accion + '</b> · ' + cuando + (fl ? ' (límite ' + fl + ')' : '') + '</span>';
+    // Estado SLA de la etapa: días hábiles usados vs. máximo permitido.
+    let slaTag = '';
+    if (sla.dias != null) {
+      const cls = sla.estado === 'vencido' ? 'fbr-sla-venc' : (sla.estado === 'porvencer' ? 'fbr-sla-porv' : 'fbr-sla-ok');
+      const txt = sla.estado === 'vencido'
+        ? '⚠ SLA vencido (' + sla.usados + '/' + sla.dias + 'd hábiles)'
+        : (sla.estado === 'porvencer'
+          ? '⏳ SLA al límite (' + sla.usados + '/' + sla.dias + 'd)'
+          : '⏱ ' + sla.usados + '/' + sla.dias + 'd en etapa');
+      slaTag = '<span class="fbr-sla ' + cls + '">' + txt + '</span>';
+    }
+    accion = '<span class="fbr-accion">📌 <b>' + sla.accion + '</b></span>' + slaTag;
   }
   return (prob || accion) ? '<div class="fb-resumen">' + prob + accion + '</div>' : '';
 }

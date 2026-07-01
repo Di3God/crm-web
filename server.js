@@ -4112,6 +4112,16 @@ function consolidadoCredito(codigo) {
 // ======================================================================
 const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
 const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
+// Días hábiles transcurridos entre dos fechas (excluye sábado y domingo). Usado para SLA por etapa.
+function diasHabiles(desde, hasta) {
+  if (!desde) return 0;
+  const a = new Date(desde), b = hasta ? new Date(hasta) : new Date();
+  if (isNaN(a) || isNaN(b) || b < a) return 0;
+  let n = 0; const cur = new Date(a); cur.setHours(0, 0, 0, 0);
+  const fin = new Date(b); fin.setHours(0, 0, 0, 0);
+  while (cur < fin) { cur.setDate(cur.getDate() + 1); const d = cur.getDay(); if (d !== 0 && d !== 6) n++; }
+  return n;
+}
 // Cuota estimada "gruesa" para el DSCR: cuota fija (francés), tasa piso referencial 25% anual, 12 meses.
 const CUOTA_REF = { tasaAnual: 0.25, meses: 12 };
 function cuotaEstimadaB2B(monto) {
@@ -4825,24 +4835,26 @@ function puntajeB2B(s, sem) {
 }
 
 // ===== Deadline por etapa + próxima acción =====
+// SLA máximo en DÍAS HÁBILES que un lead debe permanecer en cada etapa (base: manual sección 20).
 const ETAPA_SLA = {
-  'Solicitud': { dias: 2, accion: 'Validar SUNAT / contactar' },
-  'Filtro credito': { dias: 1, accion: 'Evaluar crédito' },
-  'Filtro garantia': { dias: 1, accion: 'Solicitar garantía' },
-  'Filtro finanzas': { dias: 2, accion: 'Reunión' },
-  'Business case': { dias: 1, accion: 'Armar expediente' }
+  'Solicitud': { dias: 1, accion: 'Validar SUNAT / contactar' },
+  'Filtro credito': { dias: 2, accion: 'Evaluar crédito en centrales' },
+  'Filtro garantia': { dias: 3, accion: 'Reunir docs + valor referencial' },
+  'Filtro finanzas': { dias: 3, accion: 'Reunión + análisis financiero' },
+  'Business case': { dias: 2, accion: 'Armar y enviar a Créditos' }
 };
 function slaEtapaB2B(col, fechaEtapa) {
   const cfg = ETAPA_SLA[col];
-  if (!cfg) return { accion: null, dias: null, fechaLimite: null, vencido: false, diasRestantes: null };
-  if (!fechaEtapa) return { accion: cfg.accion, dias: cfg.dias, fechaLimite: null, vencido: false, diasRestantes: null };
-  const limite = new Date(fechaEtapa).getTime() + cfg.dias * 86400000;
-  const ahora = Date.now();
+  if (!cfg) return { accion: null, dias: null, usados: null, estado: 'ok', vencido: false, diasRestantes: null };
+  if (!fechaEtapa) return { accion: cfg.accion, dias: cfg.dias, usados: 0, estado: 'ok', vencido: false, diasRestantes: cfg.dias };
+  const usados = diasHabiles(fechaEtapa);
+  let estado = 'ok';
+  if (usados > cfg.dias) estado = 'vencido';
+  else if (usados >= cfg.dias) estado = 'porvencer';
   return {
-    accion: cfg.accion, dias: cfg.dias,
-    fechaLimite: new Date(limite).toISOString(),
-    vencido: ahora > limite,
-    diasRestantes: Math.ceil((limite - ahora) / 86400000)
+    accion: cfg.accion, dias: cfg.dias, usados,
+    estado, vencido: estado === 'vencido',
+    diasRestantes: cfg.dias - usados
   };
 }
 // Sella el momento de entrada a la etapa cuando la columna derivada cambia. Devuelve la fecha vigente.
@@ -5659,7 +5671,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.229 (Finanzas: 4 campos de ANALISIS obligatorios para cerrar -> Destino de fondos (desplegable), Fuente de repago (desplegable), Mitigantes (multi-seleccion) y Motivo de evaluacion (texto libre); el destino REEMPLAZA/sincera el del alta. BUSINESS CASE rehecho como informe ejecutivo que HEREDA todo: semaforos por filtro, datos clave (valor garantia, LTV, DSCR, endeudamiento, margen), el analisis de Finanzas, lista automatica de observaciones (amarillos/escalados) y recomendacion comercial auto (Avanzar / Avanzar con observaciones / Descartar). REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.230 (SLA por etapa: se define el tiempo MAXIMO (dias habiles) que un lead debe permanecer en cada filtro -> SUNAT 1, Credito 2, Garantia 3, Finanzas 3, Business Case 2; el sistema calcula dias habiles usados vs. maximo y marca ok / al limite / vencido, visible en la ficha y en las tarjetas del Kanban (con borde rojo si vencio). La proxima accion + fecha en la bitacora de gestiones ya era OBLIGATORIA para no perder el hilo del lead. REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
