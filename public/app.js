@@ -4079,7 +4079,13 @@ function fmtUbicacion(s) {
 // Acciones por solicitud: archivar (todos) y eliminar (admin/jefes).
 function celdaAccionesB2B(s) {
   const esJefe = ['admin', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol);
-  const nom = (s.razonSocial || s.ruc || s.codigo).replace(/'/g, '');
+  const nom = (s.razonSocial || s.contacto || s.ruc || s.codigo).replace(/'/g, '');
+  // En la vista de desestimados, la acción principal es reactivar.
+  if (s.archivado || s.estado === 'No elegible') {
+    let h = '<button class="btn-sunat" title="Reactivar" onclick="reactivarB2B(\'' + s.codigo + '\')">↩ Reactivar</button>';
+    if (esJefe) h += ' <button class="btn-sunat" title="Eliminar" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarB2B(\'' + s.codigo + '\',\'' + nom + '\')">🗑</button>';
+    return h;
+  }
   let h = '<button class="btn-sunat" title="Archivar" onclick="archivarB2B(\'' + s.codigo + '\')">🗄</button>';
   if (esJefe) h += ' <button class="btn-sunat" title="Eliminar" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarB2B(\'' + s.codigo + '\',\'' + nom + '\')">🗑</button>';
   return h;
@@ -4134,11 +4140,12 @@ function b2bPreviewTicket() {
 async function guardarSolicitudB2B() {
   const ruc = $('b2bRuc').value.trim();
   const razon = $('b2bRazon').value.trim();
-  if (!ruc && !razon) { $('b2bAltaMsg').textContent = 'Ingresa al menos RUC o razón social.'; return; }
+  const contacto = $('b2bContacto').value.trim();
+  if (!ruc && !razon && !contacto) { $('b2bAltaMsg').textContent = 'Ingresa al menos RUC o nombre de contacto.'; return; }
   const body = {
     ruc, razonSocial: razon,
     nombreComercial: $('b2bComercial').value.trim(),
-    contacto: $('b2bContacto').value.trim(),
+    contacto,
     telefono: $('b2bTelefono').value.trim(),
     email: $('b2bEmail').value.trim(),
     montoSolicitado: $('b2bMonto').value ? Number($('b2bMonto').value) : null,
@@ -4152,7 +4159,7 @@ async function guardarSolicitudB2B() {
   try {
     const r = await api('/api/b2b/solicitudes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     cerrar('ovAltaB2B');
-    cargarB2B();
+    if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
   } catch (e) {
     $('b2bAltaMsg').textContent = 'No se pudo registrar: ' + e.message;
   }
@@ -4174,13 +4181,14 @@ function b2bTab(which) {
 let B2B_VISTA = 'kanban';        // 'kanban' | 'tabla'
 let B2B_KANBAN_DRAG = null;      // { codigo, desde }
 const B2B_KANBAN_COLS = [
-  { id: 'Solicitud', label: 'Solicitud', hint: 'Recién llegado · SUNAT pendiente' },
-  { id: 'SUNAT', label: 'SUNAT', hint: 'Validar / corregir RUC · 3×2' },
+  { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: 'Intake · validar RUC · triaje' },
   { id: 'Filtro credito', label: 'Filtro Crédito', hint: '' },
   { id: 'Filtro garantia', label: 'Filtro Garantía', hint: '' },
   { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: '' },
   { id: 'Business case', label: 'Business Case', hint: '' }
 ];
+// Orden de las 3 etapas de filtro (para pintar el progreso C/G/F en las tarjetas).
+const B2B_ETAPAS_FILTRO = ['Filtro credito', 'Filtro garantia', 'Filtro finanzas'];
 const SEM_COL = { Verde: '#2E8B57', Amarillo: '#E0A800', Rojo: '#CC0000' };
 
 function b2bVista(v) {
@@ -4196,8 +4204,30 @@ function b2bVista(v) {
 
 let B2B_KANBAN_CARDS = [];
 let B2B_KANBAN_META = { puedeGestionar: false };
+// Scorecards de resumen arriba del tablero: total activos, potencial S/, con observación, vencidos, calientes, expediente.
+async function cargarScorecardsB2B() {
+  const cont = $('b2bScorecards'); if (!cont) return;
+  try {
+    const r = await api('/api/b2b/resumen');
+    const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
+    const cards = [
+      { ic: '📋', val: r.activos, lbl: 'En tablero', cls: '' },
+      { ic: '💰', val: soles(r.potencial), lbl: 'Potencial estimado', cls: 'sc-azul' },
+      { ic: '⚠️', val: r.conObs, lbl: 'Con observación', cls: r.conObs ? 'sc-amar' : '' },
+      { ic: '⏰', val: r.vencidos, lbl: 'SLA vencido', cls: r.vencidos ? 'sc-rojo' : '' },
+      { ic: '🔥', val: r.calientes, lbl: 'Calientes', cls: r.calientes ? 'sc-rojo' : '' },
+      { ic: '📁', val: r.expediente, lbl: 'En business case', cls: 'sc-verde' }
+    ];
+    cont.innerHTML = cards.map(c =>
+      '<div class="sc-card ' + c.cls + '"><div class="sc-ic">' + c.ic + '</div>' +
+      '<div class="sc-val">' + c.val + '</div><div class="sc-lbl">' + c.lbl + '</div></div>').join('');
+    cont.classList.remove('oculto');
+  } catch (e) { cont.classList.add('oculto'); }
+}
+
 async function cargarKanbanB2B() {
   const cont = $('b2bTablero'); if (!cont) return;
+  cargarScorecardsB2B();
   const verDesest = $('b2bVerDesest') && $('b2bVerDesest').checked;
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   try {
@@ -4246,17 +4276,26 @@ function renderKanbanFiltrado() {
 }
 
 function b2bKanbanCard(c) {
-  const nombre = c.razonSocial || c.nombreComercial || c.ruc || c.codigo;
-  const monto = c.montoSolicitado != null ? 'S/ ' + Number(c.montoSolicitado).toLocaleString('es-PE') : (c.montoRango || '');
+  const nombre = c.razonSocial || c.nombreComercial || c.contacto || c.ruc || c.codigo;
+  const montoNum = c.montoEfectivo != null ? c.montoEfectivo : (c.montoSolicitado != null ? Number(c.montoSolicitado) : null);
+  const monto = montoNum != null ? 'S/ ' + Number(montoNum).toLocaleString('es-PE') : (c.montoRango || '');
   const sem = c.semaforos || {};
-  const dots = ['credito', 'garantia', 'finanzas'].map(t => {
-    const v = sem[t];
+  // Índice de la etapa actual dentro de las 3 de filtro (-1 si está en Solicitud o Business case).
+  const idxActual = B2B_ETAPAS_FILTRO.indexOf(c.etapaKanban);
+  const dots = B2B_ETAPAS_FILTRO.map((t, i) => {
+    const key = t.replace('Filtro ', ''); // credito | garantia | finanzas
+    const v = sem[key];
     const col = v ? SEM_COL[v] : '#DDE4EC';
-    const ini = t[0].toUpperCase();
-    return '<span class="kb-dot" title="' + t + (v ? ': ' + v : ': sin evaluar') + '" style="background:' + col + '">' + ini + '</span>';
+    const ini = key[0].toUpperCase();
+    // Parpadea el dot de la etapa en la que está la card ahora mismo.
+    const cls = 'kb-dot' + (i === idxActual ? ' kb-dot-actual' : '');
+    return '<span class="' + cls + '" title="' + key + (v ? ': ' + v : ': sin evaluar') + '" style="background:' + col + '">' + ini + '</span>';
   }).join('');
   const resp = c.responsableActual ? '<span class="kb-resp">' + primerNombre(c.responsableActual) + '</span>' : '<span class="kb-resp kb-sin">Sin asignar</span>';
-  const alerta = (c.etapaKanban === 'SUNAT') ? '<span class="kb-alerta">⚠ RUC por validar</span>' : '';
+  // Etiquetas de observación (solo en columna Solicitud): falta RUC, RUC inválido, no valida SUNAT, falta número.
+  const obs = (c.observaciones || []);
+  const obsHtml = obs.length ? '<div class="kb-obs">' + obs.map(o =>
+    '<span class="kb-tag kb-tag-' + (o.tipo === 'falta_numero' ? 'num' : 'ruc') + '">' + o.label + '</span>').join('') + '</div>' : '';
   const pj = c.puntaje || {};
   const probChip = pj.banda ? '<span class="kb-prob kb-prob-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '" title="Probabilidad de cierre · ' + pj.banda + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '%' : '') + '</span>' : '';
   const sla = c.sla || {};
@@ -4271,9 +4310,9 @@ function b2bKanbanCard(c) {
     '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket">' + c.ticket + '</span>' : '') + '</div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
     (monto ? '<div class="kb-monto">' + monto + '</div>' : '') +
+    obsHtml +
     '<div class="kb-meta">' + probChip + '</div>' +
     slaHtml +
-    alerta +
     '<div class="kb-foot">' + dots + resp + '</div>' +
     '</div>';
 }
@@ -4286,6 +4325,7 @@ function renderKanbanB2B(cards, conteos, puedeGestionar) {
     const items = porCol[col.id] || [];
     return '<div class="kb-col" data-col="' + col.id + '" ondragover="b2bDragOver(event)" ondragleave="b2bDragLeave(event)" ondrop="b2bDrop(event)">' +
       '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span></div>' +
+      '<div class="kb-colpot">' + items.length + ' ' + (items.length === 1 ? 'lead potencial' : 'leads potenciales') + '</div>' +
       (col.hint ? '<div class="kb-colhint">' + col.hint + '</div>' : '') +
       '<div class="kb-colbody">' + (items.length ? items.map(b2bKanbanCard).join('') : '<div class="kb-vacio">—</div>') + '</div>' +
       '</div>';
@@ -4294,20 +4334,21 @@ function renderKanbanB2B(cards, conteos, puedeGestionar) {
 }
 
 function renderDesestimadosB2B(cards) {
-  if (!cards.length) { $('b2bTablero').innerHTML = '<div class="vacio">No hay solicitudes desestimadas.</div>'; return; }
-  const filas = cards.map(c => {
-    const nombre = c.razonSocial || c.nombreComercial || c.ruc || c.codigo;
-    return '<tr onclick="abrirFichaB2B(\'' + c.codigo + '\')" style="cursor:pointer">' +
-      '<td><b>' + nombre + '</b><br><span class="b2b-sub">' + (c.ruc || '—') + '</span></td>' +
-      '<td>' + (c.contacto || '—') + '</td>' +
-      '<td>' + (c.telefono || '<span class="kb-sin">sin teléfono</span>') + '</td>' +
-      '<td>' + (c.motivoDescarte || 'No contactable') + '</td>' +
-      '<td><button class="btn sec" onclick="event.stopPropagation();reactivarB2B(\'' + c.codigo + '\')">↩ Reactivar</button></td>' +
-      '</tr>';
-  }).join('');
-  $('b2bTablero').innerHTML = '<div class="kb-desest"><div class="b2b-sub" style="margin-bottom:8px">Fuera del tablero. Reactivar los devuelve como “Nuevo” y se re-triajean por SUNAT.</div>' +
-    '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr><th>Empresa</th><th>Contacto</th><th>Teléfono</th><th>Motivo</th><th></th></tr></thead><tbody>' +
-    filas + '</tbody></table></div></div>';
+  const n = cards.length;
+  $('b2bTablero').innerHTML = '<div class="kb-desest-msg">' +
+    '<div class="kb-desest-ic">🗂️</div>' +
+    '<h3>Los desestimados se ven en la vista Tabla</h3>' +
+    '<p>Hay <b>' + n + '</b> ' + (n === 1 ? 'solicitud desestimada' : 'solicitudes desestimadas') + '. ' +
+    'Para revisarlas y reactivarlas, cambia a la vista <b>Tabla</b> y usa el estado <b>“Desestimados”</b>.</p>' +
+    '<button class="btn" onclick="b2bIrDesestTabla()">☰ Ver en Tabla</button>' +
+    '</div>';
+}
+// Cambia a la vista tabla con el filtro de estado en Desestimados y destilda el check del kanban.
+function b2bIrDesestTabla() {
+  const chk = $('b2bVerDesest'); if (chk) chk.checked = false;
+  b2bVista('tabla');
+  const sel = $('b2bEstado'); if (sel) { sel.value = 'Desestimados'; }
+  cargarB2B();
 }
 
 function b2bDragStart(ev) {

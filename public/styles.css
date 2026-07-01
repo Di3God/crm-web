@@ -1362,6 +1362,51 @@
 .kb-sin { color:var(--naranja); }
 .kb-desest .b2b-tabla tr:hover td { background:#FAFBFD; }
 
+/* ===== v1.221: vista B2B full-width ===== */
+#v-b2b.vista.act { max-width:none; }
+body:has(#v-b2b.vista.act) .content { max-width:none; }
+
+/* Scorecards de resumen */
+.b2b-scorecards { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin:0 0 14px; }
+@media (max-width:1100px){ .b2b-scorecards { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:640px){ .b2b-scorecards { grid-template-columns:repeat(2,1fr); } }
+.sc-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; gap:2px; box-shadow:0 1px 2px rgba(16,42,73,.05); }
+.sc-card .sc-ic { font-size:16px; line-height:1; }
+.sc-card .sc-val { font-size:22px; font-weight:800; color:var(--ink); letter-spacing:-.5px; }
+.sc-card .sc-lbl { font-size:11.5px; color:var(--muted); font-weight:600; }
+.sc-card.sc-azul { border-color:#BBD6F5; } .sc-card.sc-azul .sc-val { color:var(--azul); }
+.sc-card.sc-amar { border-color:#F3D98A; background:#FFFBF0; } .sc-card.sc-amar .sc-val { color:#B8860B; }
+.sc-card.sc-rojo { border-color:#F0B8B4; background:#FFF6F5; } .sc-card.sc-rojo .sc-val { color:var(--rojo); }
+.sc-card.sc-verde { border-color:#B4DEC6; } .sc-card.sc-verde .sc-val { color:#1D9E75; }
+
+/* Filtros compactos del kanban, a la misma altura */
+.b2b-filtros-mini { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.b2b-filtros-mini select { height:32px; padding:0 8px; border:1px solid var(--line); border-radius:7px; font-size:12px; color:var(--ink); background:#fff; }
+
+/* Banda azul de cabecera con letra un poco más grande + total de leads debajo, fuera de la banda */
+.kb-colhead span { font-size:13.5px; }
+.kb-colpot { font-size:11.5px; color:var(--muted); font-weight:600; text-align:center; padding:5px 8px; background:#fff; border-bottom:1px solid var(--line); }
+
+/* Dot de la etapa actual: parpadeo cada 5s manteniendo su color de semáforo */
+.kb-dot-actual { animation:kbPulse 5s ease-in-out infinite; box-shadow:0 0 0 0 rgba(0,0,0,.25); }
+@keyframes kbPulse {
+  0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(11,114,232,.55); filter:none; }
+  50% { transform:scale(1.18); box-shadow:0 0 0 5px rgba(11,114,232,0); filter:brightness(1.25); }
+}
+@media (prefers-reduced-motion:reduce){ .kb-dot-actual { animation:none; } }
+
+/* Etiquetas de observación en tarjetas de Solicitud */
+.kb-obs { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.kb-tag { font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; line-height:1.3; }
+.kb-tag-ruc { background:#FDECEC; color:var(--rojo); }
+.kb-tag-num { background:#FFF3E0; color:#C77700; border:1px solid #F3D08A; }
+
+/* Mensaje "ver desestimados en tabla" */
+.kb-desest-msg { max-width:460px; margin:32px auto; text-align:center; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:28px 26px; box-shadow:0 2px 10px rgba(16,42,73,.06); }
+.kb-desest-msg .kb-desest-ic { font-size:40px; }
+.kb-desest-msg h3 { margin:10px 0 6px; font-size:16px; color:var(--ink); }
+.kb-desest-msg p { font-size:13px; color:var(--muted); line-height:1.5; margin-bottom:16px; }
+
 .fb-acciones { margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .fb-acciones .btn-descartar { background:#fff; color:var(--rojo); border:1px solid var(--rojo); padding:5px 11px; border-radius:6px; font-size:13px; cursor:pointer; }
 .fb-acciones .btn-descartar:hover { background:var(--rojo); color:#fff; }

@@ -471,6 +471,19 @@ try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); 
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
+// v1.221: recalibración de rangos POTENCIALES a valores fijos por tramo (100k/400k/1M).
+// Recalcula montoSolicitado + ticket de las solicitudes que vinieron por rango (montoRango presente)
+// y cuyo monto guardado no coincide con el valor fijo del tramo. Idempotente: al converger, no cambia nada.
+try {
+  const filasRango = db.prepare("SELECT codigo, montoRango, montoSolicitado FROM b2b_solicitudes WHERE montoRango IS NOT NULL AND TRIM(montoRango) <> ''").all();
+  const upd = db.prepare("UPDATE b2b_solicitudes SET montoSolicitado=?, ticket=? WHERE codigo=?");
+  let n = 0;
+  for (const f of filasRango) {
+    const fijo = montoRangoFijo(f.montoRango);
+    if (fijo != null && Number(f.montoSolicitado) !== fijo) { upd.run(fijo, ticketDeMonto(fijo), f.codigo); n++; }
+  }
+  if (n) console.log('[migracion v1.221] rangos B2B recalibrados a valor fijo:', n, 'solicitudes');
+} catch (e) { }
 // Baja de Carmen Martinez (ya no trabaja): se desactiva para sacarla de login, round-robin y listas,
 // conservando sus registros históricos. Idempotente.
 try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='cmartinez@tasatop.com'").run(); } catch (e) { }
@@ -1031,6 +1044,20 @@ function rangoANumero(txt) {
   return isFinite(solo) && solo >= 1000 ? solo : null;
 }
 
+// Monto POTENCIAL fijo por tramo (para el total del tablero y el ticket cuando el lead
+// vino por rango de formulario/Meta, sin monto exacto). Regla de negocio de Diego:
+//   50k–299k → 100,000 · 300k–999k → 400,000 · ≥1M → 1,000,000
+// Acepta un rango de texto o un número; devuelve el valor fijo del tramo (o null si no hay dato).
+function montoRangoFijo(rangoOtexto) {
+  let piso = null;
+  if (typeof rangoOtexto === 'number' && isFinite(rangoOtexto)) piso = rangoOtexto;
+  else if (rangoOtexto != null) piso = rangoANumero(rangoOtexto);
+  if (piso == null) return null;
+  if (piso >= 1000000) return 1000000;
+  if (piso >= 300000) return 400000;
+  return 100000;
+}
+
 function normalizarB2B(origen, body) {
   const b = body || {};
   const keys = Object.keys(b);
@@ -1085,8 +1112,8 @@ function normalizarB2B(origen, body) {
   // Monto en rango (Meta/TikTok: "Capital Requerido" llega como texto, p.ej. "De S/ 50 mil a S/ 299 mil")
   let montoRango = val('montoRango', 'monto_rango', 'capitalRequerido', 'capital_requerido', 'rangoMonto');
   if (!montoRango) { for (const k of keys) { const kl = k.toLowerCase(); if (kl.includes('capital') || kl.includes('requerido')) { montoRango = String(b[k]).trim(); break; } } }
-  // Si no vino monto numérico pero sí un rango, estimamos el piso del rango para tener ticket.
-  if (monto == null && montoRango) { const est = rangoANumero(montoRango); if (est) monto = est; }
+  // Si no vino monto numérico pero sí un rango, usamos el valor FIJO del tramo (100k/400k/1M).
+  if (monto == null && montoRango) { const est = montoRangoFijo(montoRango); if (est) monto = est; }
   // Registrado en SUNARP (landing)
   let registradoSunarp = val('registradoSunarp', 'registrado_sunarp', 'sunarp');
   if (!registradoSunarp) { for (const k of keys) { if (k.toLowerCase().includes('sunarp')) { registradoSunarp = String(b[k]).trim(); break; } } }
@@ -3833,6 +3860,12 @@ app.get('/api/b2b/solicitudes', soloB2B, (req, res) => {
   const estado = (req.query.estado || '').trim();
   const q = (req.query.q || '').trim().toLowerCase();
   const verArchivados = req.query.archivados === '1';
+  // "Desestimados" = fuera del tablero: archivados o marcados No elegible. Se listan juntos.
+  if (estado === 'Desestimados') {
+    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible' ORDER BY fechaIngreso DESC, id DESC").all();
+    if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
+    return res.json({ solicitudes: filas, total: filas.length, desestimados: true });
+  }
   let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=? ORDER BY fechaIngreso DESC, id DESC').all(verArchivados ? 1 : 0);
   if (estado) filas = filas.filter(s => s.estado === estado);
   if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
@@ -4587,21 +4620,33 @@ app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
 
 // ===== Tablero (kanban) B2B =====
 // Columnas secuenciales (izq→der). "Desestimado" es un filtro aparte, no una columna.
-const COLUMNAS_KANBAN_B2B = ['Solicitud', 'SUNAT', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
+const COLUMNAS_KANBAN_B2B = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
 
 // Deriva la columna del tablero desde señales que ya existen (sin columna nueva ni migración).
+// 'Solicitud' fusiona el intake y el triaje SUNAT: aquí caen las que tienen observación
+// (RUC/SUNAT/teléfono). Si SUNAT sale OK, pasa directo a 'Filtro credito'.
 function etapaKanbanB2B(s) {
   if (s.archivado) return 'Desestimado';
   if (s.estado === 'No elegible') return 'Desestimado';
-  if (!s.telefono || !String(s.telefono).trim()) return 'Desestimado'; // sin teléfono = no contactable
   if (['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado)) return 'Business case';
   if (s.estado === 'Filtro finanzas') return 'Filtro finanzas';
   if (s.estado === 'Filtro garantia') return 'Filtro garantia';
   if (s.estado === 'Amarillo/nurture') return 'Filtro credito'; // en revisión, sigue en crédito
-  // 'Nuevo' u otros: triaje por SUNAT
+  // 'Nuevo' u otros: triaje por SUNAT. OK → crédito; cualquier otra cosa (error/pendiente) se queda en Solicitud.
   if (s.sunatEstado === 'ok') return 'Filtro credito';
-  if (s.sunatEstado === 'error') return 'SUNAT';
-  return 'Solicitud'; // recién llegado, SUNAT sin resolver
+  return 'Solicitud'; // recién llegado o con observación (RUC/SUNAT/teléfono): se etiqueta, no se auto-descarta
+}
+
+// Etiquetas de observación de una card en la columna 'Solicitud' (para triaje visual).
+// 'falta_numero' es marca para descarte MANUAL (no saca la card del tablero sola).
+function observacionesB2B(s) {
+  const obs = [];
+  const ruc = s.ruc ? String(s.ruc).trim() : '';
+  if (!ruc) obs.push({ tipo: 'falta_ruc', label: 'Falta RUC' });
+  else if (!/^(10|15|17|20)\d{9}$/.test(ruc)) obs.push({ tipo: 'ruc_malo', label: 'RUC inválido' });
+  else if (s.sunatEstado === 'error') obs.push({ tipo: 'ruc_error', label: 'RUC no valida en SUNAT' });
+  if (!s.telefono || !String(s.telefono).trim()) obs.push({ tipo: 'falta_numero', label: 'Falta número' });
+  return obs;
 }
 
 // Semáforos {credito,garantia,finanzas} por código, en un solo query.
@@ -4638,12 +4683,11 @@ function puntajeB2B(s, sem) {
 
 // ===== Deadline por etapa + próxima acción =====
 const ETAPA_SLA = {
-  'Solicitud': { dias: 1, accion: 'Contactar' },
-  'SUNAT': { dias: 2, accion: 'Contactar' },
-  'Filtro credito': { dias: 2, accion: 'Evaluar crédito' },
-  'Filtro garantia': { dias: 3, accion: 'Solicitar garantía' },
-  'Filtro finanzas': { dias: 3, accion: 'Reunión' },
-  'Business case': { dias: 5, accion: 'Armar expediente' }
+  'Solicitud': { dias: 2, accion: 'Validar SUNAT / contactar' },
+  'Filtro credito': { dias: 1, accion: 'Evaluar crédito' },
+  'Filtro garantia': { dias: 1, accion: 'Solicitar garantía' },
+  'Filtro finanzas': { dias: 2, accion: 'Reunión' },
+  'Business case': { dias: 1, accion: 'Armar expediente' }
 };
 function slaEtapaB2B(col, fechaEtapa) {
   const cfg = ETAPA_SLA[col];
@@ -4677,7 +4721,8 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
     const col = etapaKanbanB2B(f);
     const fechaEtapa = sellarFechaEtapa(f, col);
     const semc = sem[f.codigo] || {};
-    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa) };
+    const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
+    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo };
   });
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
@@ -4694,7 +4739,7 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
 
 // Para ENTRAR a cada columna: de dónde viene, qué candado (gate) exige y qué estado deja.
 const AVANCE_KANBAN_B2B = {
-  'Filtro credito': { desde: 'SUNAT', estado: 'Nuevo', gate: (s) => s.sunatEstado === 'ok', err: 'Primero valida el RUC en SUNAT (debe quedar en OK).' },
+  'Filtro credito': { desde: 'Solicitud', estado: 'Nuevo', gate: (s) => s.sunatEstado === 'ok', err: 'Primero valida el RUC en SUNAT (debe quedar en OK).' },
   'Filtro garantia': { desde: 'Filtro credito', estado: 'Filtro garantia', gate: (s, sem) => sem.credito === 'Verde', err: 'El filtro de crédito debe estar en verde para avanzar.' },
   'Filtro finanzas': { desde: 'Filtro garantia', estado: 'Filtro finanzas', gate: (s, sem) => sem.garantia === 'Verde', err: 'El filtro de garantía debe estar en verde para avanzar.' },
   'Business case': { desde: 'Filtro finanzas', estado: 'Expediente', gate: (s, sem) => sem.finanzas === 'Verde', err: 'El filtro de finanzas debe estar en verde para avanzar.' }
@@ -4758,26 +4803,53 @@ app.get('/api/b2b/ingresos', soloB2B, (req, res) => {
   res.json({ ingresos: filas, total: filas.length, resumen });
 });
 
+// Scorecards del tablero B2B: totales por columna, potencial estimado, vencidos, con observación, calientes.
+app.get('/api/b2b/resumen', soloB2B, (req, res) => {
+  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, estado, sunatEstado, fechaEtapa, fechaEtapaCol, archivado FROM b2b_solicitudes").all();
+  const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
+  let activos = 0, potencial = 0, vencidos = 0, conObs = 0, calientes = 0, expediente = 0;
+  const porColumna = {};
+  COLUMNAS_KANBAN_B2B.forEach(c => { porColumna[c] = { n: 0, potencial: 0 }; });
+  for (const f of filas) {
+    const col = etapaKanbanB2B(f);
+    if (col === 'Desestimado') continue;
+    activos++;
+    const monto = f.montoSolicitado != null ? Number(f.montoSolicitado) : (montoRangoFijo(f.montoRango) || 0);
+    potencial += monto || 0;
+    porColumna[col].n++; porColumna[col].potencial += monto || 0;
+    const sla = slaEtapaB2B(col, f.fechaEtapa);
+    if (sla.vencido) vencidos++;
+    if (col === 'Solicitud' && observacionesB2B(f).length) conObs++;
+    const pj = puntajeB2B(f, sem[f.codigo] || {});
+    if (pj.prob >= 60) calientes++;
+    if (col === 'Business case') expediente++;
+  }
+  res.json({ activos, potencial, vencidos, conObs, calientes, expediente, porColumna });
+});
+
 app.post('/api/b2b/solicitudes', soloB2B, (req, res) => {
   const b = req.body || {};
-  if (!b.razonSocial && !b.ruc) return res.status(400).json({ error: 'Falta RUC o razón social' });
+  // Alta mínima: basta con RUC, razón social o contacto (el resto se completa después).
+  if (!b.razonSocial && !b.ruc && !b.contacto) return res.status(400).json({ error: 'Ingresa al menos RUC o nombre de contacto' });
   const codigo = generarCodigoB2B();
   const ahora = new Date().toISOString();
-  const monto = b.montoSolicitado != null ? Number(b.montoSolicitado) : null;
-  const ticket = monto != null ? ticketDeMonto(monto) : null;
+  // Monto: numérico directo; si no vino pero hay rango, usar el valor fijo del tramo (100k/400k/1M).
+  let monto = b.montoSolicitado != null && b.montoSolicitado !== '' ? Number(b.montoSolicitado) : null;
+  if ((monto == null || !isFinite(monto)) && b.montoRango) monto = montoRangoFijo(b.montoRango);
+  const ticket = monto != null && isFinite(monto) ? ticketDeMonto(monto) : null;
   db.prepare(`INSERT INTO b2b_solicitudes
     (codigo, ruc, razonSocial, nombreComercial, contacto, telefono, email, fuente, campana,
-     montoSolicitado, ticket, sector, actividad, antiguedadMeses, ventasEstimadas, destinoFondos, fuenteRepago,
+     montoSolicitado, montoRango, ticket, sector, actividad, antiguedadMeses, ventasEstimadas, destinoFondos, fuenteRepago,
      estado, asistente, responsableActual, fechaIngreso)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(codigo, b.ruc || null, b.razonSocial || null, b.nombreComercial || null, b.contacto || null,
       b.telefono || null, b.email || null, b.fuente || 'Manual', b.campana || null,
-      monto, ticket, b.sector || null, b.actividad || null,
-      b.antiguedadMeses != null ? Number(b.antiguedadMeses) : null,
-      b.ventasEstimadas != null ? Number(b.ventasEstimadas) : null,
+      monto, b.montoRango || null, ticket, b.sector || null, b.actividad || null,
+      b.antiguedadMeses != null && b.antiguedadMeses !== '' ? Number(b.antiguedadMeses) : null,
+      b.ventasEstimadas != null && b.ventasEstimadas !== '' ? Number(b.ventasEstimadas) : null,
       b.destinoFondos || null, b.fuenteRepago || null,
       'Nuevo', req.user.nombre, req.user.nombre, ahora);
-  auditar(req, 'b2b_alta_solicitud', codigo, (b.razonSocial || b.ruc || '') + (ticket ? ' · ticket ' + ticket : ''));
+  auditar(req, 'b2b_alta_solicitud', codigo, (b.razonSocial || b.contacto || b.ruc || '') + (ticket ? ' · ticket ' + ticket : ''));
   if (b.ruc) enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano
   res.json({ ok: true, codigo, ticket });
 });
@@ -5438,7 +5510,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.220 (Recalibracion spec oficial COMPLETA: los 4 filtros B2B en motor de DOS CAPAS (gates KO/escalado con motivo -> puntaje 0-100 -> banda Verde>=80/Amarillo50-79/Rojo, por ticket). SUNAT (antiguedad42/actividad33/sector25, sin ventas) + CREDITO por sujeto con tabla de limites por ticket y consolidacion PEOR-CASO + FINANZAS (viabilidad+docs por ticket+solidez) + GARANTIA MULTI-INMUEBLE (tabla b2b_garantia_inmuebles, consolidacion MEJOR-CASO, sin LTV/monto) + BUSINESS CASE ensamblador con semaforo global peor-caso y resumen comercial. Nuevas columnas puntaje/motivos; endpoints /garantia/inmueble. REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.221 (Vista B2B Solicitudes: tablero full-width + scorecards de resumen; Kanban fusiona Solicitud+SUNAT (5 columnas) con etiquetas de observacion (falta RUC / RUC invalido / no valida SUNAT / falta numero -> descarte MANUAL, ya no auto-descarta sin telefono); banda de cabecera mas grande + total de leads potenciales por columna; dots C/G/F mantienen semaforo y PARPADEAN en la etapa actual; SLA por etapa recalibrado (Solicitud2 / Credito1 / Garantia1 / Finanzas2 / BusinessCase1); rangos POTENCIALES a valor fijo por tramo (100k/400k/1M) con migracion de existentes; desestimados como filtro de estado en la Tabla (Kanban redirige); alta de solicitud minima (contacto/numero/RUC + mas campos colapsables)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
