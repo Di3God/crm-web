@@ -4171,43 +4171,40 @@ const FILTROS_B2B = {
   // ===== FINANZAS Y NEGOCIOS (completitud documental + viabilidad + solidez) =====
   finanzas: {
     titulo: 'Filtro Finanzas y Negocios',
+    // Documentos obligatorios por ticket: faltante = escalado (bloquea avance a Business Case).
     gates: [
-      { clave: 'repagoSoloGarantia', etiqueta: 'Repago depende solo de ejecutar la garantía', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Repago depende solo de ejecutar la garantía' }
-      ] },
-      { clave: 'flujoIdentificable', etiqueta: 'Flujo identificable y coherente con la actividad', tipo: 'select', opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ko', motivo: 'No hay flujo identificable / inconsistente' }
-      ] },
-      { clave: 'destinoCreditoPuente', etiqueta: 'Destino = crédito puente', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Destino crédito puente (prohibido)' }
-      ] },
-      { clave: 'destinoExplicable', etiqueta: 'Destino explicable / sustentado', tipo: 'select', opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Destino no explicable (no cierra verde)' }
-      ] },
       { clave: 'djAnual', etiqueta: 'DJ Anual SUNAT', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DJ Anual SUNAT' },
-      { clave: 'eeff', etiqueta: 'Estados Financieros situacionales', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan Estados Financieros (Medio/Alto)' },
+      { clave: 'eeff', etiqueta: 'Estados Financieros situacionales (3m)', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan Estados Financieros (Medio/Alto)' },
       { clave: 'flujoProyectado', etiqueta: 'Flujo de caja proyectado', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta flujo de caja proyectado (Medio/Alto)' },
-      { clave: 'estadosCuenta', etiqueta: 'Estados de cuenta bancarios', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan estados de cuenta bancarios' },
       { clave: 'reporteTributario', etiqueta: 'Reporte tributario', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta reporte tributario' },
-      { clave: 'visitaUnidad', etiqueta: 'Visita a unidad productiva', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Realizada' }, { v: 'no', label: 'Falta' }], motivo: 'Falta visita a unidad productiva' }
+      { clave: 'fichaRuc', etiqueta: 'Ficha RUC', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta Ficha RUC' }
     ],
-    score: [
-      { clave: 'claridadDestino', etiqueta: 'Claridad de destino + mecanismos de verificación', tipo: 'select', peso: 25, opciones: [
-        { v: 'alta', label: 'Alta (≥2 mecanismos + visita)', frac: 1 }, { v: 'media', label: 'Media (≥1 mecanismo)', frac: 0.6 }, { v: 'baja', label: 'Baja / vaga', frac: 0.2 }
-      ] },
-      { clave: 'fuenteRepago', etiqueta: 'Fuente de repago identificable y coherente', tipo: 'select', peso: 25, opciones: [
-        { v: 'clara', label: 'Clara y consistente', frac: 1 }, { v: 'parcial', label: 'Parcial', frac: 0.5 }, { v: 'debil', label: 'Débil', frac: 0 }
-      ] },
-      { clave: 'coherenciaVentasBanco', etiqueta: 'Coherencia ventas declaradas vs. movimiento bancario', tipo: 'select', peso: 20, opciones: [
-        { v: 'consistente', label: 'Consistente', frac: 1 }, { v: 'parcial', label: 'Parcial', frac: 0.5 }, { v: 'inconsistente', label: 'Inconsistente', frac: 0 }
-      ] },
-      { clave: 'visita', etiqueta: 'Visita realizada sin observaciones', tipo: 'select', peso: 15, opciones: [
-        { v: 'sinobs', label: 'Sin observaciones', frac: 1 }, { v: 'conobs', label: 'Con observaciones', frac: 0.5 }, { v: 'no', label: 'No realizada', frac: 0 }
-      ] },
-      { clave: 'usoPermitido', etiqueta: 'Uso permitido (matriz sección 14)', tipo: 'select', peso: 15, opciones: [
-        { v: 'capital', label: 'Capital de trabajo', frac: 1 }, { v: 'activo', label: 'Activo fijo', frac: 0.6 }, { v: 'deuda', label: 'Compra deuda / expansión', frac: 0.3 }
-      ] }
-    ]
+    // Insumos numéricos (2 años consecutivos, cierre de año) para calcular los ratios.
+    insumos: [
+      { clave: 'ventasAct', etiqueta: 'Ventas anuales (año actual)', sufijo: 'S/' },
+      { clave: 'ventasAnt', etiqueta: 'Ventas anuales (año anterior)', sufijo: 'S/' },
+      { clave: 'utilidadAct', etiqueta: 'Utilidad neta / EBITDA (actual)', sufijo: 'S/' },
+      { clave: 'utilidadAnt', etiqueta: 'Utilidad neta / EBITDA (anterior)', sufijo: 'S/' },
+      { clave: 'deudaFin', etiqueta: 'Deuda financiera total', sufijo: 'S/' },
+      { clave: 'patrimonio', etiqueta: 'Patrimonio', sufijo: 'S/' },
+      { clave: 'flujoMensual', etiqueta: 'Flujo disponible mensual', sufijo: 'S/' },
+      { clave: 'cuotaMensual', etiqueta: 'Cuota mensual estimada', sufijo: 'S/' }
+    ],
+    // 5 ratios que PUNTÚAN (ninguno mata). No cumplir el umbral = observación (no suma su peso).
+    // dir: 'min' cumple si valor>=umbral; 'max' cumple si valor<=umbral. Umbral por ticket.
+    ratios: [
+      { clave: 'dscr', etiqueta: 'DSCR (cobertura de cuota)', peso: 35, dir: 'min', umbral: { Bajo: 1.2, Medio: 1.3, Alto: 1.4 }, fmt: 'x',
+        calc: (v) => (v.flujoMensual && v.cuotaMensual) ? v.flujoMensual / v.cuotaMensual : null },
+      { clave: 'endeudamiento', etiqueta: 'Endeudamiento (deuda/patrimonio)', peso: 20, dir: 'max', umbral: { Bajo: 2.5, Medio: 2.0, Alto: 1.8 }, fmt: 'x',
+        calc: (v) => (v.deudaFin != null && v.patrimonio) ? v.deudaFin / v.patrimonio : null },
+      { clave: 'cargaFin', etiqueta: 'Carga financiera (cuota anual/ventas)', peso: 20, dir: 'max', umbral: { Bajo: 0.30, Medio: 0.25, Alto: 0.20 }, fmt: '%',
+        calc: (v) => (v.cuotaMensual && v.ventasAct) ? (v.cuotaMensual * 12) / v.ventasAct : null },
+      { clave: 'margen', etiqueta: 'Margen neto (utilidad/ventas)', peso: 15, dir: 'min', umbral: { Bajo: 0.05, Medio: 0.08, Alto: 0.10 }, fmt: '%',
+        calc: (v) => (v.utilidadAct != null && v.ventasAct) ? v.utilidadAct / v.ventasAct : null },
+      { clave: 'crecimiento', etiqueta: 'Crecimiento de ventas (act/ant −1)', peso: 10, dir: 'min', umbral: { Bajo: -0.10, Medio: 0.00, Alto: 0.05 }, fmt: '%',
+        calc: (v) => (v.ventasAct != null && v.ventasAnt) ? (v.ventasAct / v.ventasAnt - 1) : null }
+    ],
+    score: []
   },
 
   // ===== GARANTÍA (se evalúa POR INMUEBLE; consolidación = MEJOR caso: basta 1 inmueble que pase) =====
@@ -4249,7 +4246,9 @@ const FILTROS_B2B = {
       { clave: 'gravamenes', etiqueta: '¿Gravámenes?', tipo: 'select', opciones: [
         { v: 'no', label: 'No', resultado: 'ok' },
         { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Inmueble con gravámenes: esta garantía no va' }
-      ] }
+      ] },
+      // Valor estimado referencial del inmueble: obligatorio antes de pasar a Finanzas.
+      { clave: 'valorEstimado', etiqueta: 'Valor estimado del inmueble', tipo: 'numReq', sufijo: 'S/', motivo: 'Falta el valor estimado del inmueble (referencial)' }
     ],
     score: [
       { clave: 'zonaElegible', etiqueta: 'Zona elegible', tipo: 'select', peso: 100, refGate: true, opciones: [
@@ -4268,6 +4267,12 @@ function evalGateB2B(g, valores, ticket) {
       return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
     }
     return { resultado: 'ok' }; // no aplica si la condición no se cumple
+  }
+  // Número obligatorio (valor estimado del inmueble): vacío o no positivo bloquea.
+  if (g.tipo === 'numReq') {
+    if (vacio) return { resultado: 'escalado', motivo: g.motivo, pendiente: true };
+    const n = Number(val);
+    return (!isFinite(n) || n <= 0) ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
   }
   if (g.tipo === 'numMinTicket') {
     if (vacio) return { resultado: 'ok', pendiente: true };
@@ -4320,6 +4325,35 @@ function evalScoreItemB2B(it, valores, ticket) {
   }
   return null;
 }
+// Evalúa el bloque de ratios financieros. Cada ratio que cumple su umbral suma su peso;
+// el que no cumple (o falta insumo) NO suma y se marca como observación. Ninguno mata.
+// Para DSCR calcula además la cuota máxima soportable (cruce de capacidad de pago).
+function evaluarRatiosB2B(cat, valores, ticket) {
+  const v = {};
+  (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
+  let ganado = 0, pesoTotal = 0;
+  const detalle = [], observaciones = [];
+  let capacidad = null;
+  for (const r of (cat.ratios || [])) {
+    pesoTotal += r.peso;
+    const val = r.calc(v);
+    const umbral = r.umbral[ticket] != null ? r.umbral[ticket] : r.umbral.Bajo;
+    let cumple = null;
+    if (val != null && isFinite(val)) {
+      cumple = r.dir === 'min' ? (val >= umbral) : (val <= umbral);
+      if (cumple) ganado += r.peso;
+      else observaciones.push(r.etiqueta + ' fuera de umbral');
+    } else {
+      observaciones.push(r.etiqueta + ': falta dato');
+    }
+    detalle.push({ clave: r.clave, etiqueta: r.etiqueta, valor: val, umbral, dir: r.dir, fmt: r.fmt, cumple });
+    // Cruce de capacidad: cuota máxima que soporta el flujo al DSCR mínimo del ticket.
+    if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
+  }
+  const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
+  return { puntaje, detalle, observaciones, capacidad };
+}
+
 // Aplica una penalización directa al puntaje según su tipo. Devuelve puntos a RESTAR (>=0).
 function penalB2B(p, valores) {
   const val = valores[p.clave];
@@ -4350,6 +4384,13 @@ function evaluarFiltroDosCapas(cat, valores, ticket) {
     if (p == null) faltan++; else total += p;
   }
   let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  // Bloque de ratios financieros (finanzas): el puntaje sale de los ratios; no-cumplir = observación.
+  let ratios = null;
+  if (cat.ratios && cat.ratios.length) {
+    ratios = evaluarRatiosB2B(cat, valores, ticket);
+    puntaje = ratios.puntaje;
+    ratios.observaciones.forEach(o => observados.push(o));
+  }
   // Penalizaciones directas (crédito v1.222): se restan del puntaje base.
   let penalTotal = 0;
   for (const p of (cat.penal || [])) penalTotal += penalB2B(p, valores);
@@ -4358,7 +4399,7 @@ function evaluarFiltroDosCapas(cat, valores, ticket) {
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // excepción pendiente no cierra verde
   if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo'; // observación no cierra verde
   else if (observados.length && semaforo === 'Rojo' && !kos.length) semaforo = 'Amarillo'; // observado (sin KO) = excepción, topa en Amarillo
-  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
+  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan, ratios };
 }
 
 // Recalcula y guarda el consolidado en b2b_filtros (credito) + resultadoCredito de la solicitud.
@@ -5576,7 +5617,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.223 (Filtros del tablero en una sola fila horizontal; FIX RUC: persona juridica se deriva SIEMPRE del prefijo (20->si, 10->observar) sin que lo pise el guardado; AUTO-AVANCE credito Verde -> Filtro garantia sin arrastre; bitacora de GESTIONES B2B con proxima accion + fecha OBLIGATORIAS (estilo B2C); Filtro GARANTIA recortado por inmueble: copia literal (No->partida registral obligatoria), HR/PU opcional, recibo de luz obligatorio, DNI (Si->numero) obligatorio, fotos opcional, zona (Si->link Maps / No->observado con excepcion), gravamenes = killer del inmueble; obligatorios faltantes BLOQUEAN avance a finanzas (no descartan). REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.224 (Filtro FINANZAS rehecho: checklist documental obligatorio por ticket (DJ Anual, EEFF, flujo proyectado, reporte tributario, ficha RUC) que bloquea avance si falta; bloque de cifras financieras de 2 anios que calcula 5 RATIOS (DSCR 35, endeudamiento 20, carga financiera 20, margen 15, crecimiento 10) con umbrales por ticket; los ratios PUNTUAN (ninguno mata), no cumplir = observacion; DSCR sin cobertura muestra CRUCE DE CAPACIDAD (cuota maxima soportable) sin rechazar; se eliminaron gates comerciales (van en el speech). GARANTIA: nuevo campo Valor estimado del inmueble OBLIGATORIO antes de pasar a Finanzas. REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

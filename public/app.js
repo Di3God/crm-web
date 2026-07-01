@@ -4770,6 +4770,7 @@ const ANTIG_MIN_TK = { Bajo: 18, Medio: 24, Alto: 36 };
 function evalGateJS(g, valores, ticket) {
   const val = valores[g.clave]; const vacio = (val === undefined || val === null || val === '');
   if (g.tipo === 'textoReq') { if (g.requiereSi && valores[g.requiereSi.clave] === g.requiereSi.val) { return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; } return { resultado: 'ok' }; }
+  if (g.tipo === 'numReq') { if (vacio) return { resultado: 'escalado', motivo: g.motivo }; const n = Number(val); return (!isFinite(n) || n <= 0) ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'numMinTicket') { if (vacio) return { resultado: 'ok' }; const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo; return Number(val) < min ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'numMaxTicket') { if (vacio) return { resultado: 'ok' }; const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo; return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'docTicket') { const req = g.requeridoTicket && g.requeridoTicket[ticket]; if (!req) return { resultado: 'ok' }; return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
@@ -4783,6 +4784,33 @@ function evalScoreJS(it, valores, ticket) {
   if (it.tipo === 'ventasTicket') { if (vacio) return null; const n = Number(val); if (!isFinite(n)) return null; const r = RANGOS_VENTAS_TK[ticket] || RANGOS_VENTAS_TK.Bajo; const frac = n < r[0] ? 0.3 : (n > r[1] ? 0.7 : 1); return frac * it.peso; }
   if (it.tipo === 'colchonTicket') { if (vacio) return null; const min = ANTIG_MIN_TK[ticket] != null ? ANTIG_MIN_TK[ticket] : ANTIG_MIN_TK.Bajo; const c = Number(val) - min; if (!isFinite(c)) return null; return Math.max(0, Math.min(1, c / 24)) * it.peso; }
   return null;
+}
+// Fórmulas de ratios financieros (espejo del server; las funciones calc no viajan por JSON).
+const RATIO_CALC_JS = {
+  dscr: (v) => (v.flujoMensual && v.cuotaMensual) ? v.flujoMensual / v.cuotaMensual : null,
+  endeudamiento: (v) => (v.deudaFin != null && v.patrimonio) ? v.deudaFin / v.patrimonio : null,
+  cargaFin: (v) => (v.cuotaMensual && v.ventasAct) ? (v.cuotaMensual * 12) / v.ventasAct : null,
+  margen: (v) => (v.utilidadAct != null && v.ventasAct) ? v.utilidadAct / v.ventasAct : null,
+  crecimiento: (v) => (v.ventasAct != null && v.ventasAnt) ? (v.ventasAct / v.ventasAnt - 1) : null
+};
+function evaluarRatiosJS(cat, valores, ticket) {
+  const v = {};
+  (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
+  let ganado = 0, pesoTotal = 0; const detalle = []; const observaciones = []; let capacidad = null;
+  (cat.ratios || []).forEach(r => {
+    pesoTotal += r.peso;
+    const fn = RATIO_CALC_JS[r.clave]; const val = fn ? fn(v) : null;
+    const umbral = r.umbral[ticket] != null ? r.umbral[ticket] : r.umbral.Bajo;
+    let cumple = null;
+    if (val != null && isFinite(val)) {
+      cumple = r.dir === 'min' ? (val >= umbral) : (val <= umbral);
+      if (cumple) ganado += r.peso; else observaciones.push(r.etiqueta + ' fuera de umbral');
+    } else observaciones.push(r.etiqueta + ': falta dato');
+    detalle.push({ clave: r.clave, etiqueta: r.etiqueta, valor: val, umbral, dir: r.dir, fmt: r.fmt, cumple });
+    if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
+  });
+  const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
+  return { puntaje, detalle, observaciones, capacidad };
 }
 function penalJS(p, valores) {
   const val = valores[p.clave];
@@ -4800,13 +4828,15 @@ function evaluarFiltro2JS(cat, valores, ticket) {
   let total = 0, pesoTotal = 0, faltan = 0;
   (cat.score || []).forEach(it => { pesoTotal += it.peso; const p = evalScoreJS(it, valores, ticket); if (p == null) faltan++; else total += p; });
   let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let ratios = null;
+  if (cat.ratios && cat.ratios.length) { ratios = evaluarRatiosJS(cat, valores, ticket); puntaje = ratios.puntaje; ratios.observaciones.forEach(o => observados.push(o)); }
   let penalTotal = 0; (cat.penal || []).forEach(p => { penalTotal += penalJS(p, valores); });
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo';
   if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo';
   else if (observados.length && semaforo === 'Rojo' && !kos.length) semaforo = 'Amarillo';
-  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
+  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan, ratios };
 }
 function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
   const val = valores[campo.clave];
@@ -4908,8 +4938,35 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   let html = '<div class="f2-box"><div class="fb-sec">Gates (eliminatorios)</div>' + gatesHtml;
   if (scoreHtml) html += '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml;
   if (penalHtml) html += '<div class="fb-sec">Antecedentes (activa el que aplique)</div>' + penalHtml;
+  // Bloque de insumos numéricos + ratios calculados (finanzas).
+  if (cat.insumos && cat.insumos.length) {
+    const insHtml = cat.insumos.map(i => {
+      const val = valores[i.clave];
+      return '<div class="mtr-row"><span class="mtr-lbl">' + i.etiqueta + '</span><span class="mtr-ctrl">' +
+        '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + i.clave + '" value="' + (val != null ? val : '') + '" oninput="recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')">' +
+        (i.sufijo ? '<span class="mtr-suf">' + i.sufijo + '</span>' : '') + '</span></div>';
+    }).join('');
+    html += '<div class="fb-sec">Cifras financieras (2 años, cierre de año)</div>' + insHtml;
+    html += '<div class="fb-sec">Ratios calculados</div><div id="' + prefijo + '_ratios">' + ratiosTablaHTML(ev.ratios) + '</div>';
+  }
   html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
   return html;
+}
+// Tabla de ratios con su umbral, valor calculado y semáforo; + cruce de capacidad para DSCR.
+function ratiosTablaHTML(ratios) {
+  if (!ratios || !ratios.detalle) return '<div class="sub">Ingresa las cifras para calcular los ratios.</div>';
+  const fmtVal = (v, f) => v == null ? '—' : (f === '%' ? (v * 100).toFixed(1) + '%' : v.toFixed(2) + 'x');
+  const fmtUmb = (u, f, dir) => (dir === 'min' ? '≥ ' : '≤ ') + (f === '%' ? (u * 100).toFixed(0) + '%' : u.toFixed(1) + 'x');
+  let rows = ratios.detalle.map(d => {
+    const est = d.cumple == null ? '<span class="rt-na">sin dato</span>' : (d.cumple ? '<span class="rt-ok">✓ cumple</span>' : '<span class="rt-obs">⚠ observar</span>');
+    return '<tr><td>' + d.etiqueta + '</td><td class="rt-c">' + fmtUmb(d.umbral, d.fmt, d.dir) + '</td><td class="rt-c"><b>' + fmtVal(d.valor, d.fmt) + '</b></td><td class="rt-c">' + est + '</td></tr>';
+  }).join('');
+  let cap = '';
+  const dscr = ratios.detalle.find(d => d.clave === 'dscr');
+  if (dscr && dscr.cumple === false && ratios.capacidad != null) {
+    cap = '<div class="rt-cap">💡 Capacidad de pago: la cuota máxima que soporta el flujo es <b>S/ ' + Math.floor(ratios.capacidad).toLocaleString('es-PE') + '</b>/mes. Considera reducir el monto a ese nivel.</div>';
+  }
+  return '<table class="rt-tabla"><thead><tr><th>Ratio</th><th>Umbral</th><th>Valor</th><th>Estado</th></tr></thead><tbody>' + rows + '</tbody></table>' + cap;
 }
 function leerFiltro2(prefijo) {
   const o = {}; document.querySelectorAll('[data-f2="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; }); return o;
@@ -4930,6 +4987,7 @@ function recalcFiltro2(prefijo, tipo, ticket) {
   });
   cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : r.resultado === 'observado' ? 'f2-obs-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
   const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(evaluarFiltro2JS(cat, valores, ticket));
+  const rt = $(prefijo + '_ratios'); if (rt && cat.ratios) rt.innerHTML = ratiosTablaHTML(evaluarFiltro2JS(cat, valores, ticket).ratios);
 }
 // Autocompleta los gates de SUNAT desde los datos ya conocidos (RUC, sunatRaw, antigüedad, ventas).
 function autoValoresSunat(s) {
