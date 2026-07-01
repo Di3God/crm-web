@@ -4026,11 +4026,20 @@ async function cargarB2B() {
       Object.entries(porEstado).map(([e, n]) =>
         '<span class="b2b-chip"><i style="background:' + (B2B_ESTADO_COL[e] || '#888') + '"></i>' + trEstadoB2B(e) + ': ' + n + '</span>').join('');
     if (!lista.length) { cont.innerHTML = '<div class="vacio">No hay solicitudes con estos filtros. Crea una con “+ Nueva solicitud”.</div>'; return; }
-    cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
-      '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Sector / Rubro</th><th>Antigüedad</th><th>Ubicación</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th><th></th>' +
+    const puedeGestionar = d.puedeGestionar || puedeReasignarB2B();
+    const barra = puedeGestionar ? '<div class="b2b-lote-bar" id="b2bLoteBar">' +
+      '<label class="b2b-lote-all"><input type="checkbox" id="b2bSelAll" onchange="b2bToggleAll(this)"> Seleccionar todos</label>' +
+      '<span id="b2bSelCount" class="sub">0 seleccionados</span>' +
+      '<button class="btn sec" onclick="abrirReasignarLote()">↻ Reasignar seleccionados</button>' +
+      '<button class="btn sec" onclick="verDuplicadosB2B()">⧉ Ver duplicados</button>' +
+      '</div>' : '';
+    const colSel = puedeGestionar ? '<th style="width:28px"></th>' : '';
+    cont.innerHTML = barra + '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
+      colSel + '<th>Código</th><th>Empresa</th><th>RUC</th><th>SUNAT</th><th>Contacto</th><th>Sector / Rubro</th><th>Antigüedad</th><th>Ubicación</th><th>Monto</th><th>Ticket</th><th>Estado</th><th>Responsable</th><th>Ingreso</th><th></th>' +
       '</tr></thead><tbody>' +
       lista.map(s =>
         '<tr>' +
+        (puedeGestionar ? '<td><input type="checkbox" class="b2b-sel" value="' + s.codigo + '" onchange="b2bSelChange()"></td>' : '') +
         '<td><span class="b2b-cod b2b-cod-link" onclick="abrirFichaB2B(\'' + s.codigo + '\')" title="Abrir ficha">' + s.codigo + '</span></td>' +
         '<td><b>' + (s.razonSocial || '—') + '</b>' + (s.nombreComercial ? '<div class="b2b-sub">' + s.nombreComercial + '</div>' : '') + '</td>' +
         '<td>' + (s.ruc || '—') + '</td>' +
@@ -4051,6 +4060,14 @@ async function cargarB2B() {
     cont.innerHTML = '<div class="vacio">No se pudo cargar B2B: ' + e.message + '</div>';
   }
 }
+// ¿El usuario puede reasignar/gestionar? (jefe_b2b, jefe_creditos, admin)
+function puedeReasignarB2B() {
+  const rol = (typeof YO !== 'undefined' && YO && YO.rol) || '';
+  return ['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(rol);
+}
+function b2bToggleAll(chk) { document.querySelectorAll('.b2b-sel').forEach(c => { c.checked = chk.checked; }); b2bSelChange(); }
+function b2bSelChange() { const n = document.querySelectorAll('.b2b-sel:checked').length; const el = $('b2bSelCount'); if (el) el.textContent = n + ' seleccionados'; }
+function b2bSeleccionados() { return Array.from(document.querySelectorAll('.b2b-sel:checked')).map(c => c.value); }
 
 function trEstadoB2B(e) {
   const M = { 'Filtro credito': 'Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': 'Filtro garantía', 'Apto garantia': 'Apto garantía', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
@@ -4646,6 +4663,88 @@ async function reasignarB2B(codigo, usuario) {
   }
 }
 
+// ===== Reasignar en LOTE =====
+async function abrirReasignarLote() {
+  const cods = b2bSeleccionados();
+  if (!cods.length) { alert('Selecciona al menos un lead (marca las casillas).'); return; }
+  if (!B2B_EQUIPO_CACHE) { try { B2B_EQUIPO_CACHE = await api('/api/b2b/equipo'); } catch (e) { } }
+  const eq = (B2B_EQUIPO_CACHE && B2B_EQUIPO_CACHE.equipo) || [];
+  const opts = eq.map(m => '<option value="' + m.usuario + '">' + m.nombre + '</option>').join('');
+  const html = '<div class="gm-back" onclick="if(event.target===this)cerrarOverlayGenerico()"><div class="gm-card" style="width:400px">' +
+    '<div class="gm-head"><b>Reasignar ' + cods.length + ' lead(s)</b><button class="gm-x" onclick="cerrarOverlayGenerico()">✕</button></div>' +
+    '<div class="gm-row"><label>Asignar a</label><select id="loteDestino" class="mtr-in">' + (opts || '<option value="">Sin operadores</option>') + '</select></div>' +
+    '<div class="error" id="loteMsg"></div>' +
+    '<div class="gm-foot"><button class="btn sec" onclick="cerrarOverlayGenerico()">Cancelar</button><button class="btn" onclick="confirmarReasignarLote()">Reasignar</button></div>' +
+    '</div></div>';
+  montarOverlayGenerico(html);
+}
+async function confirmarReasignarLote() {
+  const usuario = $('loteDestino') && $('loteDestino').value;
+  const codigos = b2bSeleccionados();
+  if (!usuario) { $('loteMsg').textContent = 'Elige un operador.'; return; }
+  try {
+    const r = await api('/api/b2b/solicitudes/reasignar-lote', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codigos, usuario }) });
+    cerrarOverlayGenerico();
+    cargarB2B();
+    alert(r.reasignados + ' lead(s) reasignados a ' + r.responsable);
+  } catch (e) { $('loteMsg').textContent = e.message || 'No se pudo reasignar.'; }
+}
+
+// ===== Duplicados por RUC =====
+async function verDuplicadosB2B() {
+  let d; try { d = await api('/api/b2b/duplicados'); } catch (e) { alert('No se pudo cargar duplicados: ' + e.message); return; }
+  const grupos = d.grupos || [];
+  let cuerpo;
+  if (!grupos.length) cuerpo = '<div class="sub" style="padding:10px">No hay RUCs duplicados en solicitudes activas. 👍</div>';
+  else cuerpo = grupos.map(g => {
+    const rows = g.solicitudes.map((s, i) => '<label class="dup-row"><input type="radio" name="dup_' + g.ruc + '" value="' + s.codigo + '"' + (i === 0 ? ' checked' : '') + '> ' +
+      '<b>' + s.codigo + '</b> · ' + (s.razonSocial || '—') + ' · ' + trEstadoB2B(s.estado) + ' · ' + (s.responsableActual ? primerNombre(s.responsableActual) : 'sin asignar') +
+      ' <span class="sub">(' + (s.fechaIngreso ? fmtFecha(s.fechaIngreso) : '') + ')</span></label>').join('');
+    return '<div class="dup-grupo"><div class="dup-ruc">RUC ' + g.ruc + ' · ' + g.n + ' solicitudes</div>' + rows +
+      '<div class="dup-acc">' +
+      '<span class="sub">Elige la que se conserva y:</span> ' +
+      '<button class="btn sec" onclick="fusionarDup(\'' + g.ruc + '\')">⧉ Fusionar en la elegida</button> ' +
+      '<button class="btn sec" onclick="descartarOtrosDup(\'' + g.ruc + '\')">✕ Descartar las demás</button>' +
+      '</div></div>';
+  }).join('');
+  const html = '<div class="tl-back" onclick="if(event.target===this)cerrarOverlayGenerico()"><div class="tl-card" style="width:560px">' +
+    '<div class="tl-head"><b>Duplicados por RUC</b><button class="gm-x" onclick="cerrarOverlayGenerico()">✕</button></div>' +
+    '<p class="sub" style="margin:0 0 10px">Fusionar mueve las gestiones a la solicitud elegida y descarta las demás. Descartar solo saca las otras del tablero.</p>' +
+    cuerpo + '</div></div>';
+  montarOverlayGenerico(html);
+}
+function dupElegida(ruc) { const el = document.querySelector('input[name="dup_' + ruc + '"]:checked'); return el ? el.value : null; }
+function dupTodas(ruc) { return Array.from(document.querySelectorAll('input[name="dup_' + ruc + '"]')).map(e => e.value); }
+async function fusionarDup(ruc) {
+  const destino = dupElegida(ruc); if (!destino) return;
+  const origenes = dupTodas(ruc).filter(c => c !== destino);
+  if (!confirm('Fusionar ' + origenes.length + ' solicitud(es) en ' + destino + '? Las gestiones se moverán a la elegida y las demás se descartarán.')) return;
+  try { await api('/api/b2b/solicitudes/fusionar-duplicados', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destino, origenes }) }); cerrarOverlayGenerico(); cargarB2B(); alert('Duplicados fusionados.'); }
+  catch (e) { alert(e.message || 'No se pudo fusionar.'); }
+}
+async function descartarOtrosDup(ruc) {
+  const conservar = dupElegida(ruc); if (!conservar) return;
+  const otras = dupTodas(ruc).filter(c => c !== conservar);
+  if (!confirm('Descartar ' + otras.length + ' duplicado(s) y conservar ' + conservar + '?')) return;
+  try { for (const o of otras) await api('/api/b2b/solicitudes/' + o + '/descartar-duplicado', { method: 'PUT' }); cerrarOverlayGenerico(); cargarB2B(); alert('Duplicados descartados.'); }
+  catch (e) { alert(e.message || 'No se pudo descartar.'); }
+}
+
+// ===== Limpiar historial (dentro del timeline; solo jefe/admin) =====
+async function limpiarHistorialB2B() {
+  if (!confirm('¿Limpiar TODO el historial de gestiones de este lead? El lead se conserva y vuelve a su etapa base (SUNAT/Crédito). Esta acción no se puede deshacer.')) return;
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/gestiones', { method: 'DELETE' });
+    if ($('tlHost')) $('tlHost').remove();
+    abrirFichaB2B(FICHA.solicitud.codigo);
+    alert(r.eliminadas + ' gestiones eliminadas. El lead volvió a su etapa base.');
+  } catch (e) { alert(e.message || 'No se pudo limpiar.'); }
+}
+
+// Overlay genérico reutilizable
+function montarOverlayGenerico(html) { cerrarOverlayGenerico(); const h = document.createElement('div'); h.id = 'ovGen'; h.innerHTML = html; document.body.appendChild(h); }
+function cerrarOverlayGenerico() { const h = $('ovGen'); if (h) h.remove(); }
+
 function resumenFichaB2B() {
   const pj = FICHA.puntaje || {}; const sla = FICHA.sla || {};
   const prob = pj.banda ? '<span class="fbr-prob fbr-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '% · ' : '') + pj.banda + '</span>' : '';
@@ -4805,9 +4904,11 @@ function toggleTimelineB2B() {
       '<div class="tl-prox">➡ <b>' + (x.proximaAccion || '') + '</b> · 📅 ' + fp + '</div>' +
       '</div></div>';
   }).join('') : '<div class="sub" style="padding:8px">Sin gestiones registradas todavía.</div>';
+  const puedeLimpiar = puedeReasignarB2B();
+  const footer = (puedeLimpiar && g.length) ? '<div class="tl-foot"><button class="btn sec tl-limpiar" onclick="limpiarHistorialB2B()">🗑 Limpiar historial</button></div>' : '';
   const html = '<div class="tl-back" onclick="if(event.target===this)toggleTimelineB2B()">' +
     '<div class="tl-card"><div class="tl-head"><b>Trazabilidad del lead</b><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
-    '<div class="tl-list">' + items + '</div></div></div>';
+    '<div class="tl-list">' + items + '</div>' + footer + '</div></div>';
   const host = document.createElement('div'); host.id = 'tlHost'; host.innerHTML = html;
   document.body.appendChild(host);
 }
@@ -4906,6 +5007,8 @@ function evaluarFiltro2JS(cat, valores, ticket) {
   (cat.analisis || []).forEach(a => { const v = valores[a.clave]; const vacio = (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)); if (vacio) escalados.push(a.motivo || ('Falta ' + a.etiqueta)); });
   let penalTotal = 0; (cat.penal || []).forEach(p => { penalTotal += penalJS(p, valores); });
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
+  const soloGates = !(cat.score && cat.score.length) && !(cat.ratios && cat.ratios.length);
+  if (soloGates && observados.length) { puntaje = Math.max(50, 100 - observados.length * 12); }
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo';
   if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo';

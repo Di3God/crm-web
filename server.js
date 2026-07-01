@@ -3923,6 +3923,83 @@ app.put('/api/b2b/solicitudes/:codigo/reasignar', soloB2B, (req, res) => {
   res.json({ ok: true, responsable: destino.nombre });
 });
 
+// Reasignar VARIOS leads a la vez a un funcionario (selección múltiple en la bandeja).
+app.put('/api/b2b/solicitudes/reasignar-lote', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado para reasignar' });
+  const codigos = Array.isArray(req.body && req.body.codigos) ? req.body.codigos : [];
+  if (!codigos.length) return res.status(400).json({ error: 'No hay leads seleccionados' });
+  const roles = rolesGestionablesB2B(req.user);
+  if (!roles.length) return res.status(403).json({ error: 'Sin operadores que gestionar' });
+  const ph = roles.map(() => '?').join(',');
+  const destino = db.prepare("SELECT usuario, nombre FROM usuarios WHERE usuario=? AND activo=1 AND rol IN (" + ph + ")").get(req.body && req.body.usuario, ...roles);
+  if (!destino) return res.status(400).json({ error: 'Operador no válido para reasignar' });
+  const upd = db.prepare("UPDATE b2b_solicitudes SET responsableActual=?, funcionario=? WHERE codigo=?");
+  let n = 0;
+  for (const cod of codigos) {
+    const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(cod);
+    if (s) { upd.run(destino.nombre, destino.nombre, cod); n++; }
+  }
+  auditar(req, 'b2b_reasignar_lote', codigos.join(','), `${n} leads -> ${destino.nombre}`);
+  res.json({ ok: true, reasignados: n, responsable: destino.nombre });
+});
+
+// Detectar duplicados por RUC (mismo RUC en 2+ solicitudes activas). Para la bandeja de ingresos.
+app.get('/api/b2b/duplicados', soloB2B, (req, res) => {
+  const filas = db.prepare(`SELECT ruc, COUNT(*) n, GROUP_CONCAT(codigo) codigos FROM b2b_solicitudes
+    WHERE archivado IS NOT 1 AND estado <> 'No elegible' AND ruc IS NOT NULL AND TRIM(ruc) <> ''
+    GROUP BY ruc HAVING n > 1`).all();
+  const grupos = filas.map(f => {
+    const cods = String(f.codigos).split(',');
+    const dets = db.prepare("SELECT codigo, razonSocial, responsableActual, estado, fechaIngreso FROM b2b_solicitudes WHERE codigo IN (" + cods.map(() => '?').join(',') + ") ORDER BY fechaIngreso ASC").all(...cods);
+    return { ruc: f.ruc, n: f.n, solicitudes: dets };
+  });
+  res.json({ grupos });
+});
+
+// Descartar un duplicado (sale del tablero, conserva el original). Solo jefe/admin.
+app.put('/api/b2b/solicitudes/:codigo/descartar-duplicado', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado' });
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', archivado=1, motivoDescarte='Duplicado' WHERE codigo=?").run(s.codigo);
+  auditar(req, 'b2b_descartar_duplicado', s.codigo, 'marcado duplicado');
+  res.json({ ok: true });
+});
+
+// Fusionar duplicados: conserva el destino y descarta los demás, moviendo sus gestiones al destino.
+app.put('/api/b2b/solicitudes/fusionar-duplicados', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado' });
+  const destino = req.body && req.body.destino;
+  const origenes = Array.isArray(req.body && req.body.origenes) ? req.body.origenes : [];
+  if (!destino || !origenes.length) return res.status(400).json({ error: 'Faltan destino u orígenes' });
+  const d = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(destino);
+  if (!d) return res.status(404).json({ error: 'Destino no encontrado' });
+  const mover = db.prepare("UPDATE b2b_gestiones SET codigoSolicitud=? WHERE codigoSolicitud=?");
+  const descartar = db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', archivado=1, motivoDescarte='Fusionado' WHERE codigo=?");
+  let n = 0;
+  for (const o of origenes) {
+    if (o === destino) continue;
+    const src = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(o);
+    if (!src) continue;
+    mover.run(destino, o); descartar.run(o); n++;
+  }
+  auditar(req, 'b2b_fusionar_duplicados', destino, `absorbió ${n} · orígenes ${origenes.join(',')}`);
+  res.json({ ok: true, fusionados: n });
+});
+
+// Limpiar TODAS las gestiones de un lead (sin borrar el lead). Solo jefe/admin. Vuelve a su etapa base.
+app.delete('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'Solo jefe/admin puede limpiar el historial' });
+  const s = db.prepare('SELECT codigo, sunatEstado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const del = db.prepare('DELETE FROM b2b_gestiones WHERE codigoSolicitud=?').run(s.codigo);
+  // Vuelve a la etapa base: SUNAT ok -> Filtro credito; si no -> Solicitud (SUNAT).
+  const estadoBase = s.sunatEstado === 'ok' ? 'Nuevo' : 'Nuevo';
+  db.prepare("UPDATE b2b_solicitudes SET estado=?, fechaEtapa=?, fechaEtapaCol=NULL WHERE codigo=?").run(estadoBase, new Date().toISOString(), s.codigo);
+  auditar(req, 'b2b_limpiar_gestiones', s.codigo, del.changes + ' gestiones eliminadas · vuelve a etapa base');
+  res.json({ ok: true, eliminadas: del.changes });
+});
+
 // Editar el monto exacto solicitado (el que confirma el empresario). Recalcula el ticket.
 app.put('/api/b2b/solicitudes/:codigo/monto', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
@@ -4444,6 +4521,12 @@ function evaluarFiltroDosCapas(cat, valores, ticket, monto) {
   let penalTotal = 0;
   for (const p of (cat.penal || [])) penalTotal += penalB2B(p, valores);
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
+  // Filtros de solo-gates (sin score ni ratios): cada observación descuenta 12 pts del 100,
+  // con piso en 50 mientras no haya KO, para que el % refleje qué tan observado está.
+  const soloGates = !(cat.score && cat.score.length) && !(cat.ratios && cat.ratios.length);
+  if (soloGates && observados.length) {
+    puntaje = Math.max(50, 100 - observados.length * 12);
+  }
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // excepción pendiente no cierra verde
   if (observados.length && semaforo !== 'Rojo') semaforo = 'Amarillo'; // observación no cierra verde
@@ -5685,7 +5768,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.231 (Ficha estilo B2C: etapa ACTIVA automatica (etapaKanban), solo esa editable; etapas anteriores en solo-lectura (desplegables) salvo el MONTO; futuras bloqueadas. Boton GESTION por etapa abre MODAL 2 pasos (canal+resultado+comentario / proxima accion OBLIGATORIA por etapa + fecha). Boton TIMELINE (i) junto a la bandera. SLA en HORAS: SUNAT 24, Credito 48, Garantia 72, Finanzas 72, Business Case 24. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.232 (FIX puntaje credito/solo-gates: cada observacion descuenta 12 pts del 100 (piso 50 sin KO), el % refleja el nivel de observacion. Bandeja B2B: seleccion multiple + REASIGNAR EN LOTE a un funcionario; deteccion de DUPLICADOS por RUC con 3 opciones (avisar/fusionar/descartar), fusionar mueve las gestiones a la elegida. Timeline: boton LIMPIAR HISTORIAL (solo jefe/admin, con confirmacion) que borra las gestiones y devuelve el lead a su etapa base. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

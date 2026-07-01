@@ -1577,6 +1577,21 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .tl-com { font-size:12px; color:#6B7A8D; font-style:italic; margin-top:3px; }
 .tl-prox { font-size:12px; color:#0B4C8C; background:#EEF5FE; border-radius:6px; padding:3px 8px; margin-top:5px; display:inline-block; }
 
+/* Reasignación en lote */
+.b2b-lote-bar { display:flex; align-items:center; gap:14px; padding:8px 12px; background:#F2F5F9; border-radius:10px; margin-bottom:10px; flex-wrap:wrap; }
+.b2b-lote-all { font-size:13px; font-weight:600; color:#41505F; display:flex; align-items:center; gap:6px; }
+.b2b-sel { cursor:pointer; }
+
+/* Duplicados */
+.dup-grupo { border:1px solid #E3E9F2; border-radius:10px; padding:12px; margin-bottom:12px; }
+.dup-ruc { font-weight:700; font-size:13px; color:#1B2A41; margin-bottom:8px; }
+.dup-row { display:block; font-size:12.5px; padding:5px 0; cursor:pointer; border-bottom:1px solid #F0F3F7; }
+.dup-acc { margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+/* Timeline footer */
+.tl-foot { margin-top:12px; padding-top:12px; border-top:1px solid #E3E9F2; text-align:right; }
+.tl-limpiar { color:#CC0000 !important; border-color:#E8B5AD !important; }
+
 .fb-resumen { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 12px; background: #F2F5F9; border-radius: 10px; font-size: 13px; }
 .fbr-prob { font-weight: 700; padding: 2px 10px; border-radius: 999px; }
 .fbr-p1 { background: #FFE7DC; color: #D9480F; }
