@@ -4527,6 +4527,7 @@ async function abrirFichaB2B(codigo) {
   $('fbAcordeon').innerHTML = '<div class="vacio">Cargando…</div>';
   try {
     await cargarCriteriosB2B();
+    await cargarFiltrosCatalogo();
     FICHA = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/ficha');
     renderFichaB2B();
   } catch (e) {
@@ -4618,14 +4619,16 @@ function renderFichaB2B() {
   const semFinanzas = (FICHA.filtros.finanzas && FICHA.filtros.finanzas.semaforo) || null;
   const garantiaDesbloqueada = semCredito === 'Verde' || ['Filtro garantia', 'Apto garantia', 'Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
   const finanzasDesbloqueada = semGarantia === 'Verde' || ['Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
+  const bcDesbloqueada = semFinanzas === 'Verde' || ['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
 
   const panels = [
     panelSolicitud(s),
     panelEmpresa(s),
+    panelFiltroSunat(s),
     panelCredito(semCredito),
     panelGarantia(garantiaDesbloqueada, semGarantia),
     panelFinanzas(finanzasDesbloqueada, semFinanzas),
-    panelBloqueable('businesscase', 'Business case', '📑', false)
+    panelBusinessCase(bcDesbloqueada)
   ];
   $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('');
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });  // el resaltado solo en el primer render
@@ -4635,6 +4638,116 @@ function fbPill(sem) {
   if (!sem) return '';
   const c = { Verde: '#1D9E75', Amarillo: '#EF9F27', Rojo: '#E24B4A' }[sem] || '#888';
   return '<span class="b2b-pill" style="background:' + c + '22;color:' + c + '">' + sem + '</span>';
+}
+
+// ===== Motor de DOS CAPAS en el cliente (espejo del server, para vista previa en vivo) =====
+let FILTROS_B2B_CACHE = null;
+async function cargarFiltrosCatalogo() {
+  if (FILTROS_B2B_CACHE) return FILTROS_B2B_CACHE;
+  try { const d = await api('/api/b2b/filtros-catalogo'); FILTROS_B2B_CACHE = d.filtros || {}; }
+  catch (e) { FILTROS_B2B_CACHE = {}; }
+  return FILTROS_B2B_CACHE;
+}
+const RANGOS_VENTAS_TK = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
+const ANTIG_MIN_TK = { Bajo: 18, Medio: 24, Alto: 36 };
+function evalGateJS(g, valores, ticket) {
+  const val = valores[g.clave]; const vacio = (val === undefined || val === null || val === '');
+  if (g.tipo === 'numMinTicket') { if (vacio) return { resultado: 'ok' }; const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo; return Number(val) < min ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
+  if (g.tipo === 'numMaxTicket') { if (vacio) return { resultado: 'ok' }; const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo; return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
+  if (g.tipo === 'docTicket') { const req = g.requeridoTicket && g.requeridoTicket[ticket]; if (!req) return { resultado: 'ok' }; return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
+  if (vacio) return { resultado: 'ok' };
+  const op = (g.opciones || []).find(o => o.v === val); return op ? { resultado: op.resultado || 'ok', motivo: op.motivo } : { resultado: 'ok' };
+}
+function evalScoreJS(it, valores, ticket) {
+  const val = valores[it.clave]; const vacio = (val === undefined || val === null || val === '');
+  if (it.tipo === 'select') { if (vacio) return null; const op = (it.opciones || []).find(o => o.v === val); return op ? op.frac * it.peso : 0; }
+  if (it.tipo === 'limpiezaNum') { if (vacio) return null; const n = Number(val); if (!isFinite(n)) return null; return (n === 0 ? 1 : 0.4) * it.peso; }
+  if (it.tipo === 'ventasTicket') { if (vacio) return null; const n = Number(val); if (!isFinite(n)) return null; const r = RANGOS_VENTAS_TK[ticket] || RANGOS_VENTAS_TK.Bajo; const frac = n < r[0] ? 0.3 : (n > r[1] ? 0.7 : 1); return frac * it.peso; }
+  if (it.tipo === 'colchonTicket') { if (vacio) return null; const min = ANTIG_MIN_TK[ticket] != null ? ANTIG_MIN_TK[ticket] : ANTIG_MIN_TK.Bajo; const c = Number(val) - min; if (!isFinite(c)) return null; return Math.max(0, Math.min(1, c / 24)) * it.peso; }
+  return null;
+}
+function evaluarFiltro2JS(cat, valores, ticket) {
+  valores = valores || {}; ticket = ticket || 'Bajo';
+  const kos = [], escalados = [];
+  (cat.gates || []).forEach(g => { const r = evalGateJS(g, valores, ticket); if (r.resultado === 'ko') kos.push(r.motivo || g.etiqueta); else if (r.resultado === 'escalado') escalados.push(r.motivo || g.etiqueta); });
+  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, ko: true };
+  let total = 0, pesoTotal = 0, faltan = 0;
+  (cat.score || []).forEach(it => { pesoTotal += it.peso; const p = evalScoreJS(it, valores, ticket); if (p == null) faltan++; else total += p; });
+  const puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
+  if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo';
+  return { semaforo, puntaje, kos, escalados, ko: false, faltan };
+}
+function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
+  const val = valores[campo.clave];
+  const cb = 'recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')';
+  if (campo.tipo === 'select') {
+    return '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"><option value="">—</option>' +
+      campo.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
+  }
+  return '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '" oninput="' + cb + '">';
+}
+function bandaFiltro2HTML(ev) {
+  let h = '<span class="mtr-pill">' + (SEM_EMOJI[ev.semaforo] || '') + ' ' + ev.semaforo + ' · ' + ev.puntaje + '%</span>';
+  if (ev.kos && ev.kos.length) h += '<div class="f2-ko">✕ KO: ' + ev.kos.join(' · ') + '</div>';
+  if (ev.escalados && ev.escalados.length) h += '<div class="f2-esc">⚠ Escalado a excepción: ' + ev.escalados.join(' · ') + '</div>';
+  return h;
+}
+function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
+  const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return '<div class="sub">Catálogo no disponible.</div>';
+  valores = valores || {};
+  const gatesHtml = cat.gates.map(g =>
+    '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + '</span>' +
+    inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</div>').join('');
+  const scoreHtml = cat.score.map(it => it.refGate ? '' :
+    '<div class="mtr-row"><span class="mtr-lbl">' + it.etiqueta + ' <span class="f2-peso">(' + it.peso + ')</span></span>' +
+    inputFiltro2(it, valores, prefijo, tipo, ticket) + (it.sufijo ? '<span class="mtr-suf">' + it.sufijo + '</span>' : '') + '</div>').join('');
+  const ev = evaluarFiltro2JS(cat, valores, ticket);
+  return '<div class="f2-box"><div class="fb-sec">Gates (eliminatorios)</div>' + gatesHtml +
+    '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml +
+    '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+}
+function leerFiltro2(prefijo) {
+  const o = {}; document.querySelectorAll('[data-f2="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; }); return o;
+}
+function recalcFiltro2(prefijo, tipo, ticket) {
+  const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return;
+  const valores = leerFiltro2(prefijo);
+  cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
+  const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(evaluarFiltro2JS(cat, valores, ticket));
+}
+// Autocompleta los gates de SUNAT desde los datos ya conocidos (RUC, sunatRaw, antigüedad, ventas).
+function autoValoresSunat(s) {
+  let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
+  const v = {};
+  if (s.ruc) v.personaJuridica = String(s.ruc).startsWith('20') ? 'si' : 'no';
+  if (raw.estado) v.estado = /activ/i.test(raw.estado) ? 'activo' : 'no';
+  if (raw.condicion) v.condicion = /^\s*habido/i.test(raw.condicion) ? 'habido' : 'no';
+  if (s.antiguedadMeses != null) v.antiguedad = s.antiguedadMeses;
+  return v;
+}
+function panelFiltroSunat(s) {
+  const open = FICHA_ETAPA_OPEN === 'fsunat';
+  const f = FICHA.filtros.sunat || {};
+  const sem = f.semaforo || null;
+  const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
+  if (!open) return fbPanelWrap('fsunat', '📋', 'Filtro SUNAT (elegibilidad)', head, false, '');
+  const ticket = s.ticket || 'Bajo';
+  const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
+  const valores = Object.assign(autoValoresSunat(s), saved);
+  const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket. Los datos de SUNAT se autocompletan; puedes corregirlos.</p>' +
+    renderFiltroDosCapas('sunat', valores, 'fsunat', ticket) +
+    '<div class="fb-acc"><button class="btn" onclick="guardarFiltroSunat()">Guardar</button></div></div>';
+  return fbPanelWrap('fsunat', '📋', 'Filtro SUNAT (elegibilidad)', head, true, cuerpo);
+}
+async function guardarFiltroSunat() {
+  try {
+    const valores = leerFiltro2('fsunat');
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/sunat', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    FICHA.filtros.sunat = Object.assign({}, FICHA.filtros.sunat, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
+    setPanelPill('fsunat', r.semaforo);
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
 function panelSolicitud(s) {
@@ -4748,6 +4861,7 @@ async function cargarCriteriosB2B() {
 const SEM_ORDEN = { Verde: 0, Amarillo: 1, Rojo: 2 };
 const SEM_DOT = { Verde: '#1D9E75', Amarillo: '#E0A800', Rojo: '#CC0000' };
 const SEM_EMOJI = { Verde: '🟢', Amarillo: '🟡', Rojo: '🔴' };
+const ORDEN_SEM_JS = { Verde: 0, Amarillo: 1, Rojo: 2 };
 function colorCriterioJS(crit, valor) {
   if (valor === undefined || valor === null || valor === '') return null;
   if (crit.tipo === 'select') { const o = (crit.opciones || []).find(o => o.v === valor); return o ? o.color : null; }
@@ -4812,16 +4926,14 @@ function recalcMetricasB2B(prefijo, tipo) {
 // Consolidado de crédito en vivo (misma regla del server: empresa ancla).
 function consolidadoCreditoVivoJS() {
   const sujetos = FICHA.creditoSujetos || [];
-  let empColor = null; const otros = [];
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.credito;
+  let peor = null;
   sujetos.forEach(su => {
-    const sem = evalChecklistJS('credito', leerMetricas('suj' + su.id)).semaforo;
-    if (su.tipoSujeto === 'empresa') empColor = sem; else otros.push(sem);
+    const sem = cat ? evaluarFiltro2JS(cat, leerFiltro2('suj' + su.id), ticket).semaforo : null;
+    if (sem && (peor == null || ORDEN_SEM_JS[sem] > ORDEN_SEM_JS[peor])) peor = sem;
   });
-  if (!empColor) return null;
-  if (empColor === 'Rojo') return 'Rojo';
-  const hayRojo = otros.some(x => x === 'Rojo');
-  if (empColor === 'Verde') return hayRojo ? 'Amarillo' : 'Verde';
-  return 'Amarillo';
+  return peor;
 }
 function actualizarConsolidadoVivo() {
   const cons = consolidadoCreditoVivoJS();
@@ -4835,13 +4947,9 @@ function setPanelPill(tipo, sem) {
 
 function consolidadoGuardadoJS() {
   const sujetos = FICHA.creditoSujetos || [];
-  const emp = sujetos.find(x => x.tipoSujeto === 'empresa');
-  const base = emp && emp.semaforo ? emp.semaforo : null;
-  if (!base) return null;
-  if (base === 'Rojo') return 'Rojo';
-  const hayRojo = sujetos.some(x => x.tipoSujeto !== 'empresa' && x.semaforo === 'Rojo');
-  if (base === 'Verde') return hayRojo ? 'Amarillo' : 'Verde';
-  return 'Amarillo';
+  let peor = null;
+  sujetos.forEach(su => { if (su.semaforo && (peor == null || ORDEN_SEM_JS[su.semaforo] > ORDEN_SEM_JS[peor])) peor = su.semaforo; });
+  return peor;
 }
 
 function panelCredito(semGuardado) {
@@ -4856,7 +4964,7 @@ function panelCredito(semGuardado) {
 
   let html = '<div class="fb-body">';
   html += '<div class="fb-cred-cons">Consolidado: <span id="fbCredConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
-  html += '<p class="sub">Empresa, representante y vinculada llevan el mismo checklist. El semáforo se calcula solo con las métricas. La empresa manda: sus verdes/ámbar deciden; un rojo en otro sujeto solo degrada.</p>';
+  html += '<p class="sub">Empresa, representantes y vinculadas se evalúan con el mismo motor (gates KO + puntaje), dependiente del ticket. Consolidación = <b>peor caso</b>: un sujeto en Rojo (KO seco, Dudoso/Pérdida, listas, o límites del ticket excedidos) contagia y hace Rojo todo el filtro.</p>';
   html += '<div class="fb-sec">Empresa</div>';
   html += empresa ? sujetoCard(empresa, false) : '<div class="sub">—</div>';
   html += '<div class="fb-sec">Representantes (' + reps.length + ')</div>';
@@ -4873,12 +4981,13 @@ function panelCredito(semGuardado) {
 function sujetoCard(su, editable) {
   let valores = {};
   try { valores = typeof su.checklist === 'string' ? JSON.parse(su.checklist || '{}') : (su.checklist || {}); } catch (e) { valores = {}; }
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   const docs = (FICHA.documentos || []).filter(d => d.sujetoId === su.id);
   const nombreHtml = editable
     ? '<input class="fb-suj-nom" id="suj_nom_' + su.id + '" value="' + (su.nombre ? su.nombre.replace(/"/g, '&quot;') : '') + '" placeholder="Nombre">'
     : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
   const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
-  const metricas = renderMetricasB2B('credito', valores, 'suj' + su.id);
+  const metricas = renderFiltroDosCapas('credito', valores, 'suj' + su.id, ticket);
   const docsList = docs.map(d => docAnchor(d) + ' <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ');
   const docHtml = '<div class="fb-doc" style="margin-top:8px">' +
     (docs.length ? docsList + ' ' : '<span class="fb-doc-pend">Reporte de central pendiente</span> ') +
@@ -4893,40 +5002,111 @@ function recalcConsolidado() {
   renderFichaB2B();
 }
 
+function consolidadoGarantiaVivoJS() {
+  const inms = FICHA.garantiaInmuebles || [];
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.garantia;
+  let mejor = null;
+  inms.forEach(i => {
+    const sem = cat ? evaluarFiltro2JS(cat, leerFiltro2('inm' + i.id), ticket).semaforo : null;
+    if (sem && (mejor == null || ORDEN_SEM_JS[sem] < ORDEN_SEM_JS[mejor])) mejor = sem;
+  });
+  return mejor;
+}
+function consolidadoGarantiaGuardadoJS() {
+  const inms = FICHA.garantiaInmuebles || [];
+  let mejor = null;
+  inms.forEach(i => { if (i.semaforo && (mejor == null || ORDEN_SEM_JS[i.semaforo] < ORDEN_SEM_JS[mejor])) mejor = i.semaforo; });
+  return mejor;
+}
+function actualizarConsolidadoGarantiaVivo() {
+  const cons = consolidadoGarantiaVivoJS();
+  const el = $('fbGarConsolidado');
+  if (el) el.innerHTML = cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>';
+}
+function inmuebleCard(inm) {
+  let valores = {};
+  try { valores = typeof inm.checklist === 'string' ? JSON.parse(inm.checklist || '{}') : (inm.checklist || {}); } catch (e) { valores = {}; }
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const head = '<input class="fb-suj-nom" id="inm_alias_' + inm.id + '" value="' + (inm.alias ? inm.alias.replace(/"/g, '&quot;') : '') + '" placeholder="Alias / dirección">' +
+    '<input class="fb-suj-nom" id="inm_distrito_' + inm.id + '" value="' + (inm.distrito ? inm.distrito.replace(/"/g, '&quot;') : '') + '" placeholder="Distrito" style="max-width:150px">' +
+    '<span style="margin-left:auto"><button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarInmueble(' + inm.id + ')" title="Quitar">✕</button></span>';
+  return '<div class="fb-suj' + (inm._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + head + '</div>' + renderFiltroDosCapas('garantia', valores, 'inm' + inm.id, ticket) + '</div>';
+}
 function panelGarantia(desbloqueada, sem) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
+  const cons = consolidadoGarantiaGuardadoJS() || sem;
   const open = FICHA_ETAPA_OPEN === 'garantia';
-  if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', false, '');
-  const g = FICHA.garantia || {};
-  let chkG = {};
-  try { const raw = FICHA.filtros.garantia && FICHA.filtros.garantia.checklist; chkG = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkG = {}; }
-  const checklist = '<div class="fb-sec">Evaluación de garantía</div>' + renderMetricasB2B('garantia', chkG, 'gar');
-  // Datos del inmueble (los principales)
-  const datos = '<div class="fb-sec">Datos del inmueble</div><div class="fb-grid">' +
-    fbInput('tipoInmueble', 'Tipo', g.tipoInmueble) +
-    fbInput('distrito', 'Distrito', g.distrito) +
-    fbInput('propietario', 'Propietario', g.propietario) +
-    fbInput('partidaRegistral', 'Partida registral', g.partidaRegistral) +
-    fbInput('valorEstimado', 'Valor estimado (S/)', g.valorEstimado, 'number') +
-    fbInput('cargas', 'Cargas', g.cargas) +
-    '</div>';
-  // Documentos
-  const docs = '<div class="fb-sec">Documentos</div>' + renderDocsGarantia();
-  const acciones = '<div class="fb-acc"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
-  return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', true,
-    '<div class="fb-body">' + checklist + datos + docs + acciones + '</div>');
+  const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>';
+  if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, false, '');
+  const inms = FICHA.garantiaInmuebles || [];
+  let html = '<div class="fb-body">';
+  html += '<div class="fb-cred-cons">Consolidado: <span id="fbGarConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
+  html += '<p class="sub">Registra uno o varios inmuebles. Consolidación = <b>mejor caso</b>: basta con que UN inmueble pase todos los gates. El puntaje se ancla en el mejor. Sin LTV ni monto (los calcula Créditos).</p>';
+  html += inms.map(inmuebleCard).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas inmuebles.</div>';
+  html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
+  html += '<div class="fb-sec">Documentos (links de Drive)</div>' + renderDocsGarantia();
+  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
+  html += '</div>';
+  return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, true, html);
 }
 
 function panelFinanzas(desbloqueada, sem) {
   if (!desbloqueada) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
   const open = FICHA_ETAPA_OPEN === 'finanzas';
-  if (!open) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', fbPill(sem) || '<span class="sub">pendiente</span>', false, '');
+  const f = FICHA.filtros.finanzas || {};
+  const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
+  if (!open) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, false, '');
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   let chkF = {};
-  try { const raw = FICHA.filtros.finanzas && FICHA.filtros.finanzas.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
-  const cuerpo = '<div class="fb-body"><div class="fb-sec">Evaluación de finanzas y negocio</div>' +
-    renderMetricasB2B('finanzas', chkF, 'fin') +
+  try { const raw = f.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
+  const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket.</p>' +
+    renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
     '<div class="fb-acc"><button class="btn" onclick="guardarFinanzas()">Guardar</button></div></div>';
-  return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', fbPill(sem) || '<span class="sub">pendiente</span>', true, cuerpo);
+  return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, true, cuerpo);
+}
+
+// Semáforo global del Business Case: peor caso entre los 4 filtros (gobernanza).
+function semGlobalB2B() {
+  const f = FICHA.filtros || {};
+  const sems = ['sunat', 'credito', 'garantia', 'finanzas'].map(k => f[k] && f[k].semaforo).filter(Boolean);
+  if (!sems.length) return null;
+  let peor = null;
+  sems.forEach(x => { if (peor == null || ORDEN_SEM_JS[x] > ORDEN_SEM_JS[peor]) peor = x; });
+  return peor;
+}
+function panelBusinessCase(desbloqueada) {
+  if (!desbloqueada) return fbPanelWrap('businesscase', '📑', 'Business case', '<span class="sub" style="color:#94a3b8">🔒 requiere finanzas en verde</span>', false, '', true);
+  const glob = semGlobalB2B();
+  const open = FICHA_ETAPA_OPEN === 'businesscase';
+  const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
+  if (!open) return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, false, '');
+  const s = FICHA.solicitud; const f = FICHA.filtros || {};
+  const fila = (k, label) => {
+    const ff = f[k] || {};
+    const sem = ff.semaforo;
+    const pts = ff.puntaje != null ? (' · ' + ff.puntaje + '%') : '';
+    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? ('<div class="f2-ko">✕ ' + ff.motivos.kos.join(' · ') + '</div>') : '';
+    return '<div class="bc-row"><span class="mtr-lbl">' + label + '</span><span>' + (sem ? (SEM_EMOJI[sem] + ' ' + sem + pts) : '<span class="sub">pendiente</span>') + '</span>' + kos + '</div>';
+  };
+  const gobText = glob === 'Rojo' ? 'Al menos un filtro en Rojo → operación BLOQUEADA / a descartar.' :
+    glob === 'Amarillo' ? 'Hay filtros en Amarillo → avanza con excepción / aprobación de comité.' :
+      glob === 'Verde' ? 'Todos los filtros en Verde → apto para expediente.' : 'Faltan filtros por evaluar.';
+  let html = '<div class="fb-body">';
+  html += '<div class="fb-cred-cons">Semáforo global: <span>' + (glob ? (SEM_EMOJI[glob] + ' ' + glob) : '<span class="sub">pendiente</span>') + '</span></div>';
+  html += '<p class="sub">' + gobText + '</p>';
+  html += '<div class="fb-sec">Veredicto por filtro (peor caso gobierna)</div>';
+  html += fila('sunat', 'SUNAT (elegibilidad)') + fila('credito', 'Crédito') + fila('garantia', 'Garantía') + fila('finanzas', 'Finanzas y negocio');
+  html += '<div class="fb-sec">Resumen comercial</div>';
+  html += '<div class="bc-resumen">' +
+    '<div><span class="sub">Empresa</span><b>' + (s.razonSocial || '—') + '</b></div>' +
+    '<div><span class="sub">RUC</span><b>' + (s.ruc || '—') + '</b></div>' +
+    '<div><span class="sub">Ticket</span><b>' + (s.ticket || '—') + '</b></div>' +
+    '<div><span class="sub">Sector</span><b>' + (s.sector || '—') + '</b></div>' +
+    '<div><span class="sub">Contacto</span><b>' + (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '') + '</b></div>' +
+    '</div>';
+  html += '</div>';
+  return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, true, html);
 }
 
 function panelBloqueable(tipo, titulo, ic, desbloqueada) {
@@ -4958,13 +5138,20 @@ function sincronizarFichaDOM() {
   ['tipoInmueble', 'distrito', 'propietario', 'partidaRegistral', 'valorEstimado', 'cargas'].forEach(id => {
     const el = $('fb_' + id); if (el) { FICHA.garantia = FICHA.garantia || {}; FICHA.garantia[id] = el.value; }
   });
-  // Métricas de garantía / finanzas (si el panel está abierto)
+  // SUNAT y Finanzas → motor de dos capas (data-f2); Garantía sigue en el motor viejo (data-mtr).
+  if (document.querySelector('[data-f2="fsunat"]')) { FICHA.filtros.sunat = FICHA.filtros.sunat || {}; FICHA.filtros.sunat.checklist = leerFiltro2('fsunat'); }
   if (document.querySelector('[data-mtr="gar"]')) { FICHA.filtros.garantia = FICHA.filtros.garantia || {}; FICHA.filtros.garantia.checklist = leerMetricas('gar'); }
-  if (document.querySelector('[data-mtr="fin"]')) { FICHA.filtros.finanzas = FICHA.filtros.finanzas || {}; FICHA.filtros.finanzas.checklist = leerMetricas('fin'); }
-  // Crédito: por cada sujeto, nombre + métricas
+  if (document.querySelector('[data-f2="fin"]')) { FICHA.filtros.finanzas = FICHA.filtros.finanzas || {}; FICHA.filtros.finanzas.checklist = leerFiltro2('fin'); }
+  // Crédito: por cada sujeto, nombre + valores (dos capas)
   (FICHA.creditoSujetos || []).forEach(su => {
     const nom = $('suj_nom_' + su.id); if (nom) su.nombre = nom.value;
-    if (document.querySelector('[data-mtr="suj' + su.id + '"]')) su.checklist = leerMetricas('suj' + su.id);
+    if (document.querySelector('[data-f2="suj' + su.id + '"]')) su.checklist = leerFiltro2('suj' + su.id);
+  });
+  // Garantía: por cada inmueble, alias/distrito + valores (dos capas)
+  (FICHA.garantiaInmuebles || []).forEach(inm => {
+    const al = $('inm_alias_' + inm.id); if (al) inm.alias = al.value;
+    const di = $('inm_distrito_' + inm.id); if (di) inm.distrito = di.value;
+    if (document.querySelector('[data-f2="inm' + inm.id + '"]')) inm.checklist = leerFiltro2('inm' + inm.id);
   });
 }
 
@@ -5038,32 +5225,52 @@ function leerChecklistGarantia() {
   return o;
 }
 
-async function guardarGarantia() {
-  const g = {};
-  ['tipoInmueble', 'distrito', 'propietario', 'partidaRegistral', 'valorEstimado', 'cargas'].forEach(id => {
-    const el = $('fb_' + id); if (el) g[id] = el.value.trim() || null;
-  });
+async function agregarInmueble() {
+  sincronizarFichaDOM();
   try {
-    const valores = leerMetricas('gar');
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(g) });
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
-    const sem = evalChecklistJS('garantia', valores).semaforo;
-    FICHA.garantia = Object.assign({}, FICHA.garantia, g);
-    FICHA.filtros.garantia = Object.assign({}, FICHA.filtros.garantia, { checklist: valores, semaforo: sem });
-    setPanelPill('garantia', sem);
-    flashGuardado('gar');
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia/inmueble', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    FICHA.garantiaInmuebles = FICHA.garantiaInmuebles || [];
+    FICHA.garantiaInmuebles.push({ id: r.id, alias: 'Inmueble ' + (FICHA.garantiaInmuebles.length + 1), distrito: null, checklist: {}, semaforo: null, _nuevo: true });
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo agregar: ' + e.message); }
+}
+async function eliminarInmueble(id) {
+  if (!confirm('¿Quitar este inmueble?')) return;
+  sincronizarFichaDOM();
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia/inmueble/' + id, { method: 'DELETE' });
+    FICHA.garantiaInmuebles = (FICHA.garantiaInmuebles || []).filter(i => i.id !== id);
+    FICHA.filtros.garantia = Object.assign({}, FICHA.filtros.garantia, { semaforo: r.consolidado });
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo quitar: ' + e.message); }
+}
+async function guardarGarantia() {
+  const inms = FICHA.garantiaInmuebles || [];
+  try {
+    let cons = null;
+    for (const inm of inms) {
+      const valores = leerFiltro2('inm' + inm.id);
+      const aliasEl = $('inm_alias_' + inm.id); const distEl = $('inm_distrito_' + inm.id);
+      const body = { checklist: valores };
+      if (aliasEl) body.alias = aliasEl.value.trim();
+      if (distEl) body.distrito = distEl.value.trim();
+      const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia/inmueble/' + inm.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      inm.checklist = valores; inm.semaforo = r.semaforo; inm.puntaje = r.puntaje;
+      cons = r.consolidado;
+    }
+    FICHA.filtros.garantia = Object.assign({}, FICHA.filtros.garantia, { semaforo: cons });
+    setPanelPill('garantia', cons);
+    actualizarConsolidadoGarantiaVivo();
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
 async function guardarFinanzas() {
   try {
-    const valores = leerMetricas('fin');
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/finanzas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
-    const sem = evalChecklistJS('finanzas', valores).semaforo;
-    FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: sem });
-    setPanelPill('finanzas', sem);
-    flashGuardado('fin');
+    const valores = leerFiltro2('fin');
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/finanzas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
+    setPanelPill('finanzas', r.semaforo);
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
@@ -5104,11 +5311,9 @@ async function avanzarEtapa(tipo) {
 // Guarda los sujetos de crédito sin recargar la ficha (uso interno de avanzar).
 async function guardarCreditoSilencioso() {
   for (const su of (FICHA.creditoSujetos || [])) {
-    const chk = {};
-    document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; });
-    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
+    const valores = document.querySelector('[data-f2="suj' + su.id + '"]') ? leerFiltro2('suj' + su.id) : (su.checklist || {});
     const nomEl = $('suj_nom_' + su.id);
-    const body = { checklist: chk, semaforo: r ? r.value : null };
+    const body = { checklist: valores };
     if (nomEl) body.nombre = nomEl.value.trim();
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
@@ -5154,18 +5359,17 @@ async function guardarCredito() {
   try {
     let cons = null;
     for (const su of sujetos) {
-      const valores = leerMetricas('suj' + su.id);
+      const valores = leerFiltro2('suj' + su.id);
       const nomEl = $('suj_nom_' + su.id);
       const body = { checklist: valores };
       if (nomEl) body.nombre = nomEl.value.trim();
       const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      su.checklist = valores; su.semaforo = r.semaforo;        // el server calcula el semáforo
+      su.checklist = valores; su.semaforo = r.semaforo; su.puntaje = r.puntaje; su.motivos = r.motivos; // el server calcula todo
       cons = r.consolidado;
     }
     FICHA.filtros.credito = Object.assign({}, FICHA.filtros.credito, { semaforo: cons });
     setPanelPill('credito', cons);
     actualizarConsolidadoVivo();
-    if (sujetos[0]) flashGuardado('suj' + sujetos[0].id);
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }

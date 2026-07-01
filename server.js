@@ -424,6 +424,20 @@ db.exec(`
     actualizadoEn TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_b2bcred_sol ON b2b_credito_sujetos(codigoSolicitud);
+  CREATE TABLE IF NOT EXISTS b2b_garantia_inmuebles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoSolicitud TEXT NOT NULL,
+    alias TEXT,
+    distrito TEXT,
+    tipoInmueble TEXT,
+    checklist TEXT,
+    semaforo TEXT,
+    puntaje INTEGER,
+    motivos TEXT,
+    orden INTEGER DEFAULT 0,
+    actualizadoEn TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_b2bgar_sol ON b2b_garantia_inmuebles(codigoSolicitud);
 `);
 // Columnas de garantía añadidas a solicitudes ya existentes (despliegues previos de v1.149).
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN tieneInmueble TEXT"); } catch (e) { }
@@ -436,6 +450,11 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); 
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN enlace TEXT"); } catch (e) { } // v1.217: link de Drive (persiste al deployar)
+// v1.218: motor de dos capas — puntaje 0-100 y motivos de KO/escalado por filtro
+try { db.exec("ALTER TABLE b2b_filtros ADD COLUMN puntaje INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_filtros ADD COLUMN motivos TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_credito_sujetos ADD COLUMN puntaje INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_credito_sujetos ADD COLUMN motivos TEXT"); } catch (e) { }
 // Campos nuevos B2B: monto en rango (Meta/TikTok), SUNARP y ubicación del inmueble, atribución de anuncio.
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN montoRango TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
@@ -3997,20 +4016,300 @@ function evaluarChecklistB2B(tipo, valores) {
   return { semaforo: sem, detalle, faltan, total: items.length };
 }
 
-// Consolidado de crédito (regla: la EMPRESA es el ancla).
-//  - Empresa Roja → Rojo (mata).
-//  - Empresa Verde/Amarilla: los Amarillos de rep/vinculada NO arrastran; un Rojo en rep/vinculada degrada un nivel (no mata).
+// Consolidado de crédito — regla oficial (spec §2): PEOR CASO entre todos los sujetos
+// (empresa + representantes + vinculadas). Un sujeto Rojo (KO seco, Dudoso/Pérdida, listas,
+// concursal, límites de ticket excedidos) contagia y hace Rojo todo el filtro.
 function consolidadoCredito(codigo) {
-  const sujetos = db.prepare('SELECT tipoSujeto, semaforo FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(codigo);
+  const sujetos = db.prepare('SELECT semaforo FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(codigo);
   if (!sujetos.length) return null;
-  const empresa = sujetos.find(x => x.tipoSujeto === 'empresa');
-  const base = empresa && empresa.semaforo ? empresa.semaforo : null;
-  if (!base) return null;                 // sin evaluar la empresa no hay consolidado
-  if (base === 'Rojo') return 'Rojo';
-  const hayRojoOtro = sujetos.some(x => x.tipoSujeto !== 'empresa' && x.semaforo === 'Rojo');
-  if (base === 'Verde') return hayRojoOtro ? 'Amarillo' : 'Verde';
-  return 'Amarillo';                      // empresa Amarilla → Amarillo
+  let peor = null;
+  for (const s of sujetos) { if (s.semaforo && (peor == null || ORDEN_SEM[s.semaforo] > ORDEN_SEM[peor])) peor = s.semaforo; }
+  return peor;
 }
+
+// ======================================================================
+// MOTOR DE DOS CAPAS (recalibración spec oficial de filtros B2B)
+//  Capa 1 gates: si un gate falla → KO (Rojo) con motivo; algunos → 'escalado' (excepción pendiente).
+//  Capa 2 puntaje: solo corre si pasan los gates. 0–100 ponderado por completitud/calidad.
+//  Semáforo: Verde ≥80 · Amarillo 50–79 · Rojo <50 o cualquier KO. 'escalado' impide cerrar Verde.
+//  Todo dependiente del ticket (Bajo/Medio/Alto).
+// ======================================================================
+const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
+const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
+
+const FILTROS_B2B = {
+  sunat: {
+    titulo: 'Filtro SUNAT (elegibilidad formal)',
+    gates: [
+      { clave: 'personaJuridica', etiqueta: '¿Persona jurídica RUC 20?', tipo: 'select', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' },
+        { v: 'no', label: 'No', resultado: 'ko', motivo: 'No es persona jurídica RUC 20' }
+      ] },
+      { clave: 'estado', etiqueta: 'Estado SUNAT', tipo: 'select', opciones: [
+        { v: 'activo', label: 'Activo', resultado: 'ok' },
+        { v: 'no', label: 'No activo', resultado: 'ko', motivo: 'Estado SUNAT ≠ Activo' }
+      ] },
+      { clave: 'condicion', etiqueta: 'Condición SUNAT', tipo: 'select', opciones: [
+        { v: 'habido', label: 'Habido', resultado: 'ok' },
+        { v: 'no', label: 'No habido', resultado: 'ko', motivo: 'Condición SUNAT ≠ Habido' }
+      ] },
+      { clave: 'antiguedad', etiqueta: 'Antigüedad', tipo: 'numMinTicket', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' },
+      { clave: 'domicilio', etiqueta: 'Domicilio fiscal ubicable / operación real', tipo: 'select', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' },
+        { v: 'no', label: 'No', resultado: 'ko', motivo: 'Domicilio inubicable / sin operación real' }
+      ] },
+      { clave: 'sectorAnexoB', etiqueta: 'Sector (Anexo B)', tipo: 'select', opciones: [
+        { v: 'preferido', label: 'Preferido', resultado: 'ok' },
+        { v: 'selectivo', label: 'Selectivo', resultado: 'ok' },
+        { v: 'nolistado', label: 'No listado (criterio de Créditos)', resultado: 'ok' },
+        { v: 'restringido', label: 'Restringido', resultado: 'ko', motivo: 'Sector restringido (Anexo B)' }
+      ] }
+    ],
+    score: [
+      { clave: 'antiguedad', etiqueta: 'Antigüedad sobre el mínimo', tipo: 'colchonTicket', peso: 42, refGate: true },
+      { clave: 'actividadCoherente', etiqueta: 'Actividad / CIIU coherente con destino', tipo: 'select', peso: 33, opciones: [
+        { v: 'coherente', label: 'Coherente', frac: 1 },
+        { v: 'parcial', label: 'Parcial', frac: 0.5 },
+        { v: 'incoherente', label: 'Incoherente', frac: 0 }
+      ] },
+      { clave: 'sectorAnexoB', etiqueta: 'Preferencia de sector (Anexo B 1.5)', tipo: 'select', peso: 25, refGate: true, opciones: [
+        { v: 'preferido', label: 'Preferido', frac: 1 },
+        { v: 'selectivo', label: 'Selectivo', frac: 0.5 },
+        { v: 'nolistado', label: 'No listado', frac: 0.5 },
+        { v: 'restringido', label: 'Restringido', frac: 0 }
+      ] }
+    ]
+  },
+
+  // ===== CRÉDITO (se evalúa POR SUJETO: empresa / RL / vinculada; consolidación = peor caso) =====
+  credito: {
+    titulo: 'Filtro Crédito (por sujeto)',
+    gates: [
+      { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', opciones: [
+        { v: 'normal', label: 'Normal', resultado: 'ok' },
+        { v: 'cpp', label: 'CPP', resultado: 'ok' },
+        { v: 'deficiente', label: 'Deficiente', resultado: 'ok' },
+        { v: 'dudoso', label: 'Dudoso', resultado: 'ko', motivo: 'Clasificación actual Dudoso' },
+        { v: 'perdida', label: 'Pérdida', resultado: 'ko', motivo: 'Clasificación actual Pérdida' }
+      ] },
+      { clave: 'listasRestrictivas', etiqueta: 'Listas restrictivas (OFAC/ONU/UE/SPLAFT)', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Aparece en listas restrictivas' }
+      ] },
+      { clave: 'concursal', etiqueta: 'Proceso concursal vigente (INDECOPI)', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Proceso concursal vigente' }
+      ] },
+      { clave: 'sentenciaFirme', etiqueta: 'Sentencia firme (patrimonial/financiero/tributario/lavado)', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Sentencia firme por delitos' }
+      ] },
+      { clave: 'contraloriaOsce', etiqueta: 'Registro adverso Contraloría / inhabilitación OSCE', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Registro adverso Contraloría/OSCE' }
+      ] },
+      { clave: 'infoInconsistente', etiqueta: 'Información inconsistente / documentación adulterada', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Información inconsistente/adulterada' }
+      ] },
+      { clave: 'listaNegra', etiqueta: 'Lista negra interna Tasatop', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Lista negra interna Tasatop' }
+      ] },
+      { clave: 'protestadosVigentes', etiqueta: 'Documentos protestados vigentes (al momento de firma)', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Documentos protestados vigentes' }
+      ] },
+      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Cobranza coactiva vigente' }
+      ] },
+      { clave: 'coactivaSubsanada', etiqueta: 'Coactiva histórica subsanada', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'escalado', motivo: 'Coactiva subsanada → aprobación de comité' }
+      ] },
+      { clave: 'pep', etiqueta: 'PEP con debida diligencia', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'escalado', motivo: 'PEP → Jefe Créditos (Bajo) / Comité (Medio-Alto)' }
+      ] },
+      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación (%)', tipo: 'numMaxTicket', sufijo: '%', maxTicket: { Bajo: 75, Medio: 50, Alto: 25 }, motivo: 'CPP en evaluación excede el límite del ticket' },
+      { clave: 'cppHist', etiqueta: 'CPP histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 2, Medio: 2, Alto: 2 }, motivo: 'CPP histórico excede el límite del ticket' },
+      { clave: 'deficienteHist', etiqueta: 'Deficiente histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 1, Medio: 0, Alto: 0 }, motivo: 'Deficiente histórico excede el límite del ticket' },
+      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido' },
+      { clave: 'refis', etiqueta: 'Refinanciamientos (últ. 12m)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Refinanciamientos no permitidos' },
+      { clave: 'castigados', etiqueta: 'Castigados (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos' },
+      { clave: 'docsMorososCant', etiqueta: 'Documentos morosos (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 5, Medio: 3, Alto: 1 }, motivo: 'Documentos morosos exceden la tolerancia del ticket' },
+      { clave: 'docsMorososMonto', etiqueta: 'Documentos morosos (monto total S/)', tipo: 'numMaxTicket', sufijo: 'S/', maxTicket: { Bajo: 1000, Medio: 3000, Alto: 5000 }, motivo: 'Monto de morosos excede la tolerancia del ticket' },
+      { clave: 'protestadosCant', etiqueta: 'Documentos protestados CCL (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Documentos protestados no permitidos' }
+    ],
+    // Puntaje de "limpieza" (default; el spec no fija pesos de Crédito — calibrable).
+    score: [
+      { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', peso: 40, refGate: true, opciones: [
+        { v: 'normal', label: 'Normal', frac: 1 }, { v: 'cpp', label: 'CPP', frac: 0.5 }, { v: 'deficiente', label: 'Deficiente', frac: 0.2 },
+        { v: 'dudoso', label: 'Dudoso', frac: 0 }, { v: 'perdida', label: 'Pérdida', frac: 0 }
+      ] },
+      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación limpio', tipo: 'limpiezaNum', peso: 20, refGate: true },
+      { clave: 'cppHist', etiqueta: 'CPP histórico limpio', tipo: 'limpiezaNum', peso: 15, refGate: true },
+      { clave: 'docsMorososCant', etiqueta: 'Sin documentos morosos', tipo: 'limpiezaNum', peso: 15, refGate: true },
+      { clave: 'deficienteHist', etiqueta: 'Sin deficiente histórico', tipo: 'limpiezaNum', peso: 10, refGate: true }
+    ]
+  },
+
+  // ===== FINANZAS Y NEGOCIOS (completitud documental + viabilidad + solidez) =====
+  finanzas: {
+    titulo: 'Filtro Finanzas y Negocios',
+    gates: [
+      { clave: 'repagoSoloGarantia', etiqueta: 'Repago depende solo de ejecutar la garantía', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Repago depende solo de ejecutar la garantía' }
+      ] },
+      { clave: 'flujoIdentificable', etiqueta: 'Flujo identificable y coherente con la actividad', tipo: 'select', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ko', motivo: 'No hay flujo identificable / inconsistente' }
+      ] },
+      { clave: 'destinoCreditoPuente', etiqueta: 'Destino = crédito puente', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Destino crédito puente (prohibido)' }
+      ] },
+      { clave: 'destinoExplicable', etiqueta: 'Destino explicable / sustentado', tipo: 'select', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Destino no explicable (no cierra verde)' }
+      ] },
+      { clave: 'djAnual', etiqueta: 'DJ Anual SUNAT', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DJ Anual SUNAT' },
+      { clave: 'eeff', etiqueta: 'Estados Financieros situacionales', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan Estados Financieros (Medio/Alto)' },
+      { clave: 'flujoProyectado', etiqueta: 'Flujo de caja proyectado', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta flujo de caja proyectado (Medio/Alto)' },
+      { clave: 'estadosCuenta', etiqueta: 'Estados de cuenta bancarios', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan estados de cuenta bancarios' },
+      { clave: 'reporteTributario', etiqueta: 'Reporte tributario', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta reporte tributario' },
+      { clave: 'visitaUnidad', etiqueta: 'Visita a unidad productiva', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Realizada' }, { v: 'no', label: 'Falta' }], motivo: 'Falta visita a unidad productiva' }
+    ],
+    score: [
+      { clave: 'claridadDestino', etiqueta: 'Claridad de destino + mecanismos de verificación', tipo: 'select', peso: 25, opciones: [
+        { v: 'alta', label: 'Alta (≥2 mecanismos + visita)', frac: 1 }, { v: 'media', label: 'Media (≥1 mecanismo)', frac: 0.6 }, { v: 'baja', label: 'Baja / vaga', frac: 0.2 }
+      ] },
+      { clave: 'fuenteRepago', etiqueta: 'Fuente de repago identificable y coherente', tipo: 'select', peso: 25, opciones: [
+        { v: 'clara', label: 'Clara y consistente', frac: 1 }, { v: 'parcial', label: 'Parcial', frac: 0.5 }, { v: 'debil', label: 'Débil', frac: 0 }
+      ] },
+      { clave: 'coherenciaVentasBanco', etiqueta: 'Coherencia ventas declaradas vs. movimiento bancario', tipo: 'select', peso: 20, opciones: [
+        { v: 'consistente', label: 'Consistente', frac: 1 }, { v: 'parcial', label: 'Parcial', frac: 0.5 }, { v: 'inconsistente', label: 'Inconsistente', frac: 0 }
+      ] },
+      { clave: 'visita', etiqueta: 'Visita realizada sin observaciones', tipo: 'select', peso: 15, opciones: [
+        { v: 'sinobs', label: 'Sin observaciones', frac: 1 }, { v: 'conobs', label: 'Con observaciones', frac: 0.5 }, { v: 'no', label: 'No realizada', frac: 0 }
+      ] },
+      { clave: 'usoPermitido', etiqueta: 'Uso permitido (matriz sección 14)', tipo: 'select', peso: 15, opciones: [
+        { v: 'capital', label: 'Capital de trabajo', frac: 1 }, { v: 'activo', label: 'Activo fijo', frac: 0.6 }, { v: 'deuda', label: 'Compra deuda / expansión', frac: 0.3 }
+      ] }
+    ]
+  },
+
+  // ===== GARANTÍA (se evalúa POR INMUEBLE; consolidación = MEJOR caso: basta 1 inmueble que pase) =====
+  garantia: {
+    titulo: 'Filtro Garantía (por inmueble)',
+    gates: [
+      { clave: 'copiaLiteral', etiqueta: 'Copia literal reciente', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibida' }, { v: 'no', label: 'Falta' }], motivo: 'Falta copia literal reciente' },
+      { clave: 'hrPu', etiqueta: 'HR / PU', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibida' }, { v: 'no', label: 'Falta' }], motivo: 'Falta HR/PU' },
+      { clave: 'reciboServicios', etiqueta: 'Recibo de servicios (luz/agua)', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta recibo de servicios' },
+      { clave: 'dniPropietario', etiqueta: 'DNI del propietario', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DNI del propietario' },
+      { clave: 'zonaElegible', etiqueta: 'Zona (elegibilidad)', tipo: 'select', opciones: [
+        { v: 'alta', label: 'Alta preferencia', resultado: 'ok' },
+        { v: 'condicionada', label: 'Condicionada', resultado: 'ok' },
+        { v: 'noelegible', label: 'No elegible', resultado: 'ko', motivo: 'Zona no elegible' }
+      ] },
+      { clave: 'titulosSaneados', etiqueta: 'Títulos saneados / inscripción clara', tipo: 'select', opciones: [
+        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ko', motivo: 'Títulos no saneados / observados' }
+      ] },
+      { clave: 'gravamenes', etiqueta: 'Gravámenes', tipo: 'select', opciones: [
+        { v: 'libre', label: 'Libre', resultado: 'ok' },
+        { v: 'hipotecaCancelable', label: 'Hipoteca previa cancelable', resultado: 'ok' },
+        { v: 'noCancelable', label: 'Gravamen no cancelable', resultado: 'ko', motivo: 'Gravamen no cancelable' }
+      ] },
+      { clave: 'tipoPermitido', etiqueta: 'Tipo de inmueble', tipo: 'select', opciones: [
+        { v: 'departamento', label: 'Departamento', resultado: 'ok' },
+        { v: 'casa', label: 'Casa', resultado: 'ok' },
+        { v: 'oficina', label: 'Oficina', resultado: 'ok' },
+        { v: 'local', label: 'Local comercial', resultado: 'ok' },
+        { v: 'terreno', label: 'Terreno / otro', resultado: 'escalado', motivo: 'Tipo de inmueble sujeto a excepción' }
+      ] },
+      { clave: 'copropiedad', etiqueta: 'Copropiedad', tipo: 'select', opciones: [
+        { v: 'individual', label: 'Propietario único', resultado: 'ok' },
+        { v: 'firmas', label: 'Copropiedad con todas las firmas', resultado: 'ok' },
+        { v: 'sinfirmas', label: 'Copropiedad sin todas las firmas', resultado: 'ko', motivo: 'Copropiedad sin todas las firmas' }
+      ] }
+    ],
+    score: [
+      { clave: 'zonaElegible', etiqueta: 'Preferencia de zona', tipo: 'select', peso: 40, refGate: true, opciones: [
+        { v: 'alta', label: 'Alta preferencia', frac: 1 }, { v: 'condicionada', label: 'Condicionada', frac: 0.5 }, { v: 'noelegible', label: 'No elegible', frac: 0 }
+      ] },
+      { clave: 'tipoPermitido', etiqueta: 'Calidad del tipo de inmueble', tipo: 'select', peso: 25, refGate: true, opciones: [
+        { v: 'departamento', label: 'Departamento', frac: 1 }, { v: 'casa', label: 'Casa', frac: 1 }, { v: 'oficina', label: 'Oficina', frac: 0.7 }, { v: 'local', label: 'Local comercial', frac: 0.7 }, { v: 'terreno', label: 'Terreno / otro', frac: 0.4 }
+      ] },
+      { clave: 'estadoConservacion', etiqueta: 'Estado de conservación', tipo: 'select', peso: 20, opciones: [
+        { v: 'bueno', label: 'Bueno', frac: 1 }, { v: 'regular', label: 'Regular', frac: 0.5 }, { v: 'malo', label: 'Malo', frac: 0.1 }
+      ] },
+      { clave: 'liquidez', etiqueta: 'Liquidez / facilidad de venta', tipo: 'select', peso: 15, opciones: [
+        { v: 'alta', label: 'Alta', frac: 1 }, { v: 'media', label: 'Media', frac: 0.5 }, { v: 'baja', label: 'Baja', frac: 0.2 }
+      ] }
+    ]
+  }
+};
+
+function evalGateB2B(g, valores, ticket) {
+  const val = valores[g.clave];
+  const vacio = (val === undefined || val === null || val === '');
+  if (g.tipo === 'numMinTicket') {
+    if (vacio) return { resultado: 'ok', pendiente: true };
+    const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo;
+    return Number(val) < min ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' };
+  }
+  if (g.tipo === 'numMaxTicket') {
+    if (vacio) return { resultado: 'ok', pendiente: true };
+    const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo;
+    return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' };
+  }
+  if (g.tipo === 'docTicket') {
+    const req = g.requeridoTicket && g.requeridoTicket[ticket];
+    if (!req) return { resultado: 'ok' };
+    return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
+  }
+  if (vacio) return { resultado: 'ok', pendiente: true };
+  const op = (g.opciones || []).find(o => o.v === val);
+  return op ? { resultado: op.resultado || 'ok', motivo: op.motivo } : { resultado: 'ok' };
+}
+function evalScoreItemB2B(it, valores, ticket) {
+  const val = valores[it.clave];
+  const vacio = (val === undefined || val === null || val === '');
+  if (it.tipo === 'select') {
+    if (vacio) return null;
+    const op = (it.opciones || []).find(o => o.v === val);
+    return op ? op.frac * it.peso : 0;
+  }
+  if (it.tipo === 'limpiezaNum') {
+    if (vacio) return null;
+    const n = Number(val); if (!isFinite(n)) return null;
+    return (n === 0 ? 1 : 0.4) * it.peso;
+  }
+  if (it.tipo === 'ventasTicket') {
+    if (vacio) return null;
+    const n = Number(val); if (!isFinite(n)) return null;
+    const r = RANGOS_VENTAS_TICKET[ticket] || RANGOS_VENTAS_TICKET.Bajo;
+    const frac = n < r[0] ? 0.3 : (n > r[1] ? 0.7 : 1);
+    return frac * it.peso;
+  }
+  if (it.tipo === 'colchonTicket') {
+    if (vacio) return null;
+    const min = ANTIG_MIN_TICKET[ticket] != null ? ANTIG_MIN_TICKET[ticket] : ANTIG_MIN_TICKET.Bajo;
+    const colchon = Number(val) - min; if (!isFinite(colchon)) return null;
+    return Math.max(0, Math.min(1, colchon / 24)) * it.peso;
+  }
+  return null;
+}
+// Evalúa un filtro de dos capas. Devuelve { semaforo, puntaje, kos[], escalados[], ko, faltan }.
+function evaluarFiltroDosCapas(cat, valores, ticket) {
+  valores = valores || {}; ticket = ticket || 'Bajo';
+  const kos = [], escalados = [];
+  for (const g of (cat.gates || [])) {
+    const r = evalGateB2B(g, valores, ticket);
+    if (r.resultado === 'ko') kos.push(r.motivo || g.etiqueta);
+    else if (r.resultado === 'escalado') escalados.push(r.motivo || g.etiqueta);
+  }
+  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, ko: true, faltan: 0 };
+  let total = 0, pesoTotal = 0, faltan = 0;
+  for (const it of (cat.score || [])) {
+    pesoTotal += it.peso;
+    const p = evalScoreItemB2B(it, valores, ticket);
+    if (p == null) faltan++; else total += p;
+  }
+  const puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
+  if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // excepción pendiente no cierra verde
+  return { semaforo, puntaje, kos, escalados, ko: false, faltan };
+}
+
 // Recalcula y guarda el consolidado en b2b_filtros (credito) + resultadoCredito de la solicitud.
 function refrescarConsolidadoCredito(codigo, responsable) {
   const cons = consolidadoCredito(codigo);
@@ -4020,6 +4319,26 @@ function refrescarConsolidadoCredito(codigo, responsable) {
     ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
     .run(codigo, cons, responsable || null, ahora);
   if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoCredito=? WHERE codigo=?').run(cons, codigo);
+  return cons;
+}
+
+// Consolidado de garantía — regla oficial: MEJOR CASO. Basta con UN inmueble que pase todos
+// los gates para respaldar la operación; el puntaje se ancla en el mejor inmueble.
+function consolidadoGarantia(codigo) {
+  const inms = db.prepare('SELECT semaforo FROM b2b_garantia_inmuebles WHERE codigoSolicitud=?').all(codigo);
+  if (!inms.length) return null;
+  let mejor = null;
+  for (const i of inms) { if (i.semaforo && (mejor == null || ORDEN_SEM[i.semaforo] < ORDEN_SEM[mejor])) mejor = i.semaforo; }
+  return mejor;
+}
+function refrescarConsolidadoGarantia(codigo, responsable) {
+  const cons = consolidadoGarantia(codigo);
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, semaforo, responsable, actualizadoEn)
+    VALUES (?, 'garantia', ?, ?, ?)
+    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
+    .run(codigo, cons, responsable || null, ahora);
+  if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoGarantia=? WHERE codigo=?').run(cons, codigo);
   return cons;
 }
 
@@ -4040,17 +4359,20 @@ app.post('/api/b2b/solicitudes/:codigo/credito/sujeto', soloB2B, (req, res) => {
 app.put('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res) => {
   const su = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
   if (!su) return res.status(404).json({ error: 'Sujeto no encontrado' });
+  const sol = db.prepare('SELECT ticket FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const ticket = (sol && sol.ticket) || 'Bajo';
   const b = req.body || {};
   const ahora = new Date().toISOString();
   const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : (su.checklist ? JSON.parse(su.checklist) : {});
-  const semSujeto = evaluarChecklistB2B('credito', valores).semaforo; // CALCULADO por sujeto
-  db.prepare('UPDATE b2b_credito_sujetos SET nombre=?, documento=?, checklist=?, semaforo=?, observaciones=?, actualizadoEn=? WHERE id=?')
+  const ev = evaluarFiltroDosCapas(FILTROS_B2B.credito, valores, ticket); // dos capas, dependiente del ticket
+  const motivos = JSON.stringify({ kos: ev.kos, escalados: ev.escalados });
+  db.prepare('UPDATE b2b_credito_sujetos SET nombre=?, documento=?, checklist=?, semaforo=?, puntaje=?, motivos=?, observaciones=?, actualizadoEn=? WHERE id=?')
     .run(b.nombre != null ? b.nombre : su.nombre, b.documento != null ? b.documento : su.documento,
-      JSON.stringify(valores), semSujeto,
+      JSON.stringify(valores), ev.semaforo, ev.puntaje, motivos,
       b.observaciones != null ? b.observaciones : su.observaciones, ahora, su.id);
   const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
-  auditar(req, 'b2b_credito_guardar_sujeto', req.params.codigo, su.tipoSujeto + (semSujeto ? ' · ' + semSujeto : ''));
-  res.json({ ok: true, consolidado: cons, semaforo: semSujeto });
+  auditar(req, 'b2b_credito_guardar_sujeto', req.params.codigo, su.tipoSujeto + (ev.semaforo ? ' · ' + ev.semaforo : ''));
+  res.json({ ok: true, consolidado: cons, semaforo: ev.semaforo, puntaje: ev.puntaje, motivos: { kos: ev.kos, escalados: ev.escalados } });
 });
 
 // Elimina un sujeto (no la empresa).
@@ -4068,16 +4390,52 @@ app.delete('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res
   res.json({ ok: true, consolidado: cons });
 });
 
-// ===== FICHA B2B: datos completos, garantía, filtros, documentos, avanzar etapa =====
+// ===== GARANTÍA: colección de inmuebles (dos capas, consolidación mejor-caso) =====
+app.post('/api/b2b/solicitudes/:codigo/garantia/inmueble', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const ahora = new Date().toISOString();
+  const n = db.prepare('SELECT COUNT(*) c FROM b2b_garantia_inmuebles WHERE codigoSolicitud=?').get(req.params.codigo).c;
+  const r = db.prepare('INSERT INTO b2b_garantia_inmuebles (codigoSolicitud, alias, distrito, tipoInmueble, checklist, orden, actualizadoEn) VALUES (?,?,?,?,?,?,?)')
+    .run(req.params.codigo, b.alias || ('Inmueble ' + (n + 1)), b.distrito || null, b.tipoInmueble || null, '{}', n, ahora);
+  auditar(req, 'b2b_garantia_agregar_inmueble', req.params.codigo, b.alias || '');
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/b2b/solicitudes/:codigo/garantia/inmueble/:id', soloB2B, (req, res) => {
+  const inm = db.prepare('SELECT * FROM b2b_garantia_inmuebles WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
+  if (!inm) return res.status(404).json({ error: 'Inmueble no encontrado' });
+  const sol = db.prepare('SELECT ticket FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const ticket = (sol && sol.ticket) || 'Bajo';
+  const b = req.body || {};
+  const ahora = new Date().toISOString();
+  const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : (inm.checklist ? JSON.parse(inm.checklist) : {});
+  const ev = evaluarFiltroDosCapas(FILTROS_B2B.garantia, valores, ticket);
+  const motivos = JSON.stringify({ kos: ev.kos, escalados: ev.escalados });
+  db.prepare('UPDATE b2b_garantia_inmuebles SET alias=?, distrito=?, tipoInmueble=?, checklist=?, semaforo=?, puntaje=?, motivos=?, actualizadoEn=? WHERE id=?')
+    .run(b.alias != null ? b.alias : inm.alias, b.distrito != null ? b.distrito : inm.distrito,
+      valores.tipoPermitido || inm.tipoInmueble, JSON.stringify(valores), ev.semaforo, ev.puntaje, motivos, ahora, inm.id);
+  const cons = refrescarConsolidadoGarantia(req.params.codigo, req.user.nombre);
+  auditar(req, 'b2b_garantia_guardar_inmueble', req.params.codigo, (b.alias || inm.alias || '') + (ev.semaforo ? ' · ' + ev.semaforo : ''));
+  res.json({ ok: true, consolidado: cons, semaforo: ev.semaforo, puntaje: ev.puntaje, motivos: { kos: ev.kos, escalados: ev.escalados } });
+});
+app.delete('/api/b2b/solicitudes/:codigo/garantia/inmueble/:id', soloB2B, (req, res) => {
+  const inm = db.prepare('SELECT * FROM b2b_garantia_inmuebles WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
+  if (!inm) return res.status(404).json({ error: 'Inmueble no encontrado' });
+  db.prepare('DELETE FROM b2b_garantia_inmuebles WHERE id=?').run(inm.id);
+  const cons = refrescarConsolidadoGarantia(req.params.codigo, req.user.nombre);
+  auditar(req, 'b2b_garantia_eliminar_inmueble', req.params.codigo, inm.alias || '');
+  res.json({ ok: true, consolidado: cons });
+});
 // Devuelve todo lo necesario para la ficha de una solicitud.
 app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
   const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const garantia = db.prepare('SELECT * FROM b2b_garantia WHERE codigoSolicitud=?').get(s.codigo) || null;
   const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn, sujetoId, enlace FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
-  const filtrosRows = db.prepare('SELECT tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn FROM b2b_filtros WHERE codigoSolicitud=?').all(s.codigo);
+  const filtrosRows = db.prepare('SELECT tipoFiltro, checklist, semaforo, puntaje, motivos, observaciones, responsable, actualizadoEn FROM b2b_filtros WHERE codigoSolicitud=?').all(s.codigo);
   const filtros = {};
-  filtrosRows.forEach(f => { filtros[f.tipoFiltro] = { checklist: f.checklist ? JSON.parse(f.checklist) : null, semaforo: f.semaforo, observaciones: f.observaciones, responsable: f.responsable, actualizadoEn: f.actualizadoEn }; });
+  filtrosRows.forEach(f => { filtros[f.tipoFiltro] = { checklist: f.checklist ? JSON.parse(f.checklist) : null, semaforo: f.semaforo, puntaje: f.puntaje, motivos: f.motivos ? JSON.parse(f.motivos) : null, observaciones: f.observaciones, responsable: f.responsable, actualizadoEn: f.actualizadoEn }; });
   // Sujetos de crédito (empresa / representantes / vinculadas). Auto-crea la empresa si no existe.
   let sujetos = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE codigoSolicitud=? ORDER BY CASE tipoSujeto WHEN \'empresa\' THEN 0 WHEN \'representante\' THEN 1 ELSE 2 END, orden, id').all(s.codigo);
   if (!sujetos.some(x => x.tipoSujeto === 'empresa')) {
@@ -4086,10 +4444,12 @@ app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
     sujetos = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE codigoSolicitud=? ORDER BY CASE tipoSujeto WHEN \'empresa\' THEN 0 WHEN \'representante\' THEN 1 ELSE 2 END, orden, id').all(s.codigo);
   }
   sujetos = sujetos.map(su => ({ ...su, checklist: su.checklist ? JSON.parse(su.checklist) : {} }));
+  const inmuebles = db.prepare('SELECT * FROM b2b_garantia_inmuebles WHERE codigoSolicitud=? ORDER BY orden, id').all(s.codigo)
+    .map(i => ({ ...i, checklist: i.checklist ? JSON.parse(i.checklist) : {}, motivos: i.motivos ? JSON.parse(i.motivos) : null }));
   const semFicha = { credito: filtros.credito && filtros.credito.semaforo, garantia: filtros.garantia && filtros.garantia.semaforo, finanzas: filtros.finanzas && filtros.finanzas.semaforo };
   const colFicha = etapaKanbanB2B(s);
   const fechaEtapaF = sellarFechaEtapa(s, colFicha);
-  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF) });
+  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, garantiaInmuebles: inmuebles, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF) });
 });
 
 // Guarda los datos del inmueble (garantía).
@@ -4121,25 +4481,37 @@ app.get('/api/b2b/criterios', soloB2B, (req, res) => {
   res.json({ criterios: CRITERIOS_B2B });
 });
 
+// Catálogo de filtros de dos capas (gates + puntaje) — recalibración spec oficial.
+app.get('/api/b2b/filtros-catalogo', soloB2B, (req, res) => {
+  res.json({ filtros: FILTROS_B2B });
+});
+
 app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
-  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const s = db.prepare('SELECT codigo, ticket FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const tipo = req.params.tipo;
-  if (!['credito', 'garantia', 'finanzas'].includes(tipo)) return res.status(400).json({ error: 'Filtro inválido' });
+  if (!['sunat', 'credito', 'garantia', 'finanzas'].includes(tipo)) return res.status(400).json({ error: 'Filtro inválido' });
   const b = req.body || {};
   const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : {};
   const checklist = JSON.stringify(valores);
-  const semaforo = evaluarChecklistB2B(tipo, valores).semaforo; // CALCULADO, no lo manda el cliente
+  let semaforo, puntaje = null, motivos = null;
+  if (FILTROS_B2B[tipo]) {                       // motor de dos capas (recalibrado)
+    const ev = evaluarFiltroDosCapas(FILTROS_B2B[tipo], valores, s.ticket || 'Bajo');
+    semaforo = ev.semaforo; puntaje = ev.puntaje;
+    motivos = JSON.stringify({ kos: ev.kos, escalados: ev.escalados });
+  } else {                                        // motor viejo (garantia/finanzas hasta su tanda)
+    semaforo = evaluarChecklistB2B(tipo, valores).semaforo;
+  }
   const ahora = new Date().toISOString();
-  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn)
-    VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET checklist=excluded.checklist, semaforo=excluded.semaforo, observaciones=excluded.observaciones, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
-    .run(s.codigo, tipo, checklist, semaforo, b.observaciones || null, req.user.nombre, ahora);
+  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, puntaje, motivos, observaciones, responsable, actualizadoEn)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET checklist=excluded.checklist, semaforo=excluded.semaforo, puntaje=excluded.puntaje, motivos=excluded.motivos, observaciones=excluded.observaciones, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
+    .run(s.codigo, tipo, checklist, semaforo, puntaje, motivos, b.observaciones || null, req.user.nombre, ahora);
   // Refleja el semáforo en la solicitud (columna resultado*).
   const colRes = { credito: 'resultadoCredito', garantia: 'resultadoGarantia', finanzas: 'resultadoFinanzas' }[tipo];
   if (colRes && semaforo) db.prepare('UPDATE b2b_solicitudes SET ' + colRes + '=? WHERE codigo=?').run(semaforo, s.codigo);
   auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : ''));
-  res.json({ ok: true });
+  res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null });
 });
 
 // Guarda un documento como LINK de Drive (persiste al redeploy; no usa el filesystem efímero).
@@ -5066,7 +5438,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.217 (Documentos por LINK de Drive: nuevo campo enlace en b2b_documentos + endpoint POST /documentos/enlace (valida http); en la ficha, garantia y sujetos de credito usan boton Agregar link (pega URL de Drive) en vez de subir archivo que se caia al deployar; los links abren en pestana nueva; se conservan los archivos ya subidos. Supabase (subida real) pendiente) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.220 (Recalibracion spec oficial COMPLETA: los 4 filtros B2B en motor de DOS CAPAS (gates KO/escalado con motivo -> puntaje 0-100 -> banda Verde>=80/Amarillo50-79/Rojo, por ticket). SUNAT (antiguedad42/actividad33/sector25, sin ventas) + CREDITO por sujeto con tabla de limites por ticket y consolidacion PEOR-CASO + FINANZAS (viabilidad+docs por ticket+solidez) + GARANTIA MULTI-INMUEBLE (tabla b2b_garantia_inmuebles, consolidacion MEJOR-CASO, sin LTV/monto) + BUSINESS CASE ensamblador con semaforo global peor-caso y resumen comercial. Nuevas columnas puntaje/motivos; endpoints /garantia/inmueble. REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

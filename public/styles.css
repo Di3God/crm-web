@@ -1418,3 +1418,22 @@
 .emp-ok { background: #E4F3EC; color: #1D7A56; }
 .emp-warn { background: #FDEAEA; color: #CC0000; }
 .fb-doc-note { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+
+/* ===== Filtros de dos capas (gates + puntaje) B2B ===== */
+.f2-box { margin: 4px 0; }
+.f2-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: #DDE4EC; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.f2-ok-dot { background: #1D9E75; }
+.f2-ko-dot { background: #CC0000; }
+.f2-esc-dot { background: #E0A800; }
+.f2-peso { font-size: 10px; color: var(--muted); }
+.f2-foot { margin-top: 10px; }
+.f2-ko { margin-top: 6px; font-size: 12px; color: #CC0000; font-weight: 700; }
+.f2-esc { margin-top: 4px; font-size: 12px; color: #B7791F; font-weight: 700; }
+
+/* ===== Business Case B2B ===== */
+.bc-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line, #E7ECF2); flex-wrap: wrap; }
+.bc-row .mtr-lbl { font-weight: 600; }
+.bc-row .f2-ko { flex-basis: 100%; }
+.bc-resumen { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-top: 6px; }
+.bc-resumen > div { display: flex; flex-direction: column; }
+.bc-resumen .sub { font-size: 11px; }
