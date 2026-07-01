@@ -4544,7 +4544,7 @@ app.get('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
   res.json({ gestiones: filas });
 });
 app.post('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
-  const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const b = req.body || {};
   const proximaAccion = (b.proximaAccion || '').trim();
@@ -4553,9 +4553,10 @@ app.post('/api/b2b/solicitudes/:codigo/gestiones', soloB2B, (req, res) => {
   if (!proximaAccion) return res.status(400).json({ error: 'Define la próxima acción' });
   if (!fechaProxAccion) return res.status(400).json({ error: 'Define la fecha de la próxima acción' });
   const ahora = new Date().toISOString();
+  const etapaActual = etapaKanbanB2B(s); // etapa donde ocurre la gestión (automática)
   db.prepare(`INSERT INTO b2b_gestiones (codigoSolicitud, fecha, responsable, etapa, canal, resultado, comentario, proximaAccion, fechaProxAccion)
     VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(s.codigo, ahora, req.user.nombre, b.etapa || s.estado || null, b.canal || null, b.resultado || null,
+    .run(s.codigo, ahora, req.user.nombre, etapaActual, b.canal || null, b.resultado || null,
       (b.comentario || '').trim() || null, proximaAccion, fechaProxAccion);
   auditar(req, 'b2b_gestion', s.codigo, (b.resultado || 'gestión') + ' · próx: ' + proximaAccion);
   const filas = db.prepare('SELECT * FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC, id DESC').all(s.codigo);
@@ -4635,7 +4636,8 @@ app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
   const semFicha = { credito: filtros.credito && filtros.credito.semaforo, garantia: filtros.garantia && filtros.garantia.semaforo, finanzas: filtros.finanzas && filtros.finanzas.semaforo };
   const colFicha = etapaKanbanB2B(s);
   const fechaEtapaF = sellarFechaEtapa(s, colFicha);
-  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, garantiaInmuebles: inmuebles, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF) });
+  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, garantiaInmuebles: inmuebles, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF),
+    accionesEtapa: ACCIONES_ETAPA_B2B[colFicha] || [], resultadosGestion: RESULTADOS_GESTION_B2B, canalesGestion: CANALES_GESTION_B2B });
 });
 
 // Guarda los datos del inmueble (garantía).
@@ -4834,27 +4836,39 @@ function puntajeB2B(s, sem) {
   return Object.assign({ prob }, bandaPuntaje(prob));
 }
 
+// Próximas acciones sugeridas por etapa (para el modal de gestión, paso 2).
+const ACCIONES_ETAPA_B2B = {
+  'Solicitud': ['Validar RUC en SUNAT', 'Contactar al cliente', 'Reintentar contacto', 'Solicitar datos faltantes'],
+  'Filtro credito': ['Consultar centrales', 'Pedir sustento de deudas', 'Contactar por observación crediticia', 'Escalar a jefatura'],
+  'Filtro garantia': ['Solicitar documentos del inmueble', 'Pedir copia literal', 'Calcular valor referencial', 'Coordinar con cliente por garantía'],
+  'Filtro finanzas': ['Solicitar EEFF / DJ', 'Agendar reunión comercial', 'Pedir sustento financiero', 'Levantar observación de ratios'],
+  'Business case': ['Armar expediente', 'Enviar a Créditos', 'Coordinar observaciones', 'Presentar a comité']
+};
+// Resultados posibles de una gestión (paso 1 del modal).
+const RESULTADOS_GESTION_B2B = ['Contactado', 'No contestó', 'Volver a llamar', 'Pidió información', 'Envió documentos', 'No interesado'];
+const CANALES_GESTION_B2B = ['Llamada', 'WhatsApp'];
+
 // ===== Deadline por etapa + próxima acción =====
-// SLA máximo en DÍAS HÁBILES que un lead debe permanecer en cada etapa (base: manual sección 20).
+// SLA máximo en HORAS CORRIDAS que un lead debe permanecer en cada etapa (desde que entró a ella).
 const ETAPA_SLA = {
-  'Solicitud': { dias: 1, accion: 'Validar SUNAT / contactar' },
-  'Filtro credito': { dias: 2, accion: 'Evaluar crédito en centrales' },
-  'Filtro garantia': { dias: 3, accion: 'Reunir docs + valor referencial' },
-  'Filtro finanzas': { dias: 3, accion: 'Reunión + análisis financiero' },
-  'Business case': { dias: 2, accion: 'Armar y enviar a Créditos' }
+  'Solicitud': { horas: 24, accion: 'Validar SUNAT / contactar' },
+  'Filtro credito': { horas: 48, accion: 'Evaluar crédito en centrales' },
+  'Filtro garantia': { horas: 72, accion: 'Reunir docs + valor referencial' },
+  'Filtro finanzas': { horas: 72, accion: 'Reunión + análisis financiero' },
+  'Business case': { horas: 24, accion: 'Armar y enviar a Créditos' }
 };
 function slaEtapaB2B(col, fechaEtapa) {
   const cfg = ETAPA_SLA[col];
-  if (!cfg) return { accion: null, dias: null, usados: null, estado: 'ok', vencido: false, diasRestantes: null };
-  if (!fechaEtapa) return { accion: cfg.accion, dias: cfg.dias, usados: 0, estado: 'ok', vencido: false, diasRestantes: cfg.dias };
-  const usados = diasHabiles(fechaEtapa);
+  if (!cfg) return { accion: null, horas: null, usadas: null, estado: 'ok', vencido: false, horasRestantes: null };
+  if (!fechaEtapa) return { accion: cfg.accion, horas: cfg.horas, usadas: 0, estado: 'ok', vencido: false, horasRestantes: cfg.horas };
+  const usadas = Math.max(0, Math.floor((Date.now() - new Date(fechaEtapa).getTime()) / 3600000));
   let estado = 'ok';
-  if (usados > cfg.dias) estado = 'vencido';
-  else if (usados >= cfg.dias) estado = 'porvencer';
+  if (usadas >= cfg.horas) estado = 'vencido';
+  else if (usadas >= cfg.horas * 0.75) estado = 'porvencer'; // último 25% del plazo
   return {
-    accion: cfg.accion, dias: cfg.dias, usados,
+    accion: cfg.accion, horas: cfg.horas, usadas,
     estado, vencido: estado === 'vencido',
-    diasRestantes: cfg.dias - usados
+    horasRestantes: cfg.horas - usadas
   };
 }
 // Sella el momento de entrada a la etapa cuando la columna derivada cambia. Devuelve la fecha vigente.
@@ -5671,7 +5685,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.230 (SLA por etapa: se define el tiempo MAXIMO (dias habiles) que un lead debe permanecer en cada filtro -> SUNAT 1, Credito 2, Garantia 3, Finanzas 3, Business Case 2; el sistema calcula dias habiles usados vs. maximo y marca ok / al limite / vencido, visible en la ficha y en las tarjetas del Kanban (con borde rojo si vencio). La proxima accion + fecha en la bitacora de gestiones ya era OBLIGATORIA para no perder el hilo del lead. REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.231 (Ficha estilo B2C: etapa ACTIVA automatica (etapaKanban), solo esa editable; etapas anteriores en solo-lectura (desplegables) salvo el MONTO; futuras bloqueadas. Boton GESTION por etapa abre MODAL 2 pasos (canal+resultado+comentario / proxima accion OBLIGATORIA por etapa + fecha). Boton TIMELINE (i) junto a la bandera. SLA en HORAS: SUNAT 24, Credito 48, Garantia 72, Finanzas 72, Business Case 24. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

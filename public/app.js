@@ -4317,9 +4317,9 @@ function b2bKanbanCard(c) {
   let slaHtml = '';
   if (sla.accion) {
     let cuando = '';
-    if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ SLA vencido ' + sla.usados + '/' + sla.dias + 'd</span>';
-    else if (sla.estado === 'porvencer') cuando = '<span class="kb-sla-porv">⏳ ' + sla.usados + '/' + sla.dias + 'd</span>';
-    else if (sla.dias != null) cuando = '<span class="kb-sla-dias">' + sla.usados + '/' + sla.dias + 'd</span>';
+    if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ SLA vencido ' + sla.usadas + '/' + sla.horas + 'h</span>';
+    else if (sla.estado === 'porvencer') cuando = '<span class="kb-sla-porv">⏳ ' + sla.usadas + '/' + sla.horas + 'h</span>';
+    else if (sla.horas != null) cuando = '<span class="kb-sla-dias">' + sla.usadas + '/' + sla.horas + 'h</span>';
     slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
   }
   return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
@@ -4653,13 +4653,13 @@ function resumenFichaB2B() {
   if (sla.accion) {
     // Estado SLA de la etapa: días hábiles usados vs. máximo permitido.
     let slaTag = '';
-    if (sla.dias != null) {
+    if (sla.horas != null) {
       const cls = sla.estado === 'vencido' ? 'fbr-sla-venc' : (sla.estado === 'porvencer' ? 'fbr-sla-porv' : 'fbr-sla-ok');
       const txt = sla.estado === 'vencido'
-        ? '⚠ SLA vencido (' + sla.usados + '/' + sla.dias + 'd hábiles)'
+        ? '⚠ SLA vencido (' + sla.usadas + '/' + sla.horas + 'h)'
         : (sla.estado === 'porvencer'
-          ? '⏳ SLA al límite (' + sla.usados + '/' + sla.dias + 'd)'
-          : '⏱ ' + sla.usados + '/' + sla.dias + 'd en etapa');
+          ? '⏳ SLA por vencer (' + sla.usadas + '/' + sla.horas + 'h)'
+          : '⏱ ' + sla.usadas + '/' + sla.horas + 'h en etapa');
       slaTag = '<span class="fbr-sla ' + cls + '">' + txt + '</span>';
     }
     accion = '<span class="fbr-accion">📌 <b>' + sla.accion + '</b></span>' + slaTag;
@@ -4685,81 +4685,131 @@ function renderFichaB2B() {
   const flag = $('fbDescartar');
   if (flag) flag.classList.toggle('oculto', s.estado === 'No elegible' || !!s.archivado);
 
-  // Estado de cada etapa
+  // ===== Etapa activa (automática) y modo de cada panel =====
+  // Orden de etapas y a qué columna Kanban corresponde cada panel.
+  const ORDEN_ETAPAS = ['fsunat', 'credito', 'garantia', 'finanzas', 'businesscase'];
+  const COL_DE_PANEL = { fsunat: 'Solicitud', credito: 'Filtro credito', garantia: 'Filtro garantia', finanzas: 'Filtro finanzas', businesscase: 'Business case' };
+  // La etapa activa la define el backend (etapaKanban). SUNAT/Solicitud comparten el primer panel.
+  let colActiva = FICHA.etapaKanban || 'Solicitud';
+  if (colActiva === 'Desestimado') colActiva = 'Solicitud';
+  const idxActivo = ORDEN_ETAPAS.findIndex(p => COL_DE_PANEL[p] === colActiva);
+  // modoPanel: 'editable' (etapa actual), 'lectura' (etapas ya pasadas), 'bloqueado' (futuras).
+  const modoPanel = (panel) => {
+    const i = ORDEN_ETAPAS.indexOf(panel);
+    if (i < idxActivo) return 'lectura';
+    if (i === idxActivo) return 'editable';
+    return 'bloqueado';
+  };
+  FICHA._modoPanel = modoPanel; FICHA._colActiva = colActiva;
+
   const semCredito = (FICHA.filtros.credito && FICHA.filtros.credito.semaforo) || null;
   const semGarantia = (FICHA.filtros.garantia && FICHA.filtros.garantia.semaforo) || null;
   const semFinanzas = (FICHA.filtros.finanzas && FICHA.filtros.finanzas.semaforo) || null;
-  const garantiaDesbloqueada = semCredito === 'Verde' || ['Filtro garantia', 'Apto garantia', 'Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
-  const finanzasDesbloqueada = semGarantia === 'Verde' || ['Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
-  const bcDesbloqueada = semFinanzas === 'Verde' || ['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
 
   const panels = [
     panelSolicitud(s),
-    panelFiltroSunat(s),
-    panelCredito(semCredito),
-    panelGarantia(garantiaDesbloqueada, semGarantia),
-    panelFinanzas(finanzasDesbloqueada, semFinanzas),
-    panelBusinessCase(bcDesbloqueada)
+    panelFiltroSunat(s, modoPanel('fsunat')),
+    panelCredito(semCredito, modoPanel('credito')),
+    panelGarantia(modoPanel('garantia') !== 'bloqueado', semGarantia, modoPanel('garantia')),
+    panelFinanzas(modoPanel('finanzas') !== 'bloqueado', semFinanzas, modoPanel('finanzas')),
+    panelBusinessCase(modoPanel('businesscase') !== 'bloqueado', modoPanel('businesscase'))
   ];
-  $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('') + panelGestionesB2B(s);
-  (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });  // el resaltado solo en el primer render
+  $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('');
+  (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
   cargarGestionesB2B(s.codigo);
+  aplicarBloqueoPaneles();
+}
+// Deshabilita inputs de los paneles en modo 'lectura' o 'bloqueado' (deja editable solo el monto).
+function aplicarBloqueoPaneles() {
+  document.querySelectorAll('.fb-panel[data-modo]').forEach(pnl => {
+    const modo = pnl.getAttribute('data-modo');
+    if (modo === 'editable') return;
+    pnl.querySelectorAll('input, select, textarea, button').forEach(el => {
+      // El monto siempre editable; el botón de editar monto también.
+      if (el.getAttribute('onclick') && /editarMontoB2B/.test(el.getAttribute('onclick'))) return;
+      if (el.classList.contains('fb-gestion-btn')) return; // el botón de gestión queda activo
+      el.setAttribute('disabled', 'disabled');
+      el.classList.add('fb-locked');
+    });
+  });
 }
 
 // ===== Bitácora de gestiones (trazabilidad, próxima acción obligatoria) =====
-function panelGestionesB2B(s) {
-  const open = FICHA_ETAPA_OPEN === 'gestiones';
-  if (!open) return fbPanelWrap('gestiones', '🗒️', 'Registro de gestión', '<span class="sub">trazabilidad</span>', false, '');
-  const hoy = new Date().toISOString().slice(0, 16);
-  const form = '<div class="fb-body"><div class="fb-gest-form">' +
-    '<div class="mtr-row"><span class="mtr-lbl">Canal</span><span class="mtr-ctrl"><select id="gestCanal" class="mtr-in"><option value="Llamada">Llamada</option><option value="WhatsApp">WhatsApp</option><option value="Correo">Correo</option><option value="Reunión">Reunión</option><option value="Otro">Otro</option></select></span></div>' +
-    '<div class="mtr-row"><span class="mtr-lbl">Resultado</span><span class="mtr-ctrl"><input id="gestResultado" class="mtr-in" style="max-width:none;width:220px" placeholder="Qué pasó en esta gestión"></span></div>' +
-    '<div class="mtr-row"><span class="mtr-lbl">Comentario</span><span class="mtr-ctrl"><input id="gestComentario" class="mtr-in" style="max-width:none;width:220px" placeholder="Detalle (opcional)"></span></div>' +
-    '<div class="fb-sec">Próxima acción (obligatoria)</div>' +
-    '<div class="mtr-row"><span class="mtr-lbl">¿Qué sigue?</span><span class="mtr-ctrl"><input id="gestProxAccion" class="mtr-in" style="max-width:none;width:220px" placeholder="Ej. Pedir copia literal"></span></div>' +
-    '<div class="mtr-row"><span class="mtr-lbl">¿Cuándo?</span><span class="mtr-ctrl"><input id="gestProxFecha" type="datetime-local" class="mtr-in" value="' + hoy + '"></span></div>' +
-    '<div class="error" id="gestMsg"></div>' +
-    '<div class="fb-acc"><button class="btn" onclick="registrarGestionB2B()">Registrar gestión</button></div>' +
-    '</div><div class="fb-sec">Historial</div><div id="fbGestLista"><div class="sub">Cargando…</div></div></div>';
-  return fbPanelWrap('gestiones', '🗒️', 'Registro de gestión', '<span class="sub">trazabilidad</span>', true, form);
+// ===== Modal de gestión (2 pasos: resultado + próxima acción). Se abre desde cada etapa. =====
+let GESTION_COL = null;
+function abrirModalGestion(col) {
+  GESTION_COL = col;
+  const acciones = FICHA.accionesEtapa || [];
+  const resultados = FICHA.resultadosGestion || ['Contactado', 'No contestó', 'Volver a llamar', 'Pidió información', 'Envió documentos', 'No interesado'];
+  const canales = FICHA.canalesGestion || ['Llamada', 'WhatsApp'];
+  const etLabel = trEstadoB2B(col);
+  const manana = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
+  const html = '<div class="gm-back" onclick="if(event.target===this)cerrarModalGestion()">' +
+    '<div class="gm-card">' +
+    '<div class="gm-head"><b>Registrar gestión</b> <span class="sub">· etapa ' + etLabel + '</span>' +
+    '<button class="gm-x" onclick="cerrarModalGestion()">✕</button></div>' +
+    // Paso 1
+    '<div class="gm-step">1 · ¿Qué pasó?</div>' +
+    '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in">' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Detalle breve (opcional)"></textarea></div>' +
+    // Paso 2
+    '<div class="gm-step">2 · ¿Qué sigue? <span class="gm-oblig">obligatorio</span></div>' +
+    '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
+    '<div class="gm-row" id="gmOtroWrap" style="display:none"><label>Especifica</label><input id="gmProxOtro" class="mtr-in" placeholder="Describe la próxima acción"></div>' +
+    '<div class="gm-row"><label>¿Cuándo?</label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
+    '<div class="error" id="gmMsg"></div>' +
+    '<div class="gm-foot"><button class="btn sec" onclick="cerrarModalGestion()">Cancelar</button><button class="btn" onclick="guardarModalGestion()">Registrar</button></div>' +
+    '</div></div>';
+  const host = document.createElement('div'); host.id = 'gmHost'; host.innerHTML = html;
+  document.body.appendChild(host);
+  const sel = $('gmProxAccion'); if (sel) sel.onchange = () => { $('gmOtroWrap').style.display = sel.value === '__otro' ? '' : 'none'; };
 }
+function cerrarModalGestion() { const h = $('gmHost'); if (h) h.remove(); GESTION_COL = null; }
+async function guardarModalGestion() {
+  const msg = $('gmMsg');
+  let prox = $('gmProxAccion').value;
+  if (prox === '__otro') prox = ($('gmProxOtro').value || '').trim();
+  const fecha = ($('gmProxFecha').value || '').trim();
+  if (!prox) { if (msg) msg.textContent = 'Define la próxima acción.'; return; }
+  if (!fecha) { if (msg) msg.textContent = 'Define la fecha de la próxima acción.'; return; }
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/gestiones', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal: $('gmCanal').value, resultado: $('gmResultado').value, comentario: ($('gmComentario').value || '').trim(), proximaAccion: prox, fechaProxAccion: new Date(fecha).toISOString() })
+    });
+    cerrarModalGestion();
+    abrirFichaB2B(FICHA.solicitud.codigo); // refresca ficha (y timeline)
+  } catch (e) { if (msg) msg.textContent = e.message || 'No se pudo registrar.'; }
+}
+// Carga las gestiones para el TIMELINE (panel "ⓘ").
 async function cargarGestionesB2B(codigo) {
-  const cont = $('fbGestLista'); if (!cont) return;
   try {
     const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/gestiones');
-    const g = d.gestiones || [];
-    if (!g.length) { cont.innerHTML = '<div class="sub">Sin gestiones registradas.</div>'; return; }
-    cont.innerHTML = g.map(x => {
-      const f = new Date(x.fecha), fp = x.fechaProxAccion ? new Date(x.fechaProxAccion) : null;
-      const fFmt = f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-      const fpFmt = fp ? fp.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
-      return '<div class="fb-gest-item">' +
-        '<div class="fb-gest-top"><b>' + (x.canal || 'Gestión') + '</b> · ' + (x.resultado || '—') + '<span class="fb-gest-fecha">' + fFmt + ' · ' + primerNombre(x.responsable || '') + '</span></div>' +
-        (x.comentario ? '<div class="fb-gest-com">' + x.comentario + '</div>' : '') +
-        '<div class="fb-gest-prox">➡ <b>' + (x.proximaAccion || '') + '</b> · 📅 ' + fpFmt + '</div>' +
-        '</div>';
-    }).join('');
-  } catch (e) { cont.innerHTML = '<div class="sub">No se pudo cargar el historial.</div>'; }
+    FICHA._gestiones = d.gestiones || [];
+  } catch (e) { FICHA._gestiones = []; }
 }
-async function registrarGestionB2B() {
-  const proximaAccion = ($('gestProxAccion') && $('gestProxAccion').value || '').trim();
-  const fechaProxAccion = ($('gestProxFecha') && $('gestProxFecha').value || '').trim();
-  const msg = $('gestMsg');
-  if (!proximaAccion) { if (msg) msg.textContent = 'Define la próxima acción.'; return; }
-  if (!fechaProxAccion) { if (msg) msg.textContent = 'Define la fecha de la próxima acción.'; return; }
-  try {
-    const body = {
-      canal: $('gestCanal').value, resultado: $('gestResultado').value.trim(),
-      comentario: $('gestComentario').value.trim(), proximaAccion,
-      fechaProxAccion: new Date(fechaProxAccion).toISOString(), etapa: FICHA.solicitud.estado
-    };
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/gestiones', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    $('gestResultado').value = ''; $('gestComentario').value = ''; $('gestProxAccion').value = '';
-    if (msg) msg.textContent = '';
-    cargarGestionesB2B(FICHA.solicitud.codigo);
-  } catch (e) { if (msg) msg.textContent = e.message || 'No se pudo registrar.'; }
+// Abre/cierra el timeline de trazabilidad (botón ⓘ junto a la bandera).
+function toggleTimelineB2B() {
+  let h = $('tlHost');
+  if (h) { h.remove(); return; }
+  const g = FICHA._gestiones || [];
+  const items = g.length ? g.map(x => {
+    const f = new Date(x.fecha);
+    const fFmt = f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const fp = x.fechaProxAccion ? new Date(x.fechaProxAccion).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+    return '<div class="tl-item"><div class="tl-dot"></div><div class="tl-body">' +
+      '<div class="tl-top"><b>' + trEstadoB2B(x.etapa || '') + '</b> <span class="sub">' + fFmt + ' · ' + primerNombre(x.responsable || '') + '</span></div>' +
+      '<div class="tl-res">' + (x.canal || '') + (x.resultado ? ' · ' + x.resultado : '') + '</div>' +
+      (x.comentario ? '<div class="tl-com">' + x.comentario.replace(/</g, '&lt;') + '</div>' : '') +
+      '<div class="tl-prox">➡ <b>' + (x.proximaAccion || '') + '</b> · 📅 ' + fp + '</div>' +
+      '</div></div>';
+  }).join('') : '<div class="sub" style="padding:8px">Sin gestiones registradas todavía.</div>';
+  const html = '<div class="tl-back" onclick="if(event.target===this)toggleTimelineB2B()">' +
+    '<div class="tl-card"><div class="tl-head"><b>Trazabilidad del lead</b><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
+    '<div class="tl-list">' + items + '</div></div></div>';
+  const host = document.createElement('div'); host.id = 'tlHost'; host.innerHTML = html;
+  document.body.appendChild(host);
 }
 
 function fbPill(sem) {
@@ -5086,12 +5136,12 @@ function autoValoresSunat(s) {
   if (s.antiguedadMeses != null) v.antiguedad = s.antiguedadMeses;
   return v;
 }
-function panelFiltroSunat(s) {
+function panelFiltroSunat(s, modo) {
   const open = FICHA_ETAPA_OPEN === 'fsunat';
   const f = FICHA.filtros.sunat || {};
   const sem = f.semaforo || null;
   const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, false, '');
+  if (!open) return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, false, '', false, modo, 'Solicitud');
   const ticket = s.ticket || 'Bajo';
   const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
   const auto = autoValoresSunat(s);
@@ -5113,7 +5163,7 @@ function panelFiltroSunat(s) {
     '<p class="sub">Ticket <b>' + ticket + '</b>. Los datos de SUNAT se autocompletan; RUC 20 pasa por defecto, RUC 10 queda observado.</p>' +
     renderFiltroDosCapas('sunat', valores, 'fsunat', ticket) +
     '<div class="fb-acc"><button class="btn" onclick="guardarFiltroSunat()">Guardar</button></div></div>';
-  return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, true, cuerpo);
+  return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, true, cuerpo, false, modo, 'Solicitud');
 }
 async function guardarFiltroSunat() {
   try {
@@ -5329,11 +5379,11 @@ function consolidadoGuardadoJS() {
   return peor;
 }
 
-function panelCredito(semGuardado) {
+function panelCredito(semGuardado, modo) {
   const cons = consolidadoGuardadoJS() || semGuardado;
   const open = FICHA_ETAPA_OPEN === 'credito';
   const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, false, '');
+  if (!open) return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, false, '', false, modo, 'Filtro credito');
   const sujetos = FICHA.creditoSujetos || [];
   const empresa = sujetos.find(x => x.tipoSujeto === 'empresa');
   const reps = sujetos.filter(x => x.tipoSujeto === 'representante');
@@ -5361,7 +5411,7 @@ function panelCredito(semGuardado) {
     '<div class="sub" style="font-size:11px;margin-top:4px">Pega la carpeta de Drive donde el equipo sube reportes de central, DJ, sustentos, etc.</div>';
   html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarCredito()">Guardar</button></div>';
   html += '</div>';
-  return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, true, html);
+  return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, true, html, false, modo, 'Filtro credito');
 }
 
 function sujetoCard(su, editable) {
@@ -5492,12 +5542,12 @@ function recalcGarantia(prefijo, ticket) {
   if (inp) { const row = inp.closest('.gd-row'); const st = row && row.querySelector('.gd-st'); const ok = inp.value && /^https?:\/\//i.test(inp.value); if (st) { st.className = 'gd-st ' + (ok ? 'gd-ok' : 'gd-pend'); st.textContent = ok ? '✓' : 'pendiente'; } }
   actualizarConsolidadoGarantiaVivo();
 }
-function panelGarantia(desbloqueada, sem) {
+function panelGarantia(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
   const cons = consolidadoGarantiaGuardadoJS() || sem;
   const open = FICHA_ETAPA_OPEN === 'garantia';
   const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>';
-  if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, false, '');
+  if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, false, '', false, modo, 'Filtro garantia');
   const inms = FICHA.garantiaInmuebles || [];
   let html = '<div class="fb-body">';
   html += '<div class="fb-cred-cons">Consolidado: <span id="fbGarConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
@@ -5506,22 +5556,22 @@ function panelGarantia(desbloqueada, sem) {
   html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
   html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
   html += '</div>';
-  return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, true, html);
+  return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, true, html, false, modo, 'Filtro garantia');
 }
 
-function panelFinanzas(desbloqueada, sem) {
+function panelFinanzas(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
   const open = FICHA_ETAPA_OPEN === 'finanzas';
   const f = FICHA.filtros.finanzas || {};
   const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, false, '');
+  if (!open) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, false, '', false, modo, 'Filtro finanzas');
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   let chkF = {};
   try { const raw = f.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
   const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket.</p>' +
     renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
     '<div class="fb-acc"><button class="btn" onclick="guardarFinanzas()">Guardar</button></div></div>';
-  return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, true, cuerpo);
+  return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
 }
 
 // Semáforo global del Business Case: peor caso entre los 4 filtros (gobernanza).
@@ -5533,12 +5583,12 @@ function semGlobalB2B() {
   sems.forEach(x => { if (peor == null || ORDEN_SEM_JS[x] > ORDEN_SEM_JS[peor]) peor = x; });
   return peor;
 }
-function panelBusinessCase(desbloqueada) {
+function panelBusinessCase(desbloqueada, modo) {
   if (!desbloqueada) return fbPanelWrap('businesscase', '📑', 'Business case', '<span class="sub" style="color:#94a3b8">🔒 requiere finanzas en verde</span>', false, '', true);
   const glob = semGlobalB2B();
   const open = FICHA_ETAPA_OPEN === 'businesscase';
   const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, false, '');
+  if (!open) return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, false, '', false, modo, 'Business case');
   const s = FICHA.solicitud; const f = FICHA.filtros || {};
   const fila = (k, label) => {
     const ff = f[k] || {};
@@ -5575,7 +5625,7 @@ function panelBusinessCase(desbloqueada) {
   const rec = glob === 'Rojo' ? { t: 'Descartar', c: '#E24B4A' } : glob === 'Amarillo' ? { t: 'Avanzar con observaciones', c: '#EF9F27' } : glob === 'Verde' ? { t: 'Avanzar a expediente', c: '#1D9E75' } : { t: 'Pendiente de completar filtros', c: '#94a3b8' };
   html += '<div class="fb-sec">Recomendación comercial</div><div class="bc-rec" style="border-color:' + rec.c + '55;background:' + rec.c + '11"><b style="color:' + rec.c + '">' + rec.t + '</b></div>';
   html += '</div>';
-  return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, true, html);
+  return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, true, html, false, modo, 'Business case');
 }
 // Datos clave que el Business Case hereda de los filtros ya cargados.
 function bcDatosClaveHTML() {
@@ -5640,14 +5690,21 @@ function panelBloqueable(tipo, titulo, ic, desbloqueada) {
   return fbPanelWrap(tipo, ic, titulo, '<span class="sub">disponible</span>', open, cuerpo);
 }
 
-function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado) {
+function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado, modo, colGestion) {
   const cls = open ? ' fb-panel-open' : '';
   const onclick = bloqueado ? '' : ' onclick="fbToggle(\'' + tipo + '\')"';
-  return '<div class="fb-panel' + cls + '">' +
+  const modoAttr = modo ? ' data-modo="' + modo + '"' : '';
+  // Botón de gestión: solo en la etapa editable (actual), para registrar contacto + próxima acción.
+  const btnGestion = (modo === 'editable' && colGestion)
+    ? '<button class="fb-gestion-btn" onclick="event.stopPropagation();abrirModalGestion(\'' + colGestion + '\')">＋ Gestión</button>'
+    : '';
+  const candado = (modo === 'lectura') ? '<span class="fb-lock-tag">🔒 solo lectura</span>' : (modo === 'bloqueado' ? '<span class="fb-lock-tag fb-lock-fut">🔒 bloqueada</span>' : '');
+  return '<div class="fb-panel' + cls + '"' + modoAttr + '>' +
     '<div class="fb-panel-head"' + onclick + '>' +
     '<span class="fb-ic">' + ic + '</span>' +
     '<span class="fb-titulo">' + titulo + '</span>' +
     '<span class="fb-estado" id="fbEstado_' + tipo + '">' + estadoHtml + '</span>' +
+    candado + btnGestion +
     (bloqueado ? '' : '<span class="fb-caret">' + (open ? '▴' : '▾') + '</span>') +
     '</div>' + (cuerpo || '') + '</div>';
 }
