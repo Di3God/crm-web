@@ -604,8 +604,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
 
 const app = express();
+// Compresión gzip: app.js/styles/html viajan ~80% más livianos (clave en Railway).
+const compression = require('compression');
+app.use(compression());
 app.use(express.json({ limit: '4mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Caché corta (5 min) + ETag: revisitas no re-descargan si no cambió; tras deploy se refresca solo.
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '5m', etag: true }));
 
 // ---------- Sesiones ----------
 function leerToken(req) {
@@ -5767,7 +5771,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.237 (LTV corregido: <35% OK (verde), >35% observado — LTV alto = mayor exposicion. Proximas acciones AHORA por etapa real: el modal de gestion usa el catalogo de la etapa desde la que se abre (antes siempre la activa) y las listas se recalibraron para ser coherentes con cada filtro. RUC visible en el head del panel Solicitud sin expandir. Vista por defecto del menu B2B: TABLA primero, con toggle a Kanban. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.238 (FIX carga lenta en Railway: se agrega compresion GZIP (los estaticos viajan ~80% mas livianos: app.js de 399KB a ~90KB) + cache de 5 min con ETag en los archivos estaticos. La lentitud venia de servir ~600KB sin comprimir en cada carga/Ctrl+F5, acumulado del crecimiento de la app desde v1.230. REQUIERE RESTART + npm install (nueva dependencia compression)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
