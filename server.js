@@ -4189,16 +4189,6 @@ function consolidadoCredito(codigo) {
 // ======================================================================
 const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
 const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
-// Días hábiles transcurridos entre dos fechas (excluye sábado y domingo). Usado para SLA por etapa.
-function diasHabiles(desde, hasta) {
-  if (!desde) return 0;
-  const a = new Date(desde), b = hasta ? new Date(hasta) : new Date();
-  if (isNaN(a) || isNaN(b) || b < a) return 0;
-  let n = 0; const cur = new Date(a); cur.setHours(0, 0, 0, 0);
-  const fin = new Date(b); fin.setHours(0, 0, 0, 0);
-  while (cur < fin) { cur.setDate(cur.getDate() + 1); const d = cur.getDay(); if (d !== 0 && d !== 6) n++; }
-  return n;
-}
 // Cuota estimada "gruesa" para el DSCR: cuota fija (francés), tasa piso referencial 25% anual, 12 meses.
 const CUOTA_REF = { tasaAnual: 0.25, meses: 12 };
 function cuotaEstimadaB2B(monto) {
@@ -5777,7 +5767,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.233 (Kanban B2B renovado: dots S+C+G+F (SUNAT incluido), verde si etapa superada y AMARILLO parpadeante la etapa actual; ubicacion (de SUNAT) en la tarjeta; probabilidad al costado del monto; colores vivos con borde por semaforo; montos totales de columna en grande; tiempo REGRESIVO Quedan Xh hasta el SLA; muestra la ultima gestion/accion de la etapa. Textos RUC unificados a Validar RUC. RUC editable SOLO en Solicitud, con boton Validar que dispara la API SUNAT y avanza. MODO DEMO (toggle) que libera todos los campos para recorrer el viaje completo. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.236 (Revision integral Solicitudes B2B. LIMPIEZA: eliminadas ~90 lineas de codigo muerto (panelEmpresa, panelFiltroSimple, panelBloqueable y diasHabiles sin uso). VISUAL: STEPPER del viaje en la ficha (5 pasos numerados con semaforo por filtro, etapa actual en ambar, lineas verdes al avanzar) + paneles del acordeon numerados 1-5 como pasos del proceso. Logicas auditadas: motor, auto-avance Verde y transiciones OK sin cambios. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
