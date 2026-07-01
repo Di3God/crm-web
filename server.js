@@ -4428,7 +4428,7 @@ function calcularLTV(cat, valores, montoSolicitud) {
   // El monto de la solicitud está en soles. Llevamos el valor a soles para dividir.
   const valorSoles = monedaValor === 'dolares' ? valorRef * cfg.tc : valorRef;
   const ltv = montoSolicitud / valorSoles;
-  return { ltv, obs: ltv < cfg.umbralObservado, moneda: monedaValor, valorSoles, umbral: cfg.umbralObservado };
+  return { ltv, obs: ltv > cfg.umbralObservado, moneda: monedaValor, valorSoles, umbral: cfg.umbralObservado }; // LTV alto = mayor exposicion -> observado
 }
 
 
@@ -4710,7 +4710,7 @@ app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
   const colFicha = etapaKanbanB2B(s);
   const fechaEtapaF = sellarFechaEtapa(s, colFicha);
   res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, garantiaInmuebles: inmuebles, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF),
-    accionesEtapa: ACCIONES_ETAPA_B2B[colFicha] || [], resultadosGestion: RESULTADOS_GESTION_B2B, canalesGestion: CANALES_GESTION_B2B });
+    accionesEtapa: ACCIONES_ETAPA_B2B[colFicha] || [], accionesPorEtapa: ACCIONES_ETAPA_B2B, resultadosGestion: RESULTADOS_GESTION_B2B, canalesGestion: CANALES_GESTION_B2B });
 });
 
 // Guarda los datos del inmueble (garantía).
@@ -4911,11 +4911,11 @@ function puntajeB2B(s, sem) {
 
 // Próximas acciones sugeridas por etapa (para el modal de gestión, paso 2).
 const ACCIONES_ETAPA_B2B = {
-  'Solicitud': ['Validar RUC en SUNAT', 'Contactar al cliente', 'Reintentar contacto', 'Solicitar datos faltantes'],
-  'Filtro credito': ['Consultar centrales', 'Pedir sustento de deudas', 'Contactar por observación crediticia', 'Escalar a jefatura'],
-  'Filtro garantia': ['Solicitar documentos del inmueble', 'Pedir copia literal', 'Calcular valor referencial', 'Coordinar con cliente por garantía'],
-  'Filtro finanzas': ['Solicitar EEFF / DJ', 'Agendar reunión comercial', 'Pedir sustento financiero', 'Levantar observación de ratios'],
-  'Business case': ['Armar expediente', 'Enviar a Créditos', 'Coordinar observaciones', 'Presentar a comité']
+  'Solicitud': ['Validar RUC en SUNAT', 'Contactar al cliente', 'Reintentar contacto', 'Confirmar monto y destino', 'Solicitar datos faltantes'],
+  'Filtro credito': ['Consultar centrales de riesgo', 'Pedir sustento de deudas', 'Solicitar aclaración de manchas', 'Evaluar representantes y vinculadas', 'Escalar a jefatura'],
+  'Filtro garantia': ['Solicitar copia literal / partida', 'Pedir datos y fotos del inmueble', 'Estimar valor referencial', 'Verificar cargas y gravámenes', 'Coordinar tasación'],
+  'Filtro finanzas': ['Solicitar EEFF / DJ anual', 'Solicitar flujo proyectado', 'Agendar reunión comercial', 'Analizar ratios y sustento', 'Levantar observaciones financieras'],
+  'Business case': ['Consolidar expediente', 'Redactar informe ejecutivo', 'Enviar a Créditos', 'Coordinar levantamiento de observaciones', 'Agendar presentación / comité']
 };
 // Resultados posibles de una gestión (paso 1 del modal).
 const RESULTADOS_GESTION_B2B = ['Contactado', 'No contestó', 'Volver a llamar', 'Pidió información', 'Envió documentos', 'No interesado'];
@@ -5767,7 +5767,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.236 (Revision integral Solicitudes B2B. LIMPIEZA: eliminadas ~90 lineas de codigo muerto (panelEmpresa, panelFiltroSimple, panelBloqueable y diasHabiles sin uso). VISUAL: STEPPER del viaje en la ficha (5 pasos numerados con semaforo por filtro, etapa actual en ambar, lineas verdes al avanzar) + paneles del acordeon numerados 1-5 como pasos del proceso. Logicas auditadas: motor, auto-avance Verde y transiciones OK sin cambios. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.237 (LTV corregido: <35% OK (verde), >35% observado — LTV alto = mayor exposicion. Proximas acciones AHORA por etapa real: el modal de gestion usa el catalogo de la etapa desde la que se abre (antes siempre la activa) y las listas se recalibraron para ser coherentes con cada filtro. RUC visible en el head del panel Solicitud sin expandir. Vista por defecto del menu B2B: TABLA primero, con toggle a Kanban. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

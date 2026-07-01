@@ -4195,7 +4195,7 @@ function b2bTab(which) {
 }
 
 // ===== Kanban B2B =====
-let B2B_VISTA = 'kanban';        // 'kanban' | 'tabla'
+let B2B_VISTA = 'tabla';        // 'tabla' | 'kanban' (tabla primero; el usuario cambia a Kanban)
 let B2B_KANBAN_DRAG = null;      // { codigo, desde }
 const B2B_KANBAN_COLS = [
   { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: 'Intake · validar RUC · triaje' },
@@ -4915,7 +4915,7 @@ function _aplicarBloqueoPanelesOriginal() {
 let GESTION_COL = null;
 function abrirModalGestion(col) {
   GESTION_COL = col;
-  const acciones = FICHA.accionesEtapa || [];
+  const acciones = (FICHA.accionesPorEtapa && FICHA.accionesPorEtapa[col]) || FICHA.accionesEtapa || [];
   const resultados = FICHA.resultadosGestion || ['Contactado', 'No contestó', 'Volver a llamar', 'Pidió información', 'Envió documentos', 'No interesado'];
   const canales = FICHA.canalesGestion || ['Llamada', 'WhatsApp'];
   const etLabel = trEstadoB2B(col);
@@ -5386,7 +5386,8 @@ function panelSolicitud(s) {
       garantia +
       '</div>';
   }
-  return fbPanelWrap('solicitud', '📥', 'Solicitud', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
+  const rucHead = s.ruc ? '<span class="fb-ruc-head">RUC ' + s.ruc + '</span>' : '<span class="fb-ruc-head fb-ruc-falta">sin RUC</span>';
+  return fbPanelWrap('solicitud', '📥', 'Solicitud', rucHead + ' <span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
 }
 
 function consolidadoCreditoJS() {
@@ -5637,7 +5638,7 @@ function ltvInfoJS(valores) {
   const moneda = valores.valorRefMoneda || 'soles';
   const valorSoles = moneda === 'dolares' ? valorRef * cfg.tc : valorRef;
   const ltv = monto / valorSoles;
-  return { ltv, obs: ltv < cfg.umbralObservado, moneda, valorSoles, tc: cfg.tc, umbral: cfg.umbralObservado };
+  return { ltv, obs: ltv > cfg.umbralObservado, moneda, valorSoles, tc: cfg.tc, umbral: cfg.umbralObservado };
 }
 function ltvTextoJS(valores, ticket) {
   const info = ltvInfoJS(valores);

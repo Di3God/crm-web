@@ -1419,6 +1419,8 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fbs-sem { font-style:normal; font-size:10.5px; font-weight:700; color:#6B7A8D; }
 .fbs-linea { width:26px; height:3px; background:#E3E9F2; border-radius:2px; flex:0 0 auto; margin:0 2px; }
 .fbs-linea-done { background:#1D9E75; }
+.fb-ruc-head { font-size:12px; font-weight:800; color:#0E2A57; background:#EEF3F9; border-radius:6px; padding:2px 8px; margin-right:6px; }
+.fb-ruc-falta { color:#CC0000; background:#FFE3E0; }
 
 
 
