@@ -471,6 +471,7 @@ try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); 
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN creditoLinkDrive TEXT"); } catch (e) { }
 // v1.221: recalibración de rangos POTENCIALES a valores fijos por tramo (100k/400k/1M).
 // Recalcula montoSolicitado + ticket de las solicitudes que vinieron por rango (montoRango presente)
 // y cuyo monto guardado no coincide con el valor fijo del tramo. Idempotente: al converger, no cambia nada.
@@ -901,6 +902,16 @@ function puedeB2B(user) {
 // ¿Puede administrar el equipo B2B (toggle de round-robin)? Admin y jefes B2B.
 function puedeGestionarEquipoB2B(user) {
   return ['admin', 'jefe_creditos', 'jefe_b2b'].includes(user.rol);
+}
+// ¿Ve TODOS los leads (supervisión) o solo los propios? Jefes/admin/jefa ven todo.
+function veTodoB2B(user) {
+  return ['admin', 'jefa', 'jefe_creditos', 'jefe_b2b'].includes(user.rol);
+}
+// Filtra una lista de solicitudes al alcance del usuario: los operadores solo ven donde son responsables.
+function filtrarPorAlcanceB2B(user, filas) {
+  if (veTodoB2B(user)) return filas;
+  const yo = user.nombre;
+  return filas.filter(s => s.responsableActual === yo || s.funcionario === yo || s.asistente === yo);
 }
 function soloB2B(req, res, next) {
   if (!puedeB2B(req.user)) return res.status(403).json({ error: 'Sin acceso al módulo B2B' });
@@ -3863,10 +3874,12 @@ app.get('/api/b2b/solicitudes', soloB2B, (req, res) => {
   // "Desestimados" = fuera del tablero: archivados o marcados No elegible. Se listan juntos.
   if (estado === 'Desestimados') {
     let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible' ORDER BY fechaIngreso DESC, id DESC").all();
+    filas = filtrarPorAlcanceB2B(req.user, filas);
     if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
     return res.json({ solicitudes: filas, total: filas.length, desestimados: true });
   }
   let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=? ORDER BY fechaIngreso DESC, id DESC').all(verArchivados ? 1 : 0);
+  filas = filtrarPorAlcanceB2B(req.user, filas);
   if (estado) filas = filas.filter(s => s.estado === estado);
   if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
   res.json({ solicitudes: filas, total: filas.length });
@@ -4072,45 +4085,26 @@ const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
 
 const FILTROS_B2B = {
   sunat: {
-    titulo: 'Filtro SUNAT (elegibilidad formal)',
+    titulo: 'Filtro SUNAT',
     gates: [
-      { clave: 'personaJuridica', etiqueta: '¿Persona jurídica RUC 20?', tipo: 'select', opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' },
-        { v: 'no', label: 'No', resultado: 'ko', motivo: 'No es persona jurídica RUC 20' }
+      { clave: 'personaJuridica', etiqueta: 'Persona jurídica (RUC 20)', tipo: 'select', auto: true, opciones: [
+        { v: 'si', label: 'Sí (RUC 20)', resultado: 'ok' },
+        { v: 'observar', label: 'RUC 10 — observar', resultado: 'observado', motivo: 'RUC 10 (persona natural): revisar' },
+        { v: 'no', label: 'No', resultado: 'ko', motivo: 'No es persona jurídica' }
       ] },
       { clave: 'estado', etiqueta: 'Estado SUNAT', tipo: 'select', opciones: [
         { v: 'activo', label: 'Activo', resultado: 'ok' },
-        { v: 'no', label: 'No activo', resultado: 'ko', motivo: 'Estado SUNAT ≠ Activo' }
+        { v: 'bajaprov', label: 'Baja provisional / de oficio', resultado: 'observado', motivo: 'Estado SUNAT en baja provisional/de oficio: observar' },
+        { v: 'no', label: 'No activo', resultado: 'ko', motivo: 'Estado SUNAT no activo' }
       ] },
       { clave: 'condicion', etiqueta: 'Condición SUNAT', tipo: 'select', opciones: [
         { v: 'habido', label: 'Habido', resultado: 'ok' },
         { v: 'no', label: 'No habido', resultado: 'ko', motivo: 'Condición SUNAT ≠ Habido' }
       ] },
-      { clave: 'antiguedad', etiqueta: 'Antigüedad', tipo: 'numMinTicket', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' },
-      { clave: 'domicilio', etiqueta: 'Domicilio fiscal ubicable / operación real', tipo: 'select', opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' },
-        { v: 'no', label: 'No', resultado: 'ko', motivo: 'Domicilio inubicable / sin operación real' }
-      ] },
-      { clave: 'sectorAnexoB', etiqueta: 'Sector (Anexo B)', tipo: 'select', opciones: [
-        { v: 'preferido', label: 'Preferido', resultado: 'ok' },
-        { v: 'selectivo', label: 'Selectivo', resultado: 'ok' },
-        { v: 'nolistado', label: 'No listado (criterio de Créditos)', resultado: 'ok' },
-        { v: 'restringido', label: 'Restringido', resultado: 'ko', motivo: 'Sector restringido (Anexo B)' }
-      ] }
+      { clave: 'antiguedad', etiqueta: 'Antigüedad', tipo: 'numMinTicket', formato: 'aniosMeses', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' }
     ],
     score: [
-      { clave: 'antiguedad', etiqueta: 'Antigüedad sobre el mínimo', tipo: 'colchonTicket', peso: 42, refGate: true },
-      { clave: 'actividadCoherente', etiqueta: 'Actividad / CIIU coherente con destino', tipo: 'select', peso: 33, opciones: [
-        { v: 'coherente', label: 'Coherente', frac: 1 },
-        { v: 'parcial', label: 'Parcial', frac: 0.5 },
-        { v: 'incoherente', label: 'Incoherente', frac: 0 }
-      ] },
-      { clave: 'sectorAnexoB', etiqueta: 'Preferencia de sector (Anexo B 1.5)', tipo: 'select', peso: 25, refGate: true, opciones: [
-        { v: 'preferido', label: 'Preferido', frac: 1 },
-        { v: 'selectivo', label: 'Selectivo', frac: 0.5 },
-        { v: 'nolistado', label: 'No listado', frac: 0.5 },
-        { v: 'restringido', label: 'Restringido', frac: 0 }
-      ] }
+      { clave: 'antiguedad', etiqueta: 'Antigüedad sobre el mínimo', tipo: 'colchonTicket', peso: 100, refGate: true }
     ]
   },
 
@@ -4125,56 +4119,36 @@ const FILTROS_B2B = {
         { v: 'dudoso', label: 'Dudoso', resultado: 'ko', motivo: 'Clasificación actual Dudoso' },
         { v: 'perdida', label: 'Pérdida', resultado: 'ko', motivo: 'Clasificación actual Pérdida' }
       ] },
-      { clave: 'listasRestrictivas', etiqueta: 'Listas restrictivas (OFAC/ONU/UE/SPLAFT)', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Aparece en listas restrictivas' }
-      ] },
-      { clave: 'concursal', etiqueta: 'Proceso concursal vigente (INDECOPI)', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Proceso concursal vigente' }
-      ] },
-      { clave: 'sentenciaFirme', etiqueta: 'Sentencia firme (patrimonial/financiero/tributario/lavado)', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Sentencia firme por delitos' }
-      ] },
-      { clave: 'contraloriaOsce', etiqueta: 'Registro adverso Contraloría / inhabilitación OSCE', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Registro adverso Contraloría/OSCE' }
-      ] },
-      { clave: 'infoInconsistente', etiqueta: 'Información inconsistente / documentación adulterada', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Información inconsistente/adulterada' }
-      ] },
       { clave: 'listaNegra', etiqueta: 'Lista negra interna Tasatop', tipo: 'select', opciones: [
         { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Lista negra interna Tasatop' }
       ] },
-      { clave: 'protestadosVigentes', etiqueta: 'Documentos protestados vigentes (al momento de firma)', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Documentos protestados vigentes' }
+      // Documentos protestados: Sí despliega cantidad; castigo -4/-8/-12 (no KO).
+      { clave: 'protestados', etiqueta: 'Documentos protestados', tipo: 'select', despliega: 'protestadosCant', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ok' }
       ] },
-      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Cobranza coactiva vigente' }
+      // Cobranza coactiva vigente: Sí despliega monto; castigo -4/-8/-12 (no KO).
+      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', despliega: 'coactivaMonto', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ok' }
       ] },
-      { clave: 'coactivaSubsanada', etiqueta: 'Coactiva histórica subsanada', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'escalado', motivo: 'Coactiva subsanada → aprobación de comité' }
-      ] },
-      { clave: 'pep', etiqueta: 'PEP con debida diligencia', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'escalado', motivo: 'PEP → Jefe Créditos (Bajo) / Comité (Medio-Alto)' }
-      ] },
-      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación (%)', tipo: 'numMaxTicket', sufijo: '%', maxTicket: { Bajo: 75, Medio: 50, Alto: 25 }, motivo: 'CPP en evaluación excede el límite del ticket' },
-      { clave: 'cppHist', etiqueta: 'CPP histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 2, Medio: 2, Alto: 2 }, motivo: 'CPP histórico excede el límite del ticket' },
-      { clave: 'deficienteHist', etiqueta: 'Deficiente histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 1, Medio: 0, Alto: 0 }, motivo: 'Deficiente histórico excede el límite del ticket' },
-      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido' },
-      { clave: 'refis', etiqueta: 'Refinanciamientos (últ. 12m)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Refinanciamientos no permitidos' },
-      { clave: 'castigados', etiqueta: 'Castigados (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos' },
-      { clave: 'docsMorososCant', etiqueta: 'Documentos morosos (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 5, Medio: 3, Alto: 1 }, motivo: 'Documentos morosos exceden la tolerancia del ticket' },
-      { clave: 'docsMorososMonto', etiqueta: 'Documentos morosos (monto total S/)', tipo: 'numMaxTicket', sufijo: 'S/', maxTicket: { Bajo: 1000, Medio: 3000, Alto: 5000 }, motivo: 'Monto de morosos excede la tolerancia del ticket' },
-      { clave: 'protestadosCant', etiqueta: 'Documentos protestados CCL (cantidad)', tipo: 'numMaxTicket', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Documentos protestados no permitidos' }
+      // KO secos por historial grave (cualquier cantidad > 0).
+      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico (cantidad)', tipo: 'numMaxTicket', activable: true, maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido' },
+      { clave: 'castigados', etiqueta: 'Castigados (cantidad)', tipo: 'numMaxTicket', activable: true, maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos' }
     ],
-    // Puntaje de "limpieza" (default; el spec no fija pesos de Crédito — calibrable).
+    // Puntaje: parte de 100 y descuenta. Los activables solo penalizan si el analista los activó.
     score: [
       { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', peso: 40, refGate: true, opciones: [
         { v: 'normal', label: 'Normal', frac: 1 }, { v: 'cpp', label: 'CPP', frac: 0.5 }, { v: 'deficiente', label: 'Deficiente', frac: 0.2 },
         { v: 'dudoso', label: 'Dudoso', frac: 0 }, { v: 'perdida', label: 'Pérdida', frac: 0 }
-      ] },
-      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación limpio', tipo: 'limpiezaNum', peso: 20, refGate: true },
-      { clave: 'cppHist', etiqueta: 'CPP histórico limpio', tipo: 'limpiezaNum', peso: 15, refGate: true },
-      { clave: 'docsMorososCant', etiqueta: 'Sin documentos morosos', tipo: 'limpiezaNum', peso: 15, refGate: true },
-      { clave: 'deficienteHist', etiqueta: 'Sin deficiente histórico', tipo: 'limpiezaNum', peso: 10, refGate: true }
+      ] }
+    ],
+    // Penalizaciones directas al puntaje (se restan del score base). Diego v1.222.
+    penal: [
+      { clave: 'protestadosCant', tipo: 'penalEscala', tramos: [{ hasta: 1, pena: 4 }, { hasta: 2, pena: 8 }, { hasta: Infinity, pena: 12 }] },
+      { clave: 'coactivaMonto', tipo: 'penalSelect', mapa: { m1: 4, m2: 8, m3: 12 } },
+      { clave: 'refis', tipo: 'penalPorUnidad', pena: 10, activable: true },
+      { clave: 'cppHist', tipo: 'penalPorUnidad', pena: 4, activable: true },
+      { clave: 'morososMonto', tipo: 'penalMonto', tramos: [{ hasta: 1000, pena: 4 }, { hasta: 5000, pena: 8 }, { hasta: Infinity, pena: 12 }], activable: true },
+      { clave: 'cppEvalPct', tipo: 'penalPorPct', pena: 0.5, activable: true }
     ]
   },
 
@@ -4321,26 +4295,44 @@ function evalScoreItemB2B(it, valores, ticket) {
   }
   return null;
 }
-// Evalúa un filtro de dos capas. Devuelve { semaforo, puntaje, kos[], escalados[], ko, faltan }.
+// Aplica una penalización directa al puntaje según su tipo. Devuelve puntos a RESTAR (>=0).
+function penalB2B(p, valores) {
+  const val = valores[p.clave];
+  if (val === undefined || val === null || val === '') return 0;
+  if (p.tipo === 'penalPorUnidad') { const n = Number(val); return isFinite(n) && n > 0 ? n * p.pena : 0; }
+  if (p.tipo === 'penalPorPct') { const n = Number(val); return isFinite(n) && n > 0 ? n * p.pena : 0; }
+  if (p.tipo === 'penalEscala') { const n = Number(val); if (!isFinite(n) || n <= 0) return 0; const t = p.tramos.find(t => n <= t.hasta); return t ? t.pena : 0; }
+  if (p.tipo === 'penalMonto') { const n = Number(val); if (!isFinite(n) || n <= 0) return 0; const t = p.tramos.find(t => n <= t.hasta); return t ? t.pena : 0; }
+  if (p.tipo === 'penalSelect') { return p.mapa[val] || 0; }
+  return 0;
+}
+
+// Evalúa un filtro de dos capas. Devuelve { semaforo, puntaje, kos[], escalados[], observados[], ko, faltan }.
 function evaluarFiltroDosCapas(cat, valores, ticket) {
   valores = valores || {}; ticket = ticket || 'Bajo';
-  const kos = [], escalados = [];
+  const kos = [], escalados = [], observados = [];
   for (const g of (cat.gates || [])) {
     const r = evalGateB2B(g, valores, ticket);
     if (r.resultado === 'ko') kos.push(r.motivo || g.etiqueta);
     else if (r.resultado === 'escalado') escalados.push(r.motivo || g.etiqueta);
+    else if (r.resultado === 'observado') observados.push(r.motivo || g.etiqueta);
   }
-  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, ko: true, faltan: 0 };
+  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, observados, ko: true, faltan: 0 };
   let total = 0, pesoTotal = 0, faltan = 0;
   for (const it of (cat.score || [])) {
     pesoTotal += it.peso;
     const p = evalScoreItemB2B(it, valores, ticket);
     if (p == null) faltan++; else total += p;
   }
-  const puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  // Penalizaciones directas (crédito v1.222): se restan del puntaje base.
+  let penalTotal = 0;
+  for (const p of (cat.penal || [])) penalTotal += penalB2B(p, valores);
+  if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // excepción pendiente no cierra verde
-  return { semaforo, puntaje, kos, escalados, ko: false, faltan };
+  if (observados.length && semaforo === 'Verde') semaforo = 'Amarillo'; // observación no cierra verde
+  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
 }
 
 // Recalcula y guarda el consolidado en b2b_filtros (credito) + resultadoCredito de la solicitud.
@@ -4421,6 +4413,17 @@ app.delete('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res
   const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
   auditar(req, 'b2b_credito_eliminar_sujeto', req.params.codigo, su.tipoSujeto);
   res.json({ ok: true, consolidado: cons });
+});
+
+// Guarda el link de Google Drive con los archivos de la etapa de crédito.
+app.put('/api/b2b/solicitudes/:codigo/credito/link', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const link = (req.body && req.body.link != null) ? String(req.body.link).trim() : '';
+  if (link && !/^https?:\/\//i.test(link)) return res.status(400).json({ error: 'El link debe empezar con http:// o https://' });
+  db.prepare('UPDATE b2b_solicitudes SET creditoLinkDrive=? WHERE codigo=?').run(link || null, req.params.codigo);
+  auditar(req, 'b2b_credito_link', req.params.codigo, link ? 'link actualizado' : 'link borrado');
+  res.json({ ok: true, link: link || null });
 });
 
 // ===== GARANTÍA: colección de inmuebles (dos capas, consolidación mejor-caso) =====
@@ -4715,7 +4718,8 @@ function sellarFechaEtapa(f, col) {
 // Datos del tablero. ?desestimados=1 devuelve la bandeja de desestimados (filtro, no columna).
 app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const soloDesest = req.query.desestimados === '1';
-  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, fechaIngreso, fechaEtapa, fechaEtapaCol, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
+  let filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, funcionario, asistente, fechaIngreso, fechaEtapa, fechaEtapaCol, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
+  filas = filtrarPorAlcanceB2B(req.user, filas);
   const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
   const cards = filas.map(f => {
     const col = etapaKanbanB2B(f);
@@ -4727,12 +4731,16 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
   const conteos = {};
-  COLUMNAS_KANBAN_B2B.forEach(c => { conteos[c] = 0; });
-  activos.forEach(c => { conteos[c.etapaKanban] = (conteos[c.etapaKanban] || 0) + 1; });
+  const montos = {};
+  COLUMNAS_KANBAN_B2B.forEach(c => { conteos[c] = 0; montos[c] = 0; });
+  activos.forEach(c => {
+    conteos[c.etapaKanban] = (conteos[c.etapaKanban] || 0) + 1;
+    montos[c.etapaKanban] = (montos[c.etapaKanban] || 0) + (Number(c.montoEfectivo) || 0);
+  });
   res.json({
     columnas: COLUMNAS_KANBAN_B2B,
     cards: soloDesest ? desest : activos,
-    conteos, desestimados: desest.length, total: activos.length,
+    conteos, montos, desestimados: desest.length, total: activos.length,
     puedeGestionar: puedeGestionarEquipoB2B(req.user)
   });
 });
@@ -4805,7 +4813,8 @@ app.get('/api/b2b/ingresos', soloB2B, (req, res) => {
 
 // Scorecards del tablero B2B: totales por columna, potencial estimado, vencidos, con observación, calientes.
 app.get('/api/b2b/resumen', soloB2B, (req, res) => {
-  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, estado, sunatEstado, fechaEtapa, fechaEtapaCol, archivado FROM b2b_solicitudes").all();
+  let filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, estado, sunatEstado, responsableActual, funcionario, asistente, fechaEtapa, fechaEtapaCol, archivado FROM b2b_solicitudes").all();
+  filas = filtrarPorAlcanceB2B(req.user, filas);
   const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
   let activos = 0, potencial = 0, vencidos = 0, conObs = 0, calientes = 0, expediente = 0;
   const porColumna = {};
@@ -5510,7 +5519,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.221 (Vista B2B Solicitudes: tablero full-width + scorecards de resumen; Kanban fusiona Solicitud+SUNAT (5 columnas) con etiquetas de observacion (falta RUC / RUC invalido / no valida SUNAT / falta numero -> descarte MANUAL, ya no auto-descarta sin telefono); banda de cabecera mas grande + total de leads potenciales por columna; dots C/G/F mantienen semaforo y PARPADEAN en la etapa actual; SLA por etapa recalibrado (Solicitud2 / Credito1 / Garantia1 / Finanzas2 / BusinessCase1); rangos POTENCIALES a valor fijo por tramo (100k/400k/1M) con migracion de existentes; desestimados como filtro de estado en la Tabla (Kanban redirige); alta de solicitud minima (contacto/numero/RUC + mas campos colapsables)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.222 (Vista B2B: barra con filtros a la izquierda + toggles Kanban/Lista a la derecha (Tabla renombrada Lista); se retira barra Solicitudes/Bandeja (la bandeja vive en submenu) y checkbox Ver desestimados; scorecards mismo tamano con icono a la derecha y CLICABLES como filtro; kanban suma MONTOS potenciales (no cantidad); SEGMENTACION por responsable (operadores solo ven sus leads, jefes/admin ven todo); Filtro SUNAT fusionado con Empresa (4 campos: RUC20 auto no editable / RUC10->observado, Estado con baja-provisional->observado, Habido, Antiguedad en anios y meses); Filtro CREDITO recortado con castigos por puntaje (protestados -4/-8/-12, coactiva por monto -4/-8/-12, refis -10, CPP hist -4, morosos por tramo, CPP eval -0.5/%, KO en dudoso-perdida y castigados) + antecedentes ACTIVABLES + link unico de Drive; ficha con boton Cerrar y bandera roja de descartar. REQUIERE RESTART (migraciones+motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

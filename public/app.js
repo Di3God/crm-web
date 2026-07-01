@@ -4169,10 +4169,10 @@ async function guardarSolicitudB2B() {
 function b2bRefrescar() { if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B(); cargarIngresosB2B(); }
 
 function b2bTab(which) {
-  $('b2bPanelSol').classList.toggle('oculto', which !== 'sol');
-  $('b2bPanelIng').classList.toggle('oculto', which !== 'ing');
-  $('b2bTabSol').classList.toggle('act', which === 'sol');
-  $('b2bTabIng').classList.toggle('act', which === 'ing');
+  // La barra de tabs Solicitudes/Bandeja se retiró (v1.222): la bandeja vive en el submenú.
+  const ps = $('b2bPanelSol'), pi = $('b2bPanelIng');
+  if (ps) ps.classList.toggle('oculto', which === 'ing');
+  if (pi) pi.classList.toggle('oculto', which !== 'ing');
   if (which === 'ing') cargarIngresosB2B();
   else b2bVista(B2B_VISTA);
 }
@@ -4197,52 +4197,63 @@ function b2bVista(v) {
   $('b2bViewTabla').classList.toggle('act', v === 'tabla');
   $('b2bTablero').classList.toggle('oculto', v !== 'kanban');
   $('b2bTablaWrap').classList.toggle('oculto', v !== 'tabla');
-  $('b2bDesestTgl').classList.toggle('oculto', v !== 'kanban');
   if ($('b2bKanbanFiltros')) $('b2bKanbanFiltros').classList.toggle('oculto', v !== 'kanban');
+  if ($('b2bTablaFiltros')) $('b2bTablaFiltros').classList.toggle('oculto', v !== 'tabla');
   if (v === 'kanban') cargarKanbanB2B(); else cargarB2B();
 }
 
 let B2B_KANBAN_CARDS = [];
 let B2B_KANBAN_META = { puedeGestionar: false };
-// Scorecards de resumen arriba del tablero: total activos, potencial S/, con observación, vencidos, calientes, expediente.
+// Scorecards de resumen arriba del tablero. Icono a la derecha del número, mismo tamaño.
+// Los que aplican filtran el tablero (con observación, SLA vencido, calientes, business case).
+let B2B_SC_FILTRO = null; // criterio activo: 'obs' | 'vencido' | 'caliente' | 'bc' | null
 async function cargarScorecardsB2B() {
   const cont = $('b2bScorecards'); if (!cont) return;
   try {
     const r = await api('/api/b2b/resumen');
     const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
     const cards = [
-      { ic: '📋', val: r.activos, lbl: 'En tablero', cls: '' },
-      { ic: '💰', val: soles(r.potencial), lbl: 'Potencial estimado', cls: 'sc-azul' },
-      { ic: '⚠️', val: r.conObs, lbl: 'Con observación', cls: r.conObs ? 'sc-amar' : '' },
-      { ic: '⏰', val: r.vencidos, lbl: 'SLA vencido', cls: r.vencidos ? 'sc-rojo' : '' },
-      { ic: '🔥', val: r.calientes, lbl: 'Calientes', cls: r.calientes ? 'sc-rojo' : '' },
-      { ic: '📁', val: r.expediente, lbl: 'En business case', cls: 'sc-verde' }
+      { ic: '📋', val: r.activos, lbl: 'En tablero', cls: '', f: null },
+      { ic: '💰', val: soles(r.potencial), lbl: 'Potencial estimado', cls: 'sc-azul', f: null },
+      { ic: '⚠️', val: r.conObs, lbl: 'Con observación', cls: r.conObs ? 'sc-amar' : '', f: 'obs' },
+      { ic: '⏰', val: r.vencidos, lbl: 'SLA vencido', cls: r.vencidos ? 'sc-rojo' : '', f: 'vencido' },
+      { ic: '🔥', val: r.calientes, lbl: 'Calientes', cls: r.calientes ? 'sc-rojo' : '', f: 'caliente' },
+      { ic: '📁', val: r.expediente, lbl: 'En business case', cls: 'sc-verde', f: 'bc' }
     ];
-    cont.innerHTML = cards.map(c =>
-      '<div class="sc-card ' + c.cls + '"><div class="sc-ic">' + c.ic + '</div>' +
-      '<div class="sc-val">' + c.val + '</div><div class="sc-lbl">' + c.lbl + '</div></div>').join('');
+    cont.innerHTML = cards.map(c => {
+      const clic = c.f ? ' sc-clic' + (B2B_SC_FILTRO === c.f ? ' sc-on' : '') : '';
+      const onclick = c.f ? ' onclick="b2bScFiltro(\'' + c.f + '\')"' : '';
+      return '<div class="sc-card ' + c.cls + clic + '"' + onclick + '>' +
+        '<div class="sc-row"><span class="sc-val">' + c.val + '</span><span class="sc-ic">' + c.ic + '</span></div>' +
+        '<div class="sc-lbl">' + c.lbl + '</div></div>';
+    }).join('');
     cont.classList.remove('oculto');
   } catch (e) { cont.classList.add('oculto'); }
+}
+// Aplica/limpia el filtro de scorecard sobre el tablero (toggle).
+function b2bScFiltro(f) {
+  B2B_SC_FILTRO = (B2B_SC_FILTRO === f) ? null : f;
+  if (B2B_VISTA !== 'kanban') b2bVista('kanban');
+  cargarScorecardsB2B(); // refresca el resaltado
+  renderKanbanFiltrado();
 }
 
 async function cargarKanbanB2B() {
   const cont = $('b2bTablero'); if (!cont) return;
   cargarScorecardsB2B();
-  const verDesest = $('b2bVerDesest') && $('b2bVerDesest').checked;
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   try {
-    const d = await api('/api/b2b/kanban' + (verDesest ? '?desestimados=1' : ''));
-    const badge = $('b2bDesestBadge');
-    if (badge) { badge.textContent = d.desestimados || 0; badge.classList.toggle('oculto', !(d.desestimados > 0)); }
-    if (verDesest) { renderDesestimadosB2B(d.cards || []); return; }
+    const d = await api('/api/b2b/kanban');
     B2B_KANBAN_CARDS = d.cards || [];
     B2B_KANBAN_META.puedeGestionar = d.puedeGestionar;
+    B2B_KANBAN_MONTOS = d.montos || {};
     poblarFiltrosKanbanB2B(B2B_KANBAN_CARDS);
     renderKanbanFiltrado();
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar el kanban: ' + (e.message || '') + '</div>';
   }
 }
+let B2B_KANBAN_MONTOS = {};
 
 // Llena las opciones de los filtros (persona) manteniendo la selección actual.
 function poblarFiltrosKanbanB2B(cards) {
@@ -4270,6 +4281,10 @@ function renderKanbanFiltrado() {
     if (corte && !(c.fechaIngreso && new Date(c.fechaIngreso).getTime() >= corte)) return false;
     if (fPersona && c.responsableActual !== fPersona) return false;
     if (fEtapa && c.etapaKanban !== fEtapa) return false;
+    if (B2B_SC_FILTRO === 'obs' && !(c.observaciones && c.observaciones.length)) return false;
+    if (B2B_SC_FILTRO === 'vencido' && !(c.sla && c.sla.vencido)) return false;
+    if (B2B_SC_FILTRO === 'caliente' && !(c.puntaje && c.puntaje.prob >= 60)) return false;
+    if (B2B_SC_FILTRO === 'bc' && c.etapaKanban !== 'Business case') return false;
     return true;
   });
   renderKanbanB2B(filtradas, {}, B2B_KANBAN_META.puedeGestionar);
@@ -4321,11 +4336,13 @@ function renderKanbanB2B(cards, conteos, puedeGestionar) {
   const porCol = {};
   B2B_KANBAN_COLS.forEach(c => { porCol[c.id] = []; });
   cards.forEach(c => { (porCol[c.etapaKanban] = porCol[c.etapaKanban] || []).push(c); });
+  const fmtS = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
   const html = '<div class="kb-board">' + B2B_KANBAN_COLS.map(col => {
     const items = porCol[col.id] || [];
+    const montoCol = items.reduce((a, c) => a + (Number(c.montoEfectivo) || 0), 0);
     return '<div class="kb-col" data-col="' + col.id + '" ondragover="b2bDragOver(event)" ondragleave="b2bDragLeave(event)" ondrop="b2bDrop(event)">' +
       '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span></div>' +
-      '<div class="kb-colpot">' + items.length + ' ' + (items.length === 1 ? 'lead potencial' : 'leads potenciales') + '</div>' +
+      '<div class="kb-colpot" title="Monto potencial acumulado en esta etapa">' + fmtS(montoCol) + '</div>' +
       (col.hint ? '<div class="kb-colhint">' + col.hint + '</div>' : '') +
       '<div class="kb-colbody">' + (items.length ? items.map(b2bKanbanCard).join('') : '<div class="kb-vacio">—</div>') + '</div>' +
       '</div>';
@@ -4390,12 +4407,12 @@ async function reactivarB2B(codigo) {
 }
 
 async function descartarB2B(codigo) {
-  const motivo = prompt('Motivo del descarte:', 'No contactable');
+  const motivo = prompt('Motivo del descarte:', '');
   if (motivo === null) return;
   try {
     await api('/api/b2b/solicitudes/' + codigo + '/descartar', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ motivo: motivo || 'No contactable' })
+      body: JSON.stringify({ motivo: motivo || 'Descartado' })
     });
     if (typeof cerrar === 'function') cerrar('ovFichaB2B');
     if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
@@ -4650,9 +4667,12 @@ function renderFichaB2B() {
       acc.innerHTML = '<span class="fb-desc-tag">Desestimado' + (s.motivoDescarte ? ' · ' + s.motivoDescarte : '') + '</span>' +
         '<button class="btn sec" onclick="reactivarB2B(\'' + s.codigo + '\')">↩ Reactivar</button>';
     } else {
-      acc.innerHTML = '<button class="btn-descartar" onclick="descartarB2B(\'' + s.codigo + '\')">✕ Descartar (No contactable)</button>';
+      acc.innerHTML = '';
     }
   }
+  // La bandera de descartar arriba solo aplica a solicitudes activas.
+  const flag = $('fbDescartar');
+  if (flag) flag.classList.toggle('oculto', s.estado === 'No elegible' || !!s.archivado);
 
   // Estado de cada etapa
   const semCredito = (FICHA.filtros.credito && FICHA.filtros.credito.semaforo) || null;
@@ -4664,7 +4684,6 @@ function renderFichaB2B() {
 
   const panels = [
     panelSolicitud(s),
-    panelEmpresa(s),
     panelFiltroSunat(s),
     panelCredito(semCredito),
     panelGarantia(garantiaDesbloqueada, semGarantia),
@@ -4707,30 +4726,96 @@ function evalScoreJS(it, valores, ticket) {
   if (it.tipo === 'colchonTicket') { if (vacio) return null; const min = ANTIG_MIN_TK[ticket] != null ? ANTIG_MIN_TK[ticket] : ANTIG_MIN_TK.Bajo; const c = Number(val) - min; if (!isFinite(c)) return null; return Math.max(0, Math.min(1, c / 24)) * it.peso; }
   return null;
 }
+function penalJS(p, valores) {
+  const val = valores[p.clave];
+  if (val === undefined || val === null || val === '') return 0;
+  if (p.tipo === 'penalPorUnidad' || p.tipo === 'penalPorPct') { const n = Number(val); return isFinite(n) && n > 0 ? n * p.pena : 0; }
+  if (p.tipo === 'penalEscala' || p.tipo === 'penalMonto') { const n = Number(val); if (!isFinite(n) || n <= 0) return 0; const t = p.tramos.find(t => n <= t.hasta); return t ? t.pena : 0; }
+  if (p.tipo === 'penalSelect') { return p.mapa[val] || 0; }
+  return 0;
+}
 function evaluarFiltro2JS(cat, valores, ticket) {
   valores = valores || {}; ticket = ticket || 'Bajo';
-  const kos = [], escalados = [];
-  (cat.gates || []).forEach(g => { const r = evalGateJS(g, valores, ticket); if (r.resultado === 'ko') kos.push(r.motivo || g.etiqueta); else if (r.resultado === 'escalado') escalados.push(r.motivo || g.etiqueta); });
-  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, ko: true };
+  const kos = [], escalados = [], observados = [];
+  (cat.gates || []).forEach(g => { const r = evalGateJS(g, valores, ticket); if (r.resultado === 'ko') kos.push(r.motivo || g.etiqueta); else if (r.resultado === 'escalado') escalados.push(r.motivo || g.etiqueta); else if (r.resultado === 'observado') observados.push(r.motivo || g.etiqueta); });
+  if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, observados, ko: true };
   let total = 0, pesoTotal = 0, faltan = 0;
   (cat.score || []).forEach(it => { pesoTotal += it.peso; const p = evalScoreJS(it, valores, ticket); if (p == null) faltan++; else total += p; });
-  const puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let penalTotal = 0; (cat.penal || []).forEach(p => { penalTotal += penalJS(p, valores); });
+  if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
   if (escalados.length && semaforo === 'Verde') semaforo = 'Amarillo';
-  return { semaforo, puntaje, kos, escalados, ko: false, faltan };
+  if (observados.length && semaforo === 'Verde') semaforo = 'Amarillo';
+  return { semaforo, puntaje, kos, escalados, observados, ko: false, faltan };
 }
 function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
   const val = valores[campo.clave];
   const cb = 'recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')';
+  // Gate automático (RUC 20): se calcula solo y no se edita.
+  if (campo.tipo === 'select' && campo.auto) {
+    const sel = campo.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('');
+    return '<select class="mtr-in mtr-auto" data-f2="' + prefijo + '" data-k="' + campo.clave + '" disabled title="Se determina por el RUC"><option value="">—</option>' + sel + '</select>' +
+      '<input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '">';
+  }
   if (campo.tipo === 'select') {
-    return '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"><option value="">—</option>' +
+    let h = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"><option value="">—</option>' +
       campo.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
+    // Sub-control que se despliega cuando el valor es "si".
+    if (campo.despliega) h += subControlFiltro2(campo.despliega, valores, prefijo, tipo, ticket, val === 'si');
+    return h;
+  }
+  // Antigüedad en años y meses (solo lectura del cálculo; el número real va en hidden).
+  if (campo.formato === 'aniosMeses') {
+    const meses = val != null && val !== '' ? Number(val) : null;
+    const txt = meses != null && isFinite(meses) ? fmtAniosMeses(meses) : '—';
+    return '<span class="mtr-am">' + txt + '</span><input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (meses != null ? meses : '') + '">';
+  }
+  // Numérico activable: checkbox que habilita el input (si no se activa, no penaliza).
+  if (campo.activable) {
+    const activo = val != null && val !== '';
+    return '<label class="mtr-act"><input type="checkbox" ' + (activo ? 'checked' : '') + ' onchange="toggleActivable(this,\'' + prefijo + '\',\'' + campo.clave + '\',\'' + tipo + '\',\'' + ticket + '\')"> aplica</label>' +
+      '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (activo ? val : '') + '"' + (activo ? '' : ' disabled') + ' oninput="' + cb + '">';
   }
   return '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '" oninput="' + cb + '">';
+}
+// Sub-control desplegable (cantidad de protestados / monto de coactiva).
+function subControlFiltro2(clave, valores, prefijo, tipo, ticket, visible) {
+  const cb = 'recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')';
+  const val = valores[clave];
+  const defs = {
+    protestadosCant: { tipo: 'num', ph: '¿cuántos?', suf: 'docs' },
+    coactivaMonto: { tipo: 'sel', opciones: [{ v: 'm1', label: '< S/ 1,000' }, { v: 'm2', label: 'S/ 1,000 – 5,000' }, { v: 'm3', label: '> S/ 5,000' }] }
+  };
+  const d = defs[clave]; if (!d) return '';
+  const style = visible ? '' : 'display:none';
+  let inner;
+  if (d.tipo === 'sel') {
+    inner = '<select class="mtr-in mtr-sub" data-f2="' + prefijo + '" data-k="' + clave + '" onchange="' + cb + '"><option value="">—</option>' +
+      d.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
+  } else {
+    inner = '<input type="number" step="1" min="0" class="mtr-in mtr-num mtr-sub" data-f2="' + prefijo + '" data-k="' + clave + '" value="' + (val != null ? val : '') + '" placeholder="' + d.ph + '" oninput="' + cb + '">' + (d.suf ? '<span class="mtr-suf">' + d.suf + '</span>' : '');
+  }
+  return '<span class="mtr-subwrap" data-subfor="' + clave + '" style="' + style + '">' + inner + '</span>';
+}
+// Formatea meses a "X años Y meses".
+function fmtAniosMeses(m) {
+  m = Number(m); if (!isFinite(m) || m < 0) return '—';
+  const a = Math.floor(m / 12), me = m % 12;
+  const pa = a > 0 ? a + (a === 1 ? ' año' : ' años') : '';
+  const pm = me > 0 ? me + (me === 1 ? ' mes' : ' meses') : '';
+  return (pa && pm) ? pa + ' y ' + pm : (pa || pm || '0 meses');
+}
+// Activa/desactiva un input numérico activable.
+function toggleActivable(chk, prefijo, clave, tipo, ticket) {
+  const inp = document.querySelector('[data-f2="' + prefijo + '"][data-k="' + clave + '"]');
+  if (inp) { inp.disabled = !chk.checked; if (!chk.checked) inp.value = ''; else inp.focus(); }
+  recalcFiltro2(prefijo, tipo, ticket);
 }
 function bandaFiltro2HTML(ev) {
   let h = '<span class="mtr-pill">' + (SEM_EMOJI[ev.semaforo] || '') + ' ' + ev.semaforo + ' · ' + ev.puntaje + '%</span>';
   if (ev.kos && ev.kos.length) h += '<div class="f2-ko">✕ KO: ' + ev.kos.join(' · ') + '</div>';
+  if (ev.observados && ev.observados.length) h += '<div class="f2-obs">👁 Observado: ' + ev.observados.join(' · ') + '</div>';
   if (ev.escalados && ev.escalados.length) h += '<div class="f2-esc">⚠ Escalado a excepción: ' + ev.escalados.join(' · ') + '</div>';
   return h;
 }
@@ -4739,14 +4824,28 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   valores = valores || {};
   const gatesHtml = cat.gates.map(g =>
     '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + '</span>' +
-    inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</div>').join('');
-  const scoreHtml = cat.score.map(it => it.refGate ? '' :
+    '<span class="mtr-ctrl">' + inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo && g.formato !== 'aniosMeses' ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</span></div>').join('');
+  const scoreVisibles = cat.score.filter(it => !it.refGate);
+  const scoreHtml = scoreVisibles.map(it =>
     '<div class="mtr-row"><span class="mtr-lbl">' + it.etiqueta + ' <span class="f2-peso">(' + it.peso + ')</span></span>' +
-    inputFiltro2(it, valores, prefijo, tipo, ticket) + (it.sufijo ? '<span class="mtr-suf">' + it.sufijo + '</span>' : '') + '</div>').join('');
+    '<span class="mtr-ctrl">' + inputFiltro2(it, valores, prefijo, tipo, ticket) + (it.sufijo ? '<span class="mtr-suf">' + it.sufijo + '</span>' : '') + '</span></div>').join('');
+  // Penalizaciones activables (solo crédito): checkbox que habilita el input y castiga el puntaje.
+  const penalActivables = (cat.penal || []).filter(p => p.activable);
+  const etiquetasPenal = {
+    refis: 'Refinanciamientos últ. 12m', cppHist: 'CPP histórico (cantidad)',
+    morososMonto: 'Documentos morosos (monto S/)', cppEvalPct: 'CPP en evaluación (%)'
+  };
+  const sufPenal = { morososMonto: 'S/', cppEvalPct: '%' };
+  const penalHtml = penalActivables.map(p =>
+    '<div class="mtr-row"><span class="mtr-lbl">' + (etiquetasPenal[p.clave] || p.clave) + '</span>' +
+    '<span class="mtr-ctrl">' + inputFiltro2({ clave: p.clave, tipo: 'num', activable: true }, valores, prefijo, tipo, ticket) +
+    (sufPenal[p.clave] ? '<span class="mtr-suf">' + sufPenal[p.clave] + '</span>' : '') + '</span></div>').join('');
   const ev = evaluarFiltro2JS(cat, valores, ticket);
-  return '<div class="f2-box"><div class="fb-sec">Gates (eliminatorios)</div>' + gatesHtml +
-    '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml +
-    '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+  let html = '<div class="f2-box"><div class="fb-sec">Gates (eliminatorios)</div>' + gatesHtml;
+  if (scoreHtml) html += '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml;
+  if (penalHtml) html += '<div class="fb-sec">Antecedentes (activa el que aplique)</div>' + penalHtml;
+  html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+  return html;
 }
 function leerFiltro2(prefijo) {
   const o = {}; document.querySelectorAll('[data-f2="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; }); return o;
@@ -4754,15 +4853,26 @@ function leerFiltro2(prefijo) {
 function recalcFiltro2(prefijo, tipo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return;
   const valores = leerFiltro2(prefijo);
-  cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
+  // Muestra/oculta sub-controles (protestados→cantidad, coactiva→monto) según el gate padre.
+  (cat.gates || []).forEach(g => {
+    if (!g.despliega) return;
+    const wrap = document.querySelector('[data-f2="' + prefijo + '"][data-k="' + g.clave + '"]');
+    const sub = document.querySelector('.mtr-subwrap[data-subfor="' + g.despliega + '"]');
+    if (sub) sub.style.display = (valores[g.clave] === 'si') ? '' : 'none';
+  });
+  cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : r.resultado === 'observado' ? 'f2-obs-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
   const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(evaluarFiltro2JS(cat, valores, ticket));
 }
 // Autocompleta los gates de SUNAT desde los datos ya conocidos (RUC, sunatRaw, antigüedad, ventas).
 function autoValoresSunat(s) {
   let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
   const v = {};
-  if (s.ruc) v.personaJuridica = String(s.ruc).startsWith('20') ? 'si' : 'no';
-  if (raw.estado) v.estado = /activ/i.test(raw.estado) ? 'activo' : 'no';
+  if (s.ruc) v.personaJuridica = String(s.ruc).startsWith('20') ? 'si' : (String(s.ruc).startsWith('10') ? 'observar' : 'no');
+  if (raw.estado) {
+    if (/activ/i.test(raw.estado)) v.estado = 'activo';
+    else if (/baja\s*prov|de\s*oficio|provision/i.test(raw.estado)) v.estado = 'bajaprov';
+    else v.estado = 'no';
+  }
   if (raw.condicion) v.condicion = /^\s*habido/i.test(raw.condicion) ? 'habido' : 'no';
   if (s.antiguedadMeses != null) v.antiguedad = s.antiguedadMeses;
   return v;
@@ -4772,14 +4882,26 @@ function panelFiltroSunat(s) {
   const f = FICHA.filtros.sunat || {};
   const sem = f.semaforo || null;
   const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('fsunat', '📋', 'Filtro SUNAT (elegibilidad)', head, false, '');
+  if (!open) return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, false, '');
   const ticket = s.ticket || 'Bajo';
   const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
   const valores = Object.assign(autoValoresSunat(s), saved);
-  const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket. Los datos de SUNAT se autocompletan; puedes corregirlos.</p>' +
+  // Datos de empresa (antes panel separado) ahora fusionados en la cabecera del filtro.
+  let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
+  const estadoTxt = raw.estado || null, condTxt = raw.condicion || null;
+  const chip = (txt, ok) => '<span class="emp-flag ' + (ok ? 'emp-ok' : 'emp-warn') + '">' + (ok ? '✓' : '!') + ' ' + txt + '</span>';
+  const flags = (estadoTxt || condTxt) ? '<div class="emp-flags">' +
+    (estadoTxt ? chip(estadoTxt, /activ/i.test(estadoTxt)) : '') +
+    (condTxt ? chip(condTxt, /^\s*habido/i.test(condTxt)) : '') + '</div>' : '';
+  const datosEmp = '<div class="fb-emp-datos">' +
+    fbCampo('Razón social', s.razonSocial) + fbCampo('RUC', s.ruc) +
+    fbCampoOpt('Nombre comercial', s.nombreComercial) + fbCampoOpt('Sector', s.sector) +
+    fbCampoOpt('Actividad', s.actividad) + fbCampo('Antigüedad', fmtAntiguedad(s.antiguedadMeses)) + '</div>';
+  const cuerpo = '<div class="fb-body">' + flags + datosEmp +
+    '<p class="sub">Ticket <b>' + ticket + '</b>. Los datos de SUNAT se autocompletan; RUC 20 pasa por defecto, RUC 10 queda observado.</p>' +
     renderFiltroDosCapas('sunat', valores, 'fsunat', ticket) +
     '<div class="fb-acc"><button class="btn" onclick="guardarFiltroSunat()">Guardar</button></div></div>';
-  return fbPanelWrap('fsunat', '📋', 'Filtro SUNAT (elegibilidad)', head, true, cuerpo);
+  return fbPanelWrap('fsunat', '🏢', 'Filtro SUNAT', head, true, cuerpo);
 }
 async function guardarFiltroSunat() {
   try {
@@ -5014,6 +5136,15 @@ function panelCredito(semGuardado) {
   html += '<div class="fb-sec">Empresas vinculadas (' + vinc.length + ')</div>';
   html += vinc.map(v => sujetoCard(v, true)).join('') || '<div class="sub" style="margin-bottom:8px">Sin empresas vinculadas.</div>';
   html += '<button class="btn-sunat" onclick="agregarSujeto(\'vinculada\')">＋ Agregar vinculada</button>';
+  // Link único de Drive para los archivos de esta etapa de crédito.
+  const linkVal = (FICHA.solicitud && FICHA.solicitud.creditoLinkDrive) ? FICHA.solicitud.creditoLinkDrive.replace(/"/g, '&quot;') : '';
+  html += '<div class="fb-sec">Archivos de crédito (link de Drive)</div>' +
+    '<div class="fb-link-drive">' +
+    '<input type="url" id="fbCredLink" class="mtr-in" style="flex:1;min-width:0" placeholder="https://drive.google.com/…" value="' + linkVal + '">' +
+    '<button class="btn-sunat" onclick="guardarLinkCredito()">Guardar link</button>' +
+    (linkVal ? '<a class="btn-sunat" href="' + linkVal + '" target="_blank" rel="noopener">🔗 Abrir</a>' : '') +
+    '</div>' +
+    '<div class="sub" style="font-size:11px;margin-top:4px">Pega la carpeta de Drive donde el equipo sube reportes de central, DJ, sustentos, etc.</div>';
   html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarCredito()">Guardar</button></div>';
   html += '</div>';
   return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, true, html);
@@ -5395,6 +5526,18 @@ async function eliminarDoc(id) {
 }
 
 // ===== Acciones del filtro de crédito =====
+async function guardarLinkCredito() {
+  const el = $('fbCredLink'); if (!el) return;
+  const link = el.value.trim();
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/link', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link })
+    });
+    FICHA.solicitud.creditoLinkDrive = r.link || null;
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo guardar el link: ' + e.message); }
+}
+
 async function guardarCredito() {
   const sujetos = FICHA.creditoSujetos || [];
   try {
