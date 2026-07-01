@@ -526,12 +526,22 @@
     </div>
     <div id="b2bPanelSol">
       <div class="vista-toggle" style="margin:0 0 10px;align-items:center">
-        <button id="b2bViewKanban" class="vt-btn act" onclick="b2bVista('kanban')">Tablero</button>
-        <button id="b2bViewTabla" class="vt-btn" onclick="b2bVista('tabla')">Tabla</button>
+        <button id="b2bViewKanban" class="vt-btn act" onclick="b2bVista('kanban')">▦ Kanban</button>
+        <button id="b2bViewTabla" class="vt-btn" onclick="b2bVista('tabla')">☰ Tabla</button>
         <label id="b2bDesestTgl" style="margin-left:auto;font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="b2bVerDesest" onchange="cargarKanbanB2B()"> Ver desestimados
           <span id="b2bDesestBadge" class="b2b-badge oculto">0</span>
         </label>
+      </div>
+      <div id="b2bKanbanFiltros" class="b2b-filtros" style="margin:0 0 10px">
+        <select id="b2bkfFecha" onchange="renderKanbanFiltrado()">
+          <option value="">Cualquier fecha</option>
+          <option value="hoy">Hoy</option>
+          <option value="7">Últimos 7 días</option>
+          <option value="30">Últimos 30 días</option>
+        </select>
+        <select id="b2bkfPersona" onchange="renderKanbanFiltrado()"><option value="">Toda persona</option></select>
+        <select id="b2bkfEtapa" onchange="renderKanbanFiltrado()"><option value="">Toda etapa</option></select>
       </div>
       <div id="b2bTablero"><div class="vacio">Cargando…</div></div>
       <div id="b2bTablaWrap" class="oculto">
@@ -606,6 +616,7 @@
           <h3 id="fbTitulo">Solicitud</h3>
           <div class="sub" id="fbSubtitulo"></div>
           <div id="fbResponsable" class="fb-responsable"></div>
+          <div id="fbAcciones" class="fb-acciones"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
           <button id="fbDescartar" class="btn sec" onclick="descartarB2B(FICHA.solicitud.codigo)" title="Sacar del tablero (No contactable)">Descartar</button>

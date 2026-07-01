@@ -4110,7 +4110,8 @@ async function validarSunat(codigo, btnEl) {
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
   try {
     await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/sunat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    cargarB2B();
+    if (typeof B2B_VISTA !== 'undefined' && B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
+    if (FICHA && FICHA.solicitud && FICHA.solicitud.codigo === codigo && typeof abrirFichaB2B === 'function') abrirFichaB2B(codigo);
   } catch (e) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✕'; }
     alert('No se pudo validar SUNAT: ' + e.message);
@@ -4169,7 +4170,7 @@ function b2bTab(which) {
   else b2bVista(B2B_VISTA);
 }
 
-// ===== Tablero (kanban) B2B =====
+// ===== Kanban B2B =====
 let B2B_VISTA = 'kanban';        // 'kanban' | 'tabla'
 let B2B_KANBAN_DRAG = null;      // { codigo, desde }
 const B2B_KANBAN_COLS = [
@@ -4189,9 +4190,12 @@ function b2bVista(v) {
   $('b2bTablero').classList.toggle('oculto', v !== 'kanban');
   $('b2bTablaWrap').classList.toggle('oculto', v !== 'tabla');
   $('b2bDesestTgl').classList.toggle('oculto', v !== 'kanban');
+  if ($('b2bKanbanFiltros')) $('b2bKanbanFiltros').classList.toggle('oculto', v !== 'kanban');
   if (v === 'kanban') cargarKanbanB2B(); else cargarB2B();
 }
 
+let B2B_KANBAN_CARDS = [];
+let B2B_KANBAN_META = { puedeGestionar: false };
 async function cargarKanbanB2B() {
   const cont = $('b2bTablero'); if (!cont) return;
   const verDesest = $('b2bVerDesest') && $('b2bVerDesest').checked;
@@ -4201,10 +4205,44 @@ async function cargarKanbanB2B() {
     const badge = $('b2bDesestBadge');
     if (badge) { badge.textContent = d.desestimados || 0; badge.classList.toggle('oculto', !(d.desestimados > 0)); }
     if (verDesest) { renderDesestimadosB2B(d.cards || []); return; }
-    renderKanbanB2B(d.cards || [], d.conteos || {}, d.puedeGestionar);
+    B2B_KANBAN_CARDS = d.cards || [];
+    B2B_KANBAN_META.puedeGestionar = d.puedeGestionar;
+    poblarFiltrosKanbanB2B(B2B_KANBAN_CARDS);
+    renderKanbanFiltrado();
   } catch (e) {
-    cont.innerHTML = '<div class="vacio">No se pudo cargar el tablero: ' + (e.message || '') + '</div>';
+    cont.innerHTML = '<div class="vacio">No se pudo cargar el kanban: ' + (e.message || '') + '</div>';
   }
+}
+
+// Llena las opciones de los filtros (persona) manteniendo la selección actual.
+function poblarFiltrosKanbanB2B(cards) {
+  const selP = $('b2bkfPersona'); if (!selP) return;
+  const prev = selP.value;
+  const personas = Array.from(new Set(cards.map(c => c.responsableActual).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  selP.innerHTML = '<option value="">Toda persona</option>' +
+    personas.map(p => '<option value="' + p.replace(/"/g, '&quot;') + '"' + (p === prev ? ' selected' : '') + '>' + primerNombre(p) + '</option>').join('');
+  const selE = $('b2bkfEtapa');
+  if (selE && selE.options.length <= 1) {
+    selE.innerHTML = '<option value="">Toda etapa</option>' + B2B_KANBAN_COLS.map(c => '<option value="' + c.id + '">' + c.label + '</option>').join('');
+  }
+}
+
+// Aplica los filtros (fecha / persona / etapa) sobre las tarjetas y re-renderiza.
+function renderKanbanFiltrado() {
+  const fFecha = ($('b2bkfFecha') && $('b2bkfFecha').value) || '';
+  const fPersona = ($('b2bkfPersona') && $('b2bkfPersona').value) || '';
+  const fEtapa = ($('b2bkfEtapa') && $('b2bkfEtapa').value) || '';
+  let corte = 0;
+  if (fFecha === 'hoy') { const d = new Date(); d.setHours(0, 0, 0, 0); corte = d.getTime(); }
+  else if (fFecha === '7') corte = Date.now() - 7 * 86400000;
+  else if (fFecha === '30') corte = Date.now() - 30 * 86400000;
+  const filtradas = B2B_KANBAN_CARDS.filter(c => {
+    if (corte && !(c.fechaIngreso && new Date(c.fechaIngreso).getTime() >= corte)) return false;
+    if (fPersona && c.responsableActual !== fPersona) return false;
+    if (fEtapa && c.etapaKanban !== fEtapa) return false;
+    return true;
+  });
+  renderKanbanB2B(filtradas, {}, B2B_KANBAN_META.puedeGestionar);
 }
 
 function b2bKanbanCard(c) {
@@ -4219,11 +4257,22 @@ function b2bKanbanCard(c) {
   }).join('');
   const resp = c.responsableActual ? '<span class="kb-resp">' + primerNombre(c.responsableActual) + '</span>' : '<span class="kb-resp kb-sin">Sin asignar</span>';
   const alerta = (c.etapaKanban === 'SUNAT') ? '<span class="kb-alerta">⚠ RUC por validar</span>' : '';
-  return '<div class="kb-card" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
+  const pj = c.puntaje || {};
+  const probChip = pj.banda ? '<span class="kb-prob kb-prob-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '" title="Probabilidad de cierre · ' + pj.banda + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '%' : '') + '</span>' : '';
+  const sla = c.sla || {};
+  let slaHtml = '';
+  if (sla.accion) {
+    const cuando = sla.vencido ? '<span class="kb-sla-venc">⚠ vencido</span>'
+      : (sla.diasRestantes != null ? '<span class="kb-sla-dias">' + (sla.diasRestantes <= 0 ? 'hoy' : 'en ' + sla.diasRestantes + 'd') + '</span>' : '');
+    slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
+  }
+  return '<div class="kb-card' + (sla.vencido ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
     '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket">' + c.ticket + '</span>' : '') + '</div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
     (monto ? '<div class="kb-monto">' + monto + '</div>' : '') +
+    '<div class="kb-meta">' + probChip + '</div>' +
+    slaHtml +
     alerta +
     '<div class="kb-foot">' + dots + resp + '</div>' +
     '</div>';
@@ -4294,7 +4343,8 @@ async function reactivarB2B(codigo) {
   if (!confirm('¿Reactivar esta solicitud y devolverla al tablero?')) return;
   try {
     await api('/api/b2b/solicitudes/' + codigo + '/reactivar', { method: 'PUT' });
-    cargarKanbanB2B();
+    if (typeof cerrar === 'function') cerrar('ovFichaB2B');
+    if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
   } catch (e) { alert(e.message || 'No se pudo reactivar'); }
 }
 
@@ -4476,6 +4526,7 @@ async function abrirFichaB2B(codigo) {
   $('ovFichaB2B').classList.add('act');
   $('fbAcordeon').innerHTML = '<div class="vacio">Cargando…</div>';
   try {
+    await cargarCriteriosB2B();
     FICHA = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/ficha');
     renderFichaB2B();
   } catch (e) {
@@ -4494,28 +4545,56 @@ async function renderResponsableB2B(s) {
   const actual = s.responsableActual || null;
   const d = await equipoB2BCache();
   const activos = (d.equipo || []).filter(m => m.activo);
+  const nombre = actual ? primerNombre(actual) : 'Sin asignar';
   if (!d.puedeGestionar || !activos.length) {
-    cont.innerHTML = 'Responsable: <b>' + (actual ? primerNombre(actual) : 'Sin asignar') + '</b>';
+    cont.innerHTML = 'Responsable: <b>' + nombre + '</b>';
     return;
   }
-  const ops = activos.map(m => '<option value="' + m.usuario + '"' + (m.nombre === actual ? ' selected' : '') + '>' + m.nombre + (m.rol.startsWith('jefe_') ? ' (jefe)' : '') + '</option>').join('');
-  cont.innerHTML = 'Responsable: ' +
-    '<select id="fbReasignar" onchange="reasignarB2B(\'' + s.codigo + '\', this.value)">' +
-    '<option value="">Sin asignar</option>' + ops + '</select>';
+  const items = activos.map(m =>
+    '<button class="asg-item' + (m.nombre === actual ? ' asg-item-act' : '') + '" onclick="reasignarB2B(\'' + s.codigo + '\',\'' + m.usuario + '\')">' +
+    m.nombre + (m.rol.startsWith('jefe_') ? ' <span class="asg-rol">jefe</span>' : '') + (m.nombre === actual ? ' <span class="asg-check">✓</span>' : '') + '</button>').join('');
+  cont.innerHTML = 'Responsable: <b>' + nombre + '</b>' +
+    '<span class="asg-wrap">' +
+    '<button class="btn sec asg-btn" onclick="toggleAsignarB2B(event)">' + (actual ? 'Cambiar' : 'Asignar') + '</button>' +
+    '<div class="asg-menu oculto" id="asgMenu"><div class="asg-menu-tit">Asignar a</div>' + items + '</div>' +
+    '</span>';
 }
+function toggleAsignarB2B(ev) {
+  ev.stopPropagation();
+  const m = $('asgMenu'); if (!m) return;
+  const abierto = !m.classList.contains('oculto');
+  m.classList.toggle('oculto', abierto);
+  if (!abierto) setTimeout(() => document.addEventListener('click', cerrarAsignarB2B, { once: true }), 0);
+}
+function cerrarAsignarB2B() { const m = $('asgMenu'); if (m) m.classList.add('oculto'); }
 async function reasignarB2B(codigo, usuario) {
   if (!usuario) return;
+  cerrarAsignarB2B();
   try {
     const r = await api('/api/b2b/solicitudes/' + codigo + '/reasignar', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ usuario })
     });
     if (FICHA && FICHA.solicitud) FICHA.solicitud.responsableActual = r.responsable;
-    if (typeof cargarB2B === 'function') cargarB2B();
+    renderResponsableB2B(FICHA.solicitud);
+    if (B2B_VISTA === 'kanban' && typeof cargarKanbanB2B === 'function') cargarKanbanB2B();
+    else if (typeof cargarB2B === 'function') cargarB2B();
   } catch (e) {
     alert(e.message || 'No se pudo reasignar');
     renderResponsableB2B(FICHA.solicitud);
   }
+}
+
+function resumenFichaB2B() {
+  const pj = FICHA.puntaje || {}; const sla = FICHA.sla || {};
+  const prob = pj.banda ? '<span class="fbr-prob fbr-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '% · ' : '') + pj.banda + '</span>' : '';
+  let accion = '';
+  if (sla.accion) {
+    const cuando = sla.vencido ? '<b style="color:#CC0000">⚠ vencido</b>' : (sla.diasRestantes != null ? (sla.diasRestantes <= 0 ? 'hoy' : 'en ' + sla.diasRestantes + ' día(s)') : '');
+    const fl = sla.fechaLimite ? new Date(sla.fechaLimite).toLocaleDateString('es-PE') : '';
+    accion = '<span class="fbr-accion">📌 <b>' + sla.accion + '</b> · ' + cuando + (fl ? ' (límite ' + fl + ')' : '') + '</span>';
+  }
+  return (prob || accion) ? '<div class="fb-resumen">' + prob + accion + '</div>' : '';
 }
 
 function renderFichaB2B() {
@@ -4523,10 +4602,20 @@ function renderFichaB2B() {
   $('fbTitulo').textContent = s.razonSocial || s.ruc || s.codigo;
   $('fbSubtitulo').innerHTML = s.codigo + ' · RUC ' + (s.ruc || '—') + (s.ticket ? ' · ticket <b>' + s.ticket + '</b>' : '') + ' · ' + trEstadoB2B(s.estado);
   renderResponsableB2B(s);
+  const acc = $('fbAcciones');
+  if (acc) {
+    if (s.estado === 'No elegible' || s.archivado) {
+      acc.innerHTML = '<span class="fb-desc-tag">Desestimado' + (s.motivoDescarte ? ' · ' + s.motivoDescarte : '') + '</span>' +
+        '<button class="btn sec" onclick="reactivarB2B(\'' + s.codigo + '\')">↩ Reactivar</button>';
+    } else {
+      acc.innerHTML = '<button class="btn-descartar" onclick="descartarB2B(\'' + s.codigo + '\')">✕ Descartar (No contactable)</button>';
+    }
+  }
 
   // Estado de cada etapa
   const semCredito = (FICHA.filtros.credito && FICHA.filtros.credito.semaforo) || null;
   const semGarantia = (FICHA.filtros.garantia && FICHA.filtros.garantia.semaforo) || null;
+  const semFinanzas = (FICHA.filtros.finanzas && FICHA.filtros.finanzas.semaforo) || null;
   const garantiaDesbloqueada = semCredito === 'Verde' || ['Filtro garantia', 'Apto garantia', 'Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
   const finanzasDesbloqueada = semGarantia === 'Verde' || ['Filtro finanzas', 'Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado);
 
@@ -4535,10 +4624,10 @@ function renderFichaB2B() {
     panelEmpresa(s),
     panelCredito(semCredito),
     panelGarantia(garantiaDesbloqueada, semGarantia),
-    panelBloqueable('finanzas', 'Filtro finanzas y negocio', '💰', finanzasDesbloqueada),
+    panelFinanzas(finanzasDesbloqueada, semFinanzas),
     panelBloqueable('businesscase', 'Business case', '📑', false)
   ];
-  $('fbAcordeon').innerHTML = panels.join('');
+  $('fbAcordeon').innerHTML = resumenFichaB2B() + panels.join('');
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });  // el resaltado solo en el primer render
 }
 
@@ -4560,33 +4649,43 @@ function panelSolicitud(s) {
       fbCampoOpt('Área (m²)', s.areaInmueble) +
       fbCampoOpt('Registrado SUNARP', s.registradoSunarp) +
       fbCampoOpt('Ubicación del inmueble', s.departamentoInmueble);
-    const marketing = '<div class="fb-sec">Origen / Marketing</div>' +
-      fbCampo('Fuente', s.fuente) +
-      fbCampoOpt('Campaña', s.campana) +
-      fbCampoOpt('Conjunto', s.conjunto) +
-      fbCampoOpt('Anuncio', s.anuncio) +
-      fbCampoOpt('ID anuncio', s.adId) +
-      fbCampoOpt('Formulario', s.formulario);
     cuerpo = '<div class="fb-body">' +
-      fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampo('Email', s.email) +
+      fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampoOpt('Email', s.email) +
       fbCampo('Monto solicitado', montoStr + montoExtra) +
       fbCampoOpt('Destino de fondos', s.destinoFondos) +
-      garantia + marketing +
+      garantia +
       '</div>';
   }
-  return fbPanelWrap('solicitud', '📥', 'Solicitud (del formulario)', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
+  return fbPanelWrap('solicitud', '📥', 'Solicitud', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
 }
 
 function panelEmpresa(s) {
   const open = FICHA_ETAPA_OPEN === 'empresa';
+  let raw = {};
+  try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { raw = {}; }
+  const estado = raw.estado || raw.estadoContribuyente || null;      // ACTIVO / BAJA...
+  const condicion = raw.condicion || raw.condicionDomicilio || null; // HABIDO / NO HABIDO
+  const esActivo = !!(estado && /activ/i.test(estado));
+  const esHabido = !!(condicion && /^\s*habido/i.test(condicion));
+  let estadoHead;
+  if (s.sunatEstado === 'ok') estadoHead = '<span style="font-size:12px;color:#1D9E75">✓ validado</span>';
+  else if (s.sunatEstado === 'error') estadoHead = '<span style="font-size:12px;color:#CC0000">RUC no validado</span>';
+  else estadoHead = '<span style="font-size:12px;color:#6B7A8D">pendiente</span>';
+  const chip = (txt, ok) => '<span class="emp-flag ' + (ok ? 'emp-ok' : 'emp-warn') + '">' + (ok ? '✓' : '!') + ' ' + txt + '</span>';
+  const flags = (estado || condicion)
+    ? '<div class="emp-flags">' + (estado ? chip(estado, esActivo) : '') + (condicion ? chip(condicion, esHabido) : '') + '</div>'
+    : '';
   const cuerpo = open ? '<div class="fb-body">' +
-    fbCampo('Razón social', s.razonSocial) + fbCampo('Nombre comercial', s.nombreComercial) +
-    fbCampo('RUC', s.ruc) + fbCampo('Sector', s.sector) + fbCampo('Actividad', s.actividad) +
+    flags +
+    fbCampo('Razón social', s.razonSocial) +
+    fbCampoOpt('Nombre comercial', s.nombreComercial) +
+    fbCampo('RUC', s.ruc) +
+    fbCampoOpt('Sector', s.sector) +
+    fbCampoOpt('Actividad', s.actividad) +
     fbCampo('Antigüedad', fmtAntiguedad(s.antiguedadMeses)) +
-    fbCampo('Ubicación', [s.sunatDistrito, s.sunatDepartamento].filter(Boolean).join(', ')) +
-    fbCampo('SUNAT', s.sunatEstado === 'ok' ? 'Validado' : (s.sunatEstado || 'pendiente')) +
+    fbCampoOpt('Ubicación', [s.sunatDistrito, s.sunatDepartamento].filter(Boolean).join(', ')) +
     '</div>' : '';
-  return fbPanelWrap('empresa', '🏢', 'Empresa (SUNAT)', '<span style="font-size:12px;color:#1D9E75">✓ completo</span>', open, cuerpo);
+  return fbPanelWrap('empresa', '🏢', 'Empresa (SUNAT)', estadoHead, open, cuerpo);
 }
 
 function panelFiltroSimple(tipo, titulo, ic, sem, habilitado) {
@@ -4638,8 +4737,115 @@ function consolidadoCreditoJS() {
   return peor;
 }
 
+// ===== Motor de MÉTRICAS en el cliente (espejo del server: color en vivo, sin llamadas) =====
+let CRITERIOS_B2B_CACHE = null;
+async function cargarCriteriosB2B() {
+  if (CRITERIOS_B2B_CACHE) return CRITERIOS_B2B_CACHE;
+  try { const d = await api('/api/b2b/criterios'); CRITERIOS_B2B_CACHE = d.criterios || {}; }
+  catch (e) { CRITERIOS_B2B_CACHE = {}; }
+  return CRITERIOS_B2B_CACHE;
+}
+const SEM_ORDEN = { Verde: 0, Amarillo: 1, Rojo: 2 };
+const SEM_DOT = { Verde: '#1D9E75', Amarillo: '#E0A800', Rojo: '#CC0000' };
+const SEM_EMOJI = { Verde: '🟢', Amarillo: '🟡', Rojo: '🔴' };
+function colorCriterioJS(crit, valor) {
+  if (valor === undefined || valor === null || valor === '') return null;
+  if (crit.tipo === 'select') { const o = (crit.opciones || []).find(o => o.v === valor); return o ? o.color : null; }
+  if (crit.tipo === 'num') {
+    const n = Number(valor); if (!isFinite(n)) return null;
+    for (const r of (crit.reglas || [])) {
+      if (r.op === '<=' && n <= r.val) return r.color;
+      if (r.op === '>=' && n >= r.val) return r.color;
+      if (r.op === '<' && n < r.val) return r.color;
+      if (r.op === '>' && n > r.val) return r.color;
+      if (r.op === '==' && n === r.val) return r.color;
+    }
+    return crit.resto || null;
+  }
+  return null;
+}
+function peorColorJS(a, b) { if (a == null) return b; if (b == null) return a; return SEM_ORDEN[a] >= SEM_ORDEN[b] ? a : b; }
+function evalChecklistJS(tipo, valores) {
+  const items = (CRITERIOS_B2B_CACHE && CRITERIOS_B2B_CACHE[tipo]) || [];
+  let sem = null, faltan = 0;
+  items.forEach(c => { const col = colorCriterioJS(c, valores ? valores[c.clave] : undefined); if (col == null) faltan++; else sem = peorColorJS(sem, col); });
+  return { semaforo: sem, faltan, total: items.length };
+}
+function pillMetricasHTML(ev) {
+  return (ev.semaforo ? SEM_EMOJI[ev.semaforo] + ' ' + ev.semaforo : 'sin evaluar') +
+    (ev.faltan ? ' <span class="mtr-faltan">· faltan ' + ev.faltan + '</span>' : '');
+}
+// Renderiza los inputs de métricas de un filtro. prefijo = id único ('gar','fin','suj12').
+function renderMetricasB2B(tipo, valores, prefijo) {
+  const items = (CRITERIOS_B2B_CACHE && CRITERIOS_B2B_CACHE[tipo]) || [];
+  valores = valores || {};
+  const filas = items.map(c => {
+    const val = valores[c.clave];
+    const col = colorCriterioJS(c, val);
+    const dot = '<span class="mtr-dot" id="' + prefijo + '_dot_' + c.clave + '" style="background:' + (col ? SEM_DOT[col] : '#DDE4EC') + '"></span>';
+    let input;
+    if (c.tipo === 'select') {
+      input = '<select class="mtr-in" data-mtr="' + prefijo + '" data-k="' + c.clave + '" onchange="recalcMetricasB2B(\'' + prefijo + '\',\'' + tipo + '\')">' +
+        '<option value="">—</option>' +
+        c.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select>';
+    } else {
+      input = '<input type="number" step="any" class="mtr-in mtr-num" data-mtr="' + prefijo + '" data-k="' + c.clave + '" value="' + (val != null ? val : '') + '" oninput="recalcMetricasB2B(\'' + prefijo + '\',\'' + tipo + '\')">';
+    }
+    return '<div class="mtr-row">' + dot + '<span class="mtr-lbl">' + c.etiqueta + '</span>' + input + (c.sufijo ? '<span class="mtr-suf">' + c.sufijo + '</span>' : '') + '</div>';
+  }).join('');
+  const ev = evalChecklistJS(tipo, valores);
+  return '<div class="mtr-box">' + filas +
+    '<div class="mtr-foot">Semáforo (calculado): <span class="mtr-pill" id="' + prefijo + '_pill">' + pillMetricasHTML(ev) + '</span></div></div>';
+}
+function leerMetricas(prefijo) {
+  const o = {};
+  document.querySelectorAll('[data-mtr="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; });
+  return o;
+}
+function recalcMetricasB2B(prefijo, tipo) {
+  const valores = leerMetricas(prefijo);
+  const items = (CRITERIOS_B2B_CACHE && CRITERIOS_B2B_CACHE[tipo]) || [];
+  items.forEach(c => { const dot = $(prefijo + '_dot_' + c.clave); if (dot) { const col = colorCriterioJS(c, valores[c.clave]); dot.style.background = col ? SEM_DOT[col] : '#DDE4EC'; } });
+  const pill = $(prefijo + '_pill'); if (pill) pill.innerHTML = pillMetricasHTML(evalChecklistJS(tipo, valores));
+  if (prefijo.indexOf('suj') === 0) actualizarConsolidadoVivo();
+}
+// Consolidado de crédito en vivo (misma regla del server: empresa ancla).
+function consolidadoCreditoVivoJS() {
+  const sujetos = FICHA.creditoSujetos || [];
+  let empColor = null; const otros = [];
+  sujetos.forEach(su => {
+    const sem = evalChecklistJS('credito', leerMetricas('suj' + su.id)).semaforo;
+    if (su.tipoSujeto === 'empresa') empColor = sem; else otros.push(sem);
+  });
+  if (!empColor) return null;
+  if (empColor === 'Rojo') return 'Rojo';
+  const hayRojo = otros.some(x => x === 'Rojo');
+  if (empColor === 'Verde') return hayRojo ? 'Amarillo' : 'Verde';
+  return 'Amarillo';
+}
+function actualizarConsolidadoVivo() {
+  const cons = consolidadoCreditoVivoJS();
+  const el = $('fbCredConsolidado');
+  if (el) el.innerHTML = cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
+}
+function setPanelPill(tipo, sem) {
+  const el = $('fbEstado_' + tipo);
+  if (el) el.innerHTML = sem ? (SEM_EMOJI[sem] + ' ' + sem) : '<span class="sub">pendiente</span>';
+}
+
+function consolidadoGuardadoJS() {
+  const sujetos = FICHA.creditoSujetos || [];
+  const emp = sujetos.find(x => x.tipoSujeto === 'empresa');
+  const base = emp && emp.semaforo ? emp.semaforo : null;
+  if (!base) return null;
+  if (base === 'Rojo') return 'Rojo';
+  const hayRojo = sujetos.some(x => x.tipoSujeto !== 'empresa' && x.semaforo === 'Rojo');
+  if (base === 'Verde') return hayRojo ? 'Amarillo' : 'Verde';
+  return 'Amarillo';
+}
+
 function panelCredito(semGuardado) {
-  const cons = consolidadoCreditoJS() || semGuardado;
+  const cons = consolidadoGuardadoJS() || semGuardado;
   const open = FICHA_ETAPA_OPEN === 'credito';
   const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
   if (!open) return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, false, '');
@@ -4649,44 +4855,36 @@ function panelCredito(semGuardado) {
   const vinc = sujetos.filter(x => x.tipoSujeto === 'vinculada');
 
   let html = '<div class="fb-body">';
-  html += '<p class="sub">El semáforo de cada sujeto es manual por ahora; con Sentinel se sugerirá por reglas. El consolidado toma el <b>peor</b> de los tres.</p>';
-  // Empresa
+  html += '<div class="fb-cred-cons">Consolidado: <span id="fbCredConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
+  html += '<p class="sub">Empresa, representante y vinculada llevan el mismo checklist. El semáforo se calcula solo con las métricas. La empresa manda: sus verdes/ámbar deciden; un rojo en otro sujeto solo degrada.</p>';
   html += '<div class="fb-sec">Empresa</div>';
   html += empresa ? sujetoCard(empresa, false) : '<div class="sub">—</div>';
-  // Representantes
   html += '<div class="fb-sec">Representantes (' + reps.length + ')</div>';
   html += reps.map(r => sujetoCard(r, true)).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas representantes.</div>';
   html += '<button class="btn-sunat" onclick="agregarSujeto(\'representante\')">＋ Agregar representante</button>';
-  // Vinculadas
   html += '<div class="fb-sec">Empresas vinculadas (' + vinc.length + ')</div>';
   html += vinc.map(v => sujetoCard(v, true)).join('') || '<div class="sub" style="margin-bottom:8px">Sin empresas vinculadas.</div>';
   html += '<button class="btn-sunat" onclick="agregarSujeto(\'vinculada\')">＋ Agregar vinculada</button>';
-  // Acciones
-  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn sec" onclick="guardarCredito()">Guardar crédito</button>' +
-    '<button class="btn" onclick="avanzarEtapa(\'credito\')">Avanzar según consolidado →</button></div>';
+  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarCredito()">Guardar</button></div>';
   html += '</div>';
   return fbPanelWrap('credito', '📋', 'Filtro crédito', estadoHtml, true, html);
 }
 
 function sujetoCard(su, editable) {
-  const chk = su.checklist || {};
-  const items = FB_CHK_CREDITO[su.tipoSujeto] || [];
+  let valores = {};
+  try { valores = typeof su.checklist === 'string' ? JSON.parse(su.checklist || '{}') : (su.checklist || {}); } catch (e) { valores = {}; }
   const docs = (FICHA.documentos || []).filter(d => d.sujetoId === su.id);
   const nombreHtml = editable
     ? '<input class="fb-suj-nom" id="suj_nom_' + su.id + '" value="' + (su.nombre ? su.nombre.replace(/"/g, '&quot;') : '') + '" placeholder="Nombre">'
     : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
   const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
-  const checklist = '<div class="fb-chk" style="margin:8px 0">' +
-    items.map(([k, label]) => '<label><input type="checkbox" data-sujchk="' + su.id + '" data-k="' + k + '"' + (chk[k] ? ' checked' : '') + '> ' + label + '</label>').join('') +
-    '</div>';
-  const sem = '<div class="fb-sem" style="margin:6px 0 0;padding-top:8px">' +
-    ['Verde', 'Amarillo', 'Rojo'].map(o => '<label class="fb-sem-op"><input type="radio" name="sujsem_' + su.id + '" value="' + o + '"' + (su.semaforo === o ? ' checked' : '') + ' onchange="recalcConsolidado()"> ' + ({ Verde: '🟢', Amarillo: '🟡', Rojo: '🔴' }[o]) + ' ' + o + '</label>').join('') + '</div>';
+  const metricas = renderMetricasB2B('credito', valores, 'suj' + su.id);
+  const docsList = docs.map(d => docAnchor(d) + ' <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ');
   const docHtml = '<div class="fb-doc" style="margin-top:8px">' +
-    (docs.length
-      ? docs.map(d => '<a href="/api/b2b/documentos/' + d.id + '/descargar" target="_blank" class="fb-doc-link">📄 ' + d.nombreArchivo + '</a> <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ')
-      : '<span class="fb-doc-pend">Sentinel pendiente</span> <button class="btn-sunat" onclick="subirDocSujeto(' + su.id + ')">Subir PDF</button>') +
+    (docs.length ? docsList + ' ' : '<span class="fb-doc-pend">Reporte de central pendiente</span> ') +
+    '<button class="btn-sunat" onclick="agregarLinkDoc(\'credito\',\'Reporte central\',' + su.id + ')">🔗 Agregar link</button>' +
     '</div>';
-  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + checklist + sem + docHtml + '</div>';
+  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
 }
 
 function recalcConsolidado() {
@@ -4700,12 +4898,9 @@ function panelGarantia(desbloqueada, sem) {
   const open = FICHA_ETAPA_OPEN === 'garantia';
   if (!open) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', false, '');
   const g = FICHA.garantia || {};
-  const chk = (FICHA.filtros.garantia && FICHA.filtros.garantia.checklist) || {};
-  // Checklist
-  const checklist = '<div class="fb-sec">Checklist de garantía</div><div class="fb-chk">' +
-    FB_CHECKLIST_GARANTIA.map(([k, label]) =>
-      '<label><input type="checkbox" data-chk="' + k + '"' + (chk[k] ? ' checked' : '') + '> ' + label + '</label>').join('') +
-    '</div>';
+  let chkG = {};
+  try { const raw = FICHA.filtros.garantia && FICHA.filtros.garantia.checklist; chkG = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkG = {}; }
+  const checklist = '<div class="fb-sec">Evaluación de garantía</div>' + renderMetricasB2B('garantia', chkG, 'gar');
   // Datos del inmueble (los principales)
   const datos = '<div class="fb-sec">Datos del inmueble</div><div class="fb-grid">' +
     fbInput('tipoInmueble', 'Tipo', g.tipoInmueble) +
@@ -4717,12 +4912,21 @@ function panelGarantia(desbloqueada, sem) {
     '</div>';
   // Documentos
   const docs = '<div class="fb-sec">Documentos</div>' + renderDocsGarantia();
-  // Semáforo + avanzar
-  const acciones = fbSemaforoBar('garantia') +
-    '<div class="fb-acc"><button class="btn sec" onclick="guardarGarantia()">Guardar garantía</button>' +
-    '<button class="btn" onclick="avanzarEtapa(\'garantia\')">Avanzar según semáforo →</button></div>';
+  const acciones = '<div class="fb-acc"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
   return fbPanelWrap('garantia', '🏠', 'Filtro garantía', fbPill(sem) || '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>', true,
     '<div class="fb-body">' + checklist + datos + docs + acciones + '</div>');
+}
+
+function panelFinanzas(desbloqueada, sem) {
+  if (!desbloqueada) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
+  const open = FICHA_ETAPA_OPEN === 'finanzas';
+  if (!open) return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', fbPill(sem) || '<span class="sub">pendiente</span>', false, '');
+  let chkF = {};
+  try { const raw = FICHA.filtros.finanzas && FICHA.filtros.finanzas.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
+  const cuerpo = '<div class="fb-body"><div class="fb-sec">Evaluación de finanzas y negocio</div>' +
+    renderMetricasB2B('finanzas', chkF, 'fin') +
+    '<div class="fb-acc"><button class="btn" onclick="guardarFinanzas()">Guardar</button></div></div>';
+  return fbPanelWrap('finanzas', '💰', 'Filtro finanzas y negocio', fbPill(sem) || '<span class="sub">pendiente</span>', true, cuerpo);
 }
 
 function panelBloqueable(tipo, titulo, ic, desbloqueada) {
@@ -4739,7 +4943,7 @@ function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado) {
     '<div class="fb-panel-head"' + onclick + '>' +
     '<span class="fb-ic">' + ic + '</span>' +
     '<span class="fb-titulo">' + titulo + '</span>' +
-    '<span class="fb-estado">' + estadoHtml + '</span>' +
+    '<span class="fb-estado" id="fbEstado_' + tipo + '">' + estadoHtml + '</span>' +
     (bloqueado ? '' : '<span class="fb-caret">' + (open ? '▴' : '▾') + '</span>') +
     '</div>' + (cuerpo || '') + '</div>';
 }
@@ -4754,22 +4958,13 @@ function sincronizarFichaDOM() {
   ['tipoInmueble', 'distrito', 'propietario', 'partidaRegistral', 'valorEstimado', 'cargas'].forEach(id => {
     const el = $('fb_' + id); if (el) { FICHA.garantia = FICHA.garantia || {}; FICHA.garantia[id] = el.value; }
   });
-  // Garantía: checklist + semáforo
-  const gchk = {}; let hayG = false;
-  document.querySelectorAll('#fbAcordeon input[data-chk]').forEach(c => { gchk[c.getAttribute('data-chk')] = c.checked; hayG = true; });
-  const gsem = document.querySelector('input[name="fbsem_garantia"]:checked');
-  if (hayG || gsem) {
-    FICHA.filtros.garantia = FICHA.filtros.garantia || {};
-    if (hayG) FICHA.filtros.garantia.checklist = gchk;
-    if (gsem) FICHA.filtros.garantia.semaforo = gsem.value;
-  }
-  // Crédito: por cada sujeto, nombre + checklist + semáforo
+  // Métricas de garantía / finanzas (si el panel está abierto)
+  if (document.querySelector('[data-mtr="gar"]')) { FICHA.filtros.garantia = FICHA.filtros.garantia || {}; FICHA.filtros.garantia.checklist = leerMetricas('gar'); }
+  if (document.querySelector('[data-mtr="fin"]')) { FICHA.filtros.finanzas = FICHA.filtros.finanzas || {}; FICHA.filtros.finanzas.checklist = leerMetricas('fin'); }
+  // Crédito: por cada sujeto, nombre + métricas
   (FICHA.creditoSujetos || []).forEach(su => {
     const nom = $('suj_nom_' + su.id); if (nom) su.nombre = nom.value;
-    const chk = {}; let hay = false;
-    document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; hay = true; });
-    if (hay) su.checklist = chk;
-    const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked'); if (r) su.semaforo = r.value;
+    if (document.querySelector('[data-mtr="suj' + su.id + '"]')) su.checklist = leerMetricas('suj' + su.id);
   });
 }
 
@@ -4796,20 +4991,41 @@ function renderDocsGarantia() {
   const filas = FB_DOCS_GARANTIA.map(tipo => {
     const sub = docs.find(d => d.tipoDoc === tipo);
     if (sub) {
-      return '<div class="fb-doc"><i>📄</i><span>' + tipo + '</span>' +
-        '<a href="/api/b2b/documentos/' + sub.id + '/descargar" target="_blank" class="fb-doc-link">' + sub.nombreArchivo + '</a>' +
+      return '<div class="fb-doc"><span>' + tipo + '</span>' + docAnchor(sub) +
         '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + sub.id + ')">✕</button></div>';
     }
-    return '<div class="fb-doc"><i>📄</i><span>' + tipo + '</span>' +
+    return '<div class="fb-doc"><span>' + tipo + '</span>' +
       '<span class="fb-doc-pend">pendiente</span>' +
-      '<button class="btn-sunat" onclick="subirDoc(\'' + tipo + '\')">Subir</button></div>';
+      '<button class="btn-sunat" onclick="agregarLinkDoc(\'garantia\',\'' + tipo.replace(/'/g, "\\'") + '\',null)">🔗 Agregar link</button></div>';
   }).join('');
-  // Otros documentos subidos no estándar
   const otros = docs.filter(d => !FB_DOCS_GARANTIA.includes(d.tipoDoc));
-  const otrosHtml = otros.map(d => '<div class="fb-doc"><i>📎</i><span>' + d.tipoDoc + '</span>' +
-    '<a href="/api/b2b/documentos/' + d.id + '/descargar" target="_blank" class="fb-doc-link">' + d.nombreArchivo + '</a>' +
+  const otrosHtml = otros.map(d => '<div class="fb-doc"><span>' + d.tipoDoc + '</span>' + docAnchor(d) +
     '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button></div>').join('');
-  return '<div class="fb-docs">' + filas + otrosHtml + '</div>';
+  return '<div class="fb-docs"><div class="fb-doc-note">Pega el link de una carpeta o archivo de Drive (persiste al actualizar el sistema).</div>' + filas + otrosHtml + '</div>';
+}
+
+// Ancla a un documento: link de Drive (🔗) o archivo subido (📄).
+function docAnchor(d) {
+  const url = d.enlace ? d.enlace : ('/api/b2b/documentos/' + d.id + '/descargar');
+  const txt = d.enlace ? (d.nombreArchivo && d.nombreArchivo !== d.enlace ? d.nombreArchivo : 'Abrir en Drive') : (d.nombreArchivo || 'archivo');
+  return '<a href="' + url + '" target="_blank" rel="noopener" class="fb-doc-link">' + (d.enlace ? '🔗 ' : '📄 ') + txt + '</a>';
+}
+
+// Guarda un documento como link de Drive (reemplaza la subida que se cae al deployar).
+async function agregarLinkDoc(etapa, tipoDoc, sujetoId) {
+  const url = (prompt('Pega el link de Drive (carpeta o archivo):', 'https://') || '').trim();
+  if (!url || url === 'https://') return;
+  if (!/^https?:\/\//i.test(url)) { alert('El link debe empezar con http:// o https://'); return; }
+  sincronizarFichaDOM();
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/documentos/enlace', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ etapa, tipoDoc, sujetoId: sujetoId || null, url, nombre: tipoDoc })
+    });
+    FICHA.documentos = FICHA.documentos || [];
+    FICHA.documentos.unshift({ id: r.id, etapa, tipoDoc, nombreArchivo: tipoDoc, enlace: url, sujetoId: sujetoId ? Number(sujetoId) : null });
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo guardar el link: ' + e.message); }
 }
 
 function leerSemaforo(tipo) {
@@ -4828,10 +5044,33 @@ async function guardarGarantia() {
     const el = $('fb_' + id); if (el) g[id] = el.value.trim() || null;
   });
   try {
+    const valores = leerMetricas('gar');
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(g) });
-    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: leerChecklistGarantia(), semaforo: leerSemaforo('garantia') }) });
-    await abrirFichaB2B(FICHA.solicitud.codigo);
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/garantia', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    const sem = evalChecklistJS('garantia', valores).semaforo;
+    FICHA.garantia = Object.assign({}, FICHA.garantia, g);
+    FICHA.filtros.garantia = Object.assign({}, FICHA.filtros.garantia, { checklist: valores, semaforo: sem });
+    setPanelPill('garantia', sem);
+    flashGuardado('gar');
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+async function guardarFinanzas() {
+  try {
+    const valores = leerMetricas('fin');
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/finanzas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    const sem = evalChecklistJS('finanzas', valores).semaforo;
+    FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: sem });
+    setPanelPill('finanzas', sem);
+    flashGuardado('fin');
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+function flashGuardado(prefijo) {
+  const p = $(prefijo + '_pill');
+  if (p) { p.classList.add('mtr-saved'); setTimeout(() => p.classList.remove('mtr-saved'), 1200); }
 }
 
 async function avanzarEtapa(tipo) {
@@ -4911,19 +5150,23 @@ async function eliminarDoc(id) {
 
 // ===== Acciones del filtro de crédito =====
 async function guardarCredito() {
-  // Guarda cada sujeto (nombre + checklist + semáforo).
   const sujetos = FICHA.creditoSujetos || [];
   try {
+    let cons = null;
     for (const su of sujetos) {
-      const chk = {};
-      document.querySelectorAll('input[data-sujchk="' + su.id + '"]').forEach(c => { chk[c.getAttribute('data-k')] = c.checked; });
-      const r = document.querySelector('input[name="sujsem_' + su.id + '"]:checked');
+      const valores = leerMetricas('suj' + su.id);
       const nomEl = $('suj_nom_' + su.id);
-      const body = { checklist: chk, semaforo: r ? r.value : null };
+      const body = { checklist: valores };
       if (nomEl) body.nombre = nomEl.value.trim();
-      await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      su.checklist = valores; su.semaforo = r.semaforo;        // el server calcula el semáforo
+      cons = r.consolidado;
     }
-    await abrirFichaB2B(FICHA.solicitud.codigo);
+    FICHA.filtros.credito = Object.assign({}, FICHA.filtros.credito, { semaforo: cons });
+    setPanelPill('credito', cons);
+    actualizarConsolidadoVivo();
+    if (sujetos[0]) flashGuardado('suj' + sujetos[0].id);
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 

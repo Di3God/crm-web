@@ -435,6 +435,7 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatVerificadoEn TEXT"); 
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDepartamento TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN sunatDistrito TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN sujetoId INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_documentos ADD COLUMN enlace TEXT"); } catch (e) { } // v1.217: link de Drive (persiste al deployar)
 // Campos nuevos B2B: monto en rango (Meta/TikTok), SUNARP y ubicación del inmueble, atribución de anuncio.
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN montoRango TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
@@ -442,6 +443,9 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN departamentoInmueble TEXT"
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN adId TEXT"); } catch (e) { }
+// v1.214: seguimiento de tiempo en etapa (para deadlines por etapa del kanban)
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN fechaEtapa TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN fechaEtapaCol TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN montoRango TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); } catch (e) { }
@@ -3888,16 +3892,124 @@ app.delete('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
 // ===== FILTRO DE CRÉDITO: sujetos (empresa / representantes / vinculadas) y consolidado =====
 // Consolidado = el PEOR semáforo de todos los sujetos (Rojo > Amarillo > Verde).
 const ORDEN_SEM = { Verde: 0, Amarillo: 1, Rojo: 2 };
-function consolidadoCredito(codigo) {
-  const sujetos = db.prepare('SELECT semaforo FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(codigo);
-  if (!sujetos.length) return null;
-  let peor = null, peorVal = -1;
-  for (const s of sujetos) {
-    if (!s.semaforo) continue;
-    const v = ORDEN_SEM[s.semaforo];
-    if (v != null && v > peorVal) { peorVal = v; peor = s.semaforo; }
+
+// ===== Criterios con MÉTRICAS por filtro (el semáforo se CALCULA, no se marca a mano) =====
+// Cada criterio evalúa a Verde/Amarillo/Rojo. El semáforo del filtro = el PEOR de los criterios evaluados.
+// Umbrales por defecto (calibrables). 'select' mapea opción→color; 'num' aplica reglas en orden (primera que cumple, si no 'resto').
+const CRITERIOS_B2B = {
+  credito: [
+    { clave: 'sbs', etiqueta: 'Clasificación SBS', tipo: 'select', opciones: [
+      { v: 'normal', label: 'Normal', color: 'Verde' },
+      { v: 'cpp', label: 'CPP', color: 'Amarillo' },
+      { v: 'deficiente', label: 'Deficiente', color: 'Rojo' },
+      { v: 'dudoso', label: 'Dudoso', color: 'Rojo' },
+      { v: 'perdida', label: 'Pérdida', color: 'Rojo' }
+    ] },
+    { clave: 'score', etiqueta: 'Score central de riesgo', tipo: 'num', sufijo: 'pts',
+      reglas: [{ op: '>=', val: 700, color: 'Verde' }, { op: '>=', val: 500, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'mora', etiqueta: 'Días de mora actual', tipo: 'num', sufijo: 'días',
+      reglas: [{ op: '<=', val: 0, color: 'Verde' }, { op: '<=', val: 15, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'cobranza', etiqueta: 'Deuda en cobranza / castigada', tipo: 'select', opciones: [
+      { v: 'no', label: 'No', color: 'Verde' },
+      { v: 'si', label: 'Sí', color: 'Rojo' }
+    ] },
+    { clave: 'entidades', etiqueta: 'N.º de entidades con deuda', tipo: 'num', sufijo: 'ent.',
+      reglas: [{ op: '<=', val: 3, color: 'Verde' }, { op: '<=', val: 6, color: 'Amarillo' }], resto: 'Rojo' }
+  ],
+  garantia: [
+    { clave: 'ltv', etiqueta: 'LTV (préstamo / valor)', tipo: 'num', sufijo: '%',
+      reglas: [{ op: '<=', val: 60, color: 'Verde' }, { op: '<=', val: 70, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'zona', etiqueta: 'Zona de cobertura', tipo: 'select', opciones: [
+      { v: 'a', label: 'Zona A', color: 'Verde' },
+      { v: 'b', label: 'Zona B', color: 'Amarillo' },
+      { v: 'c', label: 'Zona C / fuera', color: 'Rojo' }
+    ] },
+    { clave: 'sunarp', etiqueta: 'Inscrito en SUNARP', tipo: 'select', opciones: [
+      { v: 'si', label: 'Sí', color: 'Verde' },
+      { v: 'no', label: 'No', color: 'Rojo' }
+    ] },
+    { clave: 'tipo', etiqueta: 'Tipo de inmueble', tipo: 'select', opciones: [
+      { v: 'comercial', label: 'Comercial', color: 'Verde' },
+      { v: 'vivienda', label: 'Vivienda', color: 'Verde' },
+      { v: 'terreno', label: 'Terreno', color: 'Amarillo' },
+      { v: 'otro', label: 'Otro', color: 'Rojo' }
+    ] },
+    { clave: 'gravamen', etiqueta: 'Gravámenes / cargas previas', tipo: 'select', opciones: [
+      { v: 'ninguno', label: 'Ninguno', color: 'Verde' },
+      { v: 'menores', label: 'Menores', color: 'Amarillo' },
+      { v: 'hipoteca', label: 'Hipoteca vigente', color: 'Rojo' }
+    ] }
+  ],
+  finanzas: [
+    { clave: 'dscr', etiqueta: 'DSCR / cobertura de deuda', tipo: 'num', sufijo: 'x',
+      reglas: [{ op: '>=', val: 1.3, color: 'Verde' }, { op: '>=', val: 1.1, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'antiguedad', etiqueta: 'Antigüedad del negocio', tipo: 'num', sufijo: 'meses',
+      reglas: [{ op: '>=', val: 24, color: 'Verde' }, { op: '>=', val: 12, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'ventasTicket', etiqueta: 'Ventas anuales / ticket', tipo: 'num', sufijo: 'x',
+      reglas: [{ op: '>=', val: 4, color: 'Verde' }, { op: '>=', val: 2, color: 'Amarillo' }], resto: 'Rojo' },
+    { clave: 'sector', etiqueta: 'Sector (política sectorial)', tipo: 'select', opciones: [
+      { v: 'preferente', label: 'Preferente', color: 'Verde' },
+      { v: 'neutro', label: 'Neutro', color: 'Amarillo' },
+      { v: 'restringido', label: 'Restringido', color: 'Rojo' }
+    ] },
+    { clave: 'destino', etiqueta: 'Coherencia del destino de fondos', tipo: 'select', opciones: [
+      { v: 'coherente', label: 'Coherente', color: 'Verde' },
+      { v: 'parcial', label: 'Parcial', color: 'Amarillo' },
+      { v: 'incoherente', label: 'Incoherente', color: 'Rojo' }
+    ] }
+  ]
+};
+
+function colorCriterio(crit, valor) {
+  if (valor === undefined || valor === null || valor === '') return null;
+  if (crit.tipo === 'select') {
+    const op = (crit.opciones || []).find(o => o.v === valor);
+    return op ? op.color : null;
   }
-  return peor;
+  if (crit.tipo === 'num') {
+    const n = Number(valor);
+    if (!isFinite(n)) return null;
+    for (const r of (crit.reglas || [])) {
+      if (r.op === '<=' && n <= r.val) return r.color;
+      if (r.op === '>=' && n >= r.val) return r.color;
+      if (r.op === '<' && n < r.val) return r.color;
+      if (r.op === '>' && n > r.val) return r.color;
+      if (r.op === '==' && n === r.val) return r.color;
+    }
+    return crit.resto || null;
+  }
+  return null;
+}
+function peorColor(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return ORDEN_SEM[a] >= ORDEN_SEM[b] ? a : b;
+}
+// Evalúa un checklist de valores contra el catálogo → { semaforo (peor), detalle, faltan, total }.
+function evaluarChecklistB2B(tipo, valores) {
+  const items = CRITERIOS_B2B[tipo] || [];
+  let sem = null, faltan = 0;
+  const detalle = items.map(c => {
+    const col = colorCriterio(c, valores ? valores[c.clave] : undefined);
+    if (col == null) faltan++; else sem = peorColor(sem, col);
+    return { clave: c.clave, color: col };
+  });
+  return { semaforo: sem, detalle, faltan, total: items.length };
+}
+
+// Consolidado de crédito (regla: la EMPRESA es el ancla).
+//  - Empresa Roja → Rojo (mata).
+//  - Empresa Verde/Amarilla: los Amarillos de rep/vinculada NO arrastran; un Rojo en rep/vinculada degrada un nivel (no mata).
+function consolidadoCredito(codigo) {
+  const sujetos = db.prepare('SELECT tipoSujeto, semaforo FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(codigo);
+  if (!sujetos.length) return null;
+  const empresa = sujetos.find(x => x.tipoSujeto === 'empresa');
+  const base = empresa && empresa.semaforo ? empresa.semaforo : null;
+  if (!base) return null;                 // sin evaluar la empresa no hay consolidado
+  if (base === 'Rojo') return 'Rojo';
+  const hayRojoOtro = sujetos.some(x => x.tipoSujeto !== 'empresa' && x.semaforo === 'Rojo');
+  if (base === 'Verde') return hayRojoOtro ? 'Amarillo' : 'Verde';
+  return 'Amarillo';                      // empresa Amarilla → Amarillo
 }
 // Recalcula y guarda el consolidado en b2b_filtros (credito) + resultadoCredito de la solicitud.
 function refrescarConsolidadoCredito(codigo, responsable) {
@@ -3930,13 +4042,15 @@ app.put('/api/b2b/solicitudes/:codigo/credito/sujeto/:id', soloB2B, (req, res) =
   if (!su) return res.status(404).json({ error: 'Sujeto no encontrado' });
   const b = req.body || {};
   const ahora = new Date().toISOString();
+  const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : (su.checklist ? JSON.parse(su.checklist) : {});
+  const semSujeto = evaluarChecklistB2B('credito', valores).semaforo; // CALCULADO por sujeto
   db.prepare('UPDATE b2b_credito_sujetos SET nombre=?, documento=?, checklist=?, semaforo=?, observaciones=?, actualizadoEn=? WHERE id=?')
     .run(b.nombre != null ? b.nombre : su.nombre, b.documento != null ? b.documento : su.documento,
-      b.checklist ? JSON.stringify(b.checklist) : su.checklist, b.semaforo != null ? b.semaforo : su.semaforo,
+      JSON.stringify(valores), semSujeto,
       b.observaciones != null ? b.observaciones : su.observaciones, ahora, su.id);
   const cons = refrescarConsolidadoCredito(req.params.codigo, req.user.nombre);
-  auditar(req, 'b2b_credito_guardar_sujeto', req.params.codigo, su.tipoSujeto + (b.semaforo ? ' · ' + b.semaforo : ''));
-  res.json({ ok: true, consolidado: cons });
+  auditar(req, 'b2b_credito_guardar_sujeto', req.params.codigo, su.tipoSujeto + (semSujeto ? ' · ' + semSujeto : ''));
+  res.json({ ok: true, consolidado: cons, semaforo: semSujeto });
 });
 
 // Elimina un sujeto (no la empresa).
@@ -3960,7 +4074,7 @@ app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
   const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const garantia = db.prepare('SELECT * FROM b2b_garantia WHERE codigoSolicitud=?').get(s.codigo) || null;
-  const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn, sujetoId FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
+  const documentos = db.prepare('SELECT id, etapa, tipoDoc, nombreArchivo, mime, tamano, subidoPor, subidoEn, sujetoId, enlace FROM b2b_documentos WHERE codigoSolicitud=? ORDER BY id DESC').all(s.codigo);
   const filtrosRows = db.prepare('SELECT tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn FROM b2b_filtros WHERE codigoSolicitud=?').all(s.codigo);
   const filtros = {};
   filtrosRows.forEach(f => { filtros[f.tipoFiltro] = { checklist: f.checklist ? JSON.parse(f.checklist) : null, semaforo: f.semaforo, observaciones: f.observaciones, responsable: f.responsable, actualizadoEn: f.actualizadoEn }; });
@@ -3972,7 +4086,10 @@ app.get('/api/b2b/solicitudes/:codigo/ficha', soloB2B, (req, res) => {
     sujetos = db.prepare('SELECT * FROM b2b_credito_sujetos WHERE codigoSolicitud=? ORDER BY CASE tipoSujeto WHEN \'empresa\' THEN 0 WHEN \'representante\' THEN 1 ELSE 2 END, orden, id').all(s.codigo);
   }
   sujetos = sujetos.map(su => ({ ...su, checklist: su.checklist ? JSON.parse(su.checklist) : {} }));
-  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos });
+  const semFicha = { credito: filtros.credito && filtros.credito.semaforo, garantia: filtros.garantia && filtros.garantia.semaforo, finanzas: filtros.finanzas && filtros.finanzas.semaforo };
+  const colFicha = etapaKanbanB2B(s);
+  const fechaEtapaF = sellarFechaEtapa(s, colFicha);
+  res.json({ solicitud: s, garantia, documentos, filtros, creditoSujetos: sujetos, etapaKanban: colFicha, puntaje: puntajeB2B(s, semFicha), sla: slaEtapaB2B(colFicha, fechaEtapaF) });
 });
 
 // Guarda los datos del inmueble (garantía).
@@ -3999,14 +4116,20 @@ app.put('/api/b2b/solicitudes/:codigo/garantia', soloB2B, (req, res) => {
 });
 
 // Guarda checklist + semáforo de un filtro (credito | garantia | finanzas).
+// Catálogo de criterios con métricas (para que el frontend renderice los inputs y calcule el color).
+app.get('/api/b2b/criterios', soloB2B, (req, res) => {
+  res.json({ criterios: CRITERIOS_B2B });
+});
+
 app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const tipo = req.params.tipo;
   if (!['credito', 'garantia', 'finanzas'].includes(tipo)) return res.status(400).json({ error: 'Filtro inválido' });
   const b = req.body || {};
-  const checklist = b.checklist ? JSON.stringify(b.checklist) : null;
-  const semaforo = b.semaforo || null;
+  const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : {};
+  const checklist = JSON.stringify(valores);
+  const semaforo = evaluarChecklistB2B(tipo, valores).semaforo; // CALCULADO, no lo manda el cliente
   const ahora = new Date().toISOString();
   db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, observaciones, responsable, actualizadoEn)
     VALUES (?,?,?,?,?,?,?)
@@ -4017,6 +4140,22 @@ app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
   if (colRes && semaforo) db.prepare('UPDATE b2b_solicitudes SET ' + colRes + '=? WHERE codigo=?').run(semaforo, s.codigo);
   auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : ''));
   res.json({ ok: true });
+});
+
+// Guarda un documento como LINK de Drive (persiste al redeploy; no usa el filesystem efímero).
+app.post('/api/b2b/solicitudes/:codigo/documentos/enlace', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const url = (b.url || '').toString().trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'El link debe empezar con http:// o https://' });
+  const ahora = new Date().toISOString();
+  const r = db.prepare(`INSERT INTO b2b_documentos (codigoSolicitud, etapa, tipoDoc, nombreArchivo, rutaArchivo, mime, tamano, subidoPor, subidoEn, sujetoId, enlace)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(s.codigo, b.etapa || 'garantia', b.tipoDoc || 'Documento', b.nombre || 'Link Drive', null, 'link', null, req.user.nombre, ahora,
+      b.sujetoId != null ? Number(b.sujetoId) : null, url);
+  auditar(req, 'b2b_doc_enlace', s.codigo, (b.tipoDoc || 'Documento'));
+  res.json({ ok: true, id: r.lastInsertRowid });
 });
 
 // Sube un documento (multipart) a una etapa de la solicitud.
@@ -4103,12 +4242,71 @@ function semaforosB2BPorCodigo(codigos) {
   return map;
 }
 
+// ===== Puntaje = probabilidad de cierre (se refina por el filtro más profundo completado) =====
+function bandaPuntaje(prob) {
+  if (prob >= 60) return { banda: 'Caliente', emoji: '🔥', prioridad: 'P1' };
+  if (prob >= 35) return { banda: 'Tibio', emoji: '🟠', prioridad: 'P2' };
+  if (prob >= 10) return { banda: 'Frío', emoji: '🔵', prioridad: 'P3' };
+  return { banda: 'Nuevo', emoji: '⚪', prioridad: 'P4' };
+}
+// sem = { credito, garantia, finanzas } (semáforos consolidados). Rojo en cualquiera → descarte.
+function puntajeB2B(s, sem) {
+  sem = sem || {};
+  if (s.archivado || s.estado === 'No elegible' || sem.credito === 'Rojo' || sem.garantia === 'Rojo' || sem.finanzas === 'Rojo')
+    return { prob: 0, banda: 'Descartado', emoji: '⚫', prioridad: '—' };
+  let prob;
+  if (['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado)) prob = 90;
+  else if (sem.finanzas) prob = sem.finanzas === 'Verde' ? 82 : 62;
+  else if (sem.garantia) prob = sem.garantia === 'Verde' ? 65 : 45;
+  else if (sem.credito) prob = sem.credito === 'Verde' ? 40 : 25;
+  else if (s.sunatEstado === 'ok') prob = 12;
+  else prob = 5;
+  return Object.assign({ prob }, bandaPuntaje(prob));
+}
+
+// ===== Deadline por etapa + próxima acción =====
+const ETAPA_SLA = {
+  'Solicitud': { dias: 1, accion: 'Contactar' },
+  'SUNAT': { dias: 2, accion: 'Contactar' },
+  'Filtro credito': { dias: 2, accion: 'Evaluar crédito' },
+  'Filtro garantia': { dias: 3, accion: 'Solicitar garantía' },
+  'Filtro finanzas': { dias: 3, accion: 'Reunión' },
+  'Business case': { dias: 5, accion: 'Armar expediente' }
+};
+function slaEtapaB2B(col, fechaEtapa) {
+  const cfg = ETAPA_SLA[col];
+  if (!cfg) return { accion: null, dias: null, fechaLimite: null, vencido: false, diasRestantes: null };
+  if (!fechaEtapa) return { accion: cfg.accion, dias: cfg.dias, fechaLimite: null, vencido: false, diasRestantes: null };
+  const limite = new Date(fechaEtapa).getTime() + cfg.dias * 86400000;
+  const ahora = Date.now();
+  return {
+    accion: cfg.accion, dias: cfg.dias,
+    fechaLimite: new Date(limite).toISOString(),
+    vencido: ahora > limite,
+    diasRestantes: Math.ceil((limite - ahora) / 86400000)
+  };
+}
+// Sella el momento de entrada a la etapa cuando la columna derivada cambia. Devuelve la fecha vigente.
+function sellarFechaEtapa(f, col) {
+  if (col === 'Desestimado') return f.fechaEtapa || null;
+  if (f.fechaEtapaCol === col) return f.fechaEtapa || null;
+  const nueva = f.fechaEtapaCol ? new Date().toISOString() : (f.fechaIngreso || new Date().toISOString());
+  db.prepare('UPDATE b2b_solicitudes SET fechaEtapa=?, fechaEtapaCol=? WHERE codigo=?').run(nueva, col, f.codigo);
+  f.fechaEtapa = nueva; f.fechaEtapaCol = col;
+  return nueva;
+}
+
 // Datos del tablero. ?desestimados=1 devuelve la bandeja de desestimados (filtro, no columna).
 app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const soloDesest = req.query.desestimados === '1';
-  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, fechaIngreso, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
+  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, fechaIngreso, fechaEtapa, fechaEtapaCol, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
   const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
-  const cards = filas.map(f => ({ ...f, etapaKanban: etapaKanbanB2B(f), semaforos: sem[f.codigo] || {} }));
+  const cards = filas.map(f => {
+    const col = etapaKanbanB2B(f);
+    const fechaEtapa = sellarFechaEtapa(f, col);
+    const semc = sem[f.codigo] || {};
+    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa) };
+  });
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
   const conteos = {};
@@ -4868,7 +5066,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.211 (Tablero kanban B2B: 6 columnas secuenciales Solicitud/SUNAT/Filtro Credito/Garantia/Finanzas/Business Case, columna derivada de senales existentes sin migracion, triaje automatico de entrada por telefono+SUNAT, drag izq->der con candado de semaforo verde sin saltos ni retrocesos, Desestimados como filtro con reactivar, descartar No contactable desde la ficha; endpoints GET /api/b2b/kanban, PUT .../mover .../descartar .../reactivar) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.217 (Documentos por LINK de Drive: nuevo campo enlace en b2b_documentos + endpoint POST /documentos/enlace (valida http); en la ficha, garantia y sujetos de credito usan boton Agregar link (pega URL de Drive) en vez de subir archivo que se caia al deployar; los links abren en pestana nueva; se conservan los archivos ya subidos. Supabase (subida real) pendiente) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
