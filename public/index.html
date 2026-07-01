@@ -525,26 +525,37 @@
       <button id="b2bTabIng" class="vt-btn" onclick="b2bTab('ing')">Bandeja de ingresos <span id="b2bIngBadge" class="b2b-badge oculto">0</span></button>
     </div>
     <div id="b2bPanelSol">
-      <div class="b2b-filtros">
-        <select id="b2bEstado" onchange="cargarB2B()">
-          <option value="">Todos los estados</option>
-          <option value="Nuevo">Nuevo</option>
-          <option value="Filtro credito">Filtro crédito</option>
-          <option value="Apto credito">Apto crédito</option>
-          <option value="Filtro garantia">Filtro garantía</option>
-          <option value="Apto garantia">Apto garantía</option>
-          <option value="Filtro finanzas">Filtro finanzas y negocio</option>
-          <option value="Expediente">Expediente</option>
-          <option value="Amarillo/nurture">Amarillo / nurture</option>
-          <option value="Traspasado B2B">Traspasado B2B</option>
-          <option value="Reunion agendada">Reunión agendada</option>
-          <option value="No responde">No responde</option>
-          <option value="No elegible">No elegible</option>
-        </select>
-        <input type="text" id="b2bQ" placeholder="Buscar empresa, RUC o contacto" oninput="b2bBuscarDebounce()">
+      <div class="vista-toggle" style="margin:0 0 10px;align-items:center">
+        <button id="b2bViewKanban" class="vt-btn act" onclick="b2bVista('kanban')">Tablero</button>
+        <button id="b2bViewTabla" class="vt-btn" onclick="b2bVista('tabla')">Tabla</button>
+        <label id="b2bDesestTgl" style="margin-left:auto;font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="b2bVerDesest" onchange="cargarKanbanB2B()"> Ver desestimados
+          <span id="b2bDesestBadge" class="b2b-badge oculto">0</span>
+        </label>
       </div>
-      <div id="b2bResumen" class="b2b-chips"></div>
-      <div id="b2bCont"><div class="vacio">Cargando…</div></div>
+      <div id="b2bTablero"><div class="vacio">Cargando…</div></div>
+      <div id="b2bTablaWrap" class="oculto">
+        <div class="b2b-filtros">
+          <select id="b2bEstado" onchange="cargarB2B()">
+            <option value="">Todos los estados</option>
+            <option value="Nuevo">Nuevo</option>
+            <option value="Filtro credito">Filtro crédito</option>
+            <option value="Apto credito">Apto crédito</option>
+            <option value="Filtro garantia">Filtro garantía</option>
+            <option value="Apto garantia">Apto garantía</option>
+            <option value="Filtro finanzas">Filtro finanzas y negocio</option>
+            <option value="Expediente">Expediente</option>
+            <option value="Amarillo/nurture">Amarillo / nurture</option>
+            <option value="Traspasado B2B">Traspasado B2B</option>
+            <option value="Reunion agendada">Reunión agendada</option>
+            <option value="No responde">No responde</option>
+            <option value="No elegible">No elegible</option>
+          </select>
+          <input type="text" id="b2bQ" placeholder="Buscar empresa, RUC o contacto" oninput="b2bBuscarDebounce()">
+        </div>
+        <div id="b2bResumen" class="b2b-chips"></div>
+        <div id="b2bCont"><div class="vacio">Cargando…</div></div>
+      </div>
     </div>
     <div id="b2bPanelIng" class="oculto">
       <div class="b2b-chips" id="b2bIngResumen"></div>
@@ -594,8 +605,12 @@
         <div style="flex:1">
           <h3 id="fbTitulo">Solicitud</h3>
           <div class="sub" id="fbSubtitulo"></div>
+          <div id="fbResponsable" class="fb-responsable"></div>
         </div>
-        <button onclick="cerrar('ovFichaB2B')" title="Cerrar" style="background:none;border:none;font-size:18px;cursor:pointer;color:#888">✕</button>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <button id="fbDescartar" class="btn sec" onclick="descartarB2B(FICHA.solicitud.codigo)" title="Sacar del tablero (No contactable)">Descartar</button>
+          <button onclick="cerrar('ovFichaB2B')" title="Cerrar" style="background:none;border:none;font-size:18px;cursor:pointer;color:#888">✕</button>
+        </div>
       </div>
       <div id="fbAcordeon"><div class="vacio">Cargando…</div></div>
     </div>

@@ -4158,7 +4158,7 @@ async function guardarSolicitudB2B() {
 }
 
 // --- B2B: toggle de paneles y bandeja de ingresos ---
-function b2bRefrescar() { cargarB2B(); cargarIngresosB2B(); }
+function b2bRefrescar() { if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B(); cargarIngresosB2B(); }
 
 function b2bTab(which) {
   $('b2bPanelSol').classList.toggle('oculto', which !== 'sol');
@@ -4166,7 +4166,149 @@ function b2bTab(which) {
   $('b2bTabSol').classList.toggle('act', which === 'sol');
   $('b2bTabIng').classList.toggle('act', which === 'ing');
   if (which === 'ing') cargarIngresosB2B();
-  else cargarB2B();
+  else b2bVista(B2B_VISTA);
+}
+
+// ===== Tablero (kanban) B2B =====
+let B2B_VISTA = 'kanban';        // 'kanban' | 'tabla'
+let B2B_KANBAN_DRAG = null;      // { codigo, desde }
+const B2B_KANBAN_COLS = [
+  { id: 'Solicitud', label: 'Solicitud', hint: 'Recién llegado · SUNAT pendiente' },
+  { id: 'SUNAT', label: 'SUNAT', hint: 'Validar / corregir RUC · 3×2' },
+  { id: 'Filtro credito', label: 'Filtro Crédito', hint: '' },
+  { id: 'Filtro garantia', label: 'Filtro Garantía', hint: '' },
+  { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: '' },
+  { id: 'Business case', label: 'Business Case', hint: '' }
+];
+const SEM_COL = { Verde: '#2E8B57', Amarillo: '#E0A800', Rojo: '#CC0000' };
+
+function b2bVista(v) {
+  B2B_VISTA = v;
+  $('b2bViewKanban').classList.toggle('act', v === 'kanban');
+  $('b2bViewTabla').classList.toggle('act', v === 'tabla');
+  $('b2bTablero').classList.toggle('oculto', v !== 'kanban');
+  $('b2bTablaWrap').classList.toggle('oculto', v !== 'tabla');
+  $('b2bDesestTgl').classList.toggle('oculto', v !== 'kanban');
+  if (v === 'kanban') cargarKanbanB2B(); else cargarB2B();
+}
+
+async function cargarKanbanB2B() {
+  const cont = $('b2bTablero'); if (!cont) return;
+  const verDesest = $('b2bVerDesest') && $('b2bVerDesest').checked;
+  cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  try {
+    const d = await api('/api/b2b/kanban' + (verDesest ? '?desestimados=1' : ''));
+    const badge = $('b2bDesestBadge');
+    if (badge) { badge.textContent = d.desestimados || 0; badge.classList.toggle('oculto', !(d.desestimados > 0)); }
+    if (verDesest) { renderDesestimadosB2B(d.cards || []); return; }
+    renderKanbanB2B(d.cards || [], d.conteos || {}, d.puedeGestionar);
+  } catch (e) {
+    cont.innerHTML = '<div class="vacio">No se pudo cargar el tablero: ' + (e.message || '') + '</div>';
+  }
+}
+
+function b2bKanbanCard(c) {
+  const nombre = c.razonSocial || c.nombreComercial || c.ruc || c.codigo;
+  const monto = c.montoSolicitado != null ? 'S/ ' + Number(c.montoSolicitado).toLocaleString('es-PE') : (c.montoRango || '');
+  const sem = c.semaforos || {};
+  const dots = ['credito', 'garantia', 'finanzas'].map(t => {
+    const v = sem[t];
+    const col = v ? SEM_COL[v] : '#DDE4EC';
+    const ini = t[0].toUpperCase();
+    return '<span class="kb-dot" title="' + t + (v ? ': ' + v : ': sin evaluar') + '" style="background:' + col + '">' + ini + '</span>';
+  }).join('');
+  const resp = c.responsableActual ? '<span class="kb-resp">' + primerNombre(c.responsableActual) + '</span>' : '<span class="kb-resp kb-sin">Sin asignar</span>';
+  const alerta = (c.etapaKanban === 'SUNAT') ? '<span class="kb-alerta">⚠ RUC por validar</span>' : '';
+  return '<div class="kb-card" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
+    'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
+    '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket">' + c.ticket + '</span>' : '') + '</div>' +
+    '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
+    (monto ? '<div class="kb-monto">' + monto + '</div>' : '') +
+    alerta +
+    '<div class="kb-foot">' + dots + resp + '</div>' +
+    '</div>';
+}
+
+function renderKanbanB2B(cards, conteos, puedeGestionar) {
+  const porCol = {};
+  B2B_KANBAN_COLS.forEach(c => { porCol[c.id] = []; });
+  cards.forEach(c => { (porCol[c.etapaKanban] = porCol[c.etapaKanban] || []).push(c); });
+  const html = '<div class="kb-board">' + B2B_KANBAN_COLS.map(col => {
+    const items = porCol[col.id] || [];
+    return '<div class="kb-col" data-col="' + col.id + '" ondragover="b2bDragOver(event)" ondragleave="b2bDragLeave(event)" ondrop="b2bDrop(event)">' +
+      '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span></div>' +
+      (col.hint ? '<div class="kb-colhint">' + col.hint + '</div>' : '') +
+      '<div class="kb-colbody">' + (items.length ? items.map(b2bKanbanCard).join('') : '<div class="kb-vacio">—</div>') + '</div>' +
+      '</div>';
+  }).join('') + '</div>';
+  $('b2bTablero').innerHTML = html;
+}
+
+function renderDesestimadosB2B(cards) {
+  if (!cards.length) { $('b2bTablero').innerHTML = '<div class="vacio">No hay solicitudes desestimadas.</div>'; return; }
+  const filas = cards.map(c => {
+    const nombre = c.razonSocial || c.nombreComercial || c.ruc || c.codigo;
+    return '<tr onclick="abrirFichaB2B(\'' + c.codigo + '\')" style="cursor:pointer">' +
+      '<td><b>' + nombre + '</b><br><span class="b2b-sub">' + (c.ruc || '—') + '</span></td>' +
+      '<td>' + (c.contacto || '—') + '</td>' +
+      '<td>' + (c.telefono || '<span class="kb-sin">sin teléfono</span>') + '</td>' +
+      '<td>' + (c.motivoDescarte || 'No contactable') + '</td>' +
+      '<td><button class="btn sec" onclick="event.stopPropagation();reactivarB2B(\'' + c.codigo + '\')">↩ Reactivar</button></td>' +
+      '</tr>';
+  }).join('');
+  $('b2bTablero').innerHTML = '<div class="kb-desest"><div class="b2b-sub" style="margin-bottom:8px">Fuera del tablero. Reactivar los devuelve como “Nuevo” y se re-triajean por SUNAT.</div>' +
+    '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr><th>Empresa</th><th>Contacto</th><th>Teléfono</th><th>Motivo</th><th></th></tr></thead><tbody>' +
+    filas + '</tbody></table></div></div>';
+}
+
+function b2bDragStart(ev) {
+  const card = ev.currentTarget;
+  B2B_KANBAN_DRAG = { codigo: card.dataset.cod, desde: card.dataset.col };
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', card.dataset.cod); } catch (e) { }
+  setTimeout(() => card.classList.add('kb-dragging'), 0);
+}
+function b2bDragEnd(ev) { ev.currentTarget.classList.remove('kb-dragging'); document.querySelectorAll('.kb-col.kb-over').forEach(c => c.classList.remove('kb-over')); }
+function b2bDragOver(ev) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; ev.currentTarget.classList.add('kb-over'); }
+function b2bDragLeave(ev) { ev.currentTarget.classList.remove('kb-over'); }
+async function b2bDrop(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget; col.classList.remove('kb-over');
+  const drag = B2B_KANBAN_DRAG; B2B_KANBAN_DRAG = null;
+  if (!drag) return;
+  const hacia = col.dataset.col;
+  if (hacia === drag.desde) return;
+  try {
+    await api('/api/b2b/solicitudes/' + drag.codigo + '/mover', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hacia })
+    });
+    cargarKanbanB2B();
+  } catch (e) {
+    alert(e.message || 'No se pudo mover');
+    cargarKanbanB2B();
+  }
+}
+
+async function reactivarB2B(codigo) {
+  if (!confirm('¿Reactivar esta solicitud y devolverla al tablero?')) return;
+  try {
+    await api('/api/b2b/solicitudes/' + codigo + '/reactivar', { method: 'PUT' });
+    cargarKanbanB2B();
+  } catch (e) { alert(e.message || 'No se pudo reactivar'); }
+}
+
+async function descartarB2B(codigo) {
+  const motivo = prompt('Motivo del descarte:', 'No contactable');
+  if (motivo === null) return;
+  try {
+    await api('/api/b2b/solicitudes/' + codigo + '/descartar', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo: motivo || 'No contactable' })
+    });
+    if (typeof cerrar === 'function') cerrar('ovFichaB2B');
+    if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
+  } catch (e) { alert(e.message || 'No se pudo descartar'); }
 }
 
 const B2B_ROL_TXT = { jefe_creditos: 'Jefe de Créditos', asistente_creditos: 'Créditos', jefe_b2b: 'Jefe B2B', funcionario_b2b: 'Funcionario' };
@@ -4341,10 +4483,46 @@ async function abrirFichaB2B(codigo) {
   }
 }
 
+let B2B_EQUIPO_CACHE = null;
+async function equipoB2BCache(forzar) {
+  if (B2B_EQUIPO_CACHE && !forzar) return B2B_EQUIPO_CACHE;
+  try { B2B_EQUIPO_CACHE = await api('/api/b2b/equipo'); } catch (e) { B2B_EQUIPO_CACHE = { equipo: [], puedeGestionar: false }; }
+  return B2B_EQUIPO_CACHE;
+}
+async function renderResponsableB2B(s) {
+  const cont = $('fbResponsable'); if (!cont) return;
+  const actual = s.responsableActual || null;
+  const d = await equipoB2BCache();
+  const activos = (d.equipo || []).filter(m => m.activo);
+  if (!d.puedeGestionar || !activos.length) {
+    cont.innerHTML = 'Responsable: <b>' + (actual ? primerNombre(actual) : 'Sin asignar') + '</b>';
+    return;
+  }
+  const ops = activos.map(m => '<option value="' + m.usuario + '"' + (m.nombre === actual ? ' selected' : '') + '>' + m.nombre + (m.rol.startsWith('jefe_') ? ' (jefe)' : '') + '</option>').join('');
+  cont.innerHTML = 'Responsable: ' +
+    '<select id="fbReasignar" onchange="reasignarB2B(\'' + s.codigo + '\', this.value)">' +
+    '<option value="">Sin asignar</option>' + ops + '</select>';
+}
+async function reasignarB2B(codigo, usuario) {
+  if (!usuario) return;
+  try {
+    const r = await api('/api/b2b/solicitudes/' + codigo + '/reasignar', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario })
+    });
+    if (FICHA && FICHA.solicitud) FICHA.solicitud.responsableActual = r.responsable;
+    if (typeof cargarB2B === 'function') cargarB2B();
+  } catch (e) {
+    alert(e.message || 'No se pudo reasignar');
+    renderResponsableB2B(FICHA.solicitud);
+  }
+}
+
 function renderFichaB2B() {
   const s = FICHA.solicitud;
   $('fbTitulo').textContent = s.razonSocial || s.ruc || s.codigo;
   $('fbSubtitulo').innerHTML = s.codigo + ' · RUC ' + (s.ruc || '—') + (s.ticket ? ' · ticket <b>' + s.ticket + '</b>' : '') + ' · ' + trEstadoB2B(s.estado);
+  renderResponsableB2B(s);
 
   // Estado de cada etapa
   const semCredito = (FICHA.filtros.credito && FICHA.filtros.credito.semaforo) || null;

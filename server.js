@@ -284,7 +284,6 @@ try {
 // Jefes supervisan; equipos operan. Idempotente (INSERT OR IGNORE).
 crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
 crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
-crearUsuario('cmartinez@tasatop.com', 'Carmen Martinez', 'asistente_creditos', '12345678');
 crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
 crearUsuario('bvasquez@tasatop.com', 'Brillite Vasquez', 'funcionario_b2b', '12345678');
 crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
@@ -449,6 +448,9 @@ try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); 
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
+// Baja de Carmen Martinez (ya no trabaja): se desactiva para sacarla de login, round-robin y listas,
+// conservando sus registros históricos. Idempotente.
+try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='cmartinez@tasatop.com'").run(); } catch (e) { }
 // Atribución completa de marketing (conjunto = adset, anuncio = ad)
 try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
@@ -3820,6 +3822,22 @@ app.get('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
   res.json(s);
 });
 
+// Reasignar manualmente una solicitud B2B a otro operador. Solo admin y jefes B2B (Diego y Dante).
+// El destino debe ser un usuario activo dentro del área que gestiona quien reasigna.
+app.put('/api/b2b/solicitudes/:codigo/reasignar', soloB2B, (req, res) => {
+  if (!puedeGestionarEquipoB2B(req.user)) return res.status(403).json({ error: 'No autorizado para reasignar' });
+  const s = db.prepare('SELECT codigo, responsableActual FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const roles = rolesGestionablesB2B(req.user);
+  if (!roles.length) return res.status(403).json({ error: 'Sin operadores que gestionar' });
+  const ph = roles.map(() => '?').join(',');
+  const destino = db.prepare("SELECT usuario, nombre FROM usuarios WHERE usuario=? AND activo=1 AND rol IN (" + ph + ")").get(req.body && req.body.usuario, ...roles);
+  if (!destino) return res.status(400).json({ error: 'Operador no válido para reasignar' });
+  db.prepare("UPDATE b2b_solicitudes SET responsableActual=?, funcionario=? WHERE codigo=?").run(destino.nombre, destino.nombre, s.codigo);
+  auditar(req, 'b2b_reasignar', s.codigo, `${s.responsableActual || 'sin asignar'} -> ${destino.nombre}`);
+  res.json({ ok: true, responsable: destino.nombre });
+});
+
 // Equipo B2B: listar miembros con su estado de round-robin (autoasignar).
 // Qué roles puede VER/gestionar cada usuario en el panel de equipo.
 function rolesGestionablesB2B(user) {
@@ -4054,6 +4072,98 @@ app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
   db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(nuevoEstado, s.codigo);
   auditar(req, 'b2b_avanzar_etapa', s.codigo, s.estado + ' → ' + nuevoEstado + ' (' + tipo + ' ' + semaforo + ')');
   res.json({ ok: true, estado: nuevoEstado });
+});
+
+// ===== Tablero (kanban) B2B =====
+// Columnas secuenciales (izq→der). "Desestimado" es un filtro aparte, no una columna.
+const COLUMNAS_KANBAN_B2B = ['Solicitud', 'SUNAT', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
+
+// Deriva la columna del tablero desde señales que ya existen (sin columna nueva ni migración).
+function etapaKanbanB2B(s) {
+  if (s.archivado) return 'Desestimado';
+  if (s.estado === 'No elegible') return 'Desestimado';
+  if (!s.telefono || !String(s.telefono).trim()) return 'Desestimado'; // sin teléfono = no contactable
+  if (['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado)) return 'Business case';
+  if (s.estado === 'Filtro finanzas') return 'Filtro finanzas';
+  if (s.estado === 'Filtro garantia') return 'Filtro garantia';
+  if (s.estado === 'Amarillo/nurture') return 'Filtro credito'; // en revisión, sigue en crédito
+  // 'Nuevo' u otros: triaje por SUNAT
+  if (s.sunatEstado === 'ok') return 'Filtro credito';
+  if (s.sunatEstado === 'error') return 'SUNAT';
+  return 'Solicitud'; // recién llegado, SUNAT sin resolver
+}
+
+// Semáforos {credito,garantia,finanzas} por código, en un solo query.
+function semaforosB2BPorCodigo(codigos) {
+  const map = {};
+  if (!codigos.length) return map;
+  const ph = codigos.map(() => '?').join(',');
+  db.prepare("SELECT codigoSolicitud, tipoFiltro, semaforo FROM b2b_filtros WHERE codigoSolicitud IN (" + ph + ")").all(...codigos)
+    .forEach(f => { (map[f.codigoSolicitud] = map[f.codigoSolicitud] || {})[f.tipoFiltro] = f.semaforo; });
+  return map;
+}
+
+// Datos del tablero. ?desestimados=1 devuelve la bandeja de desestimados (filtro, no columna).
+app.get('/api/b2b/kanban', soloB2B, (req, res) => {
+  const soloDesest = req.query.desestimados === '1';
+  const filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, fechaIngreso, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
+  const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
+  const cards = filas.map(f => ({ ...f, etapaKanban: etapaKanbanB2B(f), semaforos: sem[f.codigo] || {} }));
+  const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
+  const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
+  const conteos = {};
+  COLUMNAS_KANBAN_B2B.forEach(c => { conteos[c] = 0; });
+  activos.forEach(c => { conteos[c.etapaKanban] = (conteos[c.etapaKanban] || 0) + 1; });
+  res.json({
+    columnas: COLUMNAS_KANBAN_B2B,
+    cards: soloDesest ? desest : activos,
+    conteos, desestimados: desest.length, total: activos.length,
+    puedeGestionar: puedeGestionarEquipoB2B(req.user)
+  });
+});
+
+// Para ENTRAR a cada columna: de dónde viene, qué candado (gate) exige y qué estado deja.
+const AVANCE_KANBAN_B2B = {
+  'Filtro credito': { desde: 'SUNAT', estado: 'Nuevo', gate: (s) => s.sunatEstado === 'ok', err: 'Primero valida el RUC en SUNAT (debe quedar en OK).' },
+  'Filtro garantia': { desde: 'Filtro credito', estado: 'Filtro garantia', gate: (s, sem) => sem.credito === 'Verde', err: 'El filtro de crédito debe estar en verde para avanzar.' },
+  'Filtro finanzas': { desde: 'Filtro garantia', estado: 'Filtro finanzas', gate: (s, sem) => sem.garantia === 'Verde', err: 'El filtro de garantía debe estar en verde para avanzar.' },
+  'Business case': { desde: 'Filtro finanzas', estado: 'Expediente', gate: (s, sem) => sem.finanzas === 'Verde', err: 'El filtro de finanzas debe estar en verde para avanzar.' }
+};
+
+// Mover una tarjeta a la siguiente columna (drag). Sin saltos, sin retrocesos, con candado de semáforo.
+app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const hacia = (req.body && req.body.hacia) || '';
+  const regla = AVANCE_KANBAN_B2B[hacia];
+  if (!regla) return res.status(400).json({ error: 'Columna destino inválida' });
+  const actual = etapaKanbanB2B(s);
+  if (actual === hacia) return res.json({ ok: true, etapaKanban: actual });
+  if (regla.desde !== actual) return res.status(400).json({ error: 'Solo se avanza una etapa a la vez, de izquierda a derecha (sin saltos ni retrocesos).' });
+  const sem = semaforosB2BPorCodigo([s.codigo])[s.codigo] || {};
+  if (!regla.gate(s, sem)) return res.status(409).json({ error: regla.err });
+  db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(regla.estado, s.codigo);
+  auditar(req, 'b2b_kanban_mover', s.codigo, actual + ' → ' + hacia);
+  res.json({ ok: true, etapaKanban: hacia });
+});
+
+// Descartar (sale del tablero, va a Desestimados). Motivo por defecto: "No contactable".
+app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const motivo = (req.body && req.body.motivo && String(req.body.motivo).trim()) || 'No contactable';
+  db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
+  auditar(req, 'b2b_descartar', s.codigo, motivo);
+  res.json({ ok: true });
+});
+
+// Reactivar un desestimado (vuelve al tablero como Nuevo → se re-triajea por SUNAT).
+app.put('/api/b2b/solicitudes/:codigo/reactivar', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  db.prepare("UPDATE b2b_solicitudes SET estado='Nuevo', motivoDescarte=NULL, archivado=0 WHERE codigo=?").run(s.codigo);
+  auditar(req, 'b2b_reactivar', s.codigo, 'reingreso al tablero');
+  res.json({ ok: true });
 });
 
 // Reconsulta SUNAT a pedido (botón "Validar SUNAT" en la ficha). Espera el resultado y lo devuelve.
@@ -4758,7 +4868,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.209 (normalizarB2B ahora acepta los nombres nativos de Meta/Make: campaign_name->campana, adset_name->conjunto, ad_name->anuncio (ad_id ya entraba); fix: el auto-detector de monto ya no confunde el texto del rango ni los IDs/nombres de campaign/adset/ad como monto. Payload de Cristian validado end-to-end) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.211 (Tablero kanban B2B: 6 columnas secuenciales Solicitud/SUNAT/Filtro Credito/Garantia/Finanzas/Business Case, columna derivada de senales existentes sin migracion, triaje automatico de entrada por telefono+SUNAT, drag izq->der con candado de semaforo verde sin saltos ni retrocesos, Desestimados como filtro con reactivar, descartar No contactable desde la ficha; endpoints GET /api/b2b/kanban, PUT .../mover .../descartar .../reactivar) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
