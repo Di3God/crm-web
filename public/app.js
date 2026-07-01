@@ -4771,8 +4771,10 @@ function evalGateJS(g, valores, ticket) {
   const val = valores[g.clave]; const vacio = (val === undefined || val === null || val === '');
   if (g.tipo === 'textoReq') { if (g.requiereSi && valores[g.requiereSi.clave] === g.requiereSi.val) { return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; } return { resultado: 'ok' }; }
   if (g.tipo === 'numReq') { if (vacio) return { resultado: 'escalado', motivo: g.motivo }; const n = Number(val); return (!isFinite(n) || n <= 0) ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
+  if (g.tipo === 'linkReq') { if (vacio) return { resultado: 'escalado', motivo: g.motivo }; return /^https?:\/\//i.test(String(val)) ? { resultado: 'ok' } : { resultado: 'escalado', motivo: g.motivo }; }
   if (g.tipo === 'numMinTicket') { if (vacio) return { resultado: 'ok' }; const min = g.minTicket[ticket] != null ? g.minTicket[ticket] : g.minTicket.Bajo; return Number(val) < min ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'numMaxTicket') { if (vacio) return { resultado: 'ok' }; const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo; return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' }; }
+  if (g.tipo === 'numObsTicket') { if (vacio) return { resultado: 'ok' }; const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo; return Number(val) > max ? { resultado: 'observado', motivo: g.motivo } : { resultado: 'ok' }; }
   if (g.tipo === 'docTicket') { const req = g.requeridoTicket && g.requeridoTicket[ticket]; if (!req) return { resultado: 'ok' }; return (vacio || val !== 'si') ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; }
   if (vacio) { if (g.oblig) return { resultado: 'escalado', motivo: g.motivo || ('Falta ' + (g.etiqueta || g.clave)) }; return { resultado: 'ok' }; }
   const op = (g.opciones || []).find(o => o.v === val); return op ? { resultado: op.resultado || 'ok', motivo: op.motivo } : { resultado: 'ok' };
@@ -4793,9 +4795,19 @@ const RATIO_CALC_JS = {
   margen: (v) => (v.utilidadAct != null && v.ventasAct) ? v.utilidadAct / v.ventasAct : null,
   crecimiento: (v) => (v.ventasAct != null && v.ventasAnt) ? (v.ventasAct / v.ventasAnt - 1) : null
 };
+// Cuota estimada gruesa (cuota fija 25% a 12m) sobre el monto sincerado; alimenta el DSCR.
+const CUOTA_REF_JS = { tasaAnual: 0.25, meses: 12 };
+function cuotaEstimadaJS(monto) {
+  const m = Number(monto); if (!isFinite(m) || m <= 0) return null;
+  const i = CUOTA_REF_JS.tasaAnual / 12, n = CUOTA_REF_JS.meses;
+  return m * (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
+}
 function evaluarRatiosJS(cat, valores, ticket) {
   const v = {};
   (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
+  const monto = FICHA.solicitud && Number(FICHA.solicitud.montoSolicitado);
+  const cuotaEst = cuotaEstimadaJS(monto);
+  v.cuotaMensual = cuotaEst;
   let ganado = 0, pesoTotal = 0; const detalle = []; const observaciones = []; let capacidad = null;
   (cat.ratios || []).forEach(r => {
     pesoTotal += r.peso;
@@ -4810,7 +4822,7 @@ function evaluarRatiosJS(cat, valores, ticket) {
     if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
   });
   const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
-  return { puntaje, detalle, observaciones, capacidad };
+  return { puntaje, detalle, observaciones, capacidad, cuotaEst };
 }
 function penalJS(p, valores) {
   const val = valores[p.clave];
@@ -4827,9 +4839,10 @@ function evaluarFiltro2JS(cat, valores, ticket) {
   if (kos.length) return { semaforo: 'Rojo', puntaje: 0, kos, escalados, observados, ko: true };
   let total = 0, pesoTotal = 0, faltan = 0;
   (cat.score || []).forEach(it => { pesoTotal += it.peso; const p = evalScoreJS(it, valores, ticket); if (p == null) faltan++; else total += p; });
-  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 100;
   let ratios = null;
   if (cat.ratios && cat.ratios.length) { ratios = evaluarRatiosJS(cat, valores, ticket); puntaje = ratios.puntaje; ratios.observaciones.forEach(o => observados.push(o)); }
+  (cat.analisis || []).forEach(a => { const v = valores[a.clave]; const vacio = (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)); if (vacio) escalados.push(a.motivo || ('Falta ' + a.etiqueta)); });
   let penalTotal = 0; (cat.penal || []).forEach(p => { penalTotal += penalJS(p, valores); });
   if (penalTotal) puntaje = Math.max(0, Math.round(puntaje - penalTotal));
   let semaforo = puntaje >= 80 ? 'Verde' : (puntaje >= 50 ? 'Amarillo' : 'Rojo');
@@ -4860,13 +4873,39 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
     const txt = meses != null && isFinite(meses) ? fmtAniosMeses(meses) : '—';
     return '<span class="mtr-am">' + txt + '</span><input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (meses != null ? meses : '') + '">';
   }
-  // Numérico activable: checkbox que habilita el input (si no se activa, no penaliza).
+  // Numérico con límite por ticket (KO o observado). Unidad clara + bloqueo de letras + límite visible.
+  if (campo.tipo === 'numMaxTicket' || campo.tipo === 'numObsTicket') {
+    const max = campo.maxTicket && (campo.maxTicket[ticket] != null ? campo.maxTicket[ticket] : campo.maxTicket.Bajo);
+    const esMonto = campo.unidad === 'monto';
+    const esPct = campo.unidad === 'porcentaje';
+    const pre = esMonto ? '<span class="mtr-uni">S/</span>' : '';
+    const post = esPct ? '<span class="mtr-uni">%</span>' : (!esMonto ? '<span class="mtr-uni">und</span>' : '');
+    // Texto del límite: KO vs observado.
+    const lim = campo.tipo === 'numMaxTicket'
+      ? (max === 0 ? 'no permitido' : 'máx ' + max)
+      : (esMonto ? 'obs. > S/' + Number(max).toLocaleString('es-PE') : esPct ? 'obs. > ' + max + '%' : 'obs. > ' + max);
+    // inputmode numeric + onkeypress bloquea todo lo que no sea dígito (ni punto para cantidades enteras; punto solo en monto).
+    const permitePunto = esMonto;
+    const guard = 'onkeypress="return b2bSoloNumero(event,' + (permitePunto ? 'true' : 'false') + ')"';
+    return '<span class="mtr-numwrap">' + pre +
+      '<input type="text" inputmode="' + (permitePunto ? 'decimal' : 'numeric') + '" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '" placeholder="0" ' + guard + ' oninput="' + cb + '">' +
+      post + '<span class="mtr-lim">' + lim + '</span></span>';
+  }
+  // Numérico activable (legacy, ya no usado en crédito).
   if (campo.activable) {
     const activo = val != null && val !== '';
     return '<label class="mtr-act"><input type="checkbox" ' + (activo ? 'checked' : '') + ' onchange="toggleActivable(this,\'' + prefijo + '\',\'' + campo.clave + '\',\'' + tipo + '\',\'' + ticket + '\')"> aplica</label>' +
       '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (activo ? val : '') + '"' + (activo ? '' : ' disabled') + ' oninput="' + cb + '">';
   }
   return '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '" oninput="' + cb + '">';
+}
+// Bloquea la entrada de caracteres no numéricos. permitePunto=true admite un punto decimal (montos).
+function b2bSoloNumero(e, permitePunto) {
+  const ch = e.key || String.fromCharCode(e.which);
+  if (ch === 'Enter' || ch === 'Backspace' || ch === 'Tab') return true;
+  if (/[0-9]/.test(ch)) return true;
+  if (permitePunto && ch === '.' && !(e.target.value || '').includes('.')) return true;
+  e.preventDefault(); return false;
 }
 // Sub-control desplegable (cantidad de protestados / monto de coactiva).
 function subControlFiltro2(clave, valores, prefijo, tipo, ticket, visible) {
@@ -4949,6 +4988,30 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     html += '<div class="fb-sec">Cifras financieras (2 años, cierre de año)</div>' + insHtml;
     html += '<div class="fb-sec">Ratios calculados</div><div id="' + prefijo + '_ratios">' + ratiosTablaHTML(ev.ratios) + '</div>';
   }
+  // Bloque de análisis comercial/financiero (obligatorio; el Business Case lo hereda).
+  if (cat.analisis && cat.analisis.length) {
+    const cb = 'recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')';
+    const anHtml = cat.analisis.map(a => {
+      const val = valores[a.clave];
+      if (a.tipo === 'selectReq') {
+        return '<div class="mtr-row"><span class="mtr-lbl">' + a.etiqueta + '</span><span class="mtr-ctrl">' +
+          '<select class="mtr-in" style="max-width:none;width:240px" data-f2="' + prefijo + '" data-k="' + a.clave + '" onchange="' + cb + '"><option value="">—</option>' +
+          a.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select></span></div>';
+      }
+      if (a.tipo === 'multiReq') {
+        const arr = Array.isArray(val) ? val : (val ? String(val).split(',') : []);
+        const chips = a.opciones.map(o => {
+          const on = arr.includes(o.v);
+          return '<label class="an-chip' + (on ? ' an-chip-on' : '') + '"><input type="checkbox" ' + (on ? 'checked' : '') + ' data-f2multi="' + prefijo + '" data-k="' + a.clave + '" value="' + o.v + '" onchange="' + cb + '"> ' + o.label + '</label>';
+        }).join('');
+        return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + '</span><div class="an-chips">' + chips + '</div></div>';
+      }
+      // textoLibreReq
+      return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + '</span>' +
+        '<textarea class="mtr-in an-textarea" data-f2="' + prefijo + '" data-k="' + a.clave + '" placeholder="Explica por qué el caso merece evaluación…" oninput="' + cb + '">' + (val ? String(val).replace(/</g, '&lt;') : '') + '</textarea></div>';
+    }).join('');
+    html += '<div class="fb-sec">Análisis del caso (para el Business Case)</div>' + anHtml;
+  }
   html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
   return html;
 }
@@ -4957,6 +5020,10 @@ function ratiosTablaHTML(ratios) {
   if (!ratios || !ratios.detalle) return '<div class="sub">Ingresa las cifras para calcular los ratios.</div>';
   const fmtVal = (v, f) => v == null ? '—' : (f === '%' ? (v * 100).toFixed(1) + '%' : v.toFixed(2) + 'x');
   const fmtUmb = (u, f, dir) => (dir === 'min' ? '≥ ' : '≤ ') + (f === '%' ? (u * 100).toFixed(0) + '%' : u.toFixed(1) + 'x');
+  // Nota de la cuota estimada usada para el DSCR (gruesa: 25% a 12m sobre el monto sincerado).
+  let cuotaNota = '';
+  if (ratios.cuotaEst != null) cuotaNota = '<div class="rt-cuota">Cuota estimada (25% a 12m sobre el monto): <b>S/ ' + Math.round(ratios.cuotaEst).toLocaleString('es-PE') + '</b>/mes</div>';
+  else cuotaNota = '<div class="rt-cuota rt-cuota-pend">Define el monto exacto (botón Editar en Solicitud) para estimar la cuota del DSCR.</div>';
   let rows = ratios.detalle.map(d => {
     const est = d.cumple == null ? '<span class="rt-na">sin dato</span>' : (d.cumple ? '<span class="rt-ok">✓ cumple</span>' : '<span class="rt-obs">⚠ observar</span>');
     return '<tr><td>' + d.etiqueta + '</td><td class="rt-c">' + fmtUmb(d.umbral, d.fmt, d.dir) + '</td><td class="rt-c"><b>' + fmtVal(d.valor, d.fmt) + '</b></td><td class="rt-c">' + est + '</td></tr>';
@@ -4966,10 +5033,15 @@ function ratiosTablaHTML(ratios) {
   if (dscr && dscr.cumple === false && ratios.capacidad != null) {
     cap = '<div class="rt-cap">💡 Capacidad de pago: la cuota máxima que soporta el flujo es <b>S/ ' + Math.floor(ratios.capacidad).toLocaleString('es-PE') + '</b>/mes. Considera reducir el monto a ese nivel.</div>';
   }
-  return '<table class="rt-tabla"><thead><tr><th>Ratio</th><th>Umbral</th><th>Valor</th><th>Estado</th></tr></thead><tbody>' + rows + '</tbody></table>' + cap;
+  return cuotaNota + '<table class="rt-tabla"><thead><tr><th>Ratio</th><th>Umbral</th><th>Valor</th><th>Estado</th></tr></thead><tbody>' + rows + '</tbody></table>' + cap;
 }
 function leerFiltro2(prefijo) {
-  const o = {}; document.querySelectorAll('[data-f2="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; }); return o;
+  const o = {}; document.querySelectorAll('[data-f2="' + prefijo + '"]').forEach(el => { const v = el.value; if (v !== '' && v != null) o[el.getAttribute('data-k')] = v; });
+  // Multi-selección (mitigantes): junta los checkboxes marcados en un array.
+  document.querySelectorAll('[data-f2multi="' + prefijo + '"]:checked').forEach(el => {
+    const k = el.getAttribute('data-k'); if (!o[k]) o[k] = []; if (Array.isArray(o[k])) o[k].push(el.value);
+  });
+  return o;
 }
 function recalcFiltro2(prefijo, tipo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return;
@@ -5048,6 +5120,8 @@ function panelSolicitud(s) {
   if (open) {
     const montoStr = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
     const montoExtra = (s.montoSolicitado != null && s.montoRango) ? ' <span class="sub">(' + s.montoRango + ')</span>' : '';
+    const montoFila = '<div class="fb-campo"><span class="fb-k">Monto solicitado</span><span class="fb-v">' + montoStr + montoExtra +
+      ' <button class="btn-sunat" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button></span></div>';
     const garantia = '<div class="fb-sec">Garantía declarada</div>' +
       fbCampo('¿Tiene inmueble?', s.tieneInmueble) +
       fbCampoOpt('Tipo de inmueble', s.tipoInmueble) +
@@ -5056,7 +5130,7 @@ function panelSolicitud(s) {
       fbCampoOpt('Ubicación del inmueble', s.departamentoInmueble);
     cuerpo = '<div class="fb-body">' +
       fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampoOpt('Email', s.email) +
-      fbCampo('Monto solicitado', montoStr + montoExtra) +
+      montoFila +
       fbCampoOpt('Destino de fondos', s.destinoFondos) +
       garantia +
       '</div>';
@@ -5329,10 +5403,83 @@ function inmuebleCard(inm) {
   let valores = {};
   try { valores = typeof inm.checklist === 'string' ? JSON.parse(inm.checklist || '{}') : (inm.checklist || {}); } catch (e) { valores = {}; }
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const pf = 'inm' + inm.id;
   const head = '<input class="fb-suj-nom" id="inm_alias_' + inm.id + '" value="' + (inm.alias ? inm.alias.replace(/"/g, '&quot;') : '') + '" placeholder="Alias / dirección">' +
     '<input class="fb-suj-nom" id="inm_distrito_' + inm.id + '" value="' + (inm.distrito ? inm.distrito.replace(/"/g, '&quot;') : '') + '" placeholder="Distrito" style="max-width:150px">' +
     '<span style="margin-left:auto"><button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarInmueble(' + inm.id + ')" title="Quitar">✕</button></span>';
-  return '<div class="fb-suj' + (inm._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + head + '</div>' + renderFiltroDosCapas('garantia', valores, 'inm' + inm.id, ticket) + '</div>';
+  return '<div class="fb-suj' + (inm._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + head + '</div>' +
+    renderGarantiaInmueble(valores, pf, ticket) + '</div>';
+}
+// Render de un inmueble: casilla Apto, valor ref + moneda, LTV calculado, y un ÚNICO link de Drive.
+function renderGarantiaInmueble(valores, prefijo, ticket) {
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.garantia; if (!cat) return '<div class="sub">Catálogo no disponible.</div>';
+  const cb = 'recalcGarantia(\'' + prefijo + '\',\'' + ticket + '\')';
+  // 1) Casilla Apto.
+  const apto = valores.apto || '';
+  const aptoHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Apto / saneado (SUNARP)</b></span><span class="mtr-ctrl">' +
+    '<select class="mtr-in" data-f2="' + prefijo + '" data-k="apto" onchange="' + cb + '">' +
+    '<option value="">—</option>' +
+    '<option value="si"' + (apto === 'si' ? ' selected' : '') + '>Sí</option>' +
+    '<option value="observado"' + (apto === 'observado' ? ' selected' : '') + '>Observado</option>' +
+    '<option value="no"' + (apto === 'no' ? ' selected' : '') + '>No</option>' +
+    '</select></span></div>';
+  // 2) Valor referencial + moneda.
+  const moneda = valores.valorRefMoneda || 'soles';
+  const valorHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Valor referencial</b></span><span class="mtr-ctrl">' +
+    '<select class="mtr-in" style="width:74px" data-f2="' + prefijo + '" data-k="valorRefMoneda" onchange="' + cb + '">' +
+    '<option value="soles"' + (moneda === 'soles' ? ' selected' : '') + '>S/</option>' +
+    '<option value="dolares"' + (moneda === 'dolares' ? ' selected' : '') + '>US$</option>' +
+    '</select>' +
+    '<input type="text" inputmode="decimal" class="mtr-in mtr-num" style="width:110px" data-f2="' + prefijo + '" data-k="valorRef" value="' + (valores.valorRef != null ? valores.valorRef : '') + '" placeholder="0" onkeypress="return b2bSoloNumero(event,true)" oninput="' + cb + '"></span></div>';
+  // 3) LTV calculado (en vivo).
+  const ltvHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>LTV</b> <span class="sub" style="font-size:11px">(monto ÷ valor ref)</span></span>' +
+    '<span class="mtr-ctrl"><span id="' + prefijo + '_ltv" class="gd-ltv">' + ltvTextoJS(valores, ticket) + '</span></span></div>';
+  // 4) Un único link de Drive con TODOS los documentos (último campo, obligatorio).
+  const link = valores.linkDrive || ''; const linkOk = link && /^https?:\/\//i.test(link);
+  const linkHtml = '<div class="gd-row gd-row-link"><span class="gd-lbl"><b>Link de Drive</b> <span class="sub" style="font-size:11px">(copia literal, HR/PU, DNI, recibo, fotos)</span></span>' +
+    '<span class="gd-st ' + (linkOk ? 'gd-ok' : 'gd-pend') + '">' + (linkOk ? '✓' : 'pendiente') + '</span>' +
+    '<input type="url" class="mtr-in gd-link" data-f2="' + prefijo + '" data-k="linkDrive" value="' + (link ? link.replace(/"/g, '&quot;') : '') + '" placeholder="https://drive.google.com/…" oninput="' + cb + '">' +
+    (linkOk ? '<a class="gd-open" href="' + link + '" target="_blank" rel="noopener">abrir</a>' : '') + '</div>';
+  const ev = evaluarFiltro2JS(cat, valores, ticket);
+  return '<div class="f2-box"><div class="fb-sec">Evaluación</div>' + aptoHtml + valorHtml + ltvHtml +
+    '<div class="fb-sec">Documentos</div>' + linkHtml +
+    '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+}
+// Calcula el LTV en el cliente para mostrarlo (TC 3.45 si el inmueble está en dólares).
+function ltvInfoJS(valores) {
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.garantia;
+  const cfg = (cat && cat.ltv) || { tc: 3.45, umbralObservado: 0.35 };
+  const monto = FICHA.solicitud && Number(FICHA.solicitud.montoSolicitado);
+  const valorRef = Number(valores.valorRef);
+  if (!isFinite(valorRef) || valorRef <= 0 || !monto) return null;
+  const moneda = valores.valorRefMoneda || 'soles';
+  const valorSoles = moneda === 'dolares' ? valorRef * cfg.tc : valorRef;
+  const ltv = monto / valorSoles;
+  return { ltv, obs: ltv < cfg.umbralObservado, moneda, valorSoles, tc: cfg.tc, umbral: cfg.umbralObservado };
+}
+function ltvTextoJS(valores, ticket) {
+  const info = ltvInfoJS(valores);
+  if (!info) return '<span class="sub">ingresa valor referencial y monto exacto</span>';
+  const pct = (info.ltv * 100).toFixed(1) + '%';
+  const clase = info.obs ? 'gd-ltv-obs' : 'gd-ltv-ok';
+  const nota = info.moneda === 'dolares' ? ' <span class="sub" style="font-size:10.5px">(TC ' + info.tc + ')</span>' : '';
+  const est = info.obs ? ' · observado (< ' + (info.umbral * 100) + '%)' : ' · verde';
+  return '<span class="' + clase + '">' + pct + est + '</span>' + nota;
+}
+// Recalcula un inmueble en vivo: LTV + banda de semáforo.
+function recalcGarantia(prefijo, ticket) {
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.garantia; if (!cat) return;
+  const valores = leerFiltro2(prefijo);
+  const ltvEl = $(prefijo + '_ltv'); if (ltvEl) ltvEl.innerHTML = ltvTextoJS(valores, ticket);
+  // Refleja el LTV bajo como observación en la evaluación en vivo.
+  const ev = evaluarFiltro2JS(cat, valores, ticket);
+  const info = ltvInfoJS(valores);
+  if (info && info.obs && ev.semaforo === 'Verde') { ev.semaforo = 'Amarillo'; if (!ev.observados) ev.observados = []; ev.observados.push('LTV < ' + (info.umbral * 100) + '%'); }
+  const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(ev);
+  // Actualiza el estado del link único (pendiente/✓).
+  const inp = document.querySelector('[data-f2="' + prefijo + '"][data-k="linkDrive"]');
+  if (inp) { const row = inp.closest('.gd-row'); const st = row && row.querySelector('.gd-st'); const ok = inp.value && /^https?:\/\//i.test(inp.value); if (st) { st.className = 'gd-st ' + (ok ? 'gd-ok' : 'gd-pend'); st.textContent = ok ? '✓' : 'pendiente'; } }
+  actualizarConsolidadoGarantiaVivo();
 }
 function panelGarantia(desbloqueada, sem) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', 'Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
@@ -5343,10 +5490,9 @@ function panelGarantia(desbloqueada, sem) {
   const inms = FICHA.garantiaInmuebles || [];
   let html = '<div class="fb-body">';
   html += '<div class="fb-cred-cons">Consolidado: <span id="fbGarConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
-  html += '<p class="sub">Registra uno o varios inmuebles. Consolidación = <b>mejor caso</b>: basta con que UN inmueble pase todos los gates. El puntaje se ancla en el mejor. Sin LTV ni monto (los calcula Créditos).</p>';
+  html += '<p class="sub">Registra uno o varios inmuebles. Consolidación = <b>mejor caso</b>: basta con que UN inmueble pase. Objetivo: verificar que el inmueble esté <b>apto/saneado en SUNARP</b> (evidencia: los documentos) y fijar un <b>valor referencial</b> para calcular el LTV. Los documentos, la casilla Apto y el valor referencial son obligatorios para avanzar.</p>';
   html += inms.map(inmuebleCard).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas inmuebles.</div>';
   html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
-  html += '<div class="fb-sec">Documentos (links de Drive)</div>' + renderDocsGarantia();
   html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
   html += '</div>';
   return fbPanelWrap('garantia', '🏠', 'Filtro garantía', estadoHtml, true, html);
@@ -5399,15 +5545,81 @@ function panelBusinessCase(desbloqueada) {
   html += '<div class="fb-sec">Veredicto por filtro (peor caso gobierna)</div>';
   html += fila('sunat', 'SUNAT (elegibilidad)') + fila('credito', 'Crédito') + fila('garantia', 'Garantía') + fila('finanzas', 'Finanzas y negocio');
   html += '<div class="fb-sec">Resumen comercial</div>';
+  const montoTxt = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
   html += '<div class="bc-resumen">' +
     '<div><span class="sub">Empresa</span><b>' + (s.razonSocial || '—') + '</b></div>' +
     '<div><span class="sub">RUC</span><b>' + (s.ruc || '—') + '</b></div>' +
     '<div><span class="sub">Ticket</span><b>' + (s.ticket || '—') + '</b></div>' +
     '<div><span class="sub">Sector</span><b>' + (s.sector || '—') + '</b></div>' +
+    '<div><span class="sub">Monto solicitado</span><b>' + montoTxt + '</b></div>' +
     '<div><span class="sub">Contacto</span><b>' + (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '') + '</b></div>' +
     '</div>';
+  // Datos clave heredados de los filtros (auto).
+  html += bcDatosClaveHTML();
+  // Análisis heredado del filtro Finanzas (destino, repago, mitigantes, motivo).
+  html += bcAnalisisHTML();
+  // Observaciones automáticas: todo lo que quedó en amarillo/escalado en los 4 filtros.
+  html += bcObservacionesHTML();
+  // Recomendación auto-sugerida según el consolidado.
+  const rec = glob === 'Rojo' ? { t: 'Descartar', c: '#E24B4A' } : glob === 'Amarillo' ? { t: 'Avanzar con observaciones', c: '#EF9F27' } : glob === 'Verde' ? { t: 'Avanzar a expediente', c: '#1D9E75' } : { t: 'Pendiente de completar filtros', c: '#94a3b8' };
+  html += '<div class="fb-sec">Recomendación comercial</div><div class="bc-rec" style="border-color:' + rec.c + '55;background:' + rec.c + '11"><b style="color:' + rec.c + '">' + rec.t + '</b></div>';
   html += '</div>';
   return fbPanelWrap('businesscase', '📑', 'Business case', estadoHtml, true, html);
+}
+// Datos clave que el Business Case hereda de los filtros ya cargados.
+function bcDatosClaveHTML() {
+  const f = FICHA.filtros || {};
+  let chkF = {}, chkC = {};
+  try { chkF = typeof f.finanzas?.checklist === 'string' ? JSON.parse(f.finanzas.checklist) : (f.finanzas?.checklist || {}); } catch (e) { }
+  // Mejor inmueble de garantía (valor ref + LTV).
+  const inms = FICHA.garantiaInmuebles || [];
+  let mejor = null;
+  inms.forEach(i => { if (i.semaforo && (mejor == null || ORDEN_SEM_JS[i.semaforo] < ORDEN_SEM_JS[mejor.semaforo])) mejor = i; });
+  let garVal = '—', ltvTxt = '—';
+  if (mejor) { try { const cg = typeof mejor.checklist === 'string' ? JSON.parse(mejor.checklist) : mejor.checklist; if (cg && cg.valorRef) garVal = (cg.valorRefMoneda === 'dolares' ? 'US$ ' : 'S/ ') + Number(cg.valorRef).toLocaleString('es-PE'); const info = ltvInfoJS(cg || {}); if (info) ltvTxt = (info.ltv * 100).toFixed(1) + '%'; } catch (e) { } }
+  const ev = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas ? evaluarFiltro2JS(FILTROS_B2B_CACHE.finanzas, chkF, FICHA.solicitud.ticket || 'Bajo') : null;
+  let dscr = '—', endeud = '—', margen = '—';
+  if (ev && ev.ratios) { const g = (k) => ev.ratios.detalle.find(d => d.clave === k); const d = g('dscr'), e = g('endeudamiento'), m = g('margen'); if (d && d.valor != null) dscr = d.valor.toFixed(2) + 'x'; if (e && e.valor != null) endeud = e.valor.toFixed(2) + 'x'; if (m && m.valor != null) margen = (m.valor * 100).toFixed(1) + '%'; }
+  return '<div class="fb-sec">Datos clave (heredados de los filtros)</div><div class="bc-resumen">' +
+    '<div><span class="sub">Valor garantía (ref.)</span><b>' + garVal + '</b></div>' +
+    '<div><span class="sub">LTV</span><b>' + ltvTxt + '</b></div>' +
+    '<div><span class="sub">DSCR</span><b>' + dscr + '</b></div>' +
+    '<div><span class="sub">Endeudamiento</span><b>' + endeud + '</b></div>' +
+    '<div><span class="sub">Margen neto</span><b>' + margen + '</b></div>' +
+    '</div>';
+}
+// Análisis heredado del filtro Finanzas.
+function bcAnalisisHTML() {
+  const f = FICHA.filtros || {};
+  let chk = {};
+  try { chk = typeof f.finanzas?.checklist === 'string' ? JSON.parse(f.finanzas.checklist) : (f.finanzas?.checklist || {}); } catch (e) { }
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas;
+  if (!cat || !cat.analisis) return '';
+  const lbl = (clave, v) => { const a = cat.analisis.find(x => x.clave === clave); if (!a || !a.opciones) return v; if (Array.isArray(v)) return v.map(x => { const o = a.opciones.find(o => o.v === x); return o ? o.label : x; }).join(', '); const o = a.opciones.find(o => o.v === v); return o ? o.label : v; };
+  const destino = chk.destinoFondos ? lbl('destinoFondos', chk.destinoFondos) : '—';
+  const repago = chk.fuenteRepago ? lbl('fuenteRepago', chk.fuenteRepago) : '—';
+  let mit = chk.mitigantes; if (typeof mit === 'string') mit = mit.split(',');
+  const mitTxt = (Array.isArray(mit) && mit.length) ? lbl('mitigantes', mit) : '—';
+  const motivo = chk.motivoEvaluacion || '—';
+  return '<div class="fb-sec">Análisis del caso</div><div class="bc-analisis">' +
+    '<div><span class="sub">Destino de los fondos</span> ' + destino + '</div>' +
+    '<div><span class="sub">Fuente de repago</span> ' + repago + '</div>' +
+    '<div><span class="sub">Mitigantes</span> ' + mitTxt + '</div>' +
+    '<div><span class="sub">Motivo de evaluación</span> ' + (motivo !== '—' ? String(motivo).replace(/</g, '&lt;') : '—') + '</div>' +
+    '</div>';
+}
+// Lista automática de observaciones (amarillos/escalados) de los 4 filtros.
+function bcObservacionesHTML() {
+  const f = FICHA.filtros || {};
+  const items = [];
+  ['sunat', 'credito', 'garantia', 'finanzas'].forEach(k => {
+    const ff = f[k] || {}; const m = ff.motivos || {};
+    (m.escalados || []).forEach(x => items.push({ k, x }));
+  });
+  if (!items.length) return '<div class="fb-sec">Observaciones a levantar</div><div class="sub" style="padding:4px 0">Sin observaciones registradas.</div>';
+  const nom = { sunat: 'SUNAT', credito: 'Crédito', garantia: 'Garantía', finanzas: 'Finanzas' };
+  return '<div class="fb-sec">Observaciones a levantar</div><ul class="bc-obs">' +
+    items.map(i => '<li><b>' + nom[i.k] + ':</b> ' + i.x + '</li>').join('') + '</ul>';
 }
 
 function panelBloqueable(tipo, titulo, ic, desbloqueada) {
@@ -5655,6 +5867,23 @@ async function eliminarDoc(id) {
 }
 
 // ===== Acciones del filtro de crédito =====
+async function editarMontoB2B() {
+  const actual = FICHA.solicitud && FICHA.solicitud.montoSolicitado;
+  const inp = prompt('Monto exacto solicitado por el empresario (S/):', actual != null ? actual : '');
+  if (inp == null) return;
+  const monto = Number(String(inp).replace(/[^0-9.]/g, ''));
+  if (!isFinite(monto) || monto <= 0) { alert('Monto inválido'); return; }
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/monto', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto })
+    });
+    FICHA.solicitud.montoSolicitado = r.montoSolicitado;
+    FICHA.solicitud.montoRango = null;
+    FICHA.solicitud.ticket = r.ticket;
+    renderFichaB2B();
+  } catch (e) { alert('No se pudo actualizar el monto: ' + e.message); }
+}
+
 async function guardarLinkCredito() {
   const el = $('fbCredLink'); if (!el) return;
   const link = el.value.trim();

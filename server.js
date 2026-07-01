@@ -3923,6 +3923,20 @@ app.put('/api/b2b/solicitudes/:codigo/reasignar', soloB2B, (req, res) => {
   res.json({ ok: true, responsable: destino.nombre });
 });
 
+// Editar el monto exacto solicitado (el que confirma el empresario). Recalcula el ticket.
+app.put('/api/b2b/solicitudes/:codigo/monto', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const monto = Number(req.body && req.body.monto);
+  if (!isFinite(monto) || monto <= 0) return res.status(400).json({ error: 'Monto inválido' });
+  const ticket = ticketDeMonto(monto);
+  // Al fijar el monto exacto, dejamos de tratarlo como rango.
+  db.prepare("UPDATE b2b_solicitudes SET montoSolicitado=?, montoRango=NULL, ticket=? WHERE codigo=?").run(monto, ticket, s.codigo);
+  auditar(req, 'b2b_editar_monto', s.codigo, 'S/ ' + monto + ' · ' + ticket);
+  res.json({ ok: true, montoSolicitado: monto, ticket });
+});
+
+
 // Equipo B2B: listar miembros con su estado de round-robin (autoasignar).
 // Qué roles puede VER/gestionar cada usuario en el panel de equipo.
 function rolesGestionablesB2B(user) {
@@ -4098,6 +4112,13 @@ function consolidadoCredito(codigo) {
 // ======================================================================
 const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
 const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
+// Cuota estimada "gruesa" para el DSCR: cuota fija (francés), tasa piso referencial 25% anual, 12 meses.
+const CUOTA_REF = { tasaAnual: 0.25, meses: 12 };
+function cuotaEstimadaB2B(monto) {
+  const m = Number(monto); if (!isFinite(m) || m <= 0) return null;
+  const i = CUOTA_REF.tasaAnual / 12, n = CUOTA_REF.meses;
+  return m * (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
+}
 
 const FILTROS_B2B = {
   sunat: {
@@ -4108,26 +4129,26 @@ const FILTROS_B2B = {
         { v: 'observar', label: 'RUC 10 — observar', resultado: 'observado', motivo: 'RUC 10 (persona natural): revisar' },
         { v: 'no', label: 'No', resultado: 'ko', motivo: 'No es persona jurídica' }
       ] },
-      { clave: 'estado', etiqueta: 'Estado SUNAT', tipo: 'select', opciones: [
+      { clave: 'estado', etiqueta: 'Estado SUNAT', tipo: 'select', auto: true, opciones: [
         { v: 'activo', label: 'Activo', resultado: 'ok' },
         { v: 'bajaprov', label: 'Baja provisional / de oficio', resultado: 'observado', motivo: 'Estado SUNAT en baja provisional/de oficio: observar' },
         { v: 'no', label: 'No activo', resultado: 'ko', motivo: 'Estado SUNAT no activo' }
       ] },
-      { clave: 'condicion', etiqueta: 'Condición SUNAT', tipo: 'select', opciones: [
+      { clave: 'condicion', etiqueta: 'Condición SUNAT', tipo: 'select', auto: true, opciones: [
         { v: 'habido', label: 'Habido', resultado: 'ok' },
         { v: 'no', label: 'No habido', resultado: 'ko', motivo: 'Condición SUNAT ≠ Habido' }
       ] },
       { clave: 'antiguedad', etiqueta: 'Antigüedad', tipo: 'numMinTicket', formato: 'aniosMeses', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' }
     ],
-    score: [
-      { clave: 'antiguedad', etiqueta: 'Antigüedad sobre el mínimo', tipo: 'colchonTicket', peso: 100, refGate: true }
-    ]
+    // SUNAT no lleva puntaje proporcional: si los gates pasan es Verde 100; un 'observado' lo baja a Amarillo.
+    score: []
   },
 
   // ===== CRÉDITO (se evalúa POR SUJETO: empresa / RL / vinculada; consolidación = peor caso) =====
   credito: {
     titulo: 'Filtro Crédito (por sujeto)',
     gates: [
+      // ---- KILLERS (matan el sujeto) ----
       { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', opciones: [
         { v: 'normal', label: 'Normal', resultado: 'ok' },
         { v: 'cpp', label: 'CPP', resultado: 'ok' },
@@ -4138,34 +4159,22 @@ const FILTROS_B2B = {
       { clave: 'listaNegra', etiqueta: 'Lista negra interna Tasatop', tipo: 'select', opciones: [
         { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Lista negra interna Tasatop' }
       ] },
-      // Documentos protestados: Sí despliega cantidad; castigo -4/-8/-12 (no KO).
-      { clave: 'protestados', etiqueta: 'Documentos protestados', tipo: 'select', despliega: 'protestadosCant', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ok' }
-      ] },
-      // Cobranza coactiva vigente: Sí despliega monto; castigo -4/-8/-12 (no KO).
-      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', despliega: 'coactivaMonto', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ok' }
-      ] },
-      // KO secos por historial grave (cualquier cantidad > 0).
-      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico (cantidad)', tipo: 'numMaxTicket', activable: true, maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido' },
-      { clave: 'castigados', etiqueta: 'Castigados (cantidad)', tipo: 'numMaxTicket', activable: true, maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos' }
-    ],
-    // Puntaje: parte de 100 y descuenta. Los activables solo penalizan si el analista los activó.
-    score: [
-      { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', peso: 40, refGate: true, opciones: [
-        { v: 'normal', label: 'Normal', frac: 1 }, { v: 'cpp', label: 'CPP', frac: 0.5 }, { v: 'deficiente', label: 'Deficiente', frac: 0.2 },
-        { v: 'dudoso', label: 'Dudoso', frac: 0 }, { v: 'perdida', label: 'Pérdida', frac: 0 }
+      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido (KO)' },
+      { clave: 'castigados', etiqueta: 'Castigados', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos (KO)' },
+      // ---- OBSERVABLES por límite de ticket (exceder = Amarillo, no mata) ----
+      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación', tipo: 'numObsTicket', unidad: 'porcentaje', maxTicket: { Bajo: 75, Medio: 50, Alto: 25 }, motivo: 'CPP en evaluación excede el límite del ticket' },
+      { clave: 'cppHist', etiqueta: 'CPP histórico', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 2, Medio: 2, Alto: 2 }, motivo: 'CPP histórico excede el límite del ticket' },
+      { clave: 'deficienteHist', etiqueta: 'Deficiente histórico', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 1, Medio: 0, Alto: 0 }, motivo: 'Deficiente histórico excede el límite del ticket' },
+      { clave: 'refis', etiqueta: 'Refinanciamientos (últ. 12m)', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Refinanciamientos observados (excede límite)' },
+      { clave: 'protestadosCant', etiqueta: 'Documentos protestados', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Documentos protestados (subsanable, observado)' },
+      { clave: 'morososMonto', etiqueta: 'Documentos morosos', tipo: 'numObsTicket', unidad: 'monto', maxTicket: { Bajo: 1000, Medio: 3000, Alto: 5000 }, motivo: 'Monto de morosos excede el límite del ticket' },
+      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', opciones: [
+        { v: 'no', label: 'No', resultado: 'ok' },
+        { v: 'si', label: 'Sí', resultado: 'observado', motivo: 'Coactiva vigente: requiere subsanación/aprobación de comité' }
       ] }
     ],
-    // Penalizaciones directas al puntaje (se restan del score base). Diego v1.222.
-    penal: [
-      { clave: 'protestadosCant', tipo: 'penalEscala', tramos: [{ hasta: 1, pena: 4 }, { hasta: 2, pena: 8 }, { hasta: Infinity, pena: 12 }] },
-      { clave: 'coactivaMonto', tipo: 'penalSelect', mapa: { m1: 4, m2: 8, m3: 12 } },
-      { clave: 'refis', tipo: 'penalPorUnidad', pena: 10, activable: true },
-      { clave: 'cppHist', tipo: 'penalPorUnidad', pena: 4, activable: true },
-      { clave: 'morososMonto', tipo: 'penalMonto', tramos: [{ hasta: 1000, pena: 4 }, { hasta: 5000, pena: 8 }, { hasta: Infinity, pena: 12 }], activable: true },
-      { clave: 'cppEvalPct', tipo: 'penalPorPct', pena: 0.5, activable: true }
-    ]
+    // SUNAT-style: sin puntaje proporcional. Pasar gates = 100; observado baja a Amarillo; KO = Rojo.
+    score: []
   },
 
   // ===== FINANZAS Y NEGOCIOS (completitud documental + viabilidad + solidez) =====
@@ -4187,8 +4196,7 @@ const FILTROS_B2B = {
       { clave: 'utilidadAnt', etiqueta: 'Utilidad neta / EBITDA (anterior)', sufijo: 'S/' },
       { clave: 'deudaFin', etiqueta: 'Deuda financiera total', sufijo: 'S/' },
       { clave: 'patrimonio', etiqueta: 'Patrimonio', sufijo: 'S/' },
-      { clave: 'flujoMensual', etiqueta: 'Flujo disponible mensual', sufijo: 'S/' },
-      { clave: 'cuotaMensual', etiqueta: 'Cuota mensual estimada', sufijo: 'S/' }
+      { clave: 'flujoMensual', etiqueta: 'Flujo disponible mensual', sufijo: 'S/' }
     ],
     // 5 ratios que PUNTÚAN (ninguno mata). No cumplir el umbral = observación (no suma su peso).
     // dir: 'min' cumple si valor>=umbral; 'max' cumple si valor<=umbral. Umbral por ticket.
@@ -4204,57 +4212,54 @@ const FILTROS_B2B = {
       { clave: 'crecimiento', etiqueta: 'Crecimiento de ventas (act/ant −1)', peso: 10, dir: 'min', umbral: { Bajo: -0.10, Medio: 0.00, Alto: 0.05 }, fmt: '%',
         calc: (v) => (v.ventasAct != null && v.ventasAnt) ? (v.ventasAct / v.ventasAnt - 1) : null }
     ],
+    // Análisis comercial/financiero (obligatorio para cerrar). El Business Case lo hereda.
+    analisis: [
+      { clave: 'destinoFondos', etiqueta: 'Destino de los fondos', tipo: 'selectReq', motivo: 'Falta el destino de los fondos', opciones: [
+        { v: 'capital', label: 'Capital de trabajo' },
+        { v: 'activo', label: 'Activo fijo productivo' },
+        { v: 'deuda', label: 'Compra de deuda' },
+        { v: 'expansion', label: 'Expansión selectiva' }
+      ] },
+      { clave: 'fuenteRepago', etiqueta: 'Fuente de repago', tipo: 'selectReq', motivo: 'Falta la fuente de repago', opciones: [
+        { v: 'operativo', label: 'Flujo operativo del negocio' },
+        { v: 'cxc', label: 'Flujo + cuentas por cobrar' },
+        { v: 'contratos', label: 'Ingresos por contratos/proyectos vigentes' },
+        { v: 'mixto', label: 'Mixto (varias fuentes)' }
+      ] },
+      { clave: 'mitigantes', etiqueta: 'Mitigantes principales', tipo: 'multiReq', motivo: 'Falta indicar mitigantes', opciones: [
+        { v: 'aval', label: 'Aval personal' },
+        { v: 'garantiaAdic', label: 'Garantía adicional' },
+        { v: 'ltvConserv', label: 'LTV conservador' },
+        { v: 'plazoRed', label: 'Plazo reducido' },
+        { v: 'dscrAlto', label: 'Mayor cobertura de flujo (DSCR alto)' },
+        { v: 'ninguno', label: 'Sin mitigantes especiales' }
+      ] },
+      { clave: 'motivoEvaluacion', etiqueta: 'Motivo por el que el caso merece evaluación', tipo: 'textoLibreReq', motivo: 'Falta el motivo de evaluación' }
+    ],
     score: []
   },
 
-  // ===== GARANTÍA (se evalúa POR INMUEBLE; consolidación = MEJOR caso: basta 1 inmueble que pase) =====
-  // Los "obligatorios" faltantes bloquean el avance a Finanzas (escalado), no descartan.
-  // Gravámenes = killer del inmueble (KO); zona no elegible = observado (excepción por aprobar).
+  // ===== GARANTÍA (POR INMUEBLE; consolidación = MEJOR caso: basta 1 inmueble que pase) =====
+  // Objetivo: (1) determinar si el inmueble está APTO/saneado en SUNARP (evidencia = documentos con link),
+  // y (2) fijar un VALOR REFERENCIAL (m² × precio de zona) del que sale el LTV = monto ÷ valor.
+  // Todos los links + las 3 casillas (Apto, Valor ref, LTV ok) son obligatorios para avanzar.
   garantia: {
     titulo: 'Filtro Garantía (por inmueble)',
     gates: [
-      // Copia literal: Sí = OK. No = exige partida registral (sin partida no avanza).
-      { clave: 'copiaLiteral', etiqueta: 'Copia literal', tipo: 'select', despliega: 'partidaRegistral', despliegaSi: 'no', opciones: [
+      // Casilla 1: ¿Inmueble apto/saneado en SUNARP? (de la copia literal). No = mata el inmueble.
+      { clave: 'apto', etiqueta: 'Apto / saneado (SUNARP)', tipo: 'select', oblig: true, opciones: [
         { v: 'si', label: 'Sí', resultado: 'ok' },
-        { v: 'no', label: 'No (indicar partida)', resultado: 'ok' }
+        { v: 'observado', label: 'Observado (subsanable)', resultado: 'observado', motivo: 'Inmueble observado: requiere subsanación/excepción' },
+        { v: 'no', label: 'No', resultado: 'ko', motivo: 'Inmueble no apto/saneado: esta garantía no va' }
       ] },
-      { clave: 'partidaRegistral', etiqueta: 'Partida registral', tipo: 'textoReq', requiereSi: { clave: 'copiaLiteral', val: 'no' }, motivo: 'Falta partida registral (obligatoria si no hay copia literal)' },
-      // HR/PU: opcional, se solicita en el proceso.
-      { clave: 'hrPu', etiqueta: 'HR / PU', tipo: 'select', opcional: true, opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No (se solicita)', resultado: 'ok' }
-      ] },
-      // Recibo de luz: obligatorio (bloquea avance si falta).
-      { clave: 'reciboLuz', etiqueta: 'Recibo de luz', tipo: 'select', oblig: true, opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Falta recibo de luz (obligatorio)' }
-      ] },
-      // DNI del propietario: obligatorio. Sí = digitar número; No = queda en No (bloquea).
-      { clave: 'dniPropietario', etiqueta: 'DNI del propietario', tipo: 'select', oblig: true, despliega: 'dniNumero', opciones: [
-        { v: 'si', label: 'Sí (indicar N.º)', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'escalado', motivo: 'Falta DNI del propietario (obligatorio)' }
-      ] },
-      { clave: 'dniNumero', etiqueta: 'N.º de DNI', tipo: 'textoReq', requiereSi: { clave: 'dniPropietario', val: 'si' }, motivo: 'Falta el número de DNI del propietario' },
-      // Fotos: opcional.
-      { clave: 'fotos', etiqueta: 'Fotos del inmueble', tipo: 'select', opcional: true, opciones: [
-        { v: 'si', label: 'Sí', resultado: 'ok' }, { v: 'no', label: 'No', resultado: 'ok' }
-      ] },
-      // Zona: Sí = pegar link de Maps. No = observado (excepción por aprobar, no avanza sin excepción).
-      { clave: 'zonaElegible', etiqueta: 'Zona (elegibilidad)', tipo: 'select', despliega: 'zonaMaps', opciones: [
-        { v: 'si', label: 'Sí (adjuntar Maps)', resultado: 'ok' },
-        { v: 'no', label: 'No', resultado: 'observado', motivo: 'Zona no elegible: requiere excepción aprobada' }
-      ] },
-      { clave: 'zonaMaps', etiqueta: 'Link de Google Maps', tipo: 'textoReq', requiereSi: { clave: 'zonaElegible', val: 'si' }, motivo: 'Falta el link de Google Maps de la zona' },
-      // Gravámenes: Sí = killer del inmueble.
-      { clave: 'gravamenes', etiqueta: '¿Gravámenes?', tipo: 'select', opciones: [
-        { v: 'no', label: 'No', resultado: 'ok' },
-        { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Inmueble con gravámenes: esta garantía no va' }
-      ] },
-      // Valor estimado referencial del inmueble: obligatorio antes de pasar a Finanzas.
-      { clave: 'valorEstimado', etiqueta: 'Valor estimado del inmueble', tipo: 'numReq', sufijo: 'S/', motivo: 'Falta el valor estimado del inmueble (referencial)' }
+      // Casilla 2: Valor referencial (número) + moneda. Obligatorio.
+      { clave: 'valorRef', etiqueta: 'Valor referencial', tipo: 'numReq', motivo: 'Falta el valor referencial del inmueble' },
+      // Casilla 3: un ÚNICO link de Drive con todos los documentos (copia literal, HR/PU, DNI, recibo, fotos).
+      { clave: 'linkDrive', etiqueta: 'Link de Drive (documentos)', tipo: 'linkReq', motivo: 'Falta el link de Drive con los documentos del inmueble' }
     ],
-    score: [
-      { clave: 'zonaElegible', etiqueta: 'Zona elegible', tipo: 'select', peso: 100, refGate: true, opciones: [
-        { v: 'si', label: 'Sí', frac: 1 }, { v: 'no', label: 'No', frac: 0 }
-      ] }
-    ]
+    // LTV = monto solicitud ÷ valor referencial (misma moneda; TC 3.45 si difieren). Semáforo especial.
+    ltv: { tc: 3.45, umbralObservado: 0.35 },
+    score: []
   }
 };
 
@@ -4268,11 +4273,16 @@ function evalGateB2B(g, valores, ticket) {
     }
     return { resultado: 'ok' }; // no aplica si la condición no se cumple
   }
-  // Número obligatorio (valor estimado del inmueble): vacío o no positivo bloquea.
+  // Número obligatorio (valor referencial): vacío o no positivo bloquea.
   if (g.tipo === 'numReq') {
     if (vacio) return { resultado: 'escalado', motivo: g.motivo, pendiente: true };
     const n = Number(val);
     return (!isFinite(n) || n <= 0) ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' };
+  }
+  // Link de Drive obligatorio: vacío o sin http bloquea.
+  if (g.tipo === 'linkReq') {
+    if (vacio) return { resultado: 'escalado', motivo: g.motivo, pendiente: true };
+    return /^https?:\/\//i.test(String(val)) ? { resultado: 'ok' } : { resultado: 'escalado', motivo: g.motivo };
   }
   if (g.tipo === 'numMinTicket') {
     if (vacio) return { resultado: 'ok', pendiente: true };
@@ -4283,6 +4293,12 @@ function evalGateB2B(g, valores, ticket) {
     if (vacio) return { resultado: 'ok', pendiente: true };
     const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo;
     return Number(val) > max ? { resultado: 'ko', motivo: g.motivo } : { resultado: 'ok' };
+  }
+  // Número con límite por ticket que, al excederse, OBSERVA (Amarillo) en vez de matar.
+  if (g.tipo === 'numObsTicket') {
+    if (vacio) return { resultado: 'ok', pendiente: true };
+    const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo;
+    return Number(val) > max ? { resultado: 'observado', motivo: g.motivo } : { resultado: 'ok' };
   }
   if (g.tipo === 'docTicket') {
     const req = g.requeridoTicket && g.requeridoTicket[ticket];
@@ -4325,12 +4341,28 @@ function evalScoreItemB2B(it, valores, ticket) {
   }
   return null;
 }
-// Evalúa el bloque de ratios financieros. Cada ratio que cumple su umbral suma su peso;
+// Calcula el LTV = monto solicitud ÷ valor referencial. Convierte con TC si difieren monedas.
+// Devuelve { ltv (0-1), obs (bool <umbral), moneda, valorSoles } o null si falta dato.
+function calcularLTV(cat, valores, montoSolicitud) {
+  const cfg = cat.ltv || { tc: 3.45, umbralObservado: 0.35 };
+  const valorRef = Number(valores.valorRef);
+  if (!isFinite(valorRef) || valorRef <= 0 || !montoSolicitud) return null;
+  const monedaValor = valores.valorRefMoneda || 'soles'; // moneda en que se valorizó el inmueble
+  // El monto de la solicitud está en soles. Llevamos el valor a soles para dividir.
+  const valorSoles = monedaValor === 'dolares' ? valorRef * cfg.tc : valorRef;
+  const ltv = montoSolicitud / valorSoles;
+  return { ltv, obs: ltv < cfg.umbralObservado, moneda: monedaValor, valorSoles, umbral: cfg.umbralObservado };
+}
+
+
 // el que no cumple (o falta insumo) NO suma y se marca como observación. Ninguno mata.
 // Para DSCR calcula además la cuota máxima soportable (cruce de capacidad de pago).
-function evaluarRatiosB2B(cat, valores, ticket) {
+// La cuota mensual se ESTIMA del monto sincerado (cuota fija 25% a 12m), no se digita.
+function evaluarRatiosB2B(cat, valores, ticket, monto) {
   const v = {};
   (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
+  const cuotaEst = cuotaEstimadaB2B(monto);
+  v.cuotaMensual = cuotaEst; // inyectada: alimenta DSCR y carga financiera
   let ganado = 0, pesoTotal = 0;
   const detalle = [], observaciones = [];
   let capacidad = null;
@@ -4351,7 +4383,7 @@ function evaluarRatiosB2B(cat, valores, ticket) {
     if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
   }
   const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
-  return { puntaje, detalle, observaciones, capacidad };
+  return { puntaje, detalle, observaciones, capacidad, cuotaEst };
 }
 
 // Aplica una penalización directa al puntaje según su tipo. Devuelve puntos a RESTAR (>=0).
@@ -4367,7 +4399,7 @@ function penalB2B(p, valores) {
 }
 
 // Evalúa un filtro de dos capas. Devuelve { semaforo, puntaje, kos[], escalados[], observados[], ko, faltan }.
-function evaluarFiltroDosCapas(cat, valores, ticket) {
+function evaluarFiltroDosCapas(cat, valores, ticket, monto) {
   valores = valores || {}; ticket = ticket || 'Bajo';
   const kos = [], escalados = [], observados = [];
   for (const g of (cat.gates || [])) {
@@ -4383,13 +4415,20 @@ function evaluarFiltroDosCapas(cat, valores, ticket) {
     const p = evalScoreItemB2B(it, valores, ticket);
     if (p == null) faltan++; else total += p;
   }
-  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 0;
+  // Sin capa de puntaje (filtro solo por gates): pasar los gates = 100. Con score: proporcional.
+  let puntaje = pesoTotal ? Math.round(total / pesoTotal * 100) : 100;
   // Bloque de ratios financieros (finanzas): el puntaje sale de los ratios; no-cumplir = observación.
   let ratios = null;
   if (cat.ratios && cat.ratios.length) {
-    ratios = evaluarRatiosB2B(cat, valores, ticket);
+    ratios = evaluarRatiosB2B(cat, valores, ticket, monto);
     puntaje = ratios.puntaje;
     ratios.observaciones.forEach(o => observados.push(o));
+  }
+  // Bloque de análisis (finanzas): campos obligatorios; faltante = escalado (bloquea avance).
+  for (const a of (cat.analisis || [])) {
+    const v = valores[a.clave];
+    const vacio = (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length));
+    if (vacio) escalados.push(a.motivo || ('Falta ' + a.etiqueta));
   }
   // Penalizaciones directas (crédito v1.222): se restan del puntaje base.
   let penalTotal = 0;
@@ -4539,19 +4578,22 @@ app.post('/api/b2b/solicitudes/:codigo/garantia/inmueble', soloB2B, (req, res) =
 app.put('/api/b2b/solicitudes/:codigo/garantia/inmueble/:id', soloB2B, (req, res) => {
   const inm = db.prepare('SELECT * FROM b2b_garantia_inmuebles WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
   if (!inm) return res.status(404).json({ error: 'Inmueble no encontrado' });
-  const sol = db.prepare('SELECT ticket FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const sol = db.prepare('SELECT ticket, montoSolicitado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   const ticket = (sol && sol.ticket) || 'Bajo';
   const b = req.body || {};
   const ahora = new Date().toISOString();
   const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : (inm.checklist ? JSON.parse(inm.checklist) : {});
   const ev = evaluarFiltroDosCapas(FILTROS_B2B.garantia, valores, ticket);
+  // LTV = monto ÷ valor referencial. LTV < umbral (35%) => observación (no mata).
+  const ltvInfo = calcularLTV(FILTROS_B2B.garantia, valores, sol && sol.montoSolicitado);
+  if (ltvInfo && ltvInfo.obs && ev.semaforo === 'Verde') ev.semaforo = 'Amarillo';
   const motivos = JSON.stringify({ kos: ev.kos, escalados: ev.escalados });
   db.prepare('UPDATE b2b_garantia_inmuebles SET alias=?, distrito=?, tipoInmueble=?, checklist=?, semaforo=?, puntaje=?, motivos=?, actualizadoEn=? WHERE id=?')
     .run(b.alias != null ? b.alias : inm.alias, b.distrito != null ? b.distrito : inm.distrito,
       valores.tipoPermitido || inm.tipoInmueble, JSON.stringify(valores), ev.semaforo, ev.puntaje, motivos, ahora, inm.id);
   const cons = refrescarConsolidadoGarantia(req.params.codigo, req.user.nombre);
   auditar(req, 'b2b_garantia_guardar_inmueble', req.params.codigo, (b.alias || inm.alias || '') + (ev.semaforo ? ' · ' + ev.semaforo : ''));
-  res.json({ ok: true, consolidado: cons, semaforo: ev.semaforo, puntaje: ev.puntaje, motivos: { kos: ev.kos, escalados: ev.escalados } });
+  res.json({ ok: true, consolidado: cons, semaforo: ev.semaforo, puntaje: ev.puntaje, motivos: { kos: ev.kos, escalados: ev.escalados }, ltv: ltvInfo });
 });
 app.delete('/api/b2b/solicitudes/:codigo/garantia/inmueble/:id', soloB2B, (req, res) => {
   const inm = db.prepare('SELECT * FROM b2b_garantia_inmuebles WHERE id=? AND codigoSolicitud=?').get(req.params.id, req.params.codigo);
@@ -4621,17 +4663,17 @@ app.get('/api/b2b/filtros-catalogo', soloB2B, (req, res) => {
 });
 
 app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
-  const s = db.prepare('SELECT codigo, ticket FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const s = db.prepare('SELECT codigo, ticket, montoSolicitado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const tipo = req.params.tipo;
   if (!['sunat', 'credito', 'garantia', 'finanzas'].includes(tipo)) return res.status(400).json({ error: 'Filtro inválido' });
   const b = req.body || {};
   const valores = (b.checklist && typeof b.checklist === 'object') ? b.checklist : {};
   const checklist = JSON.stringify(valores);
-  let semaforo, puntaje = null, motivos = null;
+  let semaforo, puntaje = null, motivos = null, ratios = null;
   if (FILTROS_B2B[tipo]) {                       // motor de dos capas (recalibrado)
-    const ev = evaluarFiltroDosCapas(FILTROS_B2B[tipo], valores, s.ticket || 'Bajo');
-    semaforo = ev.semaforo; puntaje = ev.puntaje;
+    const ev = evaluarFiltroDosCapas(FILTROS_B2B[tipo], valores, s.ticket || 'Bajo', s.montoSolicitado);
+    semaforo = ev.semaforo; puntaje = ev.puntaje; ratios = ev.ratios;
     motivos = JSON.stringify({ kos: ev.kos, escalados: ev.escalados });
   } else {                                        // motor viejo (garantia/finanzas hasta su tanda)
     semaforo = evaluarChecklistB2B(tipo, valores).semaforo;
@@ -4645,7 +4687,7 @@ app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
   const colRes = { credito: 'resultadoCredito', garantia: 'resultadoGarantia', finanzas: 'resultadoFinanzas' }[tipo];
   if (colRes && semaforo) db.prepare('UPDATE b2b_solicitudes SET ' + colRes + '=? WHERE codigo=?').run(semaforo, s.codigo);
   auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : ''));
-  res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null });
+  res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null, ratios });
 });
 
 // Guarda un documento como LINK de Drive (persiste al redeploy; no usa el filesystem efímero).
@@ -5617,7 +5659,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.224 (Filtro FINANZAS rehecho: checklist documental obligatorio por ticket (DJ Anual, EEFF, flujo proyectado, reporte tributario, ficha RUC) que bloquea avance si falta; bloque de cifras financieras de 2 anios que calcula 5 RATIOS (DSCR 35, endeudamiento 20, carga financiera 20, margen 15, crecimiento 10) con umbrales por ticket; los ratios PUNTUAN (ninguno mata), no cumplir = observacion; DSCR sin cobertura muestra CRUCE DE CAPACIDAD (cuota maxima soportable) sin rechazar; se eliminaron gates comerciales (van en el speech). GARANTIA: nuevo campo Valor estimado del inmueble OBLIGATORIO antes de pasar a Finanzas. REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.229 (Finanzas: 4 campos de ANALISIS obligatorios para cerrar -> Destino de fondos (desplegable), Fuente de repago (desplegable), Mitigantes (multi-seleccion) y Motivo de evaluacion (texto libre); el destino REEMPLAZA/sincera el del alta. BUSINESS CASE rehecho como informe ejecutivo que HEREDA todo: semaforos por filtro, datos clave (valor garantia, LTV, DSCR, endeudamiento, margen), el analisis de Finanzas, lista automatica de observaciones (amarillos/escalados) y recomendacion comercial auto (Avanzar / Avanzar con observaciones / Descartar). REQUIERE RESTART (motor)) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
