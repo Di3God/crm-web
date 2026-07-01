@@ -4312,43 +4312,74 @@ function b2bKanbanCard(c) {
   const montoNum = c.montoEfectivo != null ? c.montoEfectivo : (c.montoSolicitado != null ? Number(c.montoSolicitado) : null);
   const monto = montoNum != null ? 'S/ ' + Number(montoNum).toLocaleString('es-PE') : (c.montoRango || '');
   const sem = c.semaforos || {};
-  // Índice de la etapa actual dentro de las 3 de filtro (-1 si está en Solicitud o Business case).
-  const idxActual = B2B_ETAPAS_FILTRO.indexOf(c.etapaKanban);
-  const dots = B2B_ETAPAS_FILTRO.map((t, i) => {
-    const key = t.replace('Filtro ', ''); // credito | garantia | finanzas
-    const v = sem[key];
-    const col = v ? SEM_COL[v] : '#DDE4EC';
-    const ini = key[0].toUpperCase();
-    // Parpadea el dot de la etapa en la que está la card ahora mismo.
-    const cls = 'kb-dot' + (i === idxActual ? ' kb-dot-actual' : '');
-    return '<span class="' + cls + '" title="' + key + (v ? ': ' + v : ': sin evaluar') + '" style="background:' + col + '">' + ini + '</span>';
+  const pj = c.puntaje || {};
+  // Probabilidad de éxito, va AL COSTADO del monto.
+  const probChip = pj.banda ? '<span class="kb-prob kb-prob-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '" title="Probabilidad de cierre · ' + pj.banda + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '%' : '') + '</span>' : '';
+  // Semáforo de la ETAPA actual para el borde de color de la card.
+  const semActual = pj.banda || (sem.credito || sem.garantia || sem.finanzas || null);
+  // Ubicación (se jala de SUNAT).
+  const ubic = fmtUbicacion(c);
+  const ubicHtml = (ubic && ubic !== '—') ? '<div class="kb-ubic">📍 ' + ubic + '</div>' : '';
+  // Dots de etapa: S (SUNAT) + C + G + F. Verde si superada, amarillo parpadeante si es la actual.
+  const PASOS = [
+    { k: 'sunat', ini: 'S', col: 'Solicitud' },
+    { k: 'credito', ini: 'C', col: 'Filtro credito' },
+    { k: 'garantia', ini: 'G', col: 'Filtro garantia' },
+    { k: 'finanzas', ini: 'F', col: 'Filtro finanzas' }
+  ];
+  const ordenCols = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
+  const idxCol = ordenCols.indexOf(c.etapaKanban);
+  const dots = PASOS.map(p => {
+    const v = sem[p.k];
+    const idxPaso = ordenCols.indexOf(p.col);
+    const esActual = p.col === c.etapaKanban;
+    let cls = 'kb-dot', col = '#DDE4EC';
+    if (v) col = SEM_COL[v];                          // tiene semáforo evaluado
+    if (idxPaso < idxCol && !v) col = SEM_COL['Verde']; // etapa ya superada sin registro => verde
+    if (esActual) cls += ' kb-dot-actual';           // etapa actual: amarillo parpadeante (CSS)
+    else if (idxPaso < idxCol) cls += ' kb-dot-done';
+    return '<span class="' + cls + '" title="' + p.ini + (v ? ': ' + v : '') + '" style="background:' + col + '">' + p.ini + '</span>';
   }).join('');
   const resp = c.responsableActual ? '<span class="kb-resp">' + primerNombre(c.responsableActual) + '</span>' : '<span class="kb-resp kb-sin">Sin asignar</span>';
-  // Etiquetas de observación (solo en columna Solicitud): falta RUC, RUC inválido, no valida SUNAT, falta número.
+  // Etiquetas de observación (columna Solicitud): "Validar RUC" (unificado), falta número, etc.
   const obs = (c.observaciones || []);
   const obsHtml = obs.length ? '<div class="kb-obs">' + obs.map(o =>
-    '<span class="kb-tag kb-tag-' + (o.tipo === 'falta_numero' ? 'num' : 'ruc') + '">' + o.label + '</span>').join('') + '</div>' : '';
-  const pj = c.puntaje || {};
-  const probChip = pj.banda ? '<span class="kb-prob kb-prob-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '" title="Probabilidad de cierre · ' + pj.banda + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '%' : '') + '</span>' : '';
+    '<span class="kb-tag kb-tag-' + (o.tipo === 'falta_numero' ? 'num' : 'ruc') + '">' + labelObsKanban(o) + '</span>').join('') + '</div>' : '';
+  // Acción + tiempo REGRESIVO hasta el vencimiento del SLA.
   const sla = c.sla || {};
   let slaHtml = '';
   if (sla.accion) {
-    let cuando = '';
-    if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ SLA vencido ' + sla.usadas + '/' + sla.horas + 'h</span>';
-    else if (sla.estado === 'porvencer') cuando = '<span class="kb-sla-porv">⏳ ' + sla.usadas + '/' + sla.horas + 'h</span>';
-    else if (sla.horas != null) cuando = '<span class="kb-sla-dias">' + sla.usadas + '/' + sla.horas + 'h</span>';
-    slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
+    // La acción mostrada: la última gestión registrada en esta etapa, si existe; si no, la acción del SLA.
+    const accionTxt = c.ultimaGestionEtapa || sla.accion;
+    let cuando;
+    if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ Vencido</span>';
+    else cuando = '<span class="kb-sla-quedan">⏳ Quedan ' + fmtHorasRestantes(sla.horasRestantes) + '</span>';
+    slaHtml = '<div class="kb-sla">📌 ' + accionTxt + ' · ' + cuando + '</div>';
   }
-  return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
+  return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
-    '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket">' + c.ticket + '</span>' : '') + '</div>' +
+    '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket kb-ticket-' + (c.ticket || '').toLowerCase() + '">' + c.ticket + '</span>' : '') + '</div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
-    (monto ? '<div class="kb-monto">' + monto + '</div>' : '') +
+    ubicHtml +
+    (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + probChip + '</div>' : (probChip ? '<div class="kb-monto-row">' + probChip + '</div>' : '')) +
     obsHtml +
-    '<div class="kb-meta">' + probChip + '</div>' +
     slaHtml +
     '<div class="kb-foot">' + dots + resp + '</div>' +
     '</div>';
+}
+// Texto de las etiquetas de observación del kanban (RUC unificado a "Validar RUC").
+function labelObsKanban(o) {
+  if (o.tipo === 'falta_numero') return o.label || 'Falta número';
+  if (o.tipo === 'ruc' || /ruc/i.test(o.tipo || '') || /ruc/i.test(o.label || '')) return 'Validar RUC';
+  return o.label || 'Validar RUC';
+}
+// Formatea horas restantes en "Xh" o "Xd Yh"; negativo -> vencido.
+function fmtHorasRestantes(h) {
+  if (h == null) return '—';
+  if (h <= 0) return 'vencido';
+  if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24), r = h % 24;
+  return d + 'd' + (r ? ' ' + r + 'h' : '');
 }
 
 function renderKanbanB2B(cards, conteos, puedeGestionar) {
@@ -4745,6 +4776,36 @@ async function limpiarHistorialB2B() {
 function montarOverlayGenerico(html) { cerrarOverlayGenerico(); const h = document.createElement('div'); h.id = 'ovGen'; h.innerHTML = html; document.body.appendChild(h); }
 function cerrarOverlayGenerico() { const h = $('ovGen'); if (h) h.remove(); }
 
+async function validarRucB2B() {
+  const inp = $('fbRucEdit'); if (!inp) return;
+  const ruc = (inp.value || '').trim();
+  if (!/^(10|15|17|20)\d{9}$/.test(ruc)) { alert('El RUC debe tener 11 dígitos y empezar en 10, 15, 17 o 20.'); return; }
+  inp.disabled = true;
+  const btn = inp.nextElementSibling; if (btn) { btn.disabled = true; btn.textContent = '⏳ Validando…'; }
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/sunat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ruc })
+    });
+    if (r.solicitud) {
+      Object.assign(FICHA.solicitud, r.solicitud);
+      FICHA.solicitud.sunatEstado = r.solicitud.sunatEstado;
+    }
+    // Recarga la ficha completa: la etapa puede avanzar sola si SUNAT quedó OK.
+    abrirFichaB2B(FICHA.solicitud.codigo);
+    if (!r.ok) setTimeout(() => alert('SUNAT no validó el RUC: ' + (r.motivo || 'sin detalle') + '. Revisa el número.'), 200);
+  } catch (e) {
+    alert(e.message || 'No se pudo validar el RUC.');
+    inp.disabled = false; if (btn) { btn.disabled = false; btn.textContent = '🔎 Validar'; }
+  }
+}
+
+function toggleModoDemo() {
+  B2B_MODO_DEMO = !B2B_MODO_DEMO;
+  const btn = $('fbModoDemo');
+  if (btn) btn.classList.toggle('fb-demo-on', B2B_MODO_DEMO);
+  renderFichaB2B();
+}
+
 function resumenFichaB2B() {
   const pj = FICHA.puntaje || {}; const sla = FICHA.sla || {};
   const prob = pj.banda ? '<span class="fbr-prob fbr-' + (pj.prioridad || 'p4').toLowerCase().replace('—', 'x') + '">' + (pj.emoji || '') + ' ' + (pj.prob != null ? pj.prob + '% · ' : '') + pj.banda + '</span>' : '';
@@ -4819,7 +4880,10 @@ function renderFichaB2B() {
   aplicarBloqueoPaneles();
 }
 // Deshabilita inputs de los paneles en modo 'lectura' o 'bloqueado' (deja editable solo el monto).
+// Modo demo: cuando está activo, todos los paneles quedan editables (ignora el bloqueo por etapa).
+let B2B_MODO_DEMO = false;
 function aplicarBloqueoPaneles() {
+  if (B2B_MODO_DEMO) return; // demo: nada bloqueado
   document.querySelectorAll('.fb-panel[data-modo]').forEach(pnl => {
     const modo = pnl.getAttribute('data-modo');
     if (modo === 'editable') return;
@@ -5286,6 +5350,15 @@ function panelSolicitud(s) {
     const montoExtra = (s.montoSolicitado != null && s.montoRango) ? ' <span class="sub">(' + s.montoRango + ')</span>' : '';
     const montoFila = '<div class="fb-campo"><span class="fb-k">Monto solicitado</span><span class="fb-v">' + montoStr + montoExtra +
       ' <button class="btn-sunat" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button></span></div>';
+    // RUC: se muestra el que pusieron inicialmente. Editable SOLO en la etapa Solicitud/SUNAT.
+    const enSolicitud = (FICHA.etapaKanban === 'Solicitud') || B2B_MODO_DEMO;
+    const rucVal = s.ruc || '';
+    const rucEstado = s.sunatEstado === 'ok' ? '<span class="ruc-ok">✓ validado</span>' : (s.sunatEstado === 'error' ? '<span class="ruc-err">⚠ no valida en SUNAT</span>' : (rucVal && !/^(10|15|17|20)\d{9}$/.test(String(rucVal).trim()) ? '<span class="ruc-err">⚠ RUC inválido</span>' : '<span class="sub">pendiente</span>'));
+    const rucFila = enSolicitud
+      ? '<div class="fb-campo"><span class="fb-k">RUC</span><span class="fb-v">' +
+        '<input id="fbRucEdit" class="mtr-in" style="width:150px" value="' + rucVal + '" maxlength="11" onkeypress="return b2bSoloNumero(event,false)"> ' +
+        '<button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="validarRucB2B()">🔎 Validar</button> ' + rucEstado + '</span></div>'
+      : '<div class="fb-campo"><span class="fb-k">RUC</span><span class="fb-v">' + (rucVal || '—') + ' ' + rucEstado + '</span></div>';
     const garantia = '<div class="fb-sec">Garantía declarada</div>' +
       fbCampo('¿Tiene inmueble?', s.tieneInmueble) +
       fbCampoOpt('Tipo de inmueble', s.tipoInmueble) +
@@ -5293,6 +5366,7 @@ function panelSolicitud(s) {
       fbCampoOpt('Registrado SUNARP', s.registradoSunarp) +
       fbCampoOpt('Ubicación del inmueble', s.departamentoInmueble);
     cuerpo = '<div class="fb-body">' +
+      rucFila +
       fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampoOpt('Email', s.email) +
       montoFila +
       fbCampoOpt('Destino de fondos', s.destinoFondos) +

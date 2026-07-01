@@ -4880,9 +4880,9 @@ function etapaKanbanB2B(s) {
 function observacionesB2B(s) {
   const obs = [];
   const ruc = s.ruc ? String(s.ruc).trim() : '';
-  if (!ruc) obs.push({ tipo: 'falta_ruc', label: 'Falta RUC' });
-  else if (!/^(10|15|17|20)\d{9}$/.test(ruc)) obs.push({ tipo: 'ruc_malo', label: 'RUC inválido' });
-  else if (s.sunatEstado === 'error') obs.push({ tipo: 'ruc_error', label: 'RUC no valida en SUNAT' });
+  if (!ruc) obs.push({ tipo: 'falta_ruc', label: 'Validar RUC' });
+  else if (!/^(10|15|17|20)\d{9}$/.test(ruc)) obs.push({ tipo: 'ruc_malo', label: 'Validar RUC' });
+  else if (s.sunatEstado === 'error') obs.push({ tipo: 'ruc_error', label: 'Validar RUC' });
   if (!s.telefono || !String(s.telefono).trim()) obs.push({ tipo: 'falta_numero', label: 'Falta número' });
   return obs;
 }
@@ -4967,15 +4967,23 @@ function sellarFechaEtapa(f, col) {
 // Datos del tablero. ?desestimados=1 devuelve la bandeja de desestimados (filtro, no columna).
 app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const soloDesest = req.query.desestimados === '1';
-  let filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, responsableActual, funcionario, asistente, fechaIngreso, fechaEtapa, fechaEtapaCol, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
+  let filas = db.prepare("SELECT codigo, ruc, razonSocial, nombreComercial, contacto, telefono, montoSolicitado, montoRango, ticket, sector, estado, sunatEstado, sunatDepartamento, sunatDistrito, responsableActual, funcionario, asistente, fechaIngreso, fechaEtapa, fechaEtapaCol, temperatura, tieneInmueble, motivoDescarte, archivado FROM b2b_solicitudes ORDER BY fechaIngreso DESC, id DESC").all();
   filas = filtrarPorAlcanceB2B(req.user, filas);
   const sem = semaforosB2BPorCodigo(filas.map(f => f.codigo));
+  // Última "próxima acción" registrada en cada etapa (para mostrar en la tarjeta).
+  const ultGestEtapa = {};
+  if (filas.length) {
+    const ph = filas.map(() => '?').join(',');
+    db.prepare("SELECT codigoSolicitud, etapa, proximaAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
+      .forEach(g => { ultGestEtapa[g.codigoSolicitud + '|' + (g.etapa || '')] = g.proximaAccion; });
+  }
   const cards = filas.map(f => {
     const col = etapaKanbanB2B(f);
     const fechaEtapa = sellarFechaEtapa(f, col);
     const semc = sem[f.codigo] || {};
     const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
-    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo };
+    const ultimaGestionEtapa = ultGestEtapa[f.codigo + '|' + col] || null;
+    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo, ultimaGestionEtapa };
   });
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
@@ -5043,10 +5051,11 @@ app.post('/api/b2b/solicitudes/:codigo/sunat', soloB2B, async (req, res) => {
   const sol = db.prepare('SELECT codigo, ruc FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!sol) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const rucManual = req.body && req.body.ruc ? String(req.body.ruc).trim() : null;
-  const r = await enriquecerSunat(sol.codigo, rucManual ? { ruc: rucManual } : {});
+  // Si viene un RUC nuevo, guárdalo ANTES para que la consulta valide ese RUC.
   if (rucManual && rucManual !== sol.ruc) db.prepare('UPDATE b2b_solicitudes SET ruc=? WHERE codigo=?').run(rucManual, sol.codigo);
+  const r = await enriquecerSunat(sol.codigo, rucManual ? { ruc: rucManual } : {});
   auditar(req, 'b2b_validar_sunat', sol.codigo, r.ok ? 'ok' : (r.motivo || 'error'));
-  const fresh = db.prepare('SELECT sunatRaw, sunatEstado, sunatVerificadoEn, razonSocial FROM b2b_solicitudes WHERE codigo=?').get(sol.codigo);
+  const fresh = db.prepare('SELECT ruc, sunatRaw, sunatEstado, sunatVerificadoEn, razonSocial, sunatDepartamento, sunatDistrito FROM b2b_solicitudes WHERE codigo=?').get(sol.codigo);
   res.json({ ok: r.ok, motivo: r.motivo || null, mensaje: r.mensaje || null, solicitud: fresh });
 });
 
@@ -5768,7 +5777,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.232 (FIX puntaje credito/solo-gates: cada observacion descuenta 12 pts del 100 (piso 50 sin KO), el % refleja el nivel de observacion. Bandeja B2B: seleccion multiple + REASIGNAR EN LOTE a un funcionario; deteccion de DUPLICADOS por RUC con 3 opciones (avisar/fusionar/descartar), fusionar mueve las gestiones a la elegida. Timeline: boton LIMPIAR HISTORIAL (solo jefe/admin, con confirmacion) que borra las gestiones y devuelve el lead a su etapa base. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.233 (Kanban B2B renovado: dots S+C+G+F (SUNAT incluido), verde si etapa superada y AMARILLO parpadeante la etapa actual; ubicacion (de SUNAT) en la tarjeta; probabilidad al costado del monto; colores vivos con borde por semaforo; montos totales de columna en grande; tiempo REGRESIVO Quedan Xh hasta el SLA; muestra la ultima gestion/accion de la etapa. Textos RUC unificados a Validar RUC. RUC editable SOLO en Solicitud, con boton Validar que dispara la API SUNAT y avanza. MODO DEMO (toggle) que libera todos los campos para recorrer el viaje completo. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
