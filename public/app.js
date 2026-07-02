@@ -1976,6 +1976,28 @@ async function guardarGestion() {
 }
 
 // ---------- Trazabilidad ----------
+// Grid de contactabilidad: 3 franjas (M manana <12h · T tarde 12-16h · N noche >16h) x 10 dias.
+function renderGrid3x5(cb) {
+  if (!cb || !cb.dias || !cb.dias.length) return '';
+  const FR = ['M', 'T', 'N'];
+  const COL = { contacto: '#1D9E75', intento: '#EF9F27', vacio: '#E9EEF4', futuro: '#FFFFFF' };
+  const cols = cb.dias.map(d => {
+    const celdas = d.franjas.map((f, i) => {
+      const tip = d.dm + ' · ' + (i === 0 ? 'Mañana (<12h)' : i === 1 ? 'Tarde (12-16h)' : 'Noche (>16h)') + ' · ' +
+        (f.estado === 'contacto' ? 'Contacto efectivo' : f.estado === 'intento' ? 'Intento sin contacto' : f.estado === 'futuro' ? 'Aún no llega' : 'Sin intento');
+      return '<span class="g35-celda g35-' + f.estado + '" title="' + tip + '" style="background:' + COL[f.estado] + '"></span>';
+    }).join('');
+    const etCol = d.etapa && (typeof ETAPA_COLOR !== 'undefined') && ETAPA_COLOR[d.etapa] ? ETAPA_COLOR[d.etapa][0] : 'transparent';
+    const etTip = d.etapa ? 'Etapa al cierre de ' + d.dm + ': ' + tr(d.etapa) : '';
+    return '<div class="g35-dia"><div class="g35-celdas">' + celdas + '</div>' +
+      '<div class="g35-etapa" title="' + etTip + '" style="background:' + etCol + '"></div>' +
+      '<div class="g35-lbl">' + d.etiqueta + '<br><i>' + d.dm + '</i></div></div>';
+  }).join('');
+  const filaFr = '<div class="g35-frcol">' + FR.map(x => '<span class="g35-fr">' + x + '</span>').join('') + '<span class="g35-fr g35-fr-et">Et.</span></div>';
+  return '<div class="g35-wrap"><div class="g35-head">Contactabilidad 3×5 <span class="sub">(3 franjas/día · 10 días desde la asignación)</span>' +
+    '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro</span></div>' +
+    '<div class="g35-grid">' + filaFr + cols + '</div></div>';
+}
 let tCodigoActual = null, tTelActual = '';
 async function verTrazabilidad(codigo) {
   tCodigoActual = codigo;
@@ -1994,6 +2016,9 @@ async function verTrazabilidad(codigo) {
     `<span class="sep">·</span><span class="dato">Asignado: <b>${t.fechaAsignacion ? fmtFecha(t.fechaAsignacion) : '—'}</b>` +
     (veTodoJS() ? ` <a class="tz-edit" title="Editar fecha de asignación" onclick="editarFechaAsig('${t.codigo}')">✎</a>` : '') +
     `</span>`;
+
+  // Grid de contactabilidad 3 franjas x 10 dias (desde la asignacion)
+  $('tGrid3x5').innerHTML = renderGrid3x5(t.contactabilidad);
 
   // 4 tarjetas resumen
   const r = t.resumen;

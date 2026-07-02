@@ -1998,6 +1998,7 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   // Para score/prob progresivo: recalculamos el consolidado acumulando gestiones.
   let scorePrev = 0, etapaPrev = 'Contactabilidad 3x5', probPrev = L.calcularProbabilidad({ etapa: 'Contactabilidad 3x5', score: 0, intentos: 0 });
   let proxAccionPrev = null; // fecha de la proxima accion que dejo la gestion anterior
+  const historialEtapas = []; // cambios de etapa con fecha (para el grid de contactabilidad)
   gestiones.forEach((g, i) => {
     const parcial = leadConsolidado(lead, gestiones.slice(0, i + 1));
     const grupo = L.grupoLimpio(g.resultado);
@@ -2030,6 +2031,7 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
         actor: 'Sistema', evoEtapa: [trEtapaServer(etapaPrev), trEtapaServer(parcial.etapa)]
       });
     }
+    if (subio) historialEtapas.push({ fecha: g.fecha, etapa: parcial.etapa });
     scorePrev = parcial.score; etapaPrev = parcial.etapa; probPrev = parcial.probabilidad;
     proxAccionPrev = g.fechaProxAccion || null;
   });
@@ -2112,7 +2114,45 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   const intentosContacto = gestiones.filter(g => L.grupoLimpio(g.resultado) === 'No_respondio').length;
   const contactado = gestiones.some(g => !['No_respondio'].includes(L.grupoLimpio(g.resultado)) && g.resultado !== 'Sin gestion');
 
+  // ===== Grid de contactabilidad 3 franjas x 10 dias (desde la asignacion, hora Lima UTC-5) =====
+  const LIMA_OFF = -5 * 3600000;
+  const diaLima = (iso) => Math.floor((new Date(iso).getTime() + LIMA_OFF) / 86400000);
+  const horaLima = (iso) => new Date(new Date(iso).getTime() + LIMA_OFF).getUTCHours();
+  const franjaDe = (iso) => { const h = horaLima(iso); return h < 12 ? 0 : (h < 16 ? 1 : 2); }; // M / T / N
+  const desdeIso = lead.fechaAsignacion || lead.fechaCarga || new Date().toISOString();
+  const d0 = diaLima(desdeIso), hoyD = diaLima(new Date().toISOString()), franjaAhora = franjaDe(new Date().toISOString());
+  const NOCON = new Set(['No_respondio']);
+  const grid = [];
+  for (let d = 0; d < 10; d++) {
+    const fMs = (d0 + d) * 86400000 - LIMA_OFF;
+    const fecha = new Date(fMs);
+    grid.push({ etiqueta: 'D' + (d + 1), fecha: fecha.toISOString().slice(0, 10),
+      dm: String(fecha.getUTCDate()).padStart(2, '0') + '/' + String(fecha.getUTCMonth() + 1).padStart(2, '0'),
+      franjas: [null, null, null].map((_, fr) => {
+        const futuro = (d0 + d) > hoyD || ((d0 + d) === hoyD && fr > franjaAhora);
+        return { estado: futuro ? 'futuro' : 'vacio' };
+      }), etapa: null });
+  }
+  gestiones.forEach(g => {
+    const d = diaLima(g.fecha) - d0;
+    if (d < 0 || d > 9) return;
+    const fr = franjaDe(g.fecha);
+    const celda = grid[d].franjas[fr];
+    const esContacto = !NOCON.has(L.grupoLimpio(g.resultado));
+    if (esContacto) celda.estado = 'contacto';
+    else if (celda.estado !== 'contacto') celda.estado = 'intento';
+  });
+  // Etapa vigente al cierre de cada dia (parte de Contactabilidad 3x5 y avanza con el historial)
+  let etapaDia = 'Contactabilidad 3x5'; let hIdx = 0;
+  for (let d = 0; d < 10; d++) {
+    const finDia = (d0 + d + 1) * 86400000 - LIMA_OFF;
+    while (hIdx < historialEtapas.length && new Date(historialEtapas[hIdx].fecha).getTime() < finDia) { etapaDia = historialEtapas[hIdx].etapa; hIdx++; }
+    grid[d].etapa = (d0 + d) <= hoyD ? etapaDia : null; // dias futuros sin etapa
+  }
+  const contactabilidad = { desde: desdeIso, dias: grid, etapaActual: cons.etapa };
+
   res.json({
+    contactabilidad,
     codigo: lead.codigo, nombre: lead.nombre, telefono: lead.telefono,
     etapa: cons.etapa, etapaVisible: trEtapaServer(cons.etapa),
     prioridad: cons.prioridad, score: cons.score, probabilidad: cons.probabilidad,
@@ -5771,7 +5811,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.238 (FIX carga lenta en Railway: se agrega compresion GZIP (los estaticos viajan ~80% mas livianos: app.js de 399KB a ~90KB) + cache de 5 min con ETag en los archivos estaticos. La lentitud venia de servir ~600KB sin comprimir en cada carga/Ctrl+F5, acumulado del crecimiento de la app desde v1.230. REQUIERE RESTART + npm install (nueva dependencia compression)) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.239 (Trazabilidad B2C: GRID DE CONTACTABILIDAD 3x5 debajo del codigo del lead — 3 franjas/dia (Manana <12h, Tarde 12-16h, Noche >16h, hora Lima) x 10 dias desde la fecha de asignacion (30 celdas). Verde=contacto efectivo, ambar=intento sin contacto, gris=sin intento, punteado=futuro. Debajo de cada dia una franja fina con el COLOR DE LA ETAPA vigente ese dia (evolucion del lead) + tooltip. Leyenda incluida. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
