@@ -1421,6 +1421,12 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fbs-linea-done { background:#1D9E75; }
 .fb-ruc-head { font-size:12px; font-weight:800; color:#0E2A57; background:#EEF3F9; border-radius:6px; padding:2px 8px; margin-right:6px; }
 .fb-ruc-falta { color:#CC0000; background:#FFE3E0; }
+/* Chips de campos automaticos (SUNAT) */
+.mtr-chip { display:inline-block; font-size:12px; font-weight:700; padding:3px 10px; border-radius:8px; }
+.mtr-chip-ok { background:#E7F6EF; color:#1D9E75; }
+.mtr-chip-obs { background:#FFF4E0; color:#B7791F; }
+.mtr-chip-ko { background:#FDE8E7; color:#CC0000; }
+.mtr-chip-p { background:#EEF3F9; color:#6B7A8D; font-weight:600; }
 
 /* Grid contactabilidad 3x5 (trazabilidad B2C) */
 .g35-wrap { background:#fff; border:1px solid #E3E9F2; border-radius:12px; padding:10px 14px; margin:10px 0 4px; }

@@ -4035,8 +4035,7 @@ const B2B_ESTADO_COL = {
   'Nuevo': '#85B7EB', 'Filtro credito': '#0B72E8', 'Apto credito': '#1D9E75',
   'Filtro garantia': '#0B72E8', 'Apto garantia': '#1D9E75', 'Filtro finanzas': '#7C5BD9',
   'Expediente': '#1D9E75', 'Amarillo/nurture': '#EF9F27', 'Traspasado B2B': '#534AB7',
-  'Reunion agendada': '#534AB7', 'No responde': '#888780', 'No elegible': '#E24B4A'
-};
+  'Reunion agendada': '#534AB7', 'No responde': '#888780', 'No elegible': '#E24B4A' , 'Reunion comercial': '#7C5CD6' };
 const B2B_TICKET_COL = { 'Bajo': '#85B7EB', 'Medio': '#EF9F27', 'Alto': '#1D9E75' };
 
 async function cargarB2B() {
@@ -4100,7 +4099,7 @@ function b2bSelChange() { const n = document.querySelectorAll('.b2b-sel:checked'
 function b2bSeleccionados() { return Array.from(document.querySelectorAll('.b2b-sel:checked')).map(c => c.value); }
 
 function trEstadoB2B(e) {
-  const M = { 'Filtro credito': '2 · Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': '3 · Filtro garantía', 'Apto garantia': 'Apto garantía', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
+  const M = { 'Filtro credito': '2 · Filtro crédito', 'Apto credito': 'Apto crédito', 'Filtro garantia': '3 · Filtro garantía', 'Apto garantia': 'Apto garantía', 'Reunion comercial': 'Reunión comercial', 'Filtro finanzas': 'Filtro finanzas', 'Reunion agendada': 'Reunión agendada' };
   return M[e] || e;
 }
 
@@ -4231,7 +4230,8 @@ const B2B_KANBAN_COLS = [
   { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: 'Intake · validar RUC · triaje' },
   { id: 'Filtro credito', label: 'Filtro Crédito', hint: '' },
   { id: 'Filtro garantia', label: 'Filtro Garantía', hint: '' },
-  { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: '' },
+  { id: 'Reunion comercial', label: 'Reunión Comercial', hint: 'Agendar · realizar · apto pasa a Finanzas' },
+  { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: 'Push de información financiera' },
   { id: 'Business case', label: 'Business Case', hint: '' }
 ];
 // Orden de las 3 etapas de filtro (para pintar el progreso C/G/F en las tarjetas).
@@ -4355,9 +4355,10 @@ function b2bKanbanCard(c) {
     { k: 'sunat', ini: 'S', col: 'Solicitud' },
     { k: 'credito', ini: 'C', col: 'Filtro credito' },
     { k: 'garantia', ini: 'G', col: 'Filtro garantia' },
+    { k: 'reunion', ini: 'R', col: 'Reunion comercial' },
     { k: 'finanzas', ini: 'F', col: 'Filtro finanzas' }
   ];
-  const ordenCols = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
+  const ordenCols = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
   const idxCol = ordenCols.indexOf(c.etapaKanban);
   const dots = PASOS.map(p => {
     const v = sem[p.k];
@@ -4837,8 +4838,9 @@ function stepperFichaB2B() {
     { n: 1, t: 'SUNAT', col: 'Solicitud', sem: f.sunat && f.sunat.semaforo },
     { n: 2, t: 'Crédito', col: 'Filtro credito', sem: f.credito && f.credito.semaforo },
     { n: 3, t: 'Garantía', col: 'Filtro garantia', sem: f.garantia && f.garantia.semaforo },
-    { n: 4, t: 'Finanzas', col: 'Filtro finanzas', sem: f.finanzas && f.finanzas.semaforo },
-    { n: 5, t: 'Business Case', col: 'Business case', sem: null }
+    { n: 4, t: 'Reunión', col: 'Reunion comercial', sem: null },
+    { n: 5, t: 'Finanzas', col: 'Filtro finanzas', sem: f.finanzas && f.finanzas.semaforo },
+    { n: 6, t: 'Business Case', col: 'Business case', sem: null }
   ];
   const orden = PASOS.map(p => p.col);
   const idxAct = orden.indexOf(col === 'Desestimado' ? 'Solicitud' : col);
@@ -4851,6 +4853,31 @@ function stepperFichaB2B() {
     const linea = i < PASOS.length - 1 ? '<span class="fbs-linea' + (i < idxAct ? ' fbs-linea-done' : '') + '"></span>' : '';
     return '<span class="' + cls + '"><span class="fbs-dot"' + dotStyle + '>' + p.n + '</span><span class="fbs-txt">' + p.t + (p.sem ? ' <i class="fbs-sem">' + p.sem + '</i>' : '') + '</span></span>' + linea;
   }).join('') + '</div>';
+}
+
+// Panel de la etapa Reunion comercial: espera/realizacion de la reunion; pase MANUAL a Finanzas.
+function panelReunion(modo) {
+  const open = FICHA_ETAPA_OPEN === 'reunion';
+  const enReunion = FICHA.etapaKanban === 'Reunion comercial';
+  const pasada = ['Filtro finanzas', 'Business case'].includes(FICHA.etapaKanban);
+  const head = pasada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Realizada</span>'
+    : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>');
+  if (!open) return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, false, '', false, modo, 'Reunion comercial');
+  const cuerpo = '<div class="fb-body">' +
+    '<p class="sub" style="margin:0 0 10px">El lead completó garantía y espera la reunión comercial. Registra las gestiones de agendamiento con "＋ Gestión". Cuando la reunión se realice y el cliente esté apto, pásalo a Finanzas para el push de información financiera.</p>' +
+    (pasada ? '<div class="sub">✓ Este lead ya pasó la reunión comercial.</div>'
+      : '<div class="fb-acc"><button class="btn" onclick="reunionEfectivaB2B()">✅ Reunión efectiva → pasar a Finanzas</button></div>') +
+    '</div>';
+  return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, true, cuerpo, false, modo, 'Reunion comercial');
+}
+async function reunionEfectivaB2B() {
+  if (!confirm('¿Confirmas que la reunión comercial se realizó y el cliente está apto? Pasará a Filtro finanzas.')) return;
+  try {
+    await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/mover', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hacia: 'Filtro finanzas' })
+    });
+    abrirFichaB2B(FICHA.solicitud.codigo);
+  } catch (e) { alert(e.message || 'No se pudo avanzar.'); }
 }
 
 function resumenFichaB2B() {
@@ -4894,8 +4921,8 @@ function renderFichaB2B() {
 
   // ===== Etapa activa (automática) y modo de cada panel =====
   // Orden de etapas y a qué columna Kanban corresponde cada panel.
-  const ORDEN_ETAPAS = ['fsunat', 'credito', 'garantia', 'finanzas', 'businesscase'];
-  const COL_DE_PANEL = { fsunat: 'Solicitud', credito: 'Filtro credito', garantia: 'Filtro garantia', finanzas: 'Filtro finanzas', businesscase: 'Business case' };
+  const ORDEN_ETAPAS = ['fsunat', 'credito', 'garantia', 'reunion', 'finanzas', 'businesscase'];
+  const COL_DE_PANEL = { fsunat: 'Solicitud', credito: 'Filtro credito', garantia: 'Filtro garantia', reunion: 'Reunion comercial', finanzas: 'Filtro finanzas', businesscase: 'Business case' };
   // La etapa activa la define el backend (etapaKanban). SUNAT/Solicitud comparten el primer panel.
   let colActiva = FICHA.etapaKanban || 'Solicitud';
   if (colActiva === 'Desestimado') colActiva = 'Solicitud';
@@ -4913,6 +4940,7 @@ function renderFichaB2B() {
     panelFiltroSunat(s, modoPanel('fsunat')),
     panelCredito(semCredito, modoPanel('credito')),
     panelGarantia(modoPanel('garantia') !== 'bloqueado', semGarantia, modoPanel('garantia')),
+    panelReunion(modoPanel('reunion')),
     panelFinanzas(modoPanel('finanzas') !== 'bloqueado', semFinanzas, modoPanel('finanzas')),
     panelBusinessCase(modoPanel('businesscase') !== 'bloqueado', modoPanel('businesscase'))
   ];
@@ -5125,11 +5153,16 @@ function evaluarFiltro2JS(cat, valores, ticket) {
 function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
   const val = valores[campo.clave];
   const cb = 'recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')';
-  // Gate automático (RUC 20): se calcula solo y no se edita.
+  // Gate automático (SUNAT): se calcula solo. Se muestra como CHIP de lectura con color por resultado.
   if (campo.tipo === 'select' && campo.auto) {
-    const sel = campo.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('');
-    return '<select class="mtr-in mtr-auto" data-f2="' + prefijo + '" data-k="' + campo.clave + '" disabled title="Se determina por el RUC"><option value="">—</option>' + sel + '</select>' +
-      '<input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '">';
+    const op = campo.opciones.find(o => o.v === val);
+    let chip;
+    if (!op) chip = '<span class="mtr-chip mtr-chip-p">Se autocompleta con SUNAT</span>';
+    else {
+      const cls = op.resultado === 'ok' ? 'mtr-chip-ok' : (op.resultado === 'observado' ? 'mtr-chip-obs' : 'mtr-chip-ko');
+      chip = '<span class="mtr-chip ' + cls + '">' + op.label + '</span>';
+    }
+    return chip + '<input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '">';
   }
   if (campo.tipo === 'select') {
     let h = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"><option value="">—</option>' +
@@ -5149,18 +5182,20 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
     const max = campo.maxTicket && (campo.maxTicket[ticket] != null ? campo.maxTicket[ticket] : campo.maxTicket.Bajo);
     const esMonto = campo.unidad === 'monto';
     const esPct = campo.unidad === 'porcentaje';
-    const pre = esMonto ? '<span class="mtr-uni">S/</span>' : '';
-    const post = esPct ? '<span class="mtr-uni">%</span>' : (!esMonto ? '<span class="mtr-uni">und</span>' : '');
     // Texto del límite: KO vs observado.
     const lim = campo.tipo === 'numMaxTicket'
       ? (max === 0 ? 'no permitido' : 'máx ' + max)
       : (esMonto ? 'obs. > S/' + Number(max).toLocaleString('es-PE') : esPct ? 'obs. > ' + max + '%' : 'obs. > ' + max);
-    // inputmode numeric + onkeypress bloquea todo lo que no sea dígito (ni punto para cantidades enteras; punto solo en monto).
-    const permitePunto = esMonto;
-    const guard = 'onkeypress="return b2bSoloNumero(event,' + (permitePunto ? 'true' : 'false') + ')"';
-    return '<span class="mtr-numwrap">' + pre +
-      '<input type="text" inputmode="' + (permitePunto ? 'decimal' : 'numeric') + '" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (val != null ? val : '') + '" placeholder="0" ' + guard + ' oninput="' + cb + '">' +
-      post + '<span class="mtr-lim">' + lim + '</span></span>';
+    // UX: desplegable por RANGOS en vez de tipeo manual. El value sigue siendo numérico,
+    // así el motor (server y espejo) evalúa igual contra el límite del ticket.
+    let ops;
+    if (esPct) ops = [[null, '—'], [0, '0%'], [10, 'Hasta 10%'], [25, 'Hasta 25%'], [50, 'Hasta 50%'], [75, 'Hasta 75%'], [100, 'Más de 75%']];
+    else if (esMonto) ops = [[null, '—'], [0, 'Sin morosos (S/ 0)'], [500, 'Hasta S/ 500'], [1000, 'Hasta S/ 1,000'], [3000, 'S/ 1,001 – 3,000'], [5000, 'S/ 3,001 – 5,000'], [10000, 'Más de S/ 5,000']];
+    else if (campo.tipo === 'numMaxTicket' && max === 0) ops = [[null, '—'], [0, 'No registra'], [1, 'Sí registra (1 o más)']];
+    else ops = [[null, '—'], [0, '0'], [1, '1'], [2, '2'], [3, '3'], [5, 'Más de 3']];
+    const sel = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '">' +
+      ops.map(o => '<option value="' + (o[0] == null ? '' : o[0]) + '"' + (String(val ?? '') === String(o[0] ?? '') ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+    return '<span class="mtr-numwrap">' + sel + '<span class="mtr-lim">' + lim + '</span></span>';
   }
   // Numérico activable (legacy, ya no usado en crédito).
   if (campo.activable) {
@@ -5346,11 +5381,31 @@ function autoValoresSunat(s) {
   if (s.antiguedadMeses != null) v.antiguedad = s.antiguedadMeses;
   return v;
 }
+// Boton "i": detalle de lo observado/KO en un filtro guardado (motivos persistidos).
+function btnInfoFiltro(tipo) {
+  const f = FICHA.filtros && FICHA.filtros[tipo];
+  if (!f || !f.semaforo || f.semaforo === 'Verde') return '';
+  return ' <button class="fb-flag fb-info" style="font-size:13px;padding:1px 7px" title="Ver qué está observado" onclick="event.stopPropagation();verInfoFiltro(\'' + tipo + '\')">i</button>';
+}
+function verInfoFiltro(tipo) {
+  const f = (FICHA.filtros && FICHA.filtros[tipo]) || {};
+  let m = f.motivos; try { if (typeof m === 'string') m = JSON.parse(m); } catch (e) { m = null; }
+  const kos = (m && m.kos) || [], obs = (m && (m.escalados || m.observados)) || [];
+  let txt = '';
+  if (kos.length) txt += '⛔ ELIMINATORIOS:\n• ' + kos.join('\n• ') + '\n\n';
+  if (obs.length) txt += '👁 OBSERVADO:\n• ' + obs.join('\n• ');
+  alert(txt || 'Filtro ' + tipo + ': ' + (f.semaforo || 'sin evaluar') + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '\n(Sin detalle de motivos guardado.)');
+}
+
 function panelFiltroSunat(s, modo) {
   const open = FICHA_ETAPA_OPEN === 'fsunat';
   const f = FICHA.filtros.sunat || {};
   const sem = f.semaforo || null;
-  const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
+  let head = '<span class="sub">pendiente</span>';
+  if (sem === 'Verde') head = '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75;font-weight:800">AVANZA ✓' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
+  else if (sem === 'Amarillo') head = '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F;font-weight:800">Avanza con observación' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
+  else if (sem === 'Rojo') head = '<span class="fb-pill" style="background:#FDE8E7;color:#CC0000;font-weight:800">DESESTIMADO</span>';
+  head += btnInfoFiltro('sunat');
   if (!open) return fbPanelWrap('fsunat', '🏢', '1 · Filtro SUNAT', head, false, '', false, modo, 'Solicitud');
   const ticket = s.ticket || 'Bajo';
   const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
@@ -5534,7 +5589,8 @@ function consolidadoGuardadoJS() {
 function panelCredito(semGuardado, modo) {
   const cons = consolidadoGuardadoJS() || semGuardado;
   const open = FICHA_ETAPA_OPEN === 'credito';
-  const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
+  let estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
+  estadoHtml += btnInfoFiltro('credito');
   if (!open) return fbPanelWrap('credito', '📋', '2 · Filtro crédito', estadoHtml, false, '', false, modo, 'Filtro credito');
   const sujetos = FICHA.creditoSujetos || [];
   const empresa = sujetos.find(x => x.tipoSujeto === 'empresa');
@@ -5698,7 +5754,8 @@ function panelGarantia(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
   const cons = consolidadoGarantiaGuardadoJS() || sem;
   const open = FICHA_ETAPA_OPEN === 'garantia';
-  const estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>';
+  let estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>';
+  estadoHtml += btnInfoFiltro('garantia');
   if (!open) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, false, '', false, modo, 'Filtro garantia');
   const inms = FICHA.garantiaInmuebles || [];
   let html = '<div class="fb-body">';
@@ -5712,18 +5769,22 @@ function panelGarantia(desbloqueada, sem, modo) {
 }
 
 function panelFinanzas(desbloqueada, sem, modo) {
-  if (!desbloqueada) return fbPanelWrap('finanzas', '💰', '4 · Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
+  if (!desbloqueada) return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
   const open = FICHA_ETAPA_OPEN === 'finanzas';
   const f = FICHA.filtros.finanzas || {};
-  const head = sem ? (fbPill(sem) + (f.puntaje != null ? ' <span class="sub" style="font-size:11px">' + f.puntaje + '%</span>' : '')) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('finanzas', '💰', '4 · Filtro finanzas y negocio', head, false, '', false, modo, 'Filtro finanzas');
+  let head = '<span class="sub">pendiente</span>';
+  if (sem === 'Verde') head = '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75;font-weight:800">AVANZA ✓' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
+  else if (sem === 'Amarillo') head = '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F;font-weight:800">Avanza con observación' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
+  else if (sem === 'Rojo') head = '<span class="fb-pill" style="background:#FDE8E7;color:#CC0000;font-weight:800">DESESTIMADO</span>';
+  head += btnInfoFiltro('sunat');
+  if (!open) return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, false, '', false, modo, 'Filtro finanzas');
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   let chkF = {};
   try { const raw = f.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
   const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket.</p>' +
     renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
     '<div class="fb-acc"><button class="btn" onclick="guardarFinanzas()">Guardar</button></div></div>';
-  return fbPanelWrap('finanzas', '💰', '4 · Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
+  return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
 }
 
 // Semáforo global del Business Case: peor caso entre los 4 filtros (gobernanza).
@@ -5740,7 +5801,7 @@ function panelBusinessCase(desbloqueada, modo) {
   const glob = semGlobalB2B();
   const open = FICHA_ETAPA_OPEN === 'businesscase';
   const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
-  if (!open) return fbPanelWrap('businesscase', '📑', '5 · Business case', estadoHtml, false, '', false, modo, 'Business case');
+  if (!open) return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, false, '', false, modo, 'Business case');
   const s = FICHA.solicitud; const f = FICHA.filtros || {};
   const fila = (k, label) => {
     const ff = f[k] || {};
@@ -5777,7 +5838,7 @@ function panelBusinessCase(desbloqueada, modo) {
   const rec = glob === 'Rojo' ? { t: 'Descartar', c: '#E24B4A' } : glob === 'Amarillo' ? { t: 'Avanzar con observaciones', c: '#EF9F27' } : glob === 'Verde' ? { t: 'Avanzar a expediente', c: '#1D9E75' } : { t: 'Pendiente de completar filtros', c: '#94a3b8' };
   html += '<div class="fb-sec">Recomendación comercial</div><div class="bc-rec" style="border-color:' + rec.c + '55;background:' + rec.c + '11"><b style="color:' + rec.c + '">' + rec.t + '</b></div>';
   html += '</div>';
-  return fbPanelWrap('businesscase', '📑', '5 · Business case', estadoHtml, true, html, false, modo, 'Business case');
+  return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, html, false, modo, 'Business case');
 }
 // Datos clave que el Business Case hereda de los filtros ya cargados.
 function bcDatosClaveHTML() {

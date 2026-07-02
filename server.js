@@ -4896,7 +4896,7 @@ app.delete('/api/b2b/documentos/:id', soloB2B, (req, res) => {
 // Avanza la etapa según el semáforo del filtro (verde→siguiente, amarillo→nurture, rojo→no elegible).
 const SIGUIENTE_ETAPA_B2B = {
   credito: { Verde: 'Filtro garantia', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' },
-  garantia: { Verde: 'Filtro finanzas', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' },
+  garantia: { Verde: 'Reunion comercial', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' },
   finanzas: { Verde: 'Expediente', Amarillo: 'Amarillo/nurture', Rojo: 'No elegible' }
 };
 app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
@@ -4918,7 +4918,7 @@ app.put('/api/b2b/solicitudes/:codigo/avanzar', soloB2B, (req, res) => {
 
 // ===== Tablero (kanban) B2B =====
 // Columnas secuenciales (izq→der). "Desestimado" es un filtro aparte, no una columna.
-const COLUMNAS_KANBAN_B2B = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Filtro finanzas', 'Business case'];
+const COLUMNAS_KANBAN_B2B = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
 
 // Deriva la columna del tablero desde señales que ya existen (sin columna nueva ni migración).
 // 'Solicitud' fusiona el intake y el triaje SUNAT: aquí caen las que tienen observación
@@ -4928,6 +4928,7 @@ function etapaKanbanB2B(s) {
   if (s.estado === 'No elegible') return 'Desestimado';
   if (['Expediente', 'Traspasado B2B', 'Reunion agendada'].includes(s.estado)) return 'Business case';
   if (s.estado === 'Filtro finanzas') return 'Filtro finanzas';
+  if (s.estado === 'Reunion comercial') return 'Reunion comercial';
   if (s.estado === 'Filtro garantia') return 'Filtro garantia';
   if (s.estado === 'Amarillo/nurture') return 'Filtro credito'; // en revisión, sigue en crédito
   // 'Nuevo' u otros: triaje por SUNAT. OK → crédito; cualquier otra cosa (error/pendiente) se queda en Solicitud.
@@ -4984,7 +4985,8 @@ const ACCIONES_ETAPA_B2B = {
   'Solicitud': ['Validar RUC en SUNAT', 'Contactar al cliente', 'Reintentar contacto', 'Confirmar monto y destino', 'Solicitar datos faltantes'],
   'Filtro credito': ['Consultar centrales de riesgo', 'Pedir sustento de deudas', 'Solicitar aclaración de manchas', 'Evaluar representantes y vinculadas', 'Escalar a jefatura'],
   'Filtro garantia': ['Solicitar copia literal / partida', 'Pedir datos y fotos del inmueble', 'Estimar valor referencial', 'Verificar cargas y gravámenes', 'Coordinar tasación'],
-  'Filtro finanzas': ['Solicitar EEFF / DJ anual', 'Solicitar flujo proyectado', 'Agendar reunión comercial', 'Analizar ratios y sustento', 'Levantar observaciones financieras'],
+  'Reunion comercial': ['Agendar reunión comercial', 'Confirmar asistencia', 'Reagendar reunión', 'Registrar reunión efectiva', 'Cliente no asistió — reintentar'],
+  'Filtro finanzas': ['Solicitar EEFF / DJ anual (push)', 'Solicitar flujo proyectado', 'Recordar entrega de información', 'Analizar ratios y sustento', 'Levantar observaciones financieras'],
   'Business case': ['Consolidar expediente', 'Redactar informe ejecutivo', 'Enviar a Créditos', 'Coordinar levantamiento de observaciones', 'Agendar presentación / comité']
 };
 // Resultados posibles de una gestión (paso 1 del modal).
@@ -4997,7 +4999,8 @@ const ETAPA_SLA = {
   'Solicitud': { horas: 24, accion: 'Validar SUNAT / contactar' },
   'Filtro credito': { horas: 48, accion: 'Evaluar crédito en centrales' },
   'Filtro garantia': { horas: 72, accion: 'Reunir docs + valor referencial' },
-  'Filtro finanzas': { horas: 72, accion: 'Reunión + análisis financiero' },
+  'Reunion comercial': { horas: 48, accion: 'Agendar / realizar reunión comercial' },
+  'Filtro finanzas': { horas: 72, accion: 'Push de información financiera' },
   'Business case': { horas: 24, accion: 'Armar y enviar a Créditos' }
 };
 function slaEtapaB2B(col, fechaEtapa) {
@@ -5066,7 +5069,8 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
 const AVANCE_KANBAN_B2B = {
   'Filtro credito': { desde: 'Solicitud', estado: 'Nuevo', gate: (s) => s.sunatEstado === 'ok', err: 'Primero valida el RUC en SUNAT (debe quedar en OK).' },
   'Filtro garantia': { desde: 'Filtro credito', estado: 'Filtro garantia', gate: (s, sem) => sem.credito === 'Verde', err: 'El filtro de crédito debe estar en verde para avanzar.' },
-  'Filtro finanzas': { desde: 'Filtro garantia', estado: 'Filtro finanzas', gate: (s, sem) => sem.garantia === 'Verde', err: 'El filtro de garantía debe estar en verde para avanzar.' },
+  'Reunion comercial': { desde: 'Filtro garantia', estado: 'Reunion comercial', gate: (s, sem) => sem.garantia === 'Verde', err: 'El filtro de garantía debe estar en verde para avanzar.' },
+  'Filtro finanzas': { desde: 'Reunion comercial', estado: 'Filtro finanzas', gate: () => true, err: '' },
   'Business case': { desde: 'Filtro finanzas', estado: 'Expediente', gate: (s, sem) => sem.finanzas === 'Verde', err: 'El filtro de finanzas debe estar en verde para avanzar.' }
 };
 
@@ -5837,7 +5841,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.243 (Cortes WA: SELLO de fecha/hora Lima en el encabezado de cada mensaje (sale del sistema al momento de generar) + DISPARO MANUAL de cualquier corte: GET /api/wa/plan?corte=1pm&enviar=1 (admin/jefa) genera con estado vivo, envia y marca flag anti-duplicado del dia; el siguiente corte automatico sale normal por scheduler. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.245 (UX filtros B2B, 2da parte: campos numericos de Credito ya NO se tipean — DESPLEGABLES POR RANGO (cantidades 0/1/2/3/3+, porcentajes por tramos, morosos por rangos S/, KO en 0 como No registra / Si registra) manteniendo el valor numerico para el motor (sin cambios de calculo). Campos AUTO de SUNAT ahora son CHIPS de solo lectura con color por resultado (verde/ambar/rojo, o 'Se autocompleta con SUNAT' si falta) — fin del layout desacomodado. Catalogo contrastado con el manual de originacion: sin redundancias, limites por ticket ya alineados. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
