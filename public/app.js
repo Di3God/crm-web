@@ -1995,7 +1995,7 @@ function renderGrid3x5(cb) {
   }).join('');
   const filaFr = '<div class="g35-frcol">' + FR.map(x => '<span class="g35-fr">' + x + '</span>').join('') + '<span class="g35-fr g35-fr-et">Et.</span></div>';
   return '<div class="g35-wrap"><div class="g35-head">Contactabilidad 3×5 <span class="sub">(3 franjas/día · 10 días desde la asignación)</span>' +
-    '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro</span></div>' +
+    '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 25%,#FFE599 25% 50%,#D9EAD3 50% 75%,#CFE2F3 75% 100%)"></i>Fila Et. = etapa del día</span></div>' +
     '<div class="g35-grid">' + filaFr + cols + '</div></div>';
 }
 let tCodigoActual = null, tTelActual = '';

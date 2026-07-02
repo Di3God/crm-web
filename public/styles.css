@@ -1427,7 +1427,7 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .g35-head { font-size:13px; font-weight:800; color:#1B2A41; display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
 .g35-leyenda { margin-left:auto; font-size:11px; color:#5B6B7F; display:flex; align-items:center; gap:8px; font-weight:600; }
 .g35-leyenda i { width:12px; height:12px; border-radius:3px; display:inline-block; margin-right:3px; vertical-align:-2px; }
-.g35-grid { display:flex; gap:5px; align-items:flex-end; overflow-x:auto; padding-bottom:2px; }
+.g35-grid { display:flex; gap:5px; align-items:flex-start; overflow-x:auto; padding-bottom:2px; }
 .g35-frcol { display:flex; flex-direction:column; gap:4px; margin-right:3px; }
 .g35-fr { font-size:10px; font-weight:800; color:#5B6B7F; height:18px; display:flex; align-items:center; }
 .g35-fr-et { height:8px; font-size:8.5px; }

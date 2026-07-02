@@ -5811,7 +5811,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.239 (Trazabilidad B2C: GRID DE CONTACTABILIDAD 3x5 debajo del codigo del lead — 3 franjas/dia (Manana <12h, Tarde 12-16h, Noche >16h, hora Lima) x 10 dias desde la fecha de asignacion (30 celdas). Verde=contacto efectivo, ambar=intento sin contacto, gris=sin intento, punteado=futuro. Debajo de cada dia una franja fina con el COLOR DE LA ETAPA vigente ese dia (evolucion del lead) + tooltip. Leyenda incluida. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.240 (FIX grid contactabilidad 3x5: etiquetas de fila M/T/N/Et. ahora alineadas con su fila (antes corridas por alineacion al pie) + leyenda nueva para la fila Et. (muestra multicolor = etapa del dia). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
