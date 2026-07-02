@@ -1271,6 +1271,20 @@ async function enviarAlertaWA(texto, jid) {
   } catch (e) { console.error('[WA] alerta falló:', e.message); }
 }
 
+// ===== Planes de accion por WhatsApp (cortes 9am/1pm/6pm, estado vivo) =====
+const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolidado, enviarAlertaWA, peruFecha });
+alertasWA.iniciarCortes();
+// Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
+app.get('/api/wa/plan', soloAdminOJefa, async (req, res) => {
+  const corte = ['9am', '1pm', '6pm'].includes(req.query.corte) ? req.query.corte : '9am';
+  if (req.query.enviar === '1') {
+    const n = await alertasWA.enviarCorteAhora(corte);
+    auditar(req, 'wa_corte_manual', corte, n + ' mensajes');
+    return res.json({ corte, enviados: n, ok: true });
+  }
+  res.json({ corte, planes: alertasWA.generarPlanes(corte) });
+});
+
 // =============================================================
 // FASE 2: RECEPCION Y PROCESAMIENTO DE LEADS DE MARKETING
 // =============================================================
@@ -5823,7 +5837,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.241 (Medicion de SUPERVISION (jefa B2C): el latido de presencia ahora distingue GESTION (modal de gestion abierto) de REVISION (trazabilidad abierta) — la vista supervisor muestra Revisando: X para quien verifica leads sin gestionarlos. Se auditan las revisiones de trazabilidad (roles jefa/admin) y la tarjeta de la jefa suma metricas del dia: Leads revisados + Reasignaciones. El tiempo en CRM ya le contaba (latido por interaccion); ahora su trabajo de revision es visible y contable. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.243 (Cortes WA: SELLO de fecha/hora Lima en el encabezado de cada mensaje (sale del sistema al momento de generar) + DISPARO MANUAL de cualquier corte: GET /api/wa/plan?corte=1pm&enviar=1 (admin/jefa) genera con estado vivo, envia y marca flag anti-duplicado del dia; el siguiente corte automatico sale normal por scheduler. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
