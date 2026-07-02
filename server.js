@@ -4258,7 +4258,7 @@ function consolidadoCredito(codigo) {
 //  Todo dependiente del ticket (Bajo/Medio/Alto).
 // ======================================================================
 const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
-const ANTIG_MIN_TICKET = { Bajo: 18, Medio: 24, Alto: 36 };
+const ANTIG_MIN_TICKET = { Bajo: 12, Medio: 12, Alto: 12 }; // minimo 1 anio para avanzar (todos los tickets)
 // Cuota estimada "gruesa" para el DSCR: cuota fija (francés), tasa piso referencial 25% anual, 12 meses.
 const CUOTA_REF = { tasaAnual: 0.25, meses: 12 };
 function cuotaEstimadaB2B(monto) {
@@ -4932,6 +4932,8 @@ function etapaKanbanB2B(s) {
   if (s.estado === 'Filtro garantia') return 'Filtro garantia';
   if (s.estado === 'Amarillo/nurture') return 'Filtro credito'; // en revisión, sigue en crédito
   // 'Nuevo' u otros: triaje por SUNAT. OK → crédito; cualquier otra cosa (error/pendiente) se queda en Solicitud.
+  // Sin inmueble declarado: no avanza; queda en Solicitud con observacion (garantia inviable).
+  if (String(s.tieneInmueble || '').toLowerCase() === 'no') return 'Solicitud';
   if (s.sunatEstado === 'ok') return 'Filtro credito';
   return 'Solicitud'; // recién llegado o con observación (RUC/SUNAT/teléfono): se etiqueta, no se auto-descarta
 }
@@ -4945,6 +4947,7 @@ function observacionesB2B(s) {
   else if (!/^(10|15|17|20)\d{9}$/.test(ruc)) obs.push({ tipo: 'ruc_malo', label: 'Validar RUC' });
   else if (s.sunatEstado === 'error') obs.push({ tipo: 'ruc_error', label: 'Validar RUC' });
   if (!s.telefono || !String(s.telefono).trim()) obs.push({ tipo: 'falta_numero', label: 'Falta número' });
+  if (String(s.tieneInmueble || '').toLowerCase() === 'no') obs.push({ tipo: 'sin_inmueble', label: 'Sin inmueble (observado)' });
   return obs;
 }
 
@@ -5841,7 +5844,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.245 (UX filtros B2B, 2da parte: campos numericos de Credito ya NO se tipean — DESPLEGABLES POR RANGO (cantidades 0/1/2/3/3+, porcentajes por tramos, morosos por rangos S/, KO en 0 como No registra / Si registra) manteniendo el valor numerico para el motor (sin cambios de calculo). Campos AUTO de SUNAT ahora son CHIPS de solo lectura con color por resultado (verde/ambar/rojo, o 'Se autocompleta con SUNAT' si falta) — fin del layout desacomodado. Catalogo contrastado con el manual de originacion: sin redundancias, limites por ticket ya alineados. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.246 (UX ficha B2B: 25% mas ancha; el resumen (prob·accion·SLA) va junto al CODIGO en la cabecera; RUC dentro de la tarjeta Solicitud (ya no en el head) y editable SOLO en la primera etapa (despues inamovible); monto sin la banda de origen; labels homogeneos capitalizados; datos SUNAT en cajones + UBICACION en el filtro; boton GUARDAR arriba a la altura del encabezado de cada etapa con hover VERDE. LOGICA: tieneInmueble=no NO avanza (queda en Solicitud observado 'Sin inmueble'); antiguedad minima 12 meses (1 anio) en todos los tickets (server+espejo). Boton REVISAR junto al semaforo cuando la etapa esta en Amarillo: registra la excepcion (que hara + fecha) via modal de gestion — aplica a SUNAT/Credito/Garantia/Finanzas. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

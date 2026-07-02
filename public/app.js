@@ -4944,7 +4944,8 @@ function renderFichaB2B() {
     panelFinanzas(modoPanel('finanzas') !== 'bloqueado', semFinanzas, modoPanel('finanzas')),
     panelBusinessCase(modoPanel('businesscase') !== 'bloqueado', modoPanel('businesscase'))
   ];
-  $('fbAcordeon').innerHTML = stepperFichaB2B() + resumenFichaB2B() + panels.join('');
+  const _rh = $('fbResumenHead'); if (_rh) _rh.innerHTML = resumenFichaB2B();
+  $('fbAcordeon').innerHTML = stepperFichaB2B() + panels.join('');
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
   cargarGestionesB2B(s.codigo);
   aplicarBloqueoPaneles();
@@ -5063,7 +5064,7 @@ async function cargarFiltrosCatalogo() {
   return FILTROS_B2B_CACHE;
 }
 const RANGOS_VENTAS_TK = { Bajo: [500000, 3000000], Medio: [3000000, 10000000], Alto: [10000000, Infinity] };
-const ANTIG_MIN_TK = { Bajo: 18, Medio: 24, Alto: 36 };
+const ANTIG_MIN_TK = { Bajo: 12, Medio: 12, Alto: 12 }; // minimo 1 anio (espejo del server)
 function evalGateJS(g, valores, ticket) {
   const val = valores[g.clave]; const vacio = (val === undefined || val === null || val === '');
   if (g.tipo === 'textoReq') { if (g.requiereSi && valores[g.requiereSi.clave] === g.requiereSi.val) { return vacio ? { resultado: 'escalado', motivo: g.motivo } : { resultado: 'ok' }; } return { resultado: 'ok' }; }
@@ -5382,10 +5383,14 @@ function autoValoresSunat(s) {
   return v;
 }
 // Boton "i": detalle de lo observado/KO en un filtro guardado (motivos persistidos).
+const COL_DE_FILTRO = { sunat: 'Solicitud', credito: 'Filtro credito', garantia: 'Filtro garantia', finanzas: 'Filtro finanzas' };
 function btnInfoFiltro(tipo) {
   const f = FICHA.filtros && FICHA.filtros[tipo];
   if (!f || !f.semaforo || f.semaforo === 'Verde') return '';
-  return ' <button class="fb-flag fb-info" style="font-size:13px;padding:1px 7px" title="Ver qué está observado" onclick="event.stopPropagation();verInfoFiltro(\'' + tipo + '\')">i</button>';
+  let h = ' <button class="fb-flag fb-info" style="font-size:13px;padding:1px 7px" title="Ver qué está observado" onclick="event.stopPropagation();verInfoFiltro(\'' + tipo + '\')">i</button>';
+  // Amarillo: boton Revisar -> registra la EXCEPCION (que hara y cuando) via modal de gestion
+  if (f.semaforo === 'Amarillo') h += ' <button class="fb-revisar" title="Registrar cómo se levantará la observación (acción + fecha)" onclick="event.stopPropagation();abrirModalGestion(\'' + (COL_DE_FILTRO[tipo] || 'Solicitud') + '\')">Revisar</button>';
+  return h;
 }
 function verInfoFiltro(tipo) {
   const f = (FICHA.filtros && FICHA.filtros[tipo]) || {};
@@ -5422,6 +5427,7 @@ function panelFiltroSunat(s, modo) {
     (condTxt ? chip(condTxt, /^\s*habido/i.test(condTxt)) : '') + '</div>' : '';
   const datosEmp = '<div class="fb-emp-datos">' +
     fbCampo('Razón social', s.razonSocial) + fbCampo('RUC', s.ruc) +
+    fbCampo('Ubicación (SUNAT)', (s.sunatDistrito || s.sunatDepartamento) ? ((s.sunatDistrito || '') + (s.sunatDistrito && s.sunatDepartamento ? ' · ' : '') + (s.sunatDepartamento || '')) : '—') +
     fbCampoOpt('Nombre comercial', s.nombreComercial) + fbCampoOpt('Sector', s.sector) +
     fbCampoOpt('Actividad', s.actividad) + fbCampo('Antigüedad', fmtAntiguedad(s.antiguedadMeses)) + '</div>';
   const cuerpo = '<div class="fb-body">' + flags + datosEmp +
@@ -5445,11 +5451,11 @@ function panelSolicitud(s) {
   let cuerpo = '';
   if (open) {
     const montoStr = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
-    const montoExtra = (s.montoSolicitado != null && s.montoRango) ? ' <span class="sub">(' + s.montoRango + ')</span>' : '';
+    const montoExtra = ''; // sin la banda del origen: solo el monto definido
     const montoFila = '<div class="fb-campo"><span class="fb-k">Monto solicitado</span><span class="fb-v">' + montoStr + montoExtra +
       ' <button class="btn-sunat" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button></span></div>';
     // RUC: se muestra el que pusieron inicialmente. Editable SOLO en la etapa Solicitud/SUNAT.
-    const enSolicitud = (FICHA.etapaKanban === 'Solicitud') || B2B_MODO_DEMO;
+    const enSolicitud = (FICHA.etapaKanban === 'Solicitud'); // solo primera etapa; despues inamovible
     const rucVal = s.ruc || '';
     const rucEstado = s.sunatEstado === 'ok' ? '<span class="ruc-ok">✓ validado</span>' : (s.sunatEstado === 'error' ? '<span class="ruc-err">⚠ no valida en SUNAT</span>' : (rucVal && !/^(10|15|17|20)\d{9}$/.test(String(rucVal).trim()) ? '<span class="ruc-err">⚠ RUC inválido</span>' : '<span class="sub">pendiente</span>'));
     const rucFila = enSolicitud
@@ -5471,8 +5477,7 @@ function panelSolicitud(s) {
       garantia +
       '</div>';
   }
-  const rucHead = s.ruc ? '<span class="fb-ruc-head">RUC ' + s.ruc + '</span>' : '<span class="fb-ruc-head fb-ruc-falta">sin RUC</span>';
-  return fbPanelWrap('solicitud', '📥', 'Solicitud', rucHead + ' <span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
+  return fbPanelWrap('solicitud', '📥', 'Solicitud', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
 }
 
 function consolidadoCreditoJS() {

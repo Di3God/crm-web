@@ -1427,6 +1427,21 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .mtr-chip-obs { background:#FFF4E0; color:#B7791F; }
 .mtr-chip-ko { background:#FDE8E7; color:#CC0000; }
 .mtr-chip-p { background:#EEF3F9; color:#6B7A8D; font-weight:600; }
+/* Ficha B2B 25% mas ancha */
+#ovFichaB2B .modal, #ovFichaB2B .mg-modal, #ovFichaB2B > div:first-child > div { width:min(1250px,96vw) !important; max-width:96vw; }
+/* Boton Guardar de cada etapa: arriba a la derecha, a la altura del encabezado; verde al hover */
+.fb-panel-open { position:relative; }
+.fb-panel-open > .fb-body > .fb-acc:last-child { position:absolute; top:8px; right:52px; margin:0; z-index:3; }
+.fb-panel-open > .fb-body > .fb-acc:last-child .btn { padding:6px 16px; }
+.fb-acc .btn:hover { background:#1D9E75 !important; border-color:#1D9E75 !important; color:#fff; }
+.fb-revisar { background:#FFF4E0; color:#B7791F; border:1px solid #F1D9A7; border-radius:8px; padding:2px 10px; font-size:12px; font-weight:700; cursor:pointer; margin-left:4px; }
+.fb-revisar:hover { background:#B7791F; color:#fff; }
+/* Solicitud homogenea: labels con primera letra en mayuscula, valores alineados */
+.fb-campo .fb-k { text-transform:capitalize; color:#41505F; font-weight:600; }
+.fb-campo .fb-v { color:#1B2A41; }
+/* Cajones de datos SUNAT (auto) */
+.fb-panel .mtr-row { background:#FAFCFE; border:1px solid #EDF2F8; border-radius:10px; padding:7px 10px; margin-bottom:6px; }
+.fb-panel .mtr-lbl { font-size:12px; }
 
 /* Grid contactabilidad 3x5 (trazabilidad B2C) */
 .g35-wrap { background:#fff; border:1px solid #E3E9F2; border-radius:12px; padding:10px 14px; margin:10px 0 4px; }
