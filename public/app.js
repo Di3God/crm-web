@@ -649,17 +649,19 @@ async function enviarLatido(forzar) {
   if (!YO) return;
   if (!forzar && !(_hbActivo && document.visibilityState === 'visible')) return;
   _hbActivo = false;
-  // El lead solo cuenta como "gestionando" si el modal de gestión está abierto ahora.
-  const modal = $('ovGestion');
-  const abierto = modal && modal.classList.contains('act');
+  // Contexto del latido: 'gestion' si el modal de gestión está abierto; 'revision' si está
+  // abierta la trazabilidad de un lead (p.ej. la jefa verificando); null si solo navega.
+  const modalG = $('ovGestion');
+  const enGestion = modalG && modalG.classList.contains('act');
+  const modalT = $('ovTraza');
+  const enRevision = !enGestion && modalT && modalT.classList.contains('act') && tCodigoActual;
+  let cuerpo = { leadCodigo: null, leadNombre: null, etapa: null, modo: null };
+  if (enGestion) cuerpo = { leadCodigo: gCodigo || null, leadNombre: gLead ? (gLead.nombre || null) : null, etapa: gLead ? (gLead.etapa || null) : null, modo: 'gestion' };
+  else if (enRevision) cuerpo = { leadCodigo: tCodigoActual, leadNombre: tNombreActual || null, etapa: null, modo: 'revision' };
   try {
     await api('/api/presencia/latido', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leadCodigo: abierto ? (gCodigo || null) : null,
-        leadNombre: abierto && gLead ? (gLead.nombre || null) : null,
-        etapa: abierto && gLead ? (gLead.etapa || null) : null
-      })
+      body: JSON.stringify(cuerpo)
     });
   } catch (e) { /* silencioso: el latido no debe molestar al usuario */ }
 }
@@ -702,12 +704,14 @@ function renderSupervisor(d) {
     const esJefa = g.rol === 'jefa';
     const met = (l, v) => '<div class="sup-met"><span class="sup-met-l">' + l + '</span><span class="sup-met-v">' + v + '</span></div>';
     let grid = met('Primera conexión', supHora(g.primeraConexion)) + met('Tiempo en CRM', supDur(g.tiempoDentroSeg));
-    // La jefa no gestiona leads: no mostramos "Última gestión" ni la línea de lead.
     if (!esJefa) grid += met('Última gestión', supHora(g.ultimaGestion));
     grid += met('Última actividad', supHora(g.ultimaInteraccion));
-    const leadLinea = esJefa ? '' : ('<div class="sup-lead">' + (g.leadNombre
-      ? '📋 Gestionando: <b>' + g.leadNombre + '</b>'
-      : '<span class="muted">Sin lead abierto ahora</span>') + '</div>');
+    // Métricas de supervisión (jefa/admin): leads revisados hoy + reasignaciones.
+    if (g.supervision) grid += met('Revisados hoy', g.supervision.revisados) + met('Reasignaciones', g.supervision.reasignaciones);
+    // Línea de lead: gestionando (modal de gestión) o revisando (trazabilidad abierta).
+    const leadLinea = '<div class="sup-lead">' + (g.leadNombre
+      ? (g.modo === 'revision' ? '👁 Revisando: <b>' + g.leadNombre + '</b>' : '📋 Gestionando: <b>' + g.leadNombre + '</b>')
+      : '<span class="muted">' + (esJefa ? 'Sin lead en revisión ahora' : 'Sin lead abierto ahora') + '</span>') + '</div>';
     return `
     <div class="sup-card sup-${g.estado}">
       <div class="sup-top">
@@ -1998,11 +2002,12 @@ function renderGrid3x5(cb) {
     '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 25%,#FFE599 25% 50%,#D9EAD3 50% 75%,#CFE2F3 75% 100%)"></i>Fila Et. = etapa del día</span></div>' +
     '<div class="g35-grid">' + filaFr + cols + '</div></div>';
 }
-let tCodigoActual = null, tTelActual = '';
+let tCodigoActual = null, tTelActual = '', tNombreActual = '';
 async function verTrazabilidad(codigo) {
   tCodigoActual = codigo;
   const t = await api('/api/leads/' + codigo + '/trazabilidad');
   tTelActual = t.telefono || (gLead && gLead.codigo === codigo ? gLead.telefono : '') || '';
+  tNombreActual = t.nombre || '';
   $('tTitulo').textContent = 'Trazabilidad — ' + t.nombre;
   // Chips cabecera
   const bg = colorEtapa(t.etapa);

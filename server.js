@@ -1986,6 +1986,8 @@ app.get('/api/leads/:codigo/trazabilidad', (req, res) => {
   const gestiones = gestionesDeLead(lead.codigo);
   const cons = leadConsolidado(lead);
   const llamadas = db.prepare('SELECT * FROM llamadas WHERE codigo = ? ORDER BY fecha ASC').all(lead.codigo);
+  // Medicion de supervision: registrar la revision (solo roles que supervisan, no gestoras).
+  if (['admin', 'jefa'].includes(req.user.rol)) auditar(req, 'ver_trazabilidad', lead.codigo, null);
 
   // --- Timeline: construir eventos cronologicos con score/prob progresivos ---
   const eventos = [];
@@ -3803,6 +3805,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS presencia (
   leadCodigo TEXT, leadNombre TEXT, etapa TEXT
 )`);
 try { db.exec('ALTER TABLE presencia ADD COLUMN segundosAcum INTEGER DEFAULT 0'); } catch (e) { /* ya existe */ }
+try { db.exec('ALTER TABLE presencia ADD COLUMN modo TEXT'); } catch (e) { /* ya existe */ }
 db.exec(`CREATE TABLE IF NOT EXISTS presencia_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, dia TEXT, inicio TEXT, fin TEXT
 )`);
@@ -3812,31 +3815,31 @@ app.post('/api/presencia/latido', (req, res) => {
   const u = req.user; if (!u) return res.status(401).json({ error: 'no_auth' });
   const b = req.body || {};
   const ahoraIso = new Date().toISOString(); const nowMs = Date.now();
-  PRESENCIA[u.usuario] = { nombre: u.nombre, rol: u.rol, lastSeen: nowMs, leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null };
+  PRESENCIA[u.usuario] = { nombre: u.nombre, rol: u.rol, lastSeen: nowMs, leadCodigo: b.leadCodigo || null, leadNombre: b.leadNombre || null, etapa: b.etapa || null, modo: b.modo || null };
   try {
     const hoy = peruFecha(ahoraIso);
     const row = db.prepare('SELECT dia, ultimaConexion FROM presencia WHERE usuario = ?').get(u.usuario);
     if (!row || row.dia !== hoy) {
       // Nuevo día (o primera vez): reinicia acumulado y abre un tramo nuevo.
-      db.prepare(`INSERT INTO presencia (usuario,dia,primeraConexion,ultimaConexion,segundosAcum,leadCodigo,leadNombre,etapa)
-        VALUES (?,?,?,?,0,?,?,?)
+      db.prepare(`INSERT INTO presencia (usuario,dia,primeraConexion,ultimaConexion,segundosAcum,leadCodigo,leadNombre,etapa,modo)
+        VALUES (?,?,?,?,0,?,?,?,?)
         ON CONFLICT(usuario) DO UPDATE SET dia=excluded.dia, primeraConexion=excluded.primeraConexion,
-          ultimaConexion=excluded.ultimaConexion, segundosAcum=0, leadCodigo=excluded.leadCodigo, leadNombre=excluded.leadNombre, etapa=excluded.etapa`)
-        .run(u.usuario, hoy, ahoraIso, ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null);
+          ultimaConexion=excluded.ultimaConexion, segundosAcum=0, leadCodigo=excluded.leadCodigo, leadNombre=excluded.leadNombre, etapa=excluded.etapa, modo=excluded.modo`)
+        .run(u.usuario, hoy, ahoraIso, ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, b.modo || null);
       db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
     } else {
       const delta = Math.round((nowMs - Date.parse(row.ultimaConexion)) / 1000);
       if (delta > 0 && delta <= UMBRAL_TRAMO) {
         // Mismo tramo: suma el delta al acumulado y extiende el tramo abierto.
-        db.prepare('UPDATE presencia SET ultimaConexion=?, segundosAcum=COALESCE(segundosAcum,0)+?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
-          .run(ahoraIso, delta, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+        db.prepare('UPDATE presencia SET ultimaConexion=?, segundosAcum=COALESCE(segundosAcum,0)+?, leadCodigo=?, leadNombre=?, etapa=?, modo=? WHERE usuario=?')
+          .run(ahoraIso, delta, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, b.modo || null, u.usuario);
         const ult = db.prepare('SELECT id FROM presencia_log WHERE usuario=? AND dia=? ORDER BY inicio DESC LIMIT 1').get(u.usuario, hoy);
         if (ult) db.prepare('UPDATE presencia_log SET fin=? WHERE id=?').run(ahoraIso, ult.id);
         else db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
       } else {
         // Hueco largo (estuvo desconectada): nuevo tramo, no se cuenta el hueco.
-        db.prepare('UPDATE presencia SET ultimaConexion=?, leadCodigo=?, leadNombre=?, etapa=? WHERE usuario=?')
-          .run(ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, u.usuario);
+        db.prepare('UPDATE presencia SET ultimaConexion=?, leadCodigo=?, leadNombre=?, etapa=?, modo=? WHERE usuario=?')
+          .run(ahoraIso, b.leadCodigo || null, b.leadNombre || null, b.etapa || null, b.modo || null, u.usuario);
         db.prepare('INSERT INTO presencia_log (usuario,dia,inicio,fin) VALUES (?,?,?,?)').run(u.usuario, hoy, ahoraIso, ahoraIso);
       }
     }
@@ -3866,10 +3869,19 @@ app.get('/api/supervisor/presencia', soloAdminOJefa, (req, res) => {
     const ultimaGestion = ultGest[g.nombre] || null;
     const ultimaInteraccion = [row && row.ultimaConexion, ultimaGestion].filter(Boolean).sort().slice(-1)[0] || null;
     const vigente = estado !== 'desconectada' && row;
+    // Metricas de supervision del dia (solo roles que supervisan): leads revisados + reasignaciones.
+    let supervision = null;
+    if (g.rol === 'jefa' || g.rol === 'admin') {
+      const inicioDiaPeru = hoy + 'T05:00:00.000Z'; // 00:00 Lima = 05:00 UTC
+      const rev = db.prepare("SELECT COUNT(DISTINCT objetivo) n FROM auditoria WHERE nombre=? AND accion='ver_trazabilidad' AND fecha>=?").get(g.nombre, inicioDiaPeru);
+      const rea = db.prepare("SELECT COUNT(*) n FROM auditoria WHERE nombre=? AND accion='asignar' AND fecha>=?").get(g.nombre, inicioDiaPeru);
+      supervision = { revisados: rev.n, reasignaciones: rea.n };
+    }
     return {
       usuario: g.usuario, nombre: g.nombre, rol: g.rol, estado, segundos,
-      primeraConexion, tiempoDentroSeg, ultimaGestion, ultimaInteraccion,
-      leadCodigo: vigente ? row.leadCodigo : null, leadNombre: vigente ? row.leadNombre : null, etapa: vigente ? row.etapa : null
+      primeraConexion, tiempoDentroSeg, ultimaGestion, ultimaInteraccion, supervision,
+      leadCodigo: vigente ? row.leadCodigo : null, leadNombre: vigente ? row.leadNombre : null, etapa: vigente ? row.etapa : null,
+      modo: vigente ? row.modo : null
     };
   });
   res.json({ actualizado: new Date().toISOString(), equipo: filas });
@@ -5811,7 +5823,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.240 (FIX grid contactabilidad 3x5: etiquetas de fila M/T/N/Et. ahora alineadas con su fila (antes corridas por alineacion al pie) + leyenda nueva para la fila Et. (muestra multicolor = etapa del dia). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.241 (Medicion de SUPERVISION (jefa B2C): el latido de presencia ahora distingue GESTION (modal de gestion abierto) de REVISION (trazabilidad abierta) — la vista supervisor muestra Revisando: X para quien verifica leads sin gestionarlos. Se auditan las revisiones de trazabilidad (roles jefa/admin) y la tarjeta de la jefa suma metricas del dia: Leads revisados + Reasignaciones. El tiempo en CRM ya le contaba (latido por interaccion); ahora su trabajo de revision es visible y contable. REQUIERE RESTART) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
