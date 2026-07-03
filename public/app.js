@@ -5109,10 +5109,9 @@ function panelReunion(modo) {
 
   // Comentarios en FRANJAS horizontales a todo el ancho.
   const comentarios =
-    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">obligatorio solo para pasar a Finanzas</span></div>' +
+    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">Obligatorio al pasar a Finanzas</span></div>' +
     '<div class="reu-com-sub">Registra los acuerdos, aclaraciones y validación de las observaciones.</div>' +
-    '<textarea id="fbReuComentario" class="mtr-in reu-txt" maxlength="2000" placeholder="Escribe tus comentarios aquí…" oninput="contadorReuComentario()">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea>' +
-    '<div class="sub" id="fbReuContador" style="font-size:11px">' + ((r.comentario || '').length) + ' / 2000 caracteres · 👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</div></div>';
+    '<textarea id="fbReuComentario" class="mtr-in reu-txt reu-txt-full" maxlength="2000" placeholder="Escribe tus comentarios aquí…">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea></div>';
 
   const cuerpo = '<div class="fb-body reu-body">' +
     '<div class="reu-top"><span class="fcr-sub">Validación de observaciones y definición de próximos pasos</span>' +
@@ -5243,7 +5242,8 @@ function renderFichaB2B() {
   FICHA_DIRTY.clear(); instalarDirtyTracking();
   const _av = $('fbAvisoDirty'); if (_av) _av.remove();
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
-  cargarGestionesB2B(s.codigo);
+  renderContactabilidadB2B(); // grid inmediato con lo que haya en memoria
+  cargarGestionesB2B(s.codigo).then(renderContactabilidadB2B); // y refresco con gestiones frescas
   aplicarBloqueoPaneles();
 }
 // Deshabilita inputs de los paneles en modo 'lectura' o 'bloqueado' (deja editable solo el monto).
@@ -5268,6 +5268,66 @@ function _aplicarBloqueoPanelesOriginal() {
 // ===== Bitácora de gestiones (trazabilidad, próxima acción obligatoria) =====
 // ===== Modal de gestión (2 pasos: resultado + próxima acción). Se abre desde cada etapa. =====
 let GESTION_COL = null;
+// ===== Contactabilidad B2B (v1.261): mismo grid 3 franjas x 10 días del B2C, con Et. = embudo B2B =====
+const ETAPA_COLOR_B2B = {
+  'Solicitud': '#F4CCCC', 'Filtro credito': '#FFE599', 'Filtro garantia': '#FCE5CD',
+  'Reunion comercial': '#D9EAD3', 'Filtro finanzas': '#CFE2F3', 'Business case': '#D9D2E9', 'Desestimado': '#EFEFEF'
+};
+const RES_INTENTO_B2B = /no contest|buz[oó]n|no respond|volver a llamar|sin respuesta/i;
+function contactabilidadB2B() {
+  const s = FICHA.solicitud; if (!s || !s.fechaIngreso) return null;
+  const OFF = -5 * 3600000;
+  const dia = iso => Math.floor((new Date(iso).getTime() + OFF) / 86400000);
+  const hora = iso => new Date(new Date(iso).getTime() + OFF).getUTCHours();
+  const d0 = dia(s.fechaIngreso), hoy = dia(new Date().toISOString());
+  const dias = [];
+  for (let i = 0; i < 10; i++) {
+    const dAbs = new Date((d0 + i) * 86400000 - OFF);
+    dias.push({ etiqueta: 'D' + (i + 1), dm: String(dAbs.getUTCDate()).padStart(2, '0') + '/' + String(dAbs.getUTCMonth() + 1).padStart(2, '0'),
+      etapa: null, franjas: [{ estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }] });
+  }
+  (FICHA._gestiones || []).forEach(g => {
+    const ix = dia(g.fecha) - d0; if (ix < 0 || ix > 9) return;
+    const h = hora(g.fecha); const fr = h < 12 ? 0 : (h < 16 ? 1 : 2);
+    const esIntento = RES_INTENTO_B2B.test(g.resultado || '');
+    const cel = dias[ix].franjas[fr];
+    if (cel.estado !== 'contacto') cel.estado = esIntento ? (cel.estado === 'contacto' ? 'contacto' : 'intento') : 'contacto';
+    dias[ix].etapa = g.etapa || dias[ix].etapa; // última etapa registrada ese día
+  });
+  const ixHoy = hoy - d0;
+  if (ixHoy >= 0 && ixHoy <= 9 && !dias[ixHoy].etapa) dias[ixHoy].etapa = FICHA.etapaKanban;
+  // Mínimos por corte de llegada: <12h → 3 intentos D1 · 12-16h → 2 · >16h → 1. Días siguientes: 3/día.
+  const h0 = hora(s.fechaIngreso);
+  const minD1 = h0 < 12 ? 3 : (h0 < 16 ? 2 : 1);
+  const hechosHoy = ixHoy >= 0 && ixHoy <= 9 ? dias[ixHoy].franjas.filter(f => f.estado === 'contacto' || f.estado === 'intento').length : 0;
+  const minHoy = ixHoy === 0 ? minD1 : 3;
+  return { dias, minD1, minHoy, hechosHoy, ixHoy };
+}
+function renderContactabilidadB2B() {
+  const host = $('fbContactabilidad'); if (!host) return;
+  const cb = contactabilidadB2B();
+  if (!cb) { host.innerHTML = ''; return; }
+  const COL = { contacto: '#1D9E75', intento: '#EF9F27', vacio: '#E9EEF4', futuro: '#FFFFFF' };
+  const cols = cb.dias.map(d => {
+    const celdas = d.franjas.map((f, i) => {
+      const tip = d.dm + ' · ' + (i === 0 ? 'Mañana (<12h)' : i === 1 ? 'Tarde (12-16h)' : 'Noche (>16h)') + ' · ' +
+        (f.estado === 'contacto' ? 'Contacto efectivo' : f.estado === 'intento' ? 'Intento sin contacto' : f.estado === 'futuro' ? 'Aún no llega' : 'Sin intento');
+      return '<span class="g35-celda g35-' + f.estado + '" title="' + tip + '" style="background:' + COL[f.estado] + '"></span>';
+    }).join('');
+    const etCol = d.etapa && ETAPA_COLOR_B2B[d.etapa] ? ETAPA_COLOR_B2B[d.etapa] : 'transparent';
+    const etTip = d.etapa ? 'Etapa al cierre de ' + d.dm + ': ' + trEstadoB2B(d.etapa) : '';
+    return '<div class="g35-dia"><div class="g35-celdas">' + celdas + '</div>' +
+      '<div class="g35-etapa" title="' + etTip + '" style="background:' + etCol + '"></div>' +
+      '<div class="g35-lbl">' + d.etiqueta + '<br><i>' + d.dm + '</i></div></div>';
+  }).join('');
+  const filaFr = '<div class="g35-frcol">' + ['M', 'T', 'N'].map(x => '<span class="g35-fr">' + x + '</span>').join('') + '<span class="g35-fr g35-fr-et">Et.</span></div>';
+  const hoyOK = cb.ixHoy >= 0 && cb.ixHoy <= 9;
+  const cumple = cb.hechosHoy >= cb.minHoy;
+  const hint = hoyOK ? '<span class="g35-min ' + (cumple ? 'g35-min-ok' : 'g35-min-falta') + '">Hoy: ' + cb.hechosHoy + '/' + cb.minHoy + ' intentos mín.' + (cb.ixHoy === 0 ? ' (llegó ' + (cb.minD1 === 3 ? 'antes de mediodía' : cb.minD1 === 2 ? 'entre 12 y 4pm' : 'después de 4pm') + ')' : '') + '</span>' : '';
+  host.innerHTML = '<div class="g35-wrap"><div class="g35-head">Contactabilidad <span class="sub">(3 franjas/día · 10 días desde el ingreso)</span>' + hint +
+    '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 20%,#FFE599 20% 40%,#D9EAD3 40% 60%,#CFE2F3 60% 80%,#D9D2E9 80% 100%)"></i>Fila Et. = etapa del embudo</span></div>' +
+    '<div class="g35-grid">' + filaFr + cols + '</div></div>';
+}
 function abrirModalGestion(col) {
   GESTION_COL = col;
   const acciones = (FICHA.accionesPorEtapa && FICHA.accionesPorEtapa[col]) || FICHA.accionesEtapa || [];
@@ -5282,13 +5342,16 @@ function abrirModalGestion(col) {
     // Paso 1
     '<div class="gm-step">1 · ¿Qué pasó?</div>' +
     '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
-    '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in">' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Resultado <span class="gm-oblig">obligatorio</span></label><select id="gmResultado" class="mtr-in"><option value="">— elige —</option>' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Detalle breve (opcional)"></textarea></div>' +
     // Paso 2
     '<div class="gm-step">2 · ¿Qué sigue? <span class="gm-oblig">obligatorio</span></div>' +
     '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
     '<div class="gm-row" id="gmOtroWrap" style="display:none"><label>Especifica</label><input id="gmProxOtro" class="mtr-in" placeholder="Describe la próxima acción"></div>' +
-    '<div class="gm-row"><label>¿Cuándo?</label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
+    '<div class="gm-row"><label>¿Cuándo? <span class="gm-oblig">obligatorio</span></label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
+    '<div class="gm-row"><label>Atajos rápidos</label><div class="gm-atajos">' +
+    [['Hoy 9am', 0, 9], ['Hoy 1pm', 0, 13], ['Hoy 6pm', 0, 18], ['Mañ 9am', 1, 9], ['Mañ 1pm', 1, 13], ['Mañ 6pm', 1, 18], ['+1 día', 1, null], ['+2 días', 2, null]]
+      .map(a => '<button type="button" class="gm-atajo" onclick="gmAtajo(' + a[1] + ',' + (a[2] == null ? 'null' : a[2]) + ')">' + a[0] + '</button>').join('') + '</div></div>' +
     '<div class="error" id="gmMsg"></div>' +
     '<div class="gm-foot"><button class="btn sec" onclick="cerrarModalGestion()">Cancelar</button><button class="btn" onclick="guardarModalGestion()">Registrar</button></div>' +
     '</div></div>';
@@ -5296,14 +5359,24 @@ function abrirModalGestion(col) {
   document.body.appendChild(host);
   const sel = $('gmProxAccion'); if (sel) sel.onchange = () => { $('gmOtroWrap').style.display = sel.value === '__otro' ? '' : 'none'; };
 }
+// Atajo rápido: fija fecha/hora de la próxima acción (dias adelante; hora fija o la actual si es null).
+function gmAtajo(dias, hora) {
+  const d = new Date(Date.now() + dias * 86400000);
+  if (hora != null) d.setHours(hora, 0, 0, 0);
+  const pad = n => String(n).padStart(2, '0');
+  const v = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  const inp = $('gmProxFecha'); if (inp) inp.value = v;
+}
 function cerrarModalGestion() { const h = $('gmHost'); if (h) h.remove(); GESTION_COL = null; }
 async function guardarModalGestion() {
   const msg = $('gmMsg');
+  const resultado = ($('gmResultado').value || '').trim();
   let prox = $('gmProxAccion').value;
   if (prox === '__otro') prox = ($('gmProxOtro').value || '').trim();
   const fecha = ($('gmProxFecha').value || '').trim();
+  if (!resultado) { if (msg) msg.textContent = 'Registra el resultado de la gestión.'; return; }
   if (!prox) { if (msg) msg.textContent = 'Define la próxima acción.'; return; }
-  if (!fecha) { if (msg) msg.textContent = 'Define la fecha de la próxima acción.'; return; }
+  if (!fecha) { if (msg) msg.textContent = 'Define la fecha y hora de la próxima acción.'; return; }
   try {
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/gestiones', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5421,6 +5494,9 @@ function cuotaEstimadaJS(monto, tasa) {
   const i = t / 12, n = CUOTA_REF_JS.meses;
   return m * (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
 }
+// Formato de ratios (globales: los usan la tabla de finanzas y la plantilla del Business Case).
+const fmtVal = (v, f) => v == null ? '—' : (f === '%' ? (v * 100).toFixed(1) + '%' : v.toFixed(2) + 'x');
+const fmtUmb = (u, f, dir) => (dir === 'min' ? '≥ ' : '≤ ') + (f === '%' ? (u * 100).toFixed(0) + '%' : u.toFixed(1) + 'x');
 function evaluarRatiosJS(cat, valores, ticket) {
   const v = {};
   (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
@@ -5674,20 +5750,18 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
           '<span class="an-dd-menu oculto">' + items + '</span></span></span></div>';
       }
       // textoLibreReq
-      return '<div class="' + rowCls + ' mtr-row-multi mtr-row-block">' + '<span class="mtr-lbl">' + icoHtml(a.clave) + a.etiqueta + f2Help(a.tip) + '</span>' +
+      return '<div class="' + rowCls + ' mtr-row-block">' + '<span class="mtr-lbl mtr-lbl-block">' + icoHtml(a.clave) + a.etiqueta + f2Help(a.tip) + '</span>' +
         '<textarea class="mtr-in an-textarea" data-f2="' + prefijo + '" data-k="' + a.clave + '" placeholder="Explica por qué el caso merece evaluación…" oninput="' + cb + '">' + (val ? String(val).replace(/</g, '&lt;') : '') + '</textarea></div>';
     }).join('');
     html += '<div class="fb-sec">Análisis del caso (para el Business Case)</div>' + anHtml;
   }
-  if (tipo !== 'sunat' && tipo !== 'finanzas') html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div>';
   html += '</div>';
   return html;
 }
 // Tabla de ratios con su umbral, valor calculado y semáforo; + cruce de capacidad para DSCR.
 function ratiosTablaHTML(ratios) {
   if (!ratios || !ratios.detalle) return '<div class="sub">Ingresa las cifras para calcular los ratios.</div>';
-  const fmtVal = (v, f) => v == null ? '—' : (f === '%' ? (v * 100).toFixed(1) + '%' : v.toFixed(2) + 'x');
-  const fmtUmb = (u, f, dir) => (dir === 'min' ? '≥ ' : '≤ ') + (f === '%' ? (u * 100).toFixed(0) + '%' : u.toFixed(1) + 'x');
+
   // Nota de la cuota estimada usada para el DSCR (gruesa: 25% a 12m sobre el monto sincerado).
   let cuotaNota = '';
   const tasaAct = ratios.tasa != null ? ratios.tasa : 0.25;
@@ -6131,7 +6205,7 @@ function panelCredito(semGuardado, modo) {
   let html = '<div class="fb-body fcr-body">';
   // Cabecera del cuerpo: título + sub, y a la derecha el estado vivo + Guardar filtro.
   html += '<div class="fcr-head"><span class="fcr-head-ic">📋</span>' +
-    '<div><div class="fcr-tit">Filtro crédito</div><div class="fcr-sub">Define los criterios de evaluación crediticia · consolidación por <b>peor caso</b> (empresa, representantes y vinculadas)</div></div>' +
+    '<div><div class="fcr-tit">Filtro crédito</div><div class="fcr-sub">Define los criterios de evaluación crediticia</div></div>' +
     '<span class="fcr-pill fcr-pill-p" id="fcrEstadoPill">◌ …</span>' +
     '<button class="btn fcr-guardar" onclick="guardarCredito()">💾 Guardar filtro</button></div>';
   html += '<span id="fbCredConsolidado" class="oculto"></span>';
@@ -6166,10 +6240,11 @@ function sujetoCard(su, editable) {
     : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
   const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
   const metricas = renderFiltroDosCapas('credito', valores, 'suj' + su.id, ticket);
-  // v1.258: los links de sustento van únicamente en "Archivos de crédito (link de Drive)" del panel.
-  const docsList = docs.map(d => docAnchor(d) + ' <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ');
-  const docHtml = docs.length ? '<div class="fb-doc" style="margin-top:8px">' + docsList + '</div>' : '';
-  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + (su.tipoSujeto === 'empresa' ? ' fb-suj-empresa' : '') + '"><div class="fb-suj-head' + (su.tipoSujeto === 'empresa' ? ' fcr-emp' : '') + '">' + (su.tipoSujeto === 'empresa' ? '<span class="fcr-emp-ic">🏢</span>' : '') + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
+  const docHtml = ''; // v1.260: adjuntos por sujeto eliminados (todo va en el link de Drive del panel)
+  const extraEmp = su.tipoSujeto === 'empresa'
+    ? '<span class="fcr-emp-dato">' + (FICHA.solicitud.ruc || su.doc || '') + '</span>' + (FICHA.solicitud.contacto ? '<span class="fcr-emp-dato">' + FICHA.solicitud.contacto + '</span>' : '')
+    : '';
+  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + (su.tipoSujeto === 'empresa' ? ' fb-suj-empresa' : '') + '"><div class="fb-suj-head' + (su.tipoSujeto === 'empresa' ? ' fcr-emp' : '') + '">' + (su.tipoSujeto === 'empresa' ? '<span class="fcr-emp-ic">🏢</span>' : '') + nombreHtml + extraEmp + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
 }
 
 function recalcConsolidado() {
@@ -6285,8 +6360,7 @@ function recalcGarantia(prefijo, ticket) {
 function panelGarantia(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
   const open = FICHA_ETAPA_OPEN === 'garantia';
-  let estadoHtml = headerPillB2B('garantia');
-  estadoHtml += btnInfoFiltro('garantia');
+  const estadoHtml = headerPillB2B('garantia');
   if (!open) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, false, '', false, modo, 'Filtro garantia');
   const inms = FICHA.garantiaInmuebles || [];
   let html = '<div class="fb-body fga-body">';
@@ -6399,55 +6473,147 @@ function panelBusinessCase(desbloqueada, modo) {
     '</div></div>';
   return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, cuerpo, false, modo, 'Business case');
 }
-// Construye el HTML COMPLETO del expediente (independiente del DOM del panel).
+// ===== Plantilla profesional del Business Case (máx. 2 hojas, v1.260) =====
+// Se autocompleta con lo registrado en las etapas. Misma plantilla para previsualizar, PDF y Word.
+const BCP_CSS = `
+  .bcp { font-family:'Segoe UI',Calibri,Arial,sans-serif; color:#1E293B; font-size:10.5pt; line-height:1.35; }
+  .bcp-head { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:3px solid #0B5FFF; padding-bottom:8px; margin-bottom:12px; }
+  .bcp-logo { font-size:15pt; font-weight:800; color:#0B5FFF; letter-spacing:.5px; }
+  .bcp-tit { font-size:13pt; font-weight:800; text-align:right; }
+  .bcp-meta { font-size:8.5pt; color:#64748B; text-align:right; }
+  .bcp-sec { font-size:10pt; font-weight:800; color:#0B5FFF; border-bottom:1px solid #D6E4FF; margin:12px 0 5px; padding-bottom:2px; text-transform:uppercase; letter-spacing:.4px; }
+  .bcp table { width:100%; border-collapse:collapse; margin:2px 0; }
+  .bcp td, .bcp th { border:1px solid #D8E0EA; padding:4px 7px; font-size:9.5pt; text-align:left; vertical-align:top; }
+  .bcp th { background:#F1F6FF; font-weight:700; color:#334155; }
+  .bcp .k { background:#F8FAFD; color:#64748B; font-size:8.5pt; width:16%; font-weight:600; }
+  .bcp-band { border-radius:6px; padding:8px 12px; margin:4px 0 8px; border:1px solid; }
+  .bcp-band b { font-size:11.5pt; }
+  .bcp-verde { background:#EAF7F0; border-color:#9BD9C0; color:#127055; }
+  .bcp-amarillo { background:#FFF7E8; border-color:#F2CE8E; color:#8a5a10; }
+  .bcp-rojo { background:#FDF0EF; border-color:#F0A9A5; color:#9B1C1C; }
+  .bcp-gris { background:#F3F6FA; border-color:#DDE4EC; color:#475569; }
+  .bcp .sw { font-weight:800; padding:1px 8px; border-radius:4px; color:#fff; font-size:8.5pt; }
+  .bcp .sw-verde{background:#1D9E75}.bcp .sw-amarillo{background:#EF9F27}.bcp .sw-rojo{background:#E24B4A}.bcp .sw-gris{background:#94A3B8;}
+  .bcp-com { background:#F8FAFD; border:1px solid #E4EAF2; border-radius:6px; padding:6px 10px; font-size:9.5pt; min-height:30px; white-space:pre-wrap; }
+  .bcp-firmas { display:flex; gap:14px; margin-top:28px; }
+  .bcp-firma { flex:1; text-align:center; font-size:8.5pt; color:#64748B; border-top:1px solid #94A3B8; padding-top:5px; }
+  .bcp-firma b { display:block; color:#1E293B; font-size:9.5pt; }
+  .bcp-salto { page-break-before:always; }
+  .bcp-foot { margin-top:12px; font-size:7.5pt; color:#94A3B8; border-top:1px solid #E4EAF2; padding-top:4px; }
+`;
+function bcpSem(sem) { return sem ? '<span class="sw sw-' + sem.toLowerCase() + '">' + sem.toUpperCase() + '</span>' : '<span class="sw sw-gris">PENDIENTE</span>'; }
 function bcReporteHTML() {
   const s = FICHA.solicitud; const f = FICHA.filtros || {};
+  const parse = x => { try { return typeof x === 'string' ? JSON.parse(x || '{}') : (x || {}); } catch (e) { return {}; } };
   const glob = semGlobalB2B();
-  const gob = {
-    Verde: { t: 'APTO PARA EXPEDIENTE', d: 'Todos los filtros en Verde. El caso pasa a armado de expediente y comité.', cls: 'bc-band-ok' },
-    Amarillo: { t: 'AVANZA CON EXCEPCIÓN', d: 'Hay filtros en Amarillo: requiere levantar observaciones o aprobación de comité.', cls: 'bc-band-obs' },
-    Rojo: { t: 'OPERACIÓN BLOQUEADA', d: 'Al menos un filtro en Rojo (killer): la operación se descarta salvo excepción extraordinaria.', cls: 'bc-band-ko' }
-  }[glob] || { t: 'EN EVALUACIÓN', d: 'Faltan filtros por evaluar para emitir el veredicto.', cls: 'bc-band-p' };
-  const banda = '<div class="bc-band ' + gob.cls + '"><div class="bc-band-t">' + (glob ? SEM_EMOJI[glob] + ' ' : '') + gob.t + '</div><div class="bc-band-d">' + gob.d + '</div></div>';
+  const ticket = s.ticket || 'Bajo';
   const montoTxt = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
-  const celda = (ico, k, v) => '<div class="fsu-celda"><span class="fsu-celda-ic">' + ico + '</span><div><div class="fsu-celda-k">' + k + '</div><div class="fsu-celda-v">' + (v || '—') + '</div></div></div>';
-  const resumen = '<div class="fb-sec">Resumen comercial</div><div class="fsu-grid">' +
-    celda('🏢', 'Empresa', s.razonSocial) + celda('🪪', 'RUC', s.ruc) +
-    celda('🎟️', 'Ticket', s.ticket) + celda('🧭', 'Sector', s.sector) +
-    celda('💰', 'Monto solicitado', montoTxt) +
-    celda('👤', 'Contacto', (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '')) + '</div>';
-  const filaV = (k, titulo) => {
-    const ff = f[k] || {}; const sem = ff.semaforo || null;
-    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? ' <span class="bc-kos">✕ ' + ff.motivos.kos.join(' · ') + '</span>' : '';
-    return '<tr><td><b>' + titulo + '</b></td><td>' + (sem ? '<span class="sem-word sem-' + sem.toLowerCase() + '">' + sem + '</span>' : 'Pendiente') + (ff.puntaje != null ? ' ' + ff.puntaje + '%' : '') + kos + '</td></tr>';
-  };
-  const veredicto = '<div class="fb-sec">Veredicto por filtro (el peor caso gobierna)</div><table class="reu-tabla"><tbody>' +
-    filaV('sunat', 'SUNAT (elegibilidad)') + filaV('credito', 'Crédito') + filaV('garantia', 'Garantía') + filaV('finanzas', 'Finanzas y negocio') + '</tbody></table>';
+  const fIng = s.fechaIngreso ? new Date(s.fechaIngreso).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const asesor = s.responsableActual || '—';
+
+  // 1) Datos generales
+  const datos = '<div class="bcp-sec">1 · Datos generales</div><table>' +
+    '<tr><td class="k">Empresa</td><td><b>' + (s.razonSocial || '—') + '</b></td><td class="k">RUC</td><td>' + (s.ruc || '—') + '</td></tr>' +
+    '<tr><td class="k">Sector</td><td>' + (s.sector || '—') + '</td><td class="k">Antigüedad</td><td>' + fmtAntiguedad(s.antiguedadMeses) + '</td></tr>' +
+    '<tr><td class="k">Monto solicitado</td><td><b>' + montoTxt + '</b> · Ticket ' + ticket + '</td><td class="k">Destino</td><td>' + fmtTextoAds(s.destinoFondos) + '</td></tr>' +
+    '<tr><td class="k">Contacto</td><td>' + (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '') + '</td><td class="k">Asesor</td><td>' + asesor + '</td></tr>' +
+    '<tr><td class="k">Origen</td><td>' + fmtTextoAds(s.fuente) + '</td><td class="k">Ingreso</td><td>' + fIng + '</td></tr></table>';
+
+  // 2) Veredicto: banda global + tabla de filtros con KOs/observaciones guardadas
+  const gob = { Verde: ['APTO PARA EXPEDIENTE', 'Todos los filtros en Verde: pasa a armado de expediente y comité.', 'bcp-verde'],
+    Amarillo: ['AVANZA CON EXCEPCIÓN', 'Filtros en Amarillo: requiere levantar observaciones o aprobación de comité.', 'bcp-amarillo'],
+    Rojo: ['OPERACIÓN BLOQUEADA', 'Filtro en Rojo (killer): se descarta salvo excepción extraordinaria.', 'bcp-rojo'] }[glob]
+    || ['EN EVALUACIÓN', 'Faltan filtros por evaluar para emitir el veredicto.', 'bcp-gris'];
+  const filaF = (k, nom) => { const ff = f[k] || {}; const kos = (ff.motivos && ff.motivos.kos || []).join(' · ');
+    const esc = (ff.motivos && ff.motivos.escalados || []).join(' · ');
+    return '<tr><td><b>' + nom + '</b></td><td style="text-align:center">' + bcpSem(ff.semaforo) + '</td><td style="text-align:center">' + (ff.puntaje != null ? ff.puntaje + '%' : '—') + '</td><td>' + (kos ? '✕ ' + kos : (esc ? '⚠ ' + esc : '—')) + '</td></tr>'; };
+  const veredicto = '<div class="bcp-sec">2 · Veredicto de filtros</div>' +
+    '<div class="bcp-band ' + gob[2] + '"><b>' + gob[0] + '</b> — ' + gob[1] + '</div>' +
+    '<table><tr><th>Filtro</th><th style="width:14%">Resultado</th><th style="width:10%">Puntaje</th><th>Motivos / observaciones</th></tr>' +
+    filaF('sunat', 'SUNAT (elegibilidad)') + filaF('credito', 'Crédito') + filaF('garantia', 'Garantía') + filaF('finanzas', 'Finanzas y negocio') + '</table>';
+
+  // 3) Indicadores clave: garantía (mejor inmueble) + ratios financieros con umbral y estado
+  const inms = FICHA.garantiaInmuebles || [];
+  let mejorInm = null;
+  inms.forEach(inm => { const v = parse(inm.checklist); const n = Number(v.valorRef);
+    if (isFinite(n) && n > 0 && (!mejorInm || n > mejorInm.valor)) mejorInm = { valor: n, v, alias: inm.alias || 'Inmueble' }; });
+  const infoLtv = mejorInm ? ltvInfoJS(mejorInm.v) : null;
+  const chkFin = parse((f.finanzas || {}).checklist);
+  const evFin = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas ? evaluarRatiosJS(FILTROS_B2B_CACHE.finanzas, chkFin, ticket) : null;
+  const filaR = d => '<tr><td>' + d.etiqueta + '</td><td style="text-align:center">' + fmtUmb(d.umbral, d.fmt, d.dir) + '</td><td style="text-align:center"><b>' + fmtVal(d.valor, d.fmt) + '</b></td><td style="text-align:center">' + (d.valor == null ? bcpSem(null) : (d.cumple ? '<span class="sw sw-verde">CUMPLE</span>' : '<span class="sw sw-amarillo">OBSERVAR</span>')) + '</td></tr>';
+  const indicadores = '<div class="bcp-sec">3 · Indicadores clave</div><table>' +
+    '<tr><th>Indicador</th><th style="width:16%">Umbral (' + ticket + ')</th><th style="width:14%">Valor</th><th style="width:14%">Estado</th></tr>' +
+    '<tr><td>Valor referencial de garantía' + (mejorInm ? ' <span style="color:#64748B">(' + mejorInm.alias + ')</span>' : '') + '</td><td style="text-align:center">—</td><td style="text-align:center"><b>' + (mejorInm ? fmtSoles(mejorInm.valor) : '—') + '</b></td><td style="text-align:center">' + (mejorInm ? '<span class="sw sw-verde">REGISTRADA</span>' : bcpSem(null)) + '</td></tr>' +
+    '<tr><td>LTV (monto / valor)</td><td style="text-align:center">' + (infoLtv ? '≤ ' + (infoLtv.umbral * 100) + '%' : '—') + '</td><td style="text-align:center"><b>' + (infoLtv ? (infoLtv.ltv * 100).toFixed(1) + '%' : '—') + '</b></td><td style="text-align:center">' + (infoLtv ? (infoLtv.obs ? '<span class="sw sw-amarillo">OBSERVAR</span>' : '<span class="sw sw-verde">CUMPLE</span>') : bcpSem(null)) + '</td></tr>' +
+    (evFin && evFin.detalle ? evFin.detalle.map(filaR).join('') : '') +
+    (evFin && evFin.cuotaEst != null ? '<tr><td>Cuota estimada (tasa ' + ((evFin.tasa || 0.25) * 100) + '% · 12m)</td><td style="text-align:center">—</td><td style="text-align:center"><b>S/ ' + Math.round(evFin.cuotaEst).toLocaleString('es-PE') + '/mes</b></td><td style="text-align:center">—</td></tr>' : '') +
+    '</table>';
+
+  // ===== HOJA 2 =====
+  const rr = parse((f.reunion || {}).checklist);
+  const fReu = rr.fecha ? new Date(rr.fecha + 'T' + (rr.hora || '00:00')).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+  const reunion = '<div class="bcp-sec">4 · Reunión comercial</div><table>' +
+    '<tr><td class="k">Fecha</td><td>' + fReu + (rr.hora ? ' · ' + rr.hora : '') + '</td><td class="k">Modalidad</td><td>' + (rr.modalidad || '—') + (rr.lugar ? ' · ' + String(rr.lugar).replace(/</g, '&lt;') : '') + '</td></tr>' +
+    '<tr><td class="k">Realizada</td><td>' + (rr.realizada ? 'Sí ✓' : 'No') + '</td><td class="k">Asesor</td><td>' + asesor + '</td></tr></table>' +
+    '<div style="font-size:8.5pt;color:#64748B;margin:4px 0 2px">Acuerdos y validación de observaciones</div>' +
+    '<div class="bcp-com">' + (rr.comentario ? String(rr.comentario).replace(/</g, '&lt;') : '—') + '</div>';
+
+  const opTxt = (cat, campo, val) => { const c = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[cat]; if (!c) return val || '—';
+    const a = (c.analisis || []).find(x => x.clave === campo); if (!a || !a.opciones) return val || '—';
+    const o = a.opciones.find(x => x.v === val); return o ? o.label : (val || '—'); };
+  const mit = Array.isArray(chkFin.mitigantes) ? chkFin.mitigantes : (chkFin.mitigantes ? String(chkFin.mitigantes).split(',') : []);
+  const mitTxt = mit.length ? mit.map(m => opTxt('finanzas', 'mitigantes', m)).join(', ') : '—';
+  const analisis = '<div class="bcp-sec">5 · Análisis del caso</div><table>' +
+    '<tr><td class="k">Destino de fondos</td><td>' + opTxt('finanzas', 'destinoFondos', chkFin.destinoFondos) + '</td><td class="k">Fuente de repago</td><td>' + opTxt('finanzas', 'fuenteRepago', chkFin.fuenteRepago) + '</td></tr>' +
+    '<tr><td class="k">Mitigantes</td><td colspan="3">' + mitTxt + '</td></tr></table>' +
+    '<div style="font-size:8.5pt;color:#64748B;margin:4px 0 2px">Motivo por el que el caso merece evaluación</div>' +
+    '<div class="bcp-com">' + (chkFin.motivoEvaluacion ? String(chkFin.motivoEvaluacion).replace(/</g, '&lt;') : '—') + '</div>';
+
   const obs = recolectarObservacionesB2B();
-  const obsHtml = '<div class="fb-sec">Observaciones a levantar (' + obs.length + ')</div>' +
+  const obsHtml = '<div class="bcp-sec">6 · Observaciones y plan de levantamiento (' + obs.length + ')</div>' +
     (obs.length
-      ? '<table class="reu-tabla"><thead><tr><th>Origen</th><th>Campo</th><th>Detalle</th><th>Acción sugerida</th></tr></thead><tbody>' +
-        obs.map(o => '<tr><td>' + o.origen + '</td><td>' + o.campo + '</td><td><b>' + o.valor + '</b> ' + o.lim + '</td><td>' + o.accion + '</td></tr>').join('') + '</tbody></table>'
-      : '<div class="reu-sinobs">✓ Sin observaciones pendientes.</div>');
-  const rec = glob === 'Rojo' ? { t: '🚫 Descartar', cls: 'bc-band-ko' } : glob === 'Amarillo' ? { t: '⚠ Avanzar con observaciones (comité)', cls: 'bc-band-obs' } : glob === 'Verde' ? { t: '✅ Avanzar a expediente', cls: 'bc-band-ok' } : { t: 'Pendiente de completar filtros', cls: 'bc-band-p' };
-  const recomendacion = '<div class="fb-sec">Recomendación comercial</div><div class="bc-band ' + rec.cls + '"><div class="bc-band-t" style="font-size:14px">' + rec.t + '</div></div>';
-  const rReu = (f.reunion && f.reunion.checklist) || {};
-  return banda + resumen + veredicto + bcDatosClaveHTML() + bcReunionHTML(rReu) + bcAnalisisHTML() + obsHtml + bcTimelineHTML() + recomendacion;
+      ? '<table><tr><th style="width:12%">Origen</th><th style="width:24%">Campo</th><th style="width:22%">Detalle</th><th>Acción sugerida</th></tr>' +
+        obs.map(o => '<tr><td>' + o.origen + '</td><td>' + o.campo + '</td><td>' + o.valor + ' <span style="color:#B7791F;font-size:8pt">' + o.lim.replace(/<[^>]+>/g, '') + '</span></td><td>' + o.accion + '</td></tr>').join('') + '</table>'
+      : '<div class="bcp-band bcp-verde">✓ Sin observaciones pendientes.</div>');
+
+  const rec = glob === 'Rojo' ? ['DESCARTAR LA OPERACIÓN', 'bcp-rojo'] : glob === 'Amarillo' ? ['AVANZAR CON OBSERVACIONES · APROBACIÓN DE COMITÉ', 'bcp-amarillo'] : glob === 'Verde' ? ['AVANZAR A EXPEDIENTE', 'bcp-verde'] : ['PENDIENTE DE COMPLETAR FILTROS', 'bcp-gris'];
+  const recomendacion = '<div class="bcp-sec">7 · Recomendación comercial</div><div class="bcp-band ' + rec[1] + '"><b>' + rec[0] + '</b></div>';
+  const firmas = '<div class="bcp-firmas">' +
+    '<div class="bcp-firma"><b>' + asesor + '</b>Elaborado por · Asesor Comercial</div>' +
+    '<div class="bcp-firma"><b>&nbsp;</b>V°B Jefatura B2B</div>' +
+    '<div class="bcp-firma"><b>&nbsp;</b>Comité de Créditos</div></div>';
+  const foot = '<div class="bcp-foot">Documento generado automáticamente por MiTasaTop CRM · ' + s.codigo + ' · ' + new Date().toLocaleString('es-PE') + ' · Uso interno</div>';
+
+  const cab = '<div class="bcp-head"><div class="bcp-logo">TASATOP</div>' +
+    '<div><div class="bcp-tit">BUSINESS CASE · CRÉDITO EMPRESARIAL</div>' +
+    '<div class="bcp-meta">' + s.codigo + ' · generado el ' + new Date().toLocaleDateString('es-PE') + '</div></div></div>';
+  return '<div class="bcp">' + cab + datos + veredicto + indicadores +
+    '<div class="bcp-salto"></div>' + reunion + analisis + obsHtml + recomendacion + firmas + foot + '</div>';
 }
-// Abre el expediente en ventana limpia. imprimir=true dispara el diálogo (Imprimir / guardar PDF).
+// Abre la plantilla en ventana limpia. imprimir=true dispara el diálogo (Imprimir / guardar PDF).
 function abrirVentanaBC(imprimir) {
   const s = FICHA.solicitud;
-  const inner = bcReporteHTML().replace(/ onclick="[^"]*"/g, '');
-  const css = document.querySelector('link[href*="styles.css"]');
   const w = window.open('', '_blank');
   if (!w) { alert('Permite las ventanas emergentes para ver el Business Case.'); return; }
   w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Business Case · ' + (s.razonSocial || s.codigo) + '</title>' +
-    (css ? '<link rel="stylesheet" href="' + css.href + '">' : '') +
-    '<style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:24px;color:#1E293B;font-size:13px;max-width:900px}.bc-print-head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0B5FFF;padding-bottom:10px;margin-bottom:14px}.bc-print-head h1{font-size:18px;margin:0}.bc-print-head .sub{color:#6B7A8D;font-size:12px}</style></head><body>' +
-    '<div class="bc-print-head"><div><h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1><div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + '</div></div><div class="sub"><b>TasaTop</b> · CRM B2B</div></div>' +
-    inner + '</body></html>');
+    '<style>' + BCP_CSS + ' body{margin:0;background:#EEF2F7} .bcp{max-width:800px;margin:16px auto;background:#fff;padding:32px 36px;box-shadow:0 4px 18px rgba(15,23,42,.12)} @media print{body{background:#fff}.bcp{box-shadow:none;margin:0;padding:0;max-width:none}} @page{margin:14mm}</style></head><body>' +
+    bcReporteHTML() + '</body></html>');
   w.document.close();
-  if (imprimir) setTimeout(() => { try { w.print(); } catch (e) {} }, 600);
+  if (imprimir) setTimeout(() => { try { w.print(); } catch (e) {} }, 500);
+}
+// Descarga la plantilla como .doc EDITABLE (HTML compatible con Word, mismas 2 hojas).
+function descargarWordBusinessCase() {
+  const s = FICHA.solicitud;
+  const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+    '<head><meta charset="utf-8"><title>Business Case</title><style>' + BCP_CSS +
+    ' .bcp-head,.bcp-firmas{display:block} .bcp-firma{display:inline-block;width:30%;margin-right:2%} .bcp-tit,.bcp-meta{text-align:left}</style></head><body>' +
+    bcReporteHTML() + '</body></html>';
+  const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'BusinessCase_' + (s.codigo || 'B2B') + '.doc';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
 }
 function previsualizarBusinessCase() { abrirVentanaBC(false); }
 function imprimirBusinessCase() { abrirVentanaBC(true); }

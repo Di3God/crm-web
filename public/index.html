@@ -613,11 +613,13 @@
           <div id="fbAcciones" class="fb-acciones"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
+          <button class="btn fb-btn-gestion" onclick="abrirModalGestion(FICHA.etapaKanban)" title="Registra el contacto y define la próxima acción (obligatorio)">📝 Registrar gestión</button>
           <button id="fbTimeline" class="fb-flag fb-info" onclick="toggleTimelineB2B()" title="Trazabilidad: gestiones y cambios guardados">ⓘ</button>
           <button id="fbDescartar" class="fb-flag" onclick="abrirRedFlagB2B()" title="Marcar bandera roja (descartar con motivo)">🚩</button>
           <button onclick="cerrarFichaB2B()" title="Cerrar" class="fb-cerrar">Cerrar</button>
         </div>
       </div>
+      <div id="fbContactabilidad"></div>
       <div id="fbAcordeon"><div class="vacio">Cargando…</div></div>
     </div>
   </div>
