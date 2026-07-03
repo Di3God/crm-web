@@ -1299,6 +1299,9 @@ const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolida
 // Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
 const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
 alertasWAB2B.iniciarCortes();
+// Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
+const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA });
+watchdogLeads.iniciar();
 alertasWA.iniciarCortes();
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
 app.get('/api/wa/plan', soloAdminOJefa, async (req, res) => {
@@ -1422,6 +1425,7 @@ function procesarLeadMarketing(norm, opts = {}) {
     enviarAlertaWA(txt); // fire-and-forget: no bloquea la respuesta del webhook
     enColaVerificacion(codigo, gp, norm.nombre); // chequeo "¿atendido?" a los 10 min (solo leads en tiempo real)
   }
+  try { watchdogLeads.registrarLead(); } catch (e) { } // resetea el reloj del watchdog: llegó un lead de campaña
   return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
 }
 
@@ -5935,7 +5939,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.266 (Stepper B2B en una sola linea; fix contrasenas: cambiar clave levanta bloqueo, trim de espacios, selector solo activos; Povis desactivado) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.267 (Watchdog de leads: avisa al grupo de marketing WA_GRUPO_MKT_JID cuando dejan de llegar leads de campana - primera alerta a las 2h de silencio (WATCH_PRIMERA_H), luego repite cada 1h (WATCH_REPITE_H) hasta que llegue un lead, que resetea el reloj y rearma el ciclo. Nuevo archivo watchdog-leads.js. Server: restart Railway + variable WA_GRUPO_MKT_JID) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
