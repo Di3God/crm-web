@@ -528,7 +528,16 @@ async function arrancar() {
   // Gestión del equipo B2B (en el menú de usuario): admin y jefes B2B.
   if (['admin', 'jefe_creditos', 'jefe_b2b'].includes(YO.rol)) {
     document.querySelectorAll('.soloEquipoB2B').forEach(e => e.classList.remove('oculto'));
+    document.querySelectorAll('.soloAltaB2B').forEach(e => e.classList.remove('oculto'));
   }
+  // Deep link del WhatsApp: #b2b=CODIGO abre directo la ficha de esa solicitud.
+  try {
+    const m = (location.hash || '').match(/^#b2b=([A-Za-z0-9-]+)/);
+    if (m && ['admin', 'jefe_creditos', 'jefe_b2b', 'funcionario_b2b', 'asistente_creditos'].includes(YO.rol)) {
+      navB2B('sol');
+      setTimeout(() => abrirFichaB2B(decodeURIComponent(m[1])), 400);
+    }
+  } catch (e) { }
   // Columnas de control de la tabla: visibles solo para admin/jefa
   if (YO.rol === 'admin' || YO.rol === 'jefa') document.body.classList.add('ve-todo');
 
@@ -5335,7 +5344,8 @@ function renderContactabilidadB2B() {
   const filaFr = '<div class="g35-frcol">' + ['M', 'T', 'N'].map(x => '<span class="g35-fr">' + x + '</span>').join('') + '<span class="g35-fr g35-fr-et">Et.</span></div>';
   const hoyOK = cb.ixHoy >= 0 && cb.ixHoy <= 9;
   const cumple = cb.hechosHoy >= cb.minHoy;
-  const hint = hoyOK ? '<span class="g35-min ' + (cumple ? 'g35-min-ok' : 'g35-min-falta') + '">Hoy: ' + cb.hechosHoy + '/' + cb.minHoy + ' intentos mín.' + (cb.ixHoy === 0 ? ' (llegó ' + (cb.minD1 === 3 ? 'antes de mediodía' : cb.minD1 === 2 ? 'entre 12 y 4pm' : 'después de 4pm') + ')' : '') + '</span>' : '';
+  const fIngFmt = FICHA.solicitud.fechaIngreso ? new Date(FICHA.solicitud.fechaIngreso).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const hint = hoyOK ? '<span class="g35-min ' + (cumple ? 'g35-min-ok' : 'g35-min-falta') + '">Hoy: ' + cb.hechosHoy + '/' + cb.minHoy + ' intentos mín.' + (cb.ixHoy === 0 && fIngFmt ? ' (' + fIngFmt + ')' : '') + '</span>' : '';
   host.innerHTML = '<div class="g35-wrap"><div class="g35-head">Contactabilidad <span class="sub">(3 franjas/día · 10 días desde el ingreso)</span>' + hint +
     '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 20%,#FFE599 20% 40%,#D9EAD3 40% 60%,#CFE2F3 60% 80%,#D9D2E9 80% 100%)"></i>Fila Et. = etapa del embudo</span></div>' +
     '<div class="g35-grid">' + filaFr + cols + '</div></div>';
@@ -6251,13 +6261,14 @@ function sujetoCard(su, editable) {
   const docs = (FICHA.documentos || []).filter(d => d.sujetoId === su.id);
   const nombreHtml = editable
     ? '<input class="fb-suj-nom" id="suj_nom_' + su.id + '" value="' + (su.nombre ? su.nombre.replace(/"/g, '&quot;') : '') + '" placeholder="Nombre">'
-    : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
+    : (su.tipoSujeto === 'empresa'
+      ? '<b>' + (su.nombre || FICHA.solicitud.razonSocial || '—') + '</b>'
+      : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : ''));
   const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
   const metricas = renderFiltroDosCapas('credito', valores, 'suj' + su.id, ticket);
   const docHtml = ''; // v1.260: adjuntos por sujeto eliminados (todo va en el link de Drive del panel)
-  const extraEmp = su.tipoSujeto === 'empresa'
-    ? '<span class="fcr-emp-dato">' + (FICHA.solicitud.ruc || su.doc || '') + '</span>' + (FICHA.solicitud.contacto ? '<span class="fcr-emp-dato">' + FICHA.solicitud.contacto + '</span>' : '')
-    : '';
+  const rucEmp = FICHA.solicitud.ruc || su.documento || '';
+  const extraEmp = su.tipoSujeto === 'empresa' && rucEmp ? '<span class="fcr-emp-dato">- ' + rucEmp + '</span>' : '';
   return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + (su.tipoSujeto === 'empresa' ? ' fb-suj-empresa' : '') + '"><div class="fb-suj-head' + (su.tipoSujeto === 'empresa' ? ' fcr-emp' : '') + '">' + (su.tipoSujeto === 'empresa' ? '<span class="fcr-emp-ic">🏢</span>' : '') + nombreHtml + extraEmp + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
 }
 

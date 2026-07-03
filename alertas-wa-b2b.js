@@ -119,23 +119,15 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     try {
       const f = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(codigo);
       if (!f) return;
-      // Status inicial: si el RUC leyó bien y SUNAT sale limpio -> Filtro Crédito; si no -> Filtro Sunat.
-      let raw = {}; try { raw = f.sunatRaw ? JSON.parse(f.sunatRaw) : {}; } catch (e) { }
-      const rucOk = f.ruc && /^20\d{9}$/.test(String(f.ruc).trim());
-      const sunatLimpio = f.sunatEstado === 'ok' && /activ/i.test(raw.estado || '') && /^\s*habido/i.test(raw.condicion || '')
-        && rucOk && (f.antiguedadMeses == null || Number(f.antiguedadMeses) >= 12);
-      const status = sunatLimpio ? 'Filtro Crédito' : 'Filtro Sunat';
-      const ubic = (f.sunatDistrito || f.sunatDepartamento)
-        ? ((f.sunatDistrito || '') + (f.sunatDistrito && f.sunatDepartamento ? ' · ' : '') + (f.sunatDepartamento || '')) : '—';
-      const monto = f.montoSolicitado != null ? fmtS(f.montoSolicitado) : (f.montoRango || '—');
-      const txt = '🆕 *Nueva solicitud:* ' + (f.razonSocial || f.nombreComercial || '—') +
-        '\n🪪 RUC: ' + (f.ruc || '—') +
-        '\n👤 Nombre: ' + (f.contacto || '—') +
+      const monto = f.montoSolicitado != null ? fmtS(f.montoSolicitado) : (f.montoRango || 'por definir');
+      const base = process.env.APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
+      const link = base ? base + '/#b2b=' + encodeURIComponent(f.codigo) : '';
+      const txt = '💰 *Nueva oportunidad:* ' + monto +
+        '\n🆕 Empresa: ' + (f.razonSocial || f.nombreComercial || '—') +
+        '\n👤 Contacto: ' + (f.contacto || '—') +
         '\n📱 Celular: ' + (f.telefono || '—') +
         '\n👔 Asignado: ' + (f.responsableActual ? primerNom(f.responsableActual) : 'Sin asignar') +
-        '\n💰 Monto: ' + monto +
-        '\n📍 Ubicación Sunat: ' + ubic +
-        '\n🚦 Status: ' + status;
+        '\n\n¡Contáctalo ahora!' + (link ? ' ' + link : '');
       enviarAlertaB2BWA(txt); // fire-and-forget
     } catch (e) { console.error('[WA-B2B] alerta nueva solicitud:', e.message); }
   }
