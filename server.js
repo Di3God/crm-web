@@ -512,8 +512,8 @@ try {
 // Baja de Carmen Martinez (ya no trabaja): se desactiva para sacarla de login, round-robin y listas,
 // conservando sus registros históricos. Idempotente.
 try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='cmartinez@tasatop.com'").run(); } catch (e) { }
-// v1.264: Cristian Povis fue usuario de prueba, no es GP: fuera del round-robin y del bot (no se le asignan leads).
-try { db.prepare("UPDATE usuarios SET autoasignar=0 WHERE usuario='cpovis@tasatop.com'").run(); } catch (e) { }
+// v1.264/266: Cristian Povis fue usuario de PRUEBA, no es GP: desactivado por completo (fuera de login, selector de claves y round-robin).
+try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='cpovis@tasatop.com'").run(); } catch (e) { }
 // Atribución completa de marketing (conjunto = adset, anuncio = ad)
 try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
@@ -660,7 +660,7 @@ app.post('/api/login', (req, res) => {
   }
 
   const u = db.prepare('SELECT * FROM usuarios WHERE usuario = ? AND activo = 1').get(userLower);
-  if (!u || hashClave(clave || '', u.sal) !== u.hash) {
+  if (!u || hashClave(String(clave || '').trim(), u.sal) !== u.hash) {
     // Cuenta el fallo. Si la ventana de 15 min expiro, reinicia el contador.
     let fallos = 1, primer = new Date(ahora).toISOString();
     if (ctrl && ctrl.primer_fallo && (ahora - new Date(ctrl.primer_fallo).getTime()) < LOGIN_BLOQUEO_MS) {
@@ -717,10 +717,13 @@ app.post('/api/cambiar-clave', (req, res) => {
   if (!claveNueva || claveNueva.length < 8) {
     return res.status(422).json({ error: 'La nueva contrasena debe tener al menos 8 caracteres' });
   }
+  const claveLimpia = String(claveNueva).trim();
+  if (claveLimpia.length < 8) return res.status(422).json({ error: 'La nueva contrasena debe tener al menos 8 caracteres (sin espacios al inicio o final)' });
   const sal = crypto.randomBytes(8).toString('hex');
   db.prepare('UPDATE usuarios SET hash = ?, sal = ? WHERE usuario = ?')
-    .run(hashClave(claveNueva, sal), sal, destino);
-  auditar(req, 'cambiar-clave', destino, 'Contrasena actualizada por admin');
+    .run(hashClave(claveLimpia, sal), sal, destino);
+  db.prepare('DELETE FROM login_intentos WHERE usuario = ?').run(destino);
+  auditar(req, 'cambiar-clave', destino, 'Contrasena actualizada por admin (bloqueo limpiado)');
   res.json({ ok: true });
 });
 
@@ -5932,7 +5935,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.265 (Ficha B2B opcion A: el stepper horizontal controla la apertura -cada paso clickeable abre su panel abajo- y muestra un unico chip de estado condensado por paso (Avanza/Avanza-obs/Faltan datos/No avanza/Pendiente/lock); los paneles ya no repiten su cabecera-titulo, solo renderizan contenido cuando estan abiertos; chip del stepper se refresca en vivo al guardar cada filtro. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.266 (Stepper B2B en una sola linea; fix contrasenas: cambiar clave levanta bloqueo, trim de espacios, selector solo activos; Povis desactivado) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -2182,3 +2182,15 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fb-panel-open { border:1px solid var(--line); border-radius:12px; padding:4px 2px; margin-top:2px; background:#fff; }
 .fb-lock-banner { background:#F1F5F9; color:#64748B; font-size:12px; font-weight:600; border-radius:10px; padding:9px 12px; margin:6px; }
 .fb-lock-banner.fb-lock-fut { background:#FEF6E7; color:#8A5A10; }
+
+/* ===== v1.266: stepper 7 pasos en UNA sola línea + modal un poco más ancho ===== */
+.fb-modal { max-width:960px !important; }
+#fbStepperWrap { overflow:visible; }
+.fb-stepper { flex-wrap:nowrap !important; gap:2px !important; padding:9px 10px !important; align-items:stretch; }
+.fbs-paso { flex:1 1 0; min-width:0; gap:5px !important; padding:5px 6px !important; opacity:1 !important; }
+.fbs-dot { width:19px; height:19px; font-size:10px; flex:0 0 auto; }
+.fbs-body { min-width:0; overflow:hidden; }
+.fbs-txt { font-size:11px !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fbs-chip { font-size:9px !important; padding:1px 5px !important; }
+.fbs-caret { flex:0 0 auto; }
+.fbs-linea { flex:0 1 14px !important; min-width:6px !important; width:auto !important; margin:0 !important; align-self:center; }
