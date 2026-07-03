@@ -288,6 +288,12 @@ crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
 crearUsuario('bvasquez@tasatop.com', 'Brillith Vasquez', 'funcionario_b2b', '12345678');
 // Migración idempotente (v1.258): corrige el nombre en bases ya desplegadas (el correo no cambia).
 try { db.prepare("UPDATE usuarios SET nombre='Brillith Vasquez' WHERE usuario='bvasquez@tasatop.com' AND nombre<>'Brillith Vasquez'").run(); } catch (e) {}
+// v1.262: el nombre viejo 'Brillite' seguía apareciendo en el filtro de personas (venía de las solicitudes).
+try { db.prepare("UPDATE b2b_solicitudes SET responsableActual='Brillith Vasquez' WHERE responsableActual LIKE 'Brillite%'").run(); } catch (e) {}
+try { db.prepare("UPDATE b2b_solicitudes SET asistente='Brillith Vasquez' WHERE asistente LIKE 'Brillite%'").run(); } catch (e) {}
+try { db.prepare("UPDATE b2b_gestiones SET responsable='Brillith Vasquez' WHERE responsable LIKE 'Brillite%'").run(); } catch (e) {}
+// v1.262: Carmen ya no trabaja -> sus leads B2B quedan "Sin asignar" (desaparece del filtro de personas).
+try { db.prepare("UPDATE b2b_solicitudes SET responsableActual=NULL WHERE responsableActual='Carmen Martinez'").run(); } catch (e) {}
 crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
 crearUsuario('bsegil@tasatop.com', 'Bony Segil', 'funcionario_b2b', '12345678');
 
@@ -1035,6 +1041,12 @@ async function enriquecerSunat(codigo, opts = {}) {
 function enriquecerSunatAsync(codigo) {
   Promise.resolve().then(() => enriquecerSunat(codigo)).catch(() => { });
 }
+// v1.262: primero el enriquecimiento SUNAT (para tener ubicación y status) y RECIÉN la alerta WA.
+function enriquecerSunatYAvisar(codigo, tieneRuc) {
+  const avisar = () => { try { alertasWAB2B.alertaNuevaSolicitud(codigo); } catch (e) { } };
+  if (!tieneRuc) return avisar(); // sin RUC legible: avisa de una (caerá en Filtro Sunat)
+  Promise.resolve().then(() => enriquecerSunat(codigo)).catch(() => { }).then(avisar, avisar);
+}
 
 // Operadores B2B en la rotación: roles B2B con autoasignar=1 (Diego controla quién entra).
 function operadoresB2BParaAuto() {
@@ -1225,8 +1237,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.registradoSunarp, norm.departamentoInmueble,
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
-  enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano (no bloquea el webhook)
-  try { alertasWAB2B.alertaNuevaSolicitud(codigo); } catch (e) {} // aviso al grupo B2B (no bloquea)
+  enriquecerSunatYAvisar(codigo, !!ruc); // SUNAT primero, luego el aviso WA con ubicación y status
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
@@ -4102,7 +4113,7 @@ app.get('/api/b2b/equipo', soloB2B, (req, res) => {
   const roles = rolesGestionablesB2B(req.user);
   if (!roles.length) return res.json({ equipo: [], puedeGestionar: false });
   const ph = roles.map(() => '?').join(',');
-  const filas = db.prepare("SELECT usuario, nombre, rol, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE rol IN (" + ph + ") ORDER BY CASE rol WHEN 'jefe_creditos' THEN 1 WHEN 'asistente_creditos' THEN 2 WHEN 'jefe_b2b' THEN 3 ELSE 4 END, id").all(...roles);
+  const filas = db.prepare("SELECT usuario, nombre, rol, activo, COALESCE(autoasignar,1) AS autoasignar FROM usuarios WHERE activo=1 AND rol IN (" + ph + ") ORDER BY CASE rol WHEN 'jefe_creditos' THEN 1 WHEN 'asistente_creditos' THEN 2 WHEN 'jefe_b2b' THEN 3 ELSE 4 END, id").all(...roles);
   res.json({ equipo: filas, puedeGestionar: puedeGestionarEquipoB2B(req.user) });
 });
 // Activar/desactivar a un operador del round-robin B2B (admin y jefes, cada jefe solo a su área).
@@ -5050,16 +5061,18 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const ultGestEtapa = {};
   if (filas.length) {
     const ph = filas.map(() => '?').join(',');
-    db.prepare("SELECT codigoSolicitud, etapa, proximaAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
-      .forEach(g => { ultGestEtapa[g.codigoSolicitud + '|' + (g.etapa || '')] = g.proximaAccion; });
+    db.prepare("SELECT codigoSolicitud, etapa, proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
+      .forEach(g => { ultGestEtapa[g.codigoSolicitud + '|' + (g.etapa || '')] = { prox: g.proximaAccion, fechaProx: g.fechaProxAccion || null }; ultGestEtapa['#' + g.codigoSolicitud] = true; });
   }
   const cards = filas.map(f => {
     const col = etapaKanbanB2B(f);
     const fechaEtapa = sellarFechaEtapa(f, col);
     const semc = sem[f.codigo] || {};
     const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
-    const ultimaGestionEtapa = ultGestEtapa[f.codigo + '|' + col] || null;
-    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo, ultimaGestionEtapa };
+    const ug = ultGestEtapa[f.codigo + '|' + col] || null;
+    const tieneGestion = !!ultGestEtapa['#' + f.codigo];
+    return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo,
+      ultimaGestionEtapa: ug ? ug.prox : null, ultimaGestionFechaProx: ug ? ug.fechaProx : null, tieneGestion };
   });
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
@@ -5249,8 +5262,7 @@ app.post('/api/b2b/solicitudes', soloB2B, (req, res) => {
       b.destinoFondos || null, b.fuenteRepago || null,
       'Nuevo', req.user.nombre, req.user.nombre, ahora);
   auditar(req, 'b2b_alta_solicitud', codigo, (b.razonSocial || b.contacto || b.ruc || '') + (ticket ? ' · ticket ' + ticket : ''));
-  if (b.ruc) enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano
-  try { alertasWAB2B.alertaNuevaSolicitud(codigo); } catch (e) {} // aviso al grupo B2B también en alta manual
+  enriquecerSunatYAvisar(codigo, !!b.ruc); // SUNAT primero, luego el aviso WA (también en alta manual)
   res.json({ ok: true, codigo, ticket });
 });
 
@@ -5910,7 +5922,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.261 (Contactabilidad B2B: grid 3 franjas x 10 dias (mismo visual del B2C) en cada ficha debajo del resumen, con fila Et. = etapas del embudo B2B por colores, minimos por corte de llegada (<12h:3, 12-16h:2, >16h:1; dias siguientes 3/dia) e indicador Hoy X/Y intentos; boton Registrar gestion en el header junto a la i; modal de gestion con canal Llamada/WhatsApp/Correo, resultado OBLIGATORIO, proxima accion y fecha-hora OBLIGATORIAS (validado tambien en server) y atajos rapidos Hoy/Man 9am-1pm-6pm/+1d/+2d como B2C. Server + frontend: restart Railway + Ctrl+F5); credito sin banda Verde-100 ni adjuntos por sujeto, empresa con RUC y contacto alineados sin negrita, sub sin peor caso; garantia sin i/Revisar en cabecera; reunion con comentario a todo el ancho, sin linea de contador/responsable, label Obligatorio al pasar a Finanzas; finanzas con motivo armonizado y mitigantes compacto; Business Case con PLANTILLA PROFESIONAL de 2 hojas autocompletada (datos generales, veredicto, indicadores con umbrales, reunion, analisis, observaciones, recomendacion y firmas) para previsualizar, Word editable y PDF. Server + frontend: restart Railway + Ctrl+F5) y 6pm cierre (actividad de auditoria + pendientes), alerta instantanea de nueva solicitud del webhook, endpoints /api/b2b/alertas-wa/preview y /enviar para admin y jefe_b2b. Nuevo archivo alertas-wa-b2b.js. Server: restart Railway + variable WA_GRUPO_B2B_JID); lista con pill SUNAT acotado (texto corto + tooltip); kanban con filtro de fechas desde/hasta (date picker) y filtros compactos; boton admin para cambiar contrasena de funcionarios/creditos; Brillite->Brillith con migracion idempotente. Server + frontend: restart Railway + Ctrl+F5) y acciones Previsualizar / Descargar Word editable (.doc) / Imprimir-PDF; el expediente completo (veredicto global, resumen, veredicto por filtro, datos clave, reunion, analisis, observaciones, timeline, recomendacion) se genera en la previsualizacion y descargas. Cierra la ronda v1.255-1.257. Frontend; el paquete acumulado incluye cambios de server (reunion realizada + tasa seleccionable): restart Railway + Ctrl+F5), comentarios y proximos pasos en franjas a todo el ancho, boton Guardar. Finanzas: sub Informacion financiera, sin pill de cuerpo, Guardar, insumos con anios dinamicos (Ventas/Utilidad Operativa 2025-2024), cuota con tasa seleccionable 25/27.5/30/32 que recalcula DSCR y carga financiera (server + cliente), mitigantes en desplegable de checkboxes, motivo de evaluacion a todo el ancho, sin banda final. Server + frontend: restart Railway + Ctrl+F5), origen sin campana; SUNAT con Estado/Condicion en el grid, seccion Validacion automatica no editable con chips de color, sin Guardar (auto-save silencioso) y sin banda Verde-100; Garantia con sub simple, Guardar validado por completitud + Guardar avance, sin bandas de escalado ni placeholder de LTV; cabeceras de TODOS los paneles con [Completo/Incompleto]+[Avanza/No Avanza] con fondo de color. Solo frontend: Ctrl+F5), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.262 (Mensaje WA de nueva solicitud con formato simple: Nueva solicitud/RUC/Nombre/Celular/Asignado/Monto/Ubicacion Sunat/Status (Filtro Credito o Filtro Sunat), enviado DESPUES del enriquecimiento SUNAT para poder extraer ubicacion y status; equipo B2B solo activos (Carmen fuera de vista y round-robin), leads de Carmen a Sin asignar y Brillite->Brillith en solicitudes/gestiones (fuera del filtro Toda persona); tarjeta kanban muestra proxima accion registrada + fecha (como B2C) y chip de 1a gestion con limite 15 min desde el ingreso; modal de gestion ancho a 2 columnas Paso1/Paso2 estilo B2C; hints de columnas Intake/Agendar/Push eliminados. Server + frontend: restart Railway + Ctrl+F5) en cada ficha debajo del resumen, con fila Et. = etapas del embudo B2B por colores, minimos por corte de llegada (<12h:3, 12-16h:2, >16h:1; dias siguientes 3/dia) e indicador Hoy X/Y intentos; boton Registrar gestion en el header junto a la i; modal de gestion con canal Llamada/WhatsApp/Correo, resultado OBLIGATORIO, proxima accion y fecha-hora OBLIGATORIAS (validado tambien en server) y atajos rapidos Hoy/Man 9am-1pm-6pm/+1d/+2d como B2C. Server + frontend: restart Railway + Ctrl+F5); credito sin banda Verde-100 ni adjuntos por sujeto, empresa con RUC y contacto alineados sin negrita, sub sin peor caso; garantia sin i/Revisar en cabecera; reunion con comentario a todo el ancho, sin linea de contador/responsable, label Obligatorio al pasar a Finanzas; finanzas con motivo armonizado y mitigantes compacto; Business Case con PLANTILLA PROFESIONAL de 2 hojas autocompletada (datos generales, veredicto, indicadores con umbrales, reunion, analisis, observaciones, recomendacion y firmas) para previsualizar, Word editable y PDF. Server + frontend: restart Railway + Ctrl+F5) y 6pm cierre (actividad de auditoria + pendientes), alerta instantanea de nueva solicitud del webhook, endpoints /api/b2b/alertas-wa/preview y /enviar para admin y jefe_b2b. Nuevo archivo alertas-wa-b2b.js. Server: restart Railway + variable WA_GRUPO_B2B_JID); lista con pill SUNAT acotado (texto corto + tooltip); kanban con filtro de fechas desde/hasta (date picker) y filtros compactos; boton admin para cambiar contrasena de funcionarios/creditos; Brillite->Brillith con migracion idempotente. Server + frontend: restart Railway + Ctrl+F5) y acciones Previsualizar / Descargar Word editable (.doc) / Imprimir-PDF; el expediente completo (veredicto global, resumen, veredicto por filtro, datos clave, reunion, analisis, observaciones, timeline, recomendacion) se genera en la previsualizacion y descargas. Cierra la ronda v1.255-1.257. Frontend; el paquete acumulado incluye cambios de server (reunion realizada + tasa seleccionable): restart Railway + Ctrl+F5), comentarios y proximos pasos en franjas a todo el ancho, boton Guardar. Finanzas: sub Informacion financiera, sin pill de cuerpo, Guardar, insumos con anios dinamicos (Ventas/Utilidad Operativa 2025-2024), cuota con tasa seleccionable 25/27.5/30/32 que recalcula DSCR y carga financiera (server + cliente), mitigantes en desplegable de checkboxes, motivo de evaluacion a todo el ancho, sin banda final. Server + frontend: restart Railway + Ctrl+F5), origen sin campana; SUNAT con Estado/Condicion en el grid, seccion Validacion automatica no editable con chips de color, sin Guardar (auto-save silencioso) y sin banda Verde-100; Garantia con sub simple, Guardar validado por completitud + Guardar avance, sin bandas de escalado ni placeholder de LTV; cabeceras de TODOS los paneles con [Completo/Incompleto]+[Avanza/No Avanza] con fondo de color. Solo frontend: Ctrl+F5), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

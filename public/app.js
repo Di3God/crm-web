@@ -4230,11 +4230,11 @@ function b2bTab(which) {
 let B2B_VISTA = 'tabla';        // 'tabla' | 'kanban' (tabla primero; el usuario cambia a Kanban)
 let B2B_KANBAN_DRAG = null;      // { codigo, desde }
 const B2B_KANBAN_COLS = [
-  { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: 'Intake · validar RUC · triaje' },
+  { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: '' },
   { id: 'Filtro credito', label: 'Filtro Crédito', hint: '' },
   { id: 'Filtro garantia', label: 'Filtro Garantía', hint: '' },
-  { id: 'Reunion comercial', label: 'Reunión Comercial', hint: 'Agendar · realizar · apto pasa a Finanzas' },
-  { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: 'Push de información financiera' },
+  { id: 'Reunion comercial', label: 'Reunión Comercial', hint: '' },
+  { id: 'Filtro finanzas', label: 'Finanzas y Negocio', hint: '' },
   { id: 'Business case', label: 'Business Case', hint: '' }
 ];
 // Orden de las 3 etapas de filtro (para pintar el progreso C/G/F en las tarjetas).
@@ -4383,13 +4383,25 @@ function b2bKanbanCard(c) {
   // Acción + tiempo REGRESIVO hasta el vencimiento del SLA.
   const sla = c.sla || {};
   let slaHtml = '';
-  if (sla.accion) {
-    // La acción mostrada: la última gestión registrada en esta etapa, si existe; si no, la acción del SLA.
-    const accionTxt = c.ultimaGestionEtapa || sla.accion;
+  if (c.ultimaGestionEtapa) {
+    // Hay gestión registrada: muestra la próxima acción definida y CUÁNDO se realizará (como B2C).
+    const fp = c.ultimaGestionFechaProx ? new Date(c.ultimaGestionFechaProx) : null;
+    const fpTxt = fp && !isNaN(fp) ? fp.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+    const vencida = fp && !isNaN(fp) && fp.getTime() < Date.now();
+    slaHtml = '<div class="kb-sla">📌 ' + c.ultimaGestionEtapa + (fpTxt ? ' · <span class="' + (vencida ? 'kb-sla-venc' : 'kb-sla-quedan') + '">📅 ' + fpTxt + '</span>' : '') + '</div>';
+  } else if (sla.accion) {
     let cuando;
     if (sla.estado === 'vencido') cuando = '<span class="kb-sla-venc">⚠ Vencido</span>';
     else cuando = '<span class="kb-sla-quedan">⏳ Quedan ' + fmtHorasRestantes(sla.horasRestantes) + '</span>';
-    slaHtml = '<div class="kb-sla">📌 ' + accionTxt + ' · ' + cuando + '</div>';
+    slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
+  }
+  // Primera gestión: máximo 15 minutos desde el ingreso del lead.
+  let primeraHtml = '';
+  if (!c.tieneGestion && c.fechaIngreso && c.etapaKanban !== 'Business case') {
+    const mins = Math.floor((Date.now() - new Date(c.fechaIngreso).getTime()) / 60000);
+    primeraHtml = mins <= 15
+      ? '<div class="kb-primera kb-primera-ok">⏱ 1ª gestión: quedan ' + (15 - mins) + ' min</div>'
+      : '<div class="kb-primera kb-primera-venc">🔥 1ª gestión pendiente · +' + (mins < 60 ? mins + ' min' : Math.floor(mins / 60) + 'h') + '</div>';
   }
   return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
@@ -4397,7 +4409,7 @@ function b2bKanbanCard(c) {
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
     ubicHtml +
     (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + probChip + '</div>' : (probChip ? '<div class="kb-monto-row">' + probChip + '</div>' : '')) +
-    obsHtml +
+    obsHtml + primeraHtml +
     slaHtml +
     '<div class="kb-foot">' + dots + resp + '</div>' +
     '</div>';
@@ -5335,23 +5347,25 @@ function abrirModalGestion(col) {
   const canales = FICHA.canalesGestion || ['Llamada', 'WhatsApp'];
   const etLabel = trEstadoB2B(col);
   const manana = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
+  const atajos = [['Hoy 9am', 0, 9], ['Hoy 1pm', 0, 13], ['Hoy 6pm', 0, 18], ['Mañ 9am', 1, 9], ['Mañ 1pm', 1, 13], ['Mañ 6pm', 1, 18], ['+1 día', 1, null], ['+2 días', 2, null]]
+    .map(a => '<button type="button" class="gm-atajo" onclick="gmAtajo(' + a[1] + ',' + (a[2] == null ? 'null' : a[2]) + ')">' + a[0] + '</button>').join('');
   const html = '<div class="gm-back" onclick="if(event.target===this)cerrarModalGestion()">' +
-    '<div class="gm-card">' +
+    '<div class="gm-card gm-card-ancha">' +
     '<div class="gm-head"><b>Registrar gestión</b> <span class="sub">· etapa ' + etLabel + '</span>' +
     '<button class="gm-x" onclick="cerrarModalGestion()">✕</button></div>' +
-    // Paso 1
-    '<div class="gm-step">1 · ¿Qué pasó?</div>' +
+    '<div class="gm-2col">' +
+    // Paso 1: Gestión realizada
+    '<div class="gm-col gm-col-1"><div class="gm-col-tit"><span class="gm-num gm-num-1">1</span> Gestión realizada</div>' +
     '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Resultado <span class="gm-oblig">obligatorio</span></label><select id="gmResultado" class="mtr-in"><option value="">— elige —</option>' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
-    '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Detalle breve (opcional)"></textarea></div>' +
-    // Paso 2
-    '<div class="gm-step">2 · ¿Qué sigue? <span class="gm-oblig">obligatorio</span></div>' +
-    '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
+    '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea></div></div>' +
+    // Paso 2: Próximo paso
+    '<div class="gm-col gm-col-2"><div class="gm-col-tit"><span class="gm-num gm-num-2">2</span> Próximo paso</div>' +
+    '<div class="gm-row"><label>Próxima acción <span class="gm-oblig">obligatorio</span></label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
     '<div class="gm-row" id="gmOtroWrap" style="display:none"><label>Especifica</label><input id="gmProxOtro" class="mtr-in" placeholder="Describe la próxima acción"></div>' +
-    '<div class="gm-row"><label>¿Cuándo? <span class="gm-oblig">obligatorio</span></label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
-    '<div class="gm-row"><label>Atajos rápidos</label><div class="gm-atajos">' +
-    [['Hoy 9am', 0, 9], ['Hoy 1pm', 0, 13], ['Hoy 6pm', 0, 18], ['Mañ 9am', 1, 9], ['Mañ 1pm', 1, 13], ['Mañ 6pm', 1, 18], ['+1 día', 1, null], ['+2 días', 2, null]]
-      .map(a => '<button type="button" class="gm-atajo" onclick="gmAtajo(' + a[1] + ',' + (a[2] == null ? 'null' : a[2]) + ')">' + a[0] + '</button>').join('') + '</div></div>' +
+    '<div class="gm-row"><label>Fecha y hora <span class="gm-oblig">obligatorio</span></label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
+    '<div class="gm-row"><label>Atajos rápidos</label><div class="gm-atajos">' + atajos + '</div></div></div>' +
+    '</div>' +
     '<div class="error" id="gmMsg"></div>' +
     '<div class="gm-foot"><button class="btn sec" onclick="cerrarModalGestion()">Cancelar</button><button class="btn" onclick="guardarModalGestion()">Registrar</button></div>' +
     '</div></div>';
