@@ -83,6 +83,7 @@
           <option value="sin-asignar">Sin asignar</option>
         </select>
         <select id="selAsesor" class="asignador oculto" onchange="cargarLeads()" style="width:auto;padding:7px 9px"></select>
+        <div class="leads-buscar"><span class="leads-buscar-ic">🔍</span><input type="search" id="qLeads" placeholder="Buscar persona…" oninput="PAG_ACTUAL=1;render()" title="Buscar por nombre, teléfono o email"></div>
         <select id="fPrioridad" onchange="PAG_ACTUAL=1;render()" style="width:auto;padding:7px 9px">
           <option value="">Toda prioridad</option>
           <option>Muy alta</option><option>Alta</option><option>Media</option><option>Baja</option>

@@ -121,7 +121,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       if (!f) return;
       const monto = f.montoSolicitado != null ? fmtS(f.montoSolicitado) : (f.montoRango || 'por definir');
       const base = process.env.APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
-      const link = base ? base + '/#b2b=' + encodeURIComponent(f.codigo) : '';
+      const link = base ? base + '/o/' + encodeURIComponent(f.codigo) : '';
       const txt = '💰 *Nueva oportunidad:* ' + monto +
         '\n🆕 Empresa: ' + (f.razonSocial || f.nombreComercial || '—') +
         '\n👤 Contacto: ' + (f.contacto || '—') +

@@ -530,12 +530,16 @@ async function arrancar() {
     document.querySelectorAll('.soloEquipoB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAltaB2B').forEach(e => e.classList.remove('oculto'));
   }
-  // Deep link del WhatsApp: #b2b=CODIGO abre directo la ficha de esa solicitud.
+  // Deep links del WhatsApp: #b2b=CODIGO abre la ficha B2B; #lead=CODIGO abre la trazabilidad del lead B2C.
   try {
-    const m = (location.hash || '').match(/^#b2b=([A-Za-z0-9-]+)/);
-    if (m && ['admin', 'jefe_creditos', 'jefe_b2b', 'funcionario_b2b', 'asistente_creditos'].includes(YO.rol)) {
+    const mB = (location.hash || '').match(/^#b2b=([A-Za-z0-9-]+)/);
+    const mL = (location.hash || '').match(/^#lead=([A-Za-z0-9-]+)/);
+    if (mB && ['admin', 'jefe_creditos', 'jefe_b2b', 'funcionario_b2b', 'asistente_creditos'].includes(YO.rol)) {
       navB2B('sol');
-      setTimeout(() => abrirFichaB2B(decodeURIComponent(m[1])), 400);
+      setTimeout(() => abrirFichaB2B(decodeURIComponent(mB[1])), 400);
+    } else if (mL) {
+      ir('leads');
+      setTimeout(() => verTrazabilidad(decodeURIComponent(mL[1])), 400);
     }
   } catch (e) { }
   // Columnas de control de la tabla: visibles solo para admin/jefa
@@ -864,6 +868,8 @@ function leadsVisibles(incluirCerrados) {
   const fp = $('fPrioridad').value, fe = $('fEtapa').value;
   if (fp) arr = arr.filter(l => l.prioridad === fp);
   if (fe) arr = arr.filter(l => l.etapa === fe);
+  const q = ($('qLeads') && $('qLeads').value || '').trim().toLowerCase();
+  if (q) arr = arr.filter(l => ((l.nombre || '') + ' ' + (l.telefono || '') + ' ' + (l.email || '') + ' ' + (l.asesor || '')).toLowerCase().includes(q));
   if (typeof MD_FILTRO !== 'undefined' && MD_FILTRO) {
     const h0 = new Date(); h0.setHours(0, 0, 0, 0);
     const mn = new Date(h0); mn.setDate(mn.getDate() + 1);
