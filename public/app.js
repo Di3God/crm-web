@@ -4487,6 +4487,55 @@ async function reactivarB2B(codigo) {
   } catch (e) { alert(e.message || 'No se pudo reactivar'); }
 }
 
+// ===== Bandera roja (v1.249): modal con motivo estructurado + comentario obligatorio =====
+const REDFLAG_MOTIVOS = [
+  'No pasa filtro SUNAT (estado / condición / antigüedad)',
+  'Riesgo crediticio: Dudoso, Pérdida o castigados',
+  'Sin garantía inmobiliaria viable',
+  'Monto / ticket fuera de política',
+  'No responde / inubicable',
+  'Cliente desistió del financiamiento',
+  'Documentación incompleta (no envía)',
+  'Datos inconsistentes / posible fraude',
+  'Otro'
+];
+function abrirRedFlagB2B() {
+  if (!FICHA || !FICHA.solicitud) return;
+  let h = $('rfHost'); if (h) { h.remove(); return; }
+  const radios = REDFLAG_MOTIVOS.map((m, i) =>
+    '<label class="rf-opt"><input type="radio" name="rfMotivo" value="' + m.replace(/"/g, '&quot;') + '"' + '> ' + m + '</label>').join('');
+  const html = '<div class="tl-back" onclick="if(event.target===this)abrirRedFlagB2B()">' +
+    '<div class="tl-card rf-card"><div class="tl-head"><b>🚩 Bandera roja · descartar solicitud</b><button class="gm-x" onclick="abrirRedFlagB2B()">✕</button></div>' +
+    '<div class="rf-body"><div class="rf-sub">Selecciona el motivo principal. La solicitud sale del tablero (se puede reactivar después).</div>' +
+    radios +
+    '<div class="rf-lbl">Comentario <span class="rf-oblig">obligatorio</span></div>' +
+    '<textarea id="rfComentario" class="mtr-in rf-txt" placeholder="Detalla el motivo: qué se revisó, con quién se habló, evidencia…"></textarea>' +
+    '<div class="rf-err oculto" id="rfError"></div>' +
+    '<div class="rf-foot"><button class="btn sec" onclick="abrirRedFlagB2B()">Cancelar</button>' +
+    '<button class="btn rf-btn" onclick="confirmarRedFlagB2B()">🚩 Descartar solicitud</button></div>' +
+    '</div></div></div>';
+  const host = document.createElement('div'); host.id = 'rfHost'; host.innerHTML = html;
+  document.body.appendChild(host);
+}
+async function confirmarRedFlagB2B() {
+  const sel = document.querySelector('input[name="rfMotivo"]:checked');
+  const com = ($('rfComentario') && $('rfComentario').value || '').trim();
+  const err = $('rfError');
+  if (!sel) { err.textContent = 'Selecciona un motivo.'; err.classList.remove('oculto'); return; }
+  if (!com) { err.textContent = 'El comentario es obligatorio.'; err.classList.remove('oculto'); $('rfComentario').focus(); return; }
+  err.classList.add('oculto');
+  try {
+    await api('/api/b2b/solicitudes/' + FICHA.solicitud.codigo + '/descartar', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo: sel.value + ' — ' + com })
+    });
+    const h = $('rfHost'); if (h) h.remove();
+    FICHA_DIRTY.clear();
+    if (typeof cerrar === 'function') cerrar('ovFichaB2B');
+    if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
+  } catch (e) { err.textContent = e.message || 'No se pudo descartar'; err.classList.remove('oculto'); }
+}
+// Compat: descartar directo desde tabla/kanban (sin ficha abierta) sigue con prompt.
 async function descartarB2B(codigo) {
   const motivo = prompt('Motivo del descarte:', '');
   if (motivo === null) return;
@@ -4498,6 +4547,55 @@ async function descartarB2B(codigo) {
     if (typeof cerrar === 'function') cerrar('ovFichaB2B');
     if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
   } catch (e) { alert(e.message || 'No se pudo descartar'); }
+}
+
+// ===== Cambios sin guardar (v1.249): tracking por panel + cierre seguro =====
+const FICHA_DIRTY = new Set();
+const FICHA_DIRTY_NOMBRES = { solicitud: 'Solicitud', fsunat: 'Filtro SUNAT', credito: 'Filtro crédito', garantia: 'Filtro garantía', reunion: 'Reunión', finanzas: 'Filtro finanzas', businesscase: 'Business case' };
+let FICHA_DIRTY_HOOK = false;
+function instalarDirtyTracking() {
+  if (FICHA_DIRTY_HOOK) return; FICHA_DIRTY_HOOK = true;
+  const cont = $('fbAcordeon'); if (!cont) return;
+  const marcar = (ev) => {
+    const el = ev.target; if (!el || el.closest('[data-nodirty]')) return;
+    if (!/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;
+    const pnl = el.closest('.fb-panel'); if (!pnl) return;
+    const tipo = pnl.getAttribute('data-fb'); if (!tipo) return;
+    FICHA_DIRTY.add(tipo); pnl.classList.add('fb-panel-dirty-soft');
+  };
+  cont.addEventListener('input', marcar);
+  cont.addEventListener('change', marcar);
+}
+function limpiarDirty(tipo) {
+  FICHA_DIRTY.delete(tipo);
+  const pnl = document.querySelector('.fb-panel[data-fb="' + tipo + '"]');
+  if (pnl) { pnl.classList.remove('fb-panel-dirty-soft', 'fb-panel-dirty'); }
+  const av = $('fbAvisoDirty'); if (av && !FICHA_DIRTY.size) av.remove();
+}
+function cerrarFichaB2B() {
+  if (!FICHA_DIRTY.size) { cerrar('ovFichaB2B'); return; }
+  // Marca en rojo los paneles con cambios sin guardar y muestra el aviso.
+  let primero = null;
+  FICHA_DIRTY.forEach(tipo => {
+    const pnl = document.querySelector('.fb-panel[data-fb="' + tipo + '"]');
+    if (pnl) { pnl.classList.add('fb-panel-dirty'); if (!primero) primero = pnl; }
+  });
+  const nombres = Array.from(FICHA_DIRTY).map(t => FICHA_DIRTY_NOMBRES[t] || t).join(', ');
+  let av = $('fbAvisoDirty');
+  if (!av) {
+    av = document.createElement('div'); av.id = 'fbAvisoDirty'; av.className = 'fb-aviso-dirty';
+    const modal = document.querySelector('#ovFichaB2B .fb-modal') || document.querySelector('#ovFichaB2B .modal');
+    modal.insertBefore(av, modal.firstChild);
+  }
+  av.innerHTML = '⚠ <b>Tienes cambios sin guardar</b> en: ' + nombres + '. Guarda cada sección marcada en rojo. ' +
+    '<button class="fb-aviso-desc" onclick="descartarCambiosYCerrar()">Descartar cambios y cerrar</button>';
+  if (primero) primero.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function descartarCambiosYCerrar() {
+  FICHA_DIRTY.clear();
+  const av = $('fbAvisoDirty'); if (av) av.remove();
+  document.querySelectorAll('.fb-panel-dirty,.fb-panel-dirty-soft').forEach(p => p.classList.remove('fb-panel-dirty', 'fb-panel-dirty-soft'));
+  cerrar('ovFichaB2B');
 }
 
 const B2B_ROL_TXT = { jefe_creditos: 'Jefe de Créditos', asistente_creditos: 'Créditos', jefe_b2b: 'Jefe B2B', funcionario_b2b: 'Funcionario' };
@@ -4946,6 +5044,8 @@ function renderFichaB2B() {
   ];
   const _rh = $('fbResumenHead'); if (_rh) _rh.innerHTML = resumenFichaB2B();
   $('fbAcordeon').innerHTML = stepperFichaB2B() + panels.join('');
+  FICHA_DIRTY.clear(); instalarDirtyTracking();
+  const _av = $('fbAvisoDirty'); if (_av) _av.remove();
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
   cargarGestionesB2B(s.codigo);
   aplicarBloqueoPaneles();
@@ -5025,26 +5125,49 @@ async function cargarGestionesB2B(codigo) {
   } catch (e) { FICHA._gestiones = []; }
 }
 // Abre/cierra el timeline de trazabilidad (botón ⓘ junto a la bandera).
-function toggleTimelineB2B() {
+const TRAZA_ACCION_TXT = {
+  b2b_guardar_filtro: '💾 Guardó filtro', b2b_gestion: '📞 Gestión', b2b_editar_monto: '✏️ Editó monto',
+  b2b_reasignar: '👤 Reasignación', b2b_descartar: '🚩 Descartada', b2b_reactivar: '↩ Reactivada',
+  b2b_credito_agregar_sujeto: '➕ Sujeto de crédito', b2b_credito_guardar_sujeto: '💾 Guardó sujeto crédito',
+  b2b_credito_eliminar_sujeto: '🗑 Quitó sujeto crédito', b2b_credito_link: '🔗 Link de crédito',
+  b2b_garantia_agregar_inmueble: '🏠 Agregó inmueble', b2b_archivar_solicitud: '🗄 Archivo',
+  b2b_limpiar_gestiones: '🗑 Limpió gestiones', b2b_descartar_duplicado: '🔁 Duplicado'
+};
+async function toggleTimelineB2B() {
   let h = $('tlHost');
   if (h) { h.remove(); return; }
-  const g = FICHA._gestiones || [];
-  const items = g.length ? g.map(x => {
+  // Cambios GUARDADOS (auditoría del código) + gestiones, en una sola línea de tiempo.
+  let traza = [];
+  try { const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/trazabilidad'); traza = d.eventos || []; } catch (e) {}
+  const items = [];
+  (FICHA._gestiones || []).forEach(x => items.push({
+    fecha: x.fecha, tipo: 'gestion',
+    titulo: trEstadoB2B(x.etapa || ''), quien: primerNombre(x.responsable || ''),
+    linea: (x.canal || '') + (x.resultado ? ' · ' + x.resultado : ''),
+    comentario: x.comentario || '', prox: x.proximaAccion || '', fechaProx: x.fechaProxAccion || null
+  }));
+  traza.forEach(t => items.push({
+    fecha: t.fecha, tipo: 'cambio',
+    titulo: TRAZA_ACCION_TXT[t.accion] || ('💾 ' + String(t.accion || '').replace(/^b2b_/, '').replace(/_/g, ' ')),
+    quien: primerNombre(t.nombre || t.usuario || ''), linea: t.detalle || '', comentario: '', prox: '', fechaProx: null
+  }));
+  items.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  const filas = items.length ? items.map(x => {
     const f = new Date(x.fecha);
-    const fFmt = f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const fp = x.fechaProxAccion ? new Date(x.fechaProxAccion).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
-    return '<div class="tl-item"><div class="tl-dot"></div><div class="tl-body">' +
-      '<div class="tl-top"><b>' + trEstadoB2B(x.etapa || '') + '</b> <span class="sub">' + fFmt + ' · ' + primerNombre(x.responsable || '') + '</span></div>' +
-      '<div class="tl-res">' + (x.canal || '') + (x.resultado ? ' · ' + x.resultado : '') + '</div>' +
-      (x.comentario ? '<div class="tl-com">' + x.comentario.replace(/</g, '&lt;') + '</div>' : '') +
-      '<div class="tl-prox">➡ <b>' + (x.proximaAccion || '') + '</b> · 📅 ' + fp + '</div>' +
+    const fFmt = isNaN(f) ? '' : f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const fp = x.fechaProx ? new Date(x.fechaProx).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+    return '<div class="tl-item' + (x.tipo === 'cambio' ? ' tl-item-cambio' : '') + '"><div class="tl-dot' + (x.tipo === 'cambio' ? ' tl-dot-cambio' : '') + '"></div><div class="tl-body">' +
+      '<div class="tl-top"><b>' + x.titulo + '</b> <span class="sub">' + fFmt + (x.quien ? ' · ' + x.quien : '') + '</span></div>' +
+      (x.linea ? '<div class="tl-res">' + String(x.linea).replace(/</g, '&lt;') + '</div>' : '') +
+      (x.comentario ? '<div class="tl-com">' + String(x.comentario).replace(/</g, '&lt;') + '</div>' : '') +
+      (x.prox ? '<div class="tl-prox">➡ <b>' + x.prox + '</b>' + (fp ? ' · 📅 ' + fp : '') + '</div>' : '') +
       '</div></div>';
-  }).join('') : '<div class="sub" style="padding:8px">Sin gestiones registradas todavía.</div>';
+  }).join('') : '<div class="sub" style="padding:8px">Sin gestiones ni cambios guardados todavía.</div>';
   const puedeLimpiar = puedeReasignarB2B();
-  const footer = (puedeLimpiar && g.length) ? '<div class="tl-foot"><button class="btn sec tl-limpiar" onclick="limpiarHistorialB2B()">🗑 Limpiar historial</button></div>' : '';
+  const footer = (puedeLimpiar && (FICHA._gestiones || []).length) ? '<div class="tl-foot"><button class="btn sec tl-limpiar" onclick="limpiarHistorialB2B()">🗑 Limpiar historial</button></div>' : '';
   const html = '<div class="tl-back" onclick="if(event.target===this)toggleTimelineB2B()">' +
-    '<div class="tl-card"><div class="tl-head"><b>Trazabilidad del lead</b><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
-    '<div class="tl-list">' + items + '</div>' + footer + '</div></div>';
+    '<div class="tl-card"><div class="tl-head"><b>Trazabilidad</b> <span class="sub" style="font-weight:400">gestiones + cambios guardados</span><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
+    '<div class="tl-list">' + filas + '</div>' + footer + '</div></div>';
   const host = document.createElement('div'); host.id = 'tlHost'; host.innerHTML = html;
   document.body.appendChild(host);
 }
@@ -5421,33 +5544,46 @@ function panelFiltroSunat(s, modo) {
   const ticket = s.ticket || 'Bajo';
   const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
   const auto = autoValoresSunat(s);
-  // El checklist guardado completa/corrige lo demás, pero personaJuridica SIEMPRE se deriva del prefijo del RUC.
   const valores = Object.assign(auto, saved);
   if (auto.personaJuridica != null) valores.personaJuridica = auto.personaJuridica;
-  // Datos de empresa (antes panel separado) ahora fusionados en la cabecera del filtro.
   let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
   const estadoTxt = raw.estado || null, condTxt = raw.condicion || null;
-  const chip = (txt, ok) => '<span class="emp-flag ' + (ok ? 'emp-ok' : 'emp-warn') + '">' + (ok ? '✓' : '!') + ' ' + txt + '</span>';
-  const flags = (estadoTxt || condTxt) ? '<div class="emp-flags">' +
+  const chip = (txt, ok) => '<span class="fsu-chip ' + (ok ? 'fsu-chip-ok' : 'fsu-chip-warn') + '">' + (ok ? '✓' : '!') + ' ' + String(txt).toUpperCase() + '</span>';
+  const chips = (estadoTxt || condTxt) ? '<div class="fsu-chips">' +
     (estadoTxt ? chip(estadoTxt, /activ/i.test(estadoTxt)) : '') +
     (condTxt ? chip(condTxt, /^\s*habido/i.test(condTxt)) : '') + '</div>' : '';
-  const datosEmp = '<div class="fb-emp-datos">' +
-    fbCampo('Razón social', s.razonSocial) + fbCampo('RUC', s.ruc) +
-    fbCampo('Ubicación (SUNAT)', (s.sunatDistrito || s.sunatDepartamento) ? ((s.sunatDistrito || '') + (s.sunatDistrito && s.sunatDepartamento ? ' · ' : '') + (s.sunatDepartamento || '')) : '—') +
-    fbCampoOpt('Nombre comercial', s.nombreComercial) + fbCampoOpt('Sector', s.sector) +
-    fbCampoOpt('Actividad', s.actividad) + fbCampo('Antigüedad', fmtAntiguedad(s.antiguedadMeses)) + '</div>';
-  const cuerpo = '<div class="fb-body">' + flags + datosEmp +
-    '<p class="sub">Ticket <b>' + ticket + '</b>. Los datos de SUNAT se autocompletan; RUC 20 pasa por defecto, RUC 10 queda observado.</p>' +
+  const celda = (ico, k, v) => '<div class="fsu-celda"><span class="fsu-celda-ic">' + ico + '</span><div><div class="fsu-celda-k">' + k + '</div><div class="fsu-celda-v">' + (v || '—') + '</div></div></div>';
+  const grid = '<div class="fsu-grid">' +
+    celda('🏢', 'Razón social', s.razonSocial) +
+    celda('🪪', 'RUC', (s.ruc || '—') + (s.ruc ? ' <button class="fsu-copy" title="Copiar RUC" onclick="navigator.clipboard&&navigator.clipboard.writeText(\'' + s.ruc + '\')">⧉</button>' : '')) +
+    celda('📍', 'Ubicación (SUNAT)', (s.sunatDistrito || s.sunatDepartamento) ? ((s.sunatDistrito || '') + (s.sunatDistrito && s.sunatDepartamento ? ' · ' : '') + (s.sunatDepartamento || '')) : '—') +
+    celda('🏪', 'Nombre comercial', s.nombreComercial) +
+    celda('🧭', 'Sector', s.sector) +
+    celda('⚙️', 'Actividad principal', s.actividad) +
+    celda('📅', 'Antigüedad', fmtAntiguedad(s.antiguedadMeses)) +
+    '</div>';
+  const fAct = f.actualizadoEn ? new Date(f.actualizadoEn).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+  const footMeta = '<div class="fsu-foot">' +
+    '<span>🕒 <b>Última actualización</b> ' + (fAct ? fAct + (f.responsable ? ' por ' + primerNombre(f.responsable) : '') : 'sin guardar aún') + '</span>' +
+    '<span>🛡 <b>Fuente</b> SUNAT · Consulta RUC</span>' +
+    '<span>🔄 <b>Actualización automática</b> cada 24 horas</span>' +
+    '</div>';
+  const cuerpo = '<div class="fb-body fsu-body">' +
+    '<div class="fsu-head"><div><div class="fsu-tit">Filtro SUNAT</div><div class="fsu-sub">Consulta y validación de información en SUNAT · Ticket <b>' + ticket + '</b></div></div>' +
+    '<button class="btn fsu-guardar" onclick="guardarFiltroSunat()">💾 Guardar filtro</button></div>' +
+    chips + grid +
+    '<div class="fsu-sec">Datos (información)</div>' +
     renderFiltroDosCapas('sunat', valores, 'fsunat', ticket) +
-    '<div class="fb-acc"><button class="btn" onclick="guardarFiltroSunat()">Guardar</button></div></div>';
+    footMeta + '</div>';
   return fbPanelWrap('fsunat', '🏢', '1 · Filtro SUNAT', head, true, cuerpo, false, modo, 'Solicitud');
 }
 async function guardarFiltroSunat() {
   try {
     const valores = leerFiltro2('fsunat');
     const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/sunat', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
-    FICHA.filtros.sunat = Object.assign({}, FICHA.filtros.sunat, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
+    FICHA.filtros.sunat = Object.assign({}, FICHA.filtros.sunat, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos, actualizadoEn: new Date().toISOString(), responsable: (typeof YO !== 'undefined' && YO && YO.nombre) || null });
     setPanelPill('fsunat', r.semaforo);
+    limpiarDirty('fsunat');
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
@@ -5457,31 +5593,49 @@ function panelSolicitud(s) {
   let cuerpo = '';
   if (open) {
     const montoStr = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
-    const montoExtra = ''; // sin la banda del origen: solo el monto definido
-    const montoFila = '<div class="fb-campo"><span class="fb-k">Monto solicitado</span><span class="fb-v">' + montoStr + montoExtra +
-      ' <button class="btn-sunat" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button></span></div>';
-    // RUC: se muestra el que pusieron inicialmente. Editable SOLO en la etapa Solicitud/SUNAT.
-    const enSolicitud = (FICHA.etapaKanban === 'Solicitud'); // solo primera etapa; despues inamovible
+    const enSolicitud = (FICHA.etapaKanban === 'Solicitud');
     const rucVal = s.ruc || '';
-    const rucEstado = s.sunatEstado === 'ok' ? '<span class="ruc-ok">✓ validado</span>' : (s.sunatEstado === 'error' ? '<span class="ruc-err">⚠ no valida en SUNAT</span>' : (rucVal && !/^(10|15|17|20)\d{9}$/.test(String(rucVal).trim()) ? '<span class="ruc-err">⚠ RUC inválido</span>' : '<span class="sub">pendiente</span>'));
-    const rucFila = enSolicitud
-      ? '<div class="fb-campo"><span class="fb-k">RUC</span><span class="fb-v">' +
-        '<input id="fbRucEdit" class="mtr-in" style="width:150px" value="' + rucVal + '" maxlength="11" onkeypress="return b2bSoloNumero(event,false)"> ' +
-        '<button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="validarRucB2B()">🔎 Validar</button> ' + rucEstado + '</span></div>'
-      : '<div class="fb-campo"><span class="fb-k">RUC</span><span class="fb-v">' + (rucVal || '—') + ' ' + rucEstado + '</span></div>';
-    const garantia = '<div class="fb-sec">Garantía declarada</div>' +
-      fbCampo('¿Tiene inmueble?', s.tieneInmueble) +
-      fbCampoOpt('Tipo de inmueble', s.tipoInmueble) +
-      fbCampoOpt('Área (m²)', s.areaInmueble) +
-      fbCampoOpt('Registrado SUNARP', s.registradoSunarp) +
-      fbCampoOpt('Ubicación del inmueble', s.departamentoInmueble);
-    cuerpo = '<div class="fb-body">' +
-      rucFila +
-      fbCampo('Contacto', s.contacto) + fbCampo('Teléfono', s.telefono) + fbCampoOpt('Email', s.email) +
-      montoFila +
-      fbCampoOpt('Destino de fondos', s.destinoFondos) +
-      garantia +
+    const rucBadge = s.sunatEstado === 'ok' ? '<span class="sol-badge sol-badge-ok">✓ Validado</span>'
+      : (s.sunatEstado === 'error' ? '<span class="sol-badge sol-badge-err">⚠ No valida</span>'
+        : (rucVal && !/^(10|15|17|20)\d{9}$/.test(String(rucVal).trim()) ? '<span class="sol-badge sol-badge-err">⚠ Inválido</span>' : '<span class="sol-badge">pendiente</span>'));
+    const rucCtrl = enSolicitud
+      ? '<input id="fbRucEdit" class="mtr-in" style="width:130px" value="' + rucVal + '" maxlength="11" onkeypress="return b2bSoloNumero(event,false)"> <button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="validarRucB2B()">🔎 Validar</button> ' + rucBadge
+      : '<b>' + (rucVal || '—') + '</b> ' + rucBadge;
+    const tel = String(s.telefono || '').replace(/[^0-9+]/g, '');
+    const filaSol = (ico, k, v) => '<div class="sol-fila"><span class="sol-ic">' + ico + '</span><span class="sol-k">' + k + '</span><span class="sol-v">' + v + '</span></div>';
+    const izq = '<div class="sol-card"><div class="sol-card-tit">👤 Información del solicitante</div>' +
+      filaSol('🪪', 'RUC', rucCtrl) +
+      filaSol('👤', 'Contacto', '<b>' + (s.contacto || '—') + '</b>') +
+      filaSol('📞', 'Teléfono', (s.telefono || '—') + (tel ? ' <a class="sol-wa" href="https://wa.me/51' + tel.replace(/^\+?51/, '') + '" target="_blank" rel="noopener" title="Abrir WhatsApp">🟢</a>' : '')) +
+      filaSol('✉️', 'Email', s.email || '—') +
+      filaSol('💰', 'Monto solicitado', '<span class="sol-monto">' + montoStr + '</span> <button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button>') +
+      (s.destinoFondos ? filaSol('🎯', 'Destino de fondos', s.destinoFondos) : '') +
       '</div>';
+    const tiene = /^s/i.test(String(s.tieneInmueble || ''));
+    const der = '<div class="sol-card"><div class="sol-card-tit">🛡 Garantía declarada</div>' +
+      '<div class="sol-gar ' + (tiene ? 'sol-gar-si' : 'sol-gar-no') + '"><span class="sol-gar-ic">🏠</span><span>¿Tiene inmueble?</span><b class="sol-gar-val">' + (s.tieneInmueble || '—') + '</b></div>' +
+      (s.tipoInmueble ? filaSol('🏢', 'Tipo', s.tipoInmueble) : '') +
+      (s.areaInmueble ? filaSol('📐', 'Área (m²)', s.areaInmueble) : '') +
+      (s.registradoSunarp ? filaSol('📜', 'Registrado SUNARP', s.registradoSunarp) : '') +
+      filaSol('📍', 'Ubicación del inmueble', s.departamentoInmueble || '—') +
+      '</div>';
+    const mail = s.email ? String(s.email).trim() : '';
+    const acciones = '<div class="sol-card" data-nodirty><div class="sol-card-tit">⚡ Acciones rápidas</div><div class="sol-acc">' +
+      (tel ? '<a class="sol-acc-btn" href="tel:+51' + tel.replace(/^\+?51/, '') + '"><span>📞</span>Llamar</a>' : '') +
+      (tel ? '<a class="sol-acc-btn" href="https://wa.me/51' + tel.replace(/^\+?51/, '') + '" target="_blank" rel="noopener"><span>🟢</span>WhatsApp</a>' : '') +
+      (mail ? '<a class="sol-acc-btn" href="mailto:' + mail + '"><span>✉️</span>Email</a>' : '') +
+      '<button class="sol-acc-btn" onclick="abrirModalGestion(\'Solicitud\')"><span>📝</span>Agregar nota</button>' +
+      '</div></div>';
+    const fIng = s.fechaIngreso ? new Date(s.fechaIngreso).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    const footer = '<div class="sol-foot">' +
+      '<span>🕒 <b>Ingreso</b> ' + fIng + '</span>' +
+      (s.fuente ? '<span>🏷 <b>Origen</b> ' + s.fuente + (s.campana ? ' · ' + s.campana : '') + '</span>' : '') +
+      (s.temperatura ? '<span>🌡 <b>Temperatura</b> ' + s.temperatura + '</span>' : '') +
+      '</div>';
+    cuerpo = '<div class="fb-body sol-body">' +
+      '<div class="sol-hero"><span class="sol-hero-ic">📥</span><div><div class="sol-hero-t">Solicitud del lead</div><div class="sol-hero-s">Información de la solicitud y datos del contacto</div></div>' +
+      '<div class="sol-hero-der">' + (s.sunatEstado === 'ok' ? '<span class="sol-hero-badge">✓ VALIDADO<small>datos del lead</small></span>' : '') + '</div></div>' +
+      '<div class="sol-grid">' + izq + der + '</div>' + acciones + footer + '</div>';
   }
   return fbPanelWrap('solicitud', '📥', 'Solicitud', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
 }
@@ -5915,7 +6069,7 @@ function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado, modo
   // Botón de gestión: solo en la etapa editable (actual), para registrar contacto + próxima acción.
   const btnGestion = ''; // boton +Gestion eliminado (la gestion se registra via Revisar o el timeline)
   const candado = (modo === 'lectura') ? '<span class="fb-lock-tag">🔒 solo lectura</span>' : (modo === 'bloqueado' ? '<span class="fb-lock-tag fb-lock-fut">🔒 bloqueada</span>' : '');
-  return '<div class="fb-panel' + cls + '"' + modoAttr + '>' +
+  return '<div class="fb-panel' + cls + '" data-fb="' + tipo + '"' + modoAttr + '>' +
     '<div class="fb-panel-head"' + onclick + '>' +
     '<span class="fb-ic">' + ic + '</span>' +
     '<span class="fb-titulo">' + titulo + '</span>' +
@@ -6059,6 +6213,7 @@ async function guardarGarantia() {
     setPanelPill('garantia', cons);
     actualizarConsolidadoGarantiaVivo();
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+      limpiarDirty('garantia');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
@@ -6069,6 +6224,7 @@ async function guardarFinanzas() {
     FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
     setPanelPill('finanzas', r.semaforo);
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+      limpiarDirty('finanzas');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
@@ -6114,6 +6270,7 @@ async function guardarCreditoSilencioso() {
     if (nomEl) body.nombre = nomEl.value.trim();
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
+  limpiarDirty('credito');
 }
 
 function subirDoc(tipoDoc) {
@@ -6197,6 +6354,7 @@ async function guardarCredito() {
     setPanelPill('credito', cons);
     actualizarConsolidadoVivo();
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+      limpiarDirty('credito');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 

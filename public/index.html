@@ -606,7 +606,7 @@
 
   <!-- ===== MODAL: FICHA DE SOLICITUD B2B ===== -->
   <div class="overlay" id="ovFichaB2B">
-    <div class="modal" style="max-width:1100px;width:96vw;max-height:92vh;overflow-y:auto;overflow-x:hidden">
+    <div class="modal fb-modal" style="max-width:880px;width:96vw;max-height:92vh;overflow-y:auto;overflow-x:hidden">
       <div class="fb-head">
         <div style="flex:1">
           <h3 id="fbTitulo">Solicitud</h3>
@@ -616,9 +616,9 @@
           <div id="fbAcciones" class="fb-acciones"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
-          <button id="fbTimeline" class="fb-flag fb-info" onclick="toggleTimelineB2B()" title="Trazabilidad del lead">ⓘ</button>
-          <button id="fbDescartar" class="fb-flag" onclick="descartarB2B(FICHA.solicitud.codigo)" title="Descartar (sacar del tablero)">🚩</button>
-          <button onclick="cerrar('ovFichaB2B')" title="Cerrar" class="fb-cerrar">Cerrar</button>
+          <button id="fbTimeline" class="fb-flag fb-info" onclick="toggleTimelineB2B()" title="Trazabilidad: gestiones y cambios guardados">ⓘ</button>
+          <button id="fbDescartar" class="fb-flag" onclick="abrirRedFlagB2B()" title="Marcar bandera roja (descartar con motivo)">🚩</button>
+          <button onclick="cerrarFichaB2B()" title="Cerrar" class="fb-cerrar">Cerrar</button>
         </div>
       </div>
       <div id="fbAcordeon"><div class="vacio">Cargando…</div></div>

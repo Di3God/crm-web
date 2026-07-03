@@ -5095,6 +5095,15 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
 });
 
 // Descartar (sale del tablero, va a Desestimados). Motivo por defecto: "No contactable".
+// Trazabilidad de UNA solicitud (v1.249): solo cambios GUARDADOS (auditoría b2b_* del código).
+// Visible para cualquier usuario B2B que pueda abrir la ficha (no solo admin).
+app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const filas = db.prepare("SELECT fecha, nombre, usuario, accion, detalle FROM auditoria WHERE objetivo=? AND accion LIKE 'b2b\\_%' ESCAPE '\\' ORDER BY fecha DESC LIMIT 200").all(s.codigo);
+  res.json({ eventos: filas });
+});
+
 app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -5844,7 +5853,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.248 (Labels cortos + tooltips en filtros B2B: etiquetas de 2-3 palabras en SUNAT/Credito/Garantia/Finanzas, explicacion larga movida a icono ? con tooltip CSS; catalogo con campo tip en server.js. Frontend + server: requiere restart Railway); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.249 (Ficha B2B UX: ancho 880px ajustado al stepper sin scroll-x; timeline de trazabilidad con cambios GUARDADOS (nuevo endpoint /trazabilidad); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

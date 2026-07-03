@@ -1410,7 +1410,7 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .ruc-err { color:#CC0000; font-weight:600; font-size:12px; margin-left:6px; }
 
 /* Stepper del viaje del lead (ficha B2B) */
-.fb-stepper { display:flex; align-items:center; gap:4px; padding:12px 14px; background:#fff; border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow-x:auto; }
+.fb-stepper { display:flex; align-items:center; gap:3px; padding:10px 12px; background:#fff; border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:visible; flex-wrap:nowrap; }
 .fbs-paso { display:flex; align-items:center; gap:7px; flex:0 0 auto; opacity:.55; }
 .fbs-paso.fbs-done, .fbs-paso.fbs-actual { opacity:1; }
 .fbs-dot { width:26px; height:26px; border-radius:50%; background:#DDE4EC; color:#fff; font-size:12px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
@@ -1739,3 +1739,101 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 /* Evita que el panel recorte el tooltip en las primeras filas */
 .mtr-row, .gd-row { overflow: visible; }
 .f2-box, .mtr-box { overflow: visible; }
+
+
+/* ===== v1.249: ficha B2B — ancho al stepper, cierre seguro, bandera roja, rediseño Solicitud/SUNAT ===== */
+/* Stepper compacto: 6 pasos en una línea dentro de 880px, sin scroll-x */
+.fbs-paso { display:inline-flex; align-items:center; gap:5px; flex:0 0 auto; }
+.fbs-dot { width:20px; height:20px; font-size:10.5px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:#DDE4EC; color:#fff; font-weight:800; flex:0 0 auto; }
+.fbs-txt { font-size:11.5px; font-weight:700; color:#6B7A8D; white-space:nowrap; }
+.fbs-actual .fbs-txt { color:#0B5FFF; }
+.fbs-sem { font-style:normal; font-size:10px; font-weight:600; color:#94A3B8; }
+.fbs-linea { flex:1 1 12px; min-width:10px; height:2px; background:#E4EAF2; border-radius:2px; }
+.fbs-linea-done { background:#1D9E75; }
+.fb-modal .fb-panel, .fb-modal .fb-stepper { max-width:100%; }
+
+/* Cerrar: hover rojo */
+.fb-cerrar:hover { background:#E24B4A !important; border-color:#E24B4A !important; color:#fff !important; }
+
+/* Cambios sin guardar */
+.fb-panel-dirty-soft { box-shadow: inset 3px 0 0 #EF9F27; }
+.fb-panel-dirty { outline:2px solid #E24B4A; outline-offset:-2px; border-radius:12px; animation: fbShake .3s ease 1; }
+@keyframes fbShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+.fb-aviso-dirty { position:sticky; top:0; z-index:40; background:#FDE8E7; color:#9B1C1C; border:1px solid #F5B8B4; border-radius:10px; padding:9px 12px; font-size:12.5px; margin:0 0 10px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.fb-aviso-desc { margin-left:auto; background:none; border:1px solid #E24B4A; color:#E24B4A; border-radius:8px; padding:3px 10px; font-size:11.5px; cursor:pointer; font-weight:700; }
+.fb-aviso-desc:hover { background:#E24B4A; color:#fff; }
+
+/* Bandera roja: modal */
+.rf-card { max-width:460px; }
+.rf-body { padding:12px 14px; display:flex; flex-direction:column; gap:6px; }
+.rf-sub { font-size:12px; color:#6B7A8D; margin-bottom:4px; }
+.rf-opt { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+.rf-opt:hover { background:#F7FAFF; border-color:#B9D2FF; }
+.rf-lbl { font-size:12px; font-weight:700; margin-top:6px; }
+.rf-oblig { color:#E24B4A; font-weight:600; font-size:11px; }
+.rf-txt { width:100%; min-height:70px; resize:vertical; }
+.rf-err { color:#CC0000; font-size:12px; font-weight:700; }
+.rf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.rf-btn { background:#E24B4A; border-color:#E24B4A; }
+.rf-btn:hover { background:#C0392B; }
+
+/* Timeline: distinguir cambios guardados de gestiones */
+.tl-dot-cambio { background:#0B5FFF; }
+.tl-item-cambio .tl-top b { color:#0B5FFF; }
+
+/* ===== Solicitud (mockup) ===== */
+.sol-hero { display:flex; align-items:center; gap:12px; background:linear-gradient(90deg,#1D6FF2,#3D8BFD); color:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+.sol-hero-ic { font-size:26px; background:rgba(255,255,255,.18); border-radius:12px; padding:8px; }
+.sol-hero-t { font-size:16.5px; font-weight:800; }
+.sol-hero-s { font-size:12px; opacity:.9; }
+.sol-hero-der { margin-left:auto; }
+.sol-hero-badge { background:#fff; color:#1D9E75; border-radius:10px; padding:6px 12px; font-size:12px; font-weight:800; display:inline-flex; flex-direction:column; line-height:1.25; }
+.sol-hero-badge small { color:#6B7A8D; font-weight:500; }
+.sol-grid { display:grid; grid-template-columns:1.25fr 1fr; gap:12px; }
+@media (max-width:720px) { .sol-grid { grid-template-columns:1fr; } }
+.sol-card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
+.sol-card-tit { font-size:13px; font-weight:800; margin-bottom:8px; }
+.sol-fila { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #F1F5F9; font-size:12.5px; }
+.sol-fila:last-child { border-bottom:none; }
+.sol-ic { width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; background:#F1F6FF; border-radius:8px; flex:0 0 auto; font-size:13px; }
+.sol-k { color:#6B7A8D; min-width:110px; }
+.sol-v { flex:1; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.sol-monto { color:#0B5FFF; font-weight:800; font-size:15px; }
+.sol-wa { text-decoration:none; font-size:14px; }
+.sol-badge { font-size:11px; color:#94A3B8; }
+.sol-badge-ok { background:#E7F6EF; color:#1D9E75; border-radius:8px; padding:2px 8px; font-weight:700; }
+.sol-badge-err { background:#FDE8E7; color:#CC0000; border-radius:8px; padding:2px 8px; font-weight:700; }
+.sol-gar { display:flex; align-items:center; gap:10px; border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:6px; }
+.sol-gar-si { background:#E7F6EF; }
+.sol-gar-no { background:#FDF2E3; }
+.sol-gar-ic { font-size:18px; }
+.sol-gar-val { margin-left:auto; color:#1D9E75; }
+.sol-gar-no .sol-gar-val { color:#B7791F; }
+.sol-acc { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+@media (max-width:640px) { .sol-acc { grid-template-columns:repeat(2,1fr); } }
+.sol-acc-btn { display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 6px; border:1px solid var(--line); border-radius:12px; background:#fff; font-size:11.5px; font-weight:700; color:#334155; text-decoration:none; cursor:pointer; }
+.sol-acc-btn:hover { border-color:#B9D2FF; background:#F7FAFF; }
+.sol-acc-btn span { font-size:17px; }
+.sol-foot { display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; color:#6B7A8D; border-top:1px solid #F1F5F9; margin-top:10px; padding-top:10px; }
+.sol-body .sol-card + .sol-card { margin-top:0; }
+.sol-body > .sol-card { margin-top:12px; }
+
+/* ===== Filtro SUNAT (mockup) ===== */
+.fsu-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+.fsu-tit { font-size:15px; font-weight:800; }
+.fsu-sub { font-size:12px; color:#6B7A8D; }
+.fsu-guardar { margin-left:auto; }
+.fsu-chips { display:flex; gap:8px; margin-bottom:10px; }
+.fsu-chip { font-size:11px; font-weight:800; border-radius:9px; padding:3px 10px; letter-spacing:.3px; }
+.fsu-chip-ok { background:#E7F6EF; color:#1D9E75; }
+.fsu-chip-warn { background:#FFF4E0; color:#B7791F; }
+.fsu-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-bottom:12px; }
+@media (max-width:640px) { .fsu-grid { grid-template-columns:1fr; } }
+.fsu-celda { display:flex; align-items:center; gap:10px; background:#fff; padding:10px 12px; }
+.fsu-celda-ic { width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; background:#F1F6FF; border-radius:8px; flex:0 0 auto; font-size:13px; }
+.fsu-celda-k { font-size:11px; color:#6B7A8D; }
+.fsu-celda-v { font-size:12.5px; font-weight:700; }
+.fsu-copy { background:none; border:1px solid var(--line); border-radius:6px; cursor:pointer; font-size:11px; padding:1px 6px; color:#6B7A8D; }
+.fsu-copy:hover { border-color:#B9D2FF; color:#0B5FFF; }
+.fsu-sec { font-size:12px; font-weight:800; color:#334155; margin:4px 0 6px; }
+.fsu-foot { display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; color:#6B7A8D; border-top:1px solid #F1F5F9; margin-top:12px; padding-top:10px; }
