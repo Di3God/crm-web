@@ -5078,6 +5078,29 @@ const AVANCE_KANBAN_B2B = {
 };
 
 // Mover una tarjeta a la siguiente columna (drag). Sin saltos, sin retrocesos, con candado de semáforo.
+// Reunión comercial (v1.252): se guarda como fila 'reunion' en b2b_filtros (checklist JSON).
+// El COMENTARIO es obligatorio para poder avanzar a Filtro finanzas (se valida en /mover).
+app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const datos = {
+    fecha: (b.fecha || '').slice(0, 10) || null,
+    hora: (b.hora || '').slice(0, 5) || null,
+    modalidad: b.modalidad || null,
+    lugar: (b.lugar || '').slice(0, 200) || null,
+    comentario: (b.comentario || '').slice(0, 2000) || null,
+    proximosPasos: (b.proximosPasos || '').slice(0, 1000) || null
+  };
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, puntaje, motivos, observaciones, responsable, actualizadoEn)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET checklist=excluded.checklist, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
+    .run(s.codigo, 'reunion', JSON.stringify(datos), null, null, null, null, req.user.nombre, ahora);
+  auditar(req, 'b2b_reunion_guardar', s.codigo, (datos.fecha ? datos.fecha + (datos.hora ? ' ' + datos.hora : '') + ' · ' + (datos.modalidad || '') : 'sin fecha') + (datos.comentario ? ' · comentario registrado' : ''));
+  res.json({ ok: true, reunion: datos });
+});
+
 app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
   const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -5089,6 +5112,12 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
   if (regla.desde !== actual) return res.status(400).json({ error: 'Solo se avanza una etapa a la vez, de izquierda a derecha (sin saltos ni retrocesos).' });
   const sem = semaforosB2BPorCodigo([s.codigo])[s.codigo] || {};
   if (!regla.gate(s, sem)) return res.status(409).json({ error: regla.err });
+  // v1.252: para avanzar a Filtro finanzas el comentario de la reunión comercial es OBLIGATORIO.
+  if (hacia === 'Filtro finanzas') {
+    const fr = db.prepare("SELECT checklist FROM b2b_filtros WHERE codigoSolicitud=? AND tipoFiltro='reunion'").get(s.codigo);
+    let com = null; try { com = fr && fr.checklist ? (JSON.parse(fr.checklist).comentario || null) : null; } catch (e) {}
+    if (!com || !String(com).trim()) return res.status(409).json({ error: 'Para pasar a Finanzas primero registra y GUARDA el comentario de la reunión comercial (acuerdos y validación de observaciones).' });
+  }
   db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(regla.estado, s.codigo);
   auditar(req, 'b2b_kanban_mover', s.codigo, actual + ' → ' + hacia);
   res.json({ ok: true, etapaKanban: hacia });
@@ -5853,7 +5882,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.249 (Ficha B2B UX: ancho 880px ajustado al stepper sin scroll-x; timeline de trazabilidad con cambios GUARDADOS (nuevo endpoint /trazabilidad); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.254 (Business Case como expediente ejecutivo final: banda de veredicto global, resumen comercial en grid, veredicto por filtro en cards con semaforo palabra-fondo + KOs, datos clave heredados, reunion comercial heredada (acuerdos + proximos pasos), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -1837,3 +1837,190 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fsu-copy:hover { border-color:#B9D2FF; color:#0B5FFF; }
 .fsu-sec { font-size:12px; font-weight:800; color:#334155; margin:4px 0 6px; }
 .fsu-foot { display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; color:#6B7A8D; border-top:1px solid #F1F5F9; margin-top:12px; padding-top:10px; }
+
+/* ===== v1.250: Filtro crédito estilo mockup ===== */
+.fcr-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+.fcr-head-ic { font-size:20px; width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; background:#E7F6EF; border-radius:12px; flex:0 0 auto; }
+.fcr-tit { font-size:15px; font-weight:800; }
+.fcr-sub { font-size:11.5px; color:#6B7A8D; }
+.fcr-head > div:nth-child(2) { flex:1; min-width:200px; }
+.fcr-pill { font-size:11.5px; font-weight:800; border-radius:10px; padding:5px 11px; white-space:nowrap; }
+.fcr-pill-ok  { background:#E7F6EF; color:#1D9E75; }
+.fcr-pill-obs { background:#FFF4E0; color:#B7791F; }
+.fcr-pill-ko  { background:#FDE8E7; color:#CC0000; }
+.fcr-pill-p   { background:#EEF2F7; color:#6B7A8D; }
+.fcr-guardar { background:#1D9E75; border-color:#1D9E75; }
+.fcr-guardar:hover { background:#178563; }
+
+/* Banda de empresa */
+.fcr-emp { background:#EAF7F0; border-radius:10px; padding:9px 12px !important; }
+.fcr-emp-ic { width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center; background:#1D9E75; border-radius:8px; font-size:14px; margin-right:8px; flex:0 0 auto; }
+
+/* Filas del filtro crédito: icono + label + control + chip, sin cortes */
+.mtr-row-cred { display:flex; align-items:center; gap:10px; background:#fff; border:1px solid #EEF2F7; border-radius:12px; padding:9px 12px; margin-bottom:7px; }
+.mtr-row-cred .fcr-ico { width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center; background:#F1F6FF; border-radius:8px; font-size:14px; flex:0 0 auto; }
+.mtr-row-cred .mtr-lbl { flex:1 1 160px; min-width:130px; }
+.mtr-row-cred .mtr-ctrl { flex:0 0 auto; }
+.mtr-row-cred select.mtr-in { min-width:180px; }
+.mtr-row-cred .mtr-numwrap { display:inline-flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+
+/* Chips de límite: nunca se cortan */
+.mtr-lim { font-size:10.5px; font-weight:700; border-radius:8px; padding:3px 8px; white-space:nowrap; flex:0 0 auto; }
+.mtr-lim-ko  { background:#FDE8E7; color:#CC0000; }
+.mtr-lim-obs { background:#FFF4E0; color:#B7791F; }
+
+/* Color del select según estado de la fila (recalc en vivo) */
+.f2row-ok  select.mtr-in { border-color:#9BD9C0; background:#F4FBF7; }
+.f2row-obs select.mtr-in { border-color:#F2CE8E; background:#FFFBF2; }
+.f2row-ko  select.mtr-in { border-color:#F0A9A5; background:#FEF5F4; }
+.f2row-ko { border-color:#F5C6C3; }
+.f2row-obs.mtr-row-cred { border-color:#F4DDB4; }
+
+/* ===== v1.251: Filtro garantía + pill unificado (palabra con fondo + Completo/Incompleto) ===== */
+.sem-word { font-size:11.5px; font-weight:800; border-radius:8px; padding:4px 12px; letter-spacing:.2px; }
+.sem-verde    { background:#1D9E75; color:#fff; }
+.sem-amarillo { background:#EF9F27; color:#fff; }
+.sem-rojo     { background:#E24B4A; color:#fff; }
+.sem-pend     { background:#EEF2F7; color:#6B7A8D; }
+.sem-comp { font-size:11px; font-weight:700; white-space:nowrap; }
+.sem-comp-ok  { color:#1D9E75; }
+.sem-comp-inc { color:#B7791F; }
+.fcr-pill-wrap { display:inline-flex; align-items:center; gap:7px; white-space:nowrap; }
+
+/* Cabecera garantía (reusa fcr-head) */
+.fga-head-ic { background:#FDEFE3; }
+
+/* Cabecera de cada inmueble: inputs con icono + tacho rojo */
+.fga-suj-head { display:flex; align-items:center; gap:10px; background:#F7F9FC; border-radius:10px; padding:8px 10px; }
+.fga-inwrap { display:inline-flex; align-items:center; gap:8px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:4px 8px; flex:1; min-width:0; }
+.fga-inwrap .fb-suj-nom { border:none; background:transparent; flex:1; min-width:0; margin:0; padding:4px 2px; }
+.fga-inwrap .fb-suj-nom:focus { outline:none; box-shadow:none; }
+.fga-ico-b { background:#E8F0FE; }
+.fga-trash { width:34px; height:34px; border:1px solid #F0A9A5; background:#FDF3F2; color:#C0392B; border-radius:10px; cursor:pointer; font-size:14px; }
+.fga-trash:hover { background:#E24B4A; border-color:#E24B4A; color:#fff; }
+
+/* LTV a la derecha y link Drive estilo fila */
+.fga-body .gd-ltv { margin-left:auto; font-weight:800; }
+.fga-body .mtr-row-cred .mtr-ctrl { margin-left:auto; display:inline-flex; align-items:center; gap:8px; }
+.gd-row.mtr-row-cred { display:flex; align-items:center; gap:10px; }
+.gd-row.mtr-row-cred .gd-link { flex:1; min-width:120px; }
+.gd-open { color:#0B5FFF; font-weight:700; font-size:12px; text-decoration:none; white-space:nowrap; }
+.gd-open:hover { text-decoration:underline; }
+
+/* ===== v1.252: Reunión comercial ===== */
+.reu-head-ic { background:#E8F0FE; }
+.reu-band { display:flex; align-items:center; gap:14px; background:#F7F9FC; border:1px solid var(--line); border-radius:14px; padding:12px 14px; margin-bottom:12px; flex-wrap:wrap; }
+.reu-band-vacia { justify-content:space-between; }
+.reu-cell { display:flex; align-items:flex-start; gap:10px; flex:1; min-width:170px; }
+.reu-cell + .reu-cell { border-left:1px solid var(--line); padding-left:14px; }
+.reu-cell-ic { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; background:#E8F0FE; border-radius:9px; font-size:14px; flex:0 0 auto; }
+.reu-cell-k { font-size:11px; color:#6B7A8D; }
+.reu-cell-v { font-size:13px; font-weight:800; }
+.reu-cell-h { font-size:11px; color:#0B5FFF; font-weight:600; }
+.reu-reprog { margin-left:auto; white-space:nowrap; }
+.reu-form { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; background:#fff; border:1px dashed #B9D2FF; border-radius:12px; padding:10px 12px; margin:-4px 0 12px; }
+.reu-form label { display:flex; flex-direction:column; gap:3px; font-size:11px; font-weight:700; color:#6B7A8D; }
+.reu-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px; }
+@media (max-width:700px) { .reu-cards { grid-template-columns:1fr; } }
+.reu-card { display:flex; align-items:center; gap:10px; border-radius:12px; padding:11px 12px; cursor:pointer; border:1px solid transparent; }
+.reu-card-ok  { background:#EAF7F0; border-color:#CBEBDC; }
+.reu-card-obs { background:#FFF7E8; border-color:#F4E3BE; }
+.reu-card-ko  { background:#FDF0EF; border-color:#F5C6C3; }
+.reu-card-p   { background:#F3F6FA; border-color:#E4EAF2; }
+.reu-card:hover { filter:brightness(.985); }
+.reu-card-ic { width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; background:#fff; border-radius:10px; font-size:15px; flex:0 0 auto; }
+.reu-card-t { font-size:12.5px; font-weight:800; }
+.reu-card-s { font-size:11.5px; color:#6B7A8D; font-weight:600; }
+.reu-card-fl { margin-left:auto; color:#94A3B8; font-size:16px; }
+.reu-puntos { border:1px solid #F4E3BE; border-radius:14px; padding:12px 14px; margin-bottom:12px; background:#FFFDF7; }
+.reu-puntos-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.reu-puntos-ic { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; background:#FFF1D6; border-radius:50%; font-size:16px; flex:0 0 auto; }
+.reu-puntos-t { font-size:13.5px; font-weight:800; }
+.reu-puntos-s { font-size:11.5px; color:#6B7A8D; }
+.reu-badge { margin-left:auto; background:#FFF1D6; color:#B7791F; font-size:11.5px; font-weight:800; border-radius:10px; padding:5px 11px; white-space:nowrap; }
+.reu-tabla { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; font-size:12px; }
+.reu-tabla th { text-align:left; font-size:11px; color:#6B7A8D; font-weight:700; padding:8px 10px; border-bottom:1px solid var(--line); background:#FBFCFE; }
+.reu-tabla td { padding:9px 10px; border-bottom:1px solid #F1F5F9; vertical-align:middle; }
+.reu-tabla tr:last-child td { border-bottom:none; }
+.reu-chip { background:#FFF1D6; color:#B7791F; font-size:11px; font-weight:800; border-radius:8px; padding:3px 9px; white-space:nowrap; }
+.reu-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#EF9F27; }
+.reu-acc { color:#334155; }
+.reu-sinobs { background:#EAF7F0; color:#1D9E75; font-weight:700; font-size:12.5px; border-radius:10px; padding:12px; }
+.reu-com-grid { display:grid; grid-template-columns:1.4fr 1fr; gap:12px; }
+@media (max-width:700px) { .reu-com-grid { grid-template-columns:1fr; } }
+.reu-com { background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
+.reu-com-tit { font-size:13px; font-weight:800; margin-bottom:2px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.reu-com-sub { font-size:11.5px; color:#6B7A8D; margin-bottom:8px; }
+.reu-txt { width:100%; min-height:110px; resize:vertical; }
+.reu-txt-err { border-color:#E24B4A !important; background:#FEF5F4; }
+
+/* ===== v1.253: Filtro finanzas y negocio ===== */
+.fin-head-ic { background:#FFF4E0; }
+
+/* Chips de documento (requerido / no aplica) */
+.mtr-lim-req { background:#E8F0FE; color:#0B5FFF; }
+.mtr-lim-na  { background:#EEF2F7; color:#94A3B8; }
+
+/* Inputs numéricos de cifras: alineados a la derecha, ancho cómodo */
+.fin-body .mtr-row-cred input.mtr-num { width:150px; text-align:right; font-weight:700; }
+.fin-body .mtr-row-cred .mtr-suf { color:#6B7A8D; font-weight:700; font-size:12px; }
+.fin-body .mtr-row-cred .mtr-ctrl { margin-left:auto; display:inline-flex; align-items:center; gap:8px; }
+.fin-body .mtr-row-cred select.mtr-in:disabled { background:#F3F6FA; color:#94A3B8; }
+
+/* Tabla de ratios: tarjeta limpia con chips de estado */
+.fin-body .rt-tabla { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; border-collapse:separate; border-spacing:0; margin:2px 0 10px; }
+.fin-body .rt-tabla th { background:#F7F9FC; padding:9px 12px; font-weight:700; color:#41505F; border-bottom:1px solid var(--line); }
+.fin-body .rt-tabla td { padding:10px 12px; border-bottom:1px solid #F1F5F9; }
+.fin-body .rt-tabla tr:last-child td { border-bottom:none; }
+.fin-body .rt-tabla td:first-child { font-weight:700; }
+.fin-body .rt-ok  { background:#E7F6EF; color:#1D9E75; border-radius:8px; padding:3px 10px; font-size:11px; font-weight:800; white-space:nowrap; }
+.fin-body .rt-obs { background:#FFF4E0; color:#B7791F; border-radius:8px; padding:3px 10px; font-size:11px; font-weight:800; white-space:nowrap; }
+.fin-body .rt-na  { background:#EEF2F7; color:#94A3B8; border-radius:8px; padding:3px 10px; font-size:11px; font-weight:700; white-space:nowrap; }
+
+/* Mitigantes: chips tipo pastilla con check */
+.fin-body .an-chips { gap:8px; }
+.fin-body .an-chip { border-radius:12px; padding:8px 14px; font-weight:700; font-size:12px; border:1.5px solid var(--line); transition:all .12s ease; }
+.fin-body .an-chip:hover { border-color:#B9D2FF; background:#F7FAFF; }
+.fin-body .an-chip-on { background:#E8F0FE; border-color:#0B5FFF; color:#0B5FFF; }
+.fin-body .an-chip input { accent-color:#0B5FFF; }
+
+/* Selects de análisis y textarea de motivo */
+.fin-body .mtr-row-multi { align-items:flex-start; }
+.fin-body .an-textarea { flex:1; min-height:80px; resize:vertical; }
+.fin-body .mtr-row-cred select.mtr-in { min-width:220px; }
+
+/* ===== v1.254: Business Case (expediente ejecutivo) ===== */
+.bc-head-ic { background:#EEE9FE; }
+.bc-band { display:flex; align-items:center; gap:14px; border-radius:14px; padding:14px 16px; margin-bottom:12px; border:1px solid transparent; flex-wrap:wrap; }
+.bc-band-ok  { background:#EAF7F0; border-color:#CBEBDC; }
+.bc-band-obs { background:#FFF7E8; border-color:#F4E3BE; }
+.bc-band-ko  { background:#FDF0EF; border-color:#F5C6C3; }
+.bc-band-p   { background:#F3F6FA; border-color:#E4EAF2; }
+.bc-band-t { font-size:15px; font-weight:900; letter-spacing:.2px; }
+.bc-band-ok  .bc-band-t { color:#1D9E75; }
+.bc-band-obs .bc-band-t { color:#B7791F; }
+.bc-band-ko  .bc-band-t { color:#CC0000; }
+.bc-band-d { font-size:12px; color:#41505F; flex-basis:100%; }
+.bc-band .bc-band-d { flex-basis:auto; flex:1; min-width:200px; }
+.bc-cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:4px; }
+@media (max-width:760px) { .bc-cards { grid-template-columns:repeat(2,1fr); } }
+.bc-kos { font-size:10.5px; color:#CC0000; font-weight:700; margin-top:3px; white-space:normal; }
+.bc-reu { background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px 14px; margin-bottom:10px; }
+.bc-reu-meta { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; margin-bottom:8px; }
+.bc-reu-com { background:#F7F9FC; border-radius:10px; padding:9px 12px; font-size:12.5px; margin-top:6px; }
+.bc-reu-com .sub { display:block; font-size:11px; margin-bottom:2px; }
+.bc-tl { display:flex; flex-direction:column; gap:0; margin-bottom:10px; }
+.bc-tl-item { display:flex; align-items:flex-start; gap:10px; padding:7px 0 7px 4px; position:relative; }
+.bc-tl-item::before { content:''; position:absolute; left:17px; top:34px; bottom:-8px; width:2px; background:#E4EAF2; }
+.bc-tl-item:last-child::before { display:none; }
+.bc-tl-ic { width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center; background:#F1F6FF; border-radius:50%; font-size:13px; flex:0 0 auto; z-index:1; }
+.bc-tl-t { font-size:12.5px; font-weight:700; }
+.bc-tl-d { font-size:11.5px; color:#6B7A8D; }
+/* Datos clave y análisis heredados: tarjetas */
+.bc-body .bc-resumen { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px; }
+@media (max-width:700px) { .bc-body .bc-resumen { grid-template-columns:repeat(2,1fr); } }
+.bc-body .bc-resumen > div { background:#fff; border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:12.5px; }
+.bc-body .bc-resumen .sub { display:block; font-size:10.5px; }
+.bc-body .bc-analisis { background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
+.bc-body .bc-analisis .sub { font-size:11px; margin-right:6px; }
+.bc-body .fsu-grid { margin-bottom:10px; }

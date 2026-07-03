@@ -4953,23 +4953,190 @@ function stepperFichaB2B() {
   }).join('') + '</div>';
 }
 
-// Panel de la etapa Reunion comercial: espera/realizacion de la reunion; pase MANUAL a Finanzas.
+// ===== Reunión comercial (v1.252): validación de observaciones + programación + comentario obligatorio =====
+const REU_ACCION_SUGERIDA = {
+  cppEvalPct: 'Validar sustento del nivel de cumplimiento proyectado.',
+  cppHist: 'Validar comportamiento histórico y tendencia.',
+  deficienteHist: 'Validar regularización de la clasificación Deficiente.',
+  refis: 'Validar el motivo y condiciones del refinanciamiento.',
+  protestadosCant: 'Validar aclaración/levantamiento de los protestos.',
+  morososMonto: 'Validar regularización de documentos morosos.',
+  coactivaVigente: 'Validar plan de subsanación de la cobranza coactiva.',
+  personaJuridica: 'Validar constitución como persona jurídica (RUC 20).',
+  estado: 'Validar regularización del estado en SUNAT.',
+  condicion: 'Validar regularización del domicilio fiscal (Habido).',
+  antiguedad: 'Validar antigüedad efectiva del negocio.',
+  apto: 'Validar subsanación registral del inmueble (SUNARP).',
+  ltv: 'Validar valor referencial y documentos del inmueble.'
+};
+function reuValorGate(g, v, ticket) {
+  if (v === undefined || v === null || v === '') return '—';
+  if (g.opciones) { const op = g.opciones.find(o => o.v === v); return op ? op.label : String(v); }
+  if (g.unidad === 'porcentaje') return 'Hasta ' + v + '%';
+  if (g.unidad === 'monto') return 'S/ ' + Number(v).toLocaleString('es-PE');
+  return String(v);
+}
+function reuLimGate(g, ticket) {
+  if (!g.maxTicket) return '';
+  const max = g.maxTicket[ticket] != null ? g.maxTicket[ticket] : g.maxTicket.Bajo;
+  const t = g.unidad === 'monto' ? 'S/' + Number(max).toLocaleString('es-PE') : g.unidad === 'porcentaje' ? max + '%' : max;
+  return '<span class="mtr-lim mtr-lim-obs">Obs. si > ' + t + '</span>';
+}
+// Recolecta TODAS las observaciones (amarillas) de SUNAT + Crédito (por sujeto) + Garantía (por inmueble).
+function recolectarObservacionesB2B() {
+  const cat = FILTROS_B2B_CACHE || {};
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const filas = [];
+  const evalua = (tipo, valores, sufijo, origen, ico) => {
+    const c = cat[tipo]; if (!c) return;
+    (c.gates || []).forEach(g => {
+      const r = evalGateJS(g, valores || {}, ticket);
+      if (r.resultado === 'observado' || r.resultado === 'escalado') {
+        filas.push({ origen, ico, campo: g.etiqueta + (sufijo ? ' <span class="sub">· ' + sufijo + '</span>' : ''),
+          valor: reuValorGate(g, (valores || {})[g.clave], ticket), lim: reuLimGate(g, ticket),
+          accion: REU_ACCION_SUGERIDA[g.clave] || 'Validar y levantar la observación con el cliente.' });
+      }
+    });
+  };
+  // SUNAT (checklist guardado + autovalores)
+  const fSun = FICHA.filtros.sunat || {};
+  const vSun = Object.assign(autoValoresSunat(FICHA.solicitud), (fSun.checklist && typeof fSun.checklist === 'object') ? fSun.checklist : {});
+  evalua('sunat', vSun, '', 'SUNAT', '🏢');
+  // Crédito por sujeto
+  (FICHA.creditoSujetos || []).forEach(su => {
+    let v = {}; try { v = typeof su.checklist === 'string' ? JSON.parse(su.checklist || '{}') : (su.checklist || {}); } catch (e) {}
+    evalua('credito', v, su.tipoSujeto === 'empresa' ? '' : (su.nombre || su.tipoSujeto), 'Crédito', '🛡️');
+  });
+  // Garantía por inmueble (+ LTV observado)
+  (FICHA.garantiaInmuebles || []).forEach(inm => {
+    let v = {}; try { v = typeof inm.checklist === 'string' ? JSON.parse(inm.checklist || '{}') : (inm.checklist || {}); } catch (e) {}
+    const suf = inm.alias || ('Inmueble ' + inm.id);
+    evalua('garantia', v, suf, 'Garantía', '🏠');
+    const info = ltvInfoJS(v);
+    if (info && info.obs) filas.push({ origen: 'Garantía', ico: '🏠', campo: 'LTV <span class="sub">· ' + suf + '</span>',
+      valor: (info.ltv * 100).toFixed(1) + '%', lim: '<span class="mtr-lim mtr-lim-obs">Obs. si > ' + (info.umbral * 100) + '%</span>',
+      accion: REU_ACCION_SUGERIDA.ltv });
+  });
+  return filas;
+}
+function reuCardFiltro(tipo, titulo, ico, panel) {
+  const f = FICHA.filtros[tipo] || {};
+  const sem = f.semaforo || null;
+  let cls = 'reu-card-p', txt = 'Pendiente';
+  if (sem === 'Verde') { cls = 'reu-card-ok'; txt = 'Verde · Completo'; }
+  else if (sem === 'Amarillo') { cls = 'reu-card-obs'; txt = 'Completo con observaciones'; }
+  else if (sem === 'Rojo') { cls = 'reu-card-ko'; txt = 'Rojo · no avanza'; }
+  return '<div class="reu-card ' + cls + '" onclick="fbToggle(\'' + panel + '\')">' +
+    '<span class="reu-card-ic">' + ico + '</span><div><div class="reu-card-t">' + titulo + '</div>' +
+    '<div class="reu-card-s">' + (sem ? SEM_EMOJI[sem] + ' ' : '') + txt + '</div></div><span class="reu-card-fl">›</span></div>';
+}
+function contadorReuComentario() {
+  const t = $('fbReuComentario'); const c = $('fbReuContador');
+  if (t && c) c.textContent = (t.value || '').length + ' / 2000 caracteres';
+}
+function toggleReprogramarReunion() { const f = $('reuForm'); if (f) f.classList.toggle('oculto'); }
 function panelReunion(modo) {
   const open = FICHA_ETAPA_OPEN === 'reunion';
   const enReunion = FICHA.etapaKanban === 'Reunion comercial';
   const pasada = ['Filtro finanzas', 'Business case'].includes(FICHA.etapaKanban);
+  const r = (FICHA.filtros.reunion && FICHA.filtros.reunion.checklist) || {};
   const head = pasada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Realizada</span>'
-    : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>');
+    : (r.fecha ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">📅 Programada</span>'
+      : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>'));
   if (!open) return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, false, '', false, modo, 'Reunion comercial');
-  const cuerpo = '<div class="fb-body">' +
-    '<p class="sub" style="margin:0 0 10px">El lead completó garantía y espera la reunión comercial. Registra las gestiones de agendamiento con "＋ Gestión". Cuando la reunión se realice y el cliente esté apto, pásalo a Finanzas para el push de información financiera.</p>' +
-    (pasada ? '<div class="sub">✓ Este lead ya pasó la reunión comercial.</div>'
-      : '<div class="fb-acc"><button class="btn" onclick="reunionEfectivaB2B()">✅ Reunión efectiva → pasar a Finanzas</button></div>') +
-    '</div>';
+
+  // Pill de cabecera del cuerpo (formato unificado: palabra + Completo/Incompleto)
+  const comOk = !!(r.comentario && String(r.comentario).trim());
+  const faltanReu = (r.fecha ? 0 : 1) + (comOk ? 0 : 1);
+  const pillCuerpo = pasada ? '<span class="sem-word sem-verde">Realizada</span>'
+    : pillSemHTML(r.fecha ? 'Amarillo' : null, faltanReu).replace('sem-amarillo">Amarillo', 'sem-amarillo">Programada');
+
+  // Banda de programación (fecha / modalidad / asesor) + form de (re)programación
+  const asesor = FICHA.solicitud.responsableActual || 'Sin asignar';
+  const fFmt = r.fecha ? new Date(r.fecha + 'T' + (r.hora || '00:00')).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : null;
+  const banda = r.fecha
+    ? '<div class="reu-band">' +
+      '<div class="reu-cell"><span class="reu-cell-ic">📅</span><div><div class="reu-cell-k">Fecha programada</div><div class="reu-cell-v">' + fFmt + '</div>' + (r.hora ? '<div class="reu-cell-h">🕒 ' + r.hora + '</div>' : '') + '</div></div>' +
+      '<div class="reu-cell"><span class="reu-cell-ic">📍</span><div><div class="reu-cell-k">Modalidad</div><div class="reu-cell-v">' + (r.modalidad || '—') + '</div>' + (r.lugar ? '<div class="reu-cell-h">' + String(r.lugar).replace(/</g, '&lt;') + '</div>' : '') + '</div></div>' +
+      '<div class="reu-cell"><span class="reu-cell-ic">👤</span><div><div class="reu-cell-k">Asesor responsable</div><div class="reu-cell-v">' + asesor + '</div><div class="reu-cell-h">Asesor Comercial</div></div></div>' +
+      '<button class="btn sec reu-reprog" onclick="toggleReprogramarReunion()">📅 Reprogramar</button></div>'
+    : '<div class="reu-band reu-band-vacia"><span class="sub">Aún no hay reunión programada.</span><button class="btn sec reu-reprog" onclick="toggleReprogramarReunion()">📅 Programar reunión</button></div>';
+  const form = '<div id="reuForm" class="reu-form' + (r.fecha ? ' oculto' : '') + '">' +
+    '<label>Fecha <input type="date" class="mtr-in" id="reuFecha" value="' + (r.fecha || '') + '"></label>' +
+    '<label>Hora <input type="time" class="mtr-in" id="reuHora" value="' + (r.hora || '') + '"></label>' +
+    '<label>Modalidad <select class="mtr-in" id="reuModalidad">' +
+    ['Presencial', 'Virtual (videollamada)', 'Llamada'].map(m => '<option' + (r.modalidad === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select></label>' +
+    '<label style="flex:1;min-width:180px">Lugar / link <input type="text" class="mtr-in" id="reuLugar" style="width:100%" placeholder="Oficina, dirección o link de la videollamada" value="' + (r.lugar ? String(r.lugar).replace(/"/g, '&quot;') : '') + '"></label></div>';
+
+  // Cards de estado de los 3 filtros previos
+  const cards = '<div class="reu-cards">' +
+    reuCardFiltro('sunat', 'Filtro SUNAT', '🏢', 'fsunat') +
+    reuCardFiltro('credito', 'Filtro Crédito', '🛡️', 'credito') +
+    reuCardFiltro('garantia', 'Filtro Garantía', '🏠', 'garantia') + '</div>';
+
+  // Tabla de puntos a validar (todas las observaciones amarillas)
+  const obs = recolectarObservacionesB2B();
+  const chipO = o => '<span class="reu-chip">' + o.ico + ' ' + o.origen + '</span>';
+  const tabla = obs.length
+    ? '<table class="reu-tabla"><thead><tr><th>Origen</th><th>Campo</th><th>Detalle / Observación</th><th>Acción sugerida</th></tr></thead><tbody>' +
+      obs.map(o => '<tr><td>' + chipO(o) + '</td><td>' + o.campo + '</td><td><span class="reu-dot"></span> <b>' + o.valor + '</b> ' + o.lim + '</td><td class="reu-acc">' + o.accion + '</td></tr>').join('') +
+      '</tbody></table>'
+    : '<div class="reu-sinobs">✓ Sin observaciones pendientes: los filtros previos están limpios.</div>';
+  const puntos = '<div class="reu-puntos"><div class="reu-puntos-head"><span class="reu-puntos-ic">⚠️</span>' +
+    '<div><div class="reu-puntos-t">Puntos a validar en la reunión</div><div class="reu-puntos-s">Se muestran solo las observaciones (amarillas) de los filtros, para validar con el cliente.</div></div>' +
+    '<span class="reu-badge">' + obs.length + ' ' + (obs.length === 1 ? 'observación' : 'observaciones') + '</span></div>' + tabla + '</div>';
+
+  // Comentarios (obligatorio para avanzar) + próximos pasos (opcional). Sin selector de responsable: es el asesor comercial.
+  const comentarios = '<div class="reu-com-grid">' +
+    '<div class="reu-com"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">obligatorio para pasar a Finanzas</span></div>' +
+    '<div class="reu-com-sub">Registra los acuerdos, aclaraciones y validación de las observaciones.</div>' +
+    '<textarea id="fbReuComentario" class="mtr-in reu-txt" maxlength="2000" placeholder="Escribe tus comentarios aquí…" oninput="contadorReuComentario()">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea>' +
+    '<div class="sub" id="fbReuContador" style="font-size:11px">' + ((r.comentario || '').length) + ' / 2000 caracteres</div></div>' +
+    '<div class="reu-com"><div class="reu-com-tit">📋 Próximos pasos <span class="sub" style="font-weight:400">(opcional)</span></div>' +
+    '<textarea id="fbReuPasos" class="mtr-in reu-txt" maxlength="1000" placeholder="Define los próximos pasos acordados…">' + (r.proximosPasos ? String(r.proximosPasos).replace(/</g, '&lt;') : '') + '</textarea>' +
+    '<div class="reu-com-sub" style="margin-top:8px">👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</div></div></div>';
+
+  const avanzar = pasada ? '<div class="sub" style="margin-top:10px">✓ Este lead ya pasó la reunión comercial.</div>'
+    : '<div class="fb-acc" style="margin-top:12px"><button class="btn" onclick="reunionEfectivaB2B()">✅ Reunión efectiva → pasar a Finanzas</button></div>';
+
+  const cuerpo = '<div class="fb-body reu-body">' +
+    '<div class="fcr-head"><span class="fcr-head-ic reu-head-ic">🤝</span>' +
+    '<div><div class="fcr-tit">Reunión comercial</div><div class="fcr-sub">Validación de observaciones y definición de próximos pasos</div></div>' +
+    '<span class="fcr-pill-wrap">' + pillCuerpo + '</span>' +
+    '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar reunión</button></div>' +
+    banda + form + cards + puntos + comentarios + avanzar + '</div>';
   return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, true, cuerpo, false, modo, 'Reunion comercial');
 }
+async function guardarReunionB2B(silencioso) {
+  const datos = {
+    fecha: $('reuFecha') ? $('reuFecha').value : ((FICHA.filtros.reunion && FICHA.filtros.reunion.checklist || {}).fecha || null),
+    hora: $('reuHora') ? $('reuHora').value : null,
+    modalidad: $('reuModalidad') ? $('reuModalidad').value : null,
+    lugar: $('reuLugar') ? $('reuLugar').value : null,
+    comentario: $('fbReuComentario') ? $('fbReuComentario').value : null,
+    proximosPasos: $('fbReuPasos') ? $('fbReuPasos').value : null
+  };
+  try {
+    const resp = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/reunion', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos)
+    });
+    FICHA.filtros.reunion = Object.assign({}, FICHA.filtros.reunion, { checklist: resp.reunion });
+    limpiarDirty('reunion');
+    if (!silencioso) renderFichaB2B();
+    return true;
+  } catch (e) { if (!silencioso) alert('No se pudo guardar la reunión: ' + e.message); return false; }
+}
 async function reunionEfectivaB2B() {
-  if (!confirm('¿Confirmas que la reunión comercial se realizó y el cliente está apto? Pasará a Filtro finanzas.')) return;
+  // El comentario de la reunión es requisito para avanzar a Finanzas (también lo valida el server).
+  const txt = $('fbReuComentario') ? $('fbReuComentario').value.trim() : ((FICHA.filtros.reunion && FICHA.filtros.reunion.checklist || {}).comentario || '');
+  if (!txt) {
+    alert('Registra el comentario de la reunión (acuerdos y validación de observaciones) antes de pasar a Finanzas.');
+    const t = $('fbReuComentario'); if (t) { t.focus(); t.classList.add('reu-txt-err'); setTimeout(() => t.classList.remove('reu-txt-err'), 1600); }
+    return;
+  }
+  if (!confirm('¿Confirmas que la reunión comercial se realizó y el cliente está apto? Se guardará la reunión y pasará a Filtro finanzas.')) return;
+  const ok = await guardarReunionB2B(true);
+  if (!ok) return;
   try {
     await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/mover', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hacia: 'Filtro finanzas' })
@@ -5307,9 +5474,10 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
     const esMonto = campo.unidad === 'monto';
     const esPct = campo.unidad === 'porcentaje';
     // Texto del límite: KO vs observado.
-    const lim = campo.tipo === 'numMaxTicket'
-      ? (max === 0 ? 'no permitido' : 'máx ' + max)
-      : (esMonto ? 'obs. > S/' + Number(max).toLocaleString('es-PE') : esPct ? 'obs. > ' + max + '%' : 'obs. > ' + max);
+    const esKO = campo.tipo === 'numMaxTicket';
+    const limTxt = esMonto ? 'S/' + Number(max).toLocaleString('es-PE') : esPct ? max + '%' : String(max);
+    const lim = (esKO ? '⛔ KO si > ' : '⚠ obs. si > ') + limTxt;
+    const limCls = esKO ? ' mtr-lim-ko' : ' mtr-lim-obs';
     // UX: desplegable por RANGOS en vez de tipeo manual. El value sigue siendo numérico,
     // así el motor (server y espejo) evalúa igual contra el límite del ticket.
     let ops;
@@ -5319,7 +5487,18 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
     else ops = [[null, '—'], [0, '0'], [1, '1'], [2, '2'], [3, '3'], [5, 'Más de 3']];
     const sel = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '">' +
       ops.map(o => '<option value="' + (o[0] == null ? '' : o[0]) + '"' + (String(val ?? '') === String(o[0] ?? '') ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
-    return '<span class="mtr-numwrap">' + sel + '<span class="mtr-lim">' + lim + '</span></span>';
+    return '<span class="mtr-numwrap">' + sel + '<span class="mtr-lim' + limCls + '">' + lim + '</span></span>';
+  }
+  // Documento por ticket (finanzas): Recibido/Falta + chip que indica si aplica en este ticket.
+  if (campo.tipo === 'docTicket') {
+    const req = campo.requeridoTicket && campo.requeridoTicket[ticket];
+    const sel = '<select class="mtr-in" data-f2="' + prefijo + '" data-k="' + campo.clave + '" onchange="' + cb + '"' + (req ? '' : ' disabled') + '>' +
+      '<option value="">—</option>' +
+      '<option value="si"' + (val === 'si' ? ' selected' : '') + '>✓ Recibido</option>' +
+      '<option value="no"' + (val === 'no' ? ' selected' : '') + '>Falta</option></select>';
+    const chip = req ? '<span class="mtr-lim mtr-lim-req">Obligatorio · ' + ticket + '</span>'
+      : '<span class="mtr-lim mtr-lim-na">No aplica en ' + ticket + '</span>';
+    return '<span class="mtr-numwrap">' + sel + chip + '</span>';
   }
   // Numérico activable (legacy, ya no usado en crédito).
   if (campo.activable) {
@@ -5390,8 +5569,16 @@ function f2Help(tip) {
 function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return '<div class="sub">Catálogo no disponible.</div>';
   valores = valores || {};
+  const ICO_F2 = {
+    credito: { clasActual: '👤', listaNegra: '🛡️', dudosoPerdidaHist: '⚠️', castigados: '📌', cppEvalPct: '📊', cppHist: '🕒', deficienteHist: '📉', refis: '🔄', protestadosCant: '🚩', morososMonto: '💰', coactivaVigente: '⚖️' },
+    finanzas: { djAnual: '📄', eeff: '📊', flujoProyectado: '📈', reporteTributario: '🧾', fichaRuc: '🪪', ventasAct: '💵', ventasAnt: '💵', utilidadAct: '📈', utilidadAnt: '📉', deudaFin: '🏦', patrimonio: '🏛️', flujoMensual: '💧', destinoFondos: '🎯', fuenteRepago: '🔁', mitigantes: '🛡️', motivoEvaluacion: '📝' }
+  };
+  const icoDe = k => (ICO_F2[tipo] && ICO_F2[tipo][k]) || null;
+  const conIco = tipo === 'credito' || tipo === 'finanzas';
+  const rowCls = conIco ? 'mtr-row mtr-row-cred' : 'mtr-row';
+  const icoHtml = k => { const i = conIco ? (icoDe(k) || '•') : null; return i ? '<span class="fcr-ico">' + i + '</span>' : ''; };
   const gatesHtml = cat.gates.filter(g => g.tipo !== 'textoReq').map(g =>
-    '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + f2Help(g.tip) + '</span>' +
+    '<div class="' + rowCls + '">' + icoHtml(g.clave) + '<span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + f2Help(g.tip) + '</span>' +
     '<span class="mtr-ctrl">' + inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo && g.formato !== 'aniosMeses' ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</span></div>').join('');
   const scoreVisibles = cat.score.filter(it => !it.refGate);
   const scoreHtml = scoreVisibles.map(it =>
@@ -5409,14 +5596,14 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     '<span class="mtr-ctrl">' + inputFiltro2({ clave: p.clave, tipo: 'num', activable: true }, valores, prefijo, tipo, ticket) +
     (sufPenal[p.clave] ? '<span class="mtr-suf">' + sufPenal[p.clave] + '</span>' : '') + '</span></div>').join('');
   const ev = evaluarFiltro2JS(cat, valores, ticket);
-  let html = '<div class="f2-box"><div class="fb-sec">Gates (eliminatorios)</div>' + gatesHtml;
+  let html = '<div class="f2-box"><div class="fb-sec">' + (tipo === 'finanzas' ? 'Documentos (por ticket)' : 'Gates (eliminatorios)') + '</div>' + gatesHtml;
   if (scoreHtml) html += '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml;
   if (penalHtml) html += '<div class="fb-sec">Antecedentes (activa el que aplique)</div>' + penalHtml;
   // Bloque de insumos numéricos + ratios calculados (finanzas).
   if (cat.insumos && cat.insumos.length) {
     const insHtml = cat.insumos.map(i => {
       const val = valores[i.clave];
-      return '<div class="mtr-row"><span class="mtr-lbl">' + i.etiqueta + f2Help(i.tip) + '</span><span class="mtr-ctrl">' +
+      return '<div class="' + rowCls + '">' + icoHtml(i.clave) + '<span class="mtr-lbl">' + i.etiqueta + f2Help(i.tip) + '</span><span class="mtr-ctrl">' +
         '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + i.clave + '" value="' + (val != null ? val : '') + '" oninput="recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')">' +
         (i.sufijo ? '<span class="mtr-suf">' + i.sufijo + '</span>' : '') + '</span></div>';
     }).join('');
@@ -5429,7 +5616,7 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     const anHtml = cat.analisis.map(a => {
       const val = valores[a.clave];
       if (a.tipo === 'selectReq') {
-        return '<div class="mtr-row"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><span class="mtr-ctrl">' +
+        return '<div class="' + rowCls + '">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><span class="mtr-ctrl">' +
           '<select class="mtr-in" style="max-width:none;width:240px" data-f2="' + prefijo + '" data-k="' + a.clave + '" onchange="' + cb + '"><option value="">—</option>' +
           a.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select></span></div>';
       }
@@ -5439,10 +5626,10 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
           const on = arr.includes(o.v);
           return '<label class="an-chip' + (on ? ' an-chip-on' : '') + '"><input type="checkbox" ' + (on ? 'checked' : '') + ' data-f2multi="' + prefijo + '" data-k="' + a.clave + '" value="' + o.v + '" onchange="' + cb + '"> ' + o.label + '</label>';
         }).join('');
-        return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><div class="an-chips">' + chips + '</div></div>';
+        return '<div class="' + rowCls + ' mtr-row-multi">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><div class="an-chips">' + chips + '</div></div>';
       }
       // textoLibreReq
-      return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span>' +
+      return '<div class="' + rowCls + ' mtr-row-multi">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span>' +
         '<textarea class="mtr-in an-textarea" data-f2="' + prefijo + '" data-k="' + a.clave + '" placeholder="Explica por qué el caso merece evaluación…" oninput="' + cb + '">' + (val ? String(val).replace(/</g, '&lt;') : '') + '</textarea></div>';
     }).join('');
     html += '<div class="fb-sec">Análisis del caso (para el Business Case)</div>' + anHtml;
@@ -5479,6 +5666,50 @@ function leerFiltro2(prefijo) {
   });
   return o;
 }
+// Pill vivo del Filtro finanzas (v1.253): semáforo del motor + completitud de docs/cifras/análisis.
+function actualizarPillFinanzas(ticket) {
+  const el = $('finEstadoPill'); if (!el) return;
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas; if (!cat) return;
+  ticket = ticket || (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  if (!document.querySelector('[data-f2="fin"]')) return;
+  const v = leerFiltro2('fin');
+  let faltan = 0;
+  (cat.gates || []).forEach(g => { if (g.requeridoTicket && g.requeridoTicket[ticket] && v[g.clave] !== 'si') faltan++; });
+  (cat.insumos || []).forEach(i => { const x = v[i.clave]; if (x === undefined || x === null || x === '') faltan++; });
+  (cat.analisis || []).forEach(a => { const x = v[a.clave]; if (x === undefined || x === null || x === '' || (Array.isArray(x) && !x.length)) faltan++; });
+  const ev = evaluarFiltro2JS(cat, v, ticket);
+  const sem = faltan > 0 && ev.semaforo === 'Verde' ? null : ev.semaforo;
+  el.className = 'fcr-pill-wrap';
+  el.innerHTML = pillSemHTML(sem, faltan) + (ev.puntaje != null && !faltan ? ' <span class="sub" style="font-size:11px">' + ev.puntaje + '%</span>' : '');
+}
+// Pill de estado (v1.251): la palabra del semáforo con FONDO de color + al costado Completo/Incompleto.
+function pillSemHTML(sem, faltan) {
+  const w = sem ? '<span class="sem-word sem-' + sem.toLowerCase() + '">' + sem + '</span>'
+    : '<span class="sem-word sem-pend">Pendiente</span>';
+  const comp = faltan > 0 ? '<span class="sem-comp sem-comp-inc">Incompleto · faltan ' + faltan + '</span>'
+    : '<span class="sem-comp sem-comp-ok">Completo</span>';
+  return w + ' ' + comp;
+}
+// Estado vivo del Filtro crédito (v1.250): Verde=completo, Amarillo=observaciones, Rojo=killer, gris=incompleto.
+function actualizarPillCredito(ticket) {
+  const el = $('fcrEstadoPill'); if (!el) return;
+  const cat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.credito; if (!cat) return;
+  ticket = ticket || (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  let ko = false, obs = false, faltan = 0, hay = false;
+  (FICHA.creditoSujetos || []).forEach(su => {
+    if (!document.querySelector('[data-f2="suj' + su.id + '"]')) return;
+    hay = true;
+    const valores = leerFiltro2('suj' + su.id);
+    const ev = evaluarFiltro2JS(cat, valores, ticket);
+    if (ev.kos && ev.kos.length) ko = true;
+    if ((ev.observados && ev.observados.length) || (ev.escalados && ev.escalados.length)) obs = true;
+    (cat.gates || []).filter(g => g.tipo !== 'textoReq').forEach(g => { const v = valores[g.clave]; if (v === undefined || v === null || v === '') faltan++; });
+  });
+  el.className = 'fcr-pill-wrap';
+  if (!hay) { el.innerHTML = pillSemHTML(null, 0).replace('Completo', 'Sin sujetos'); return; }
+  const sem = ko ? 'Rojo' : (obs ? 'Amarillo' : (faltan > 0 ? null : 'Verde'));
+  el.innerHTML = pillSemHTML(sem, faltan);
+}
 function recalcFiltro2(prefijo, tipo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return;
   const valores = leerFiltro2(prefijo);
@@ -5493,7 +5724,10 @@ function recalcFiltro2(prefijo, tipo, ticket) {
     else mostrar = (valores[g.clave] === 'si');
     sub.style.display = mostrar ? '' : 'none';
   });
-  cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : r.resultado === 'observado' ? 'f2-obs-dot' : (valores[g.clave] ? 'f2-ok-dot' : '')); } });
+  cat.gates.forEach(g => { const el = $(prefijo + '_g_' + g.clave); if (el) { const r = evalGateJS(g, valores, ticket); el.className = 'f2-dot ' + (r.resultado === 'ko' ? 'f2-ko-dot' : r.resultado === 'escalado' ? 'f2-esc-dot' : r.resultado === 'observado' ? 'f2-obs-dot' : (valores[g.clave] ? 'f2-ok-dot' : ''));
+    const row = el.closest('.mtr-row'); if (row) { row.classList.remove('f2row-ok', 'f2row-obs', 'f2row-ko'); const c = r.resultado === 'ko' ? 'f2row-ko' : (r.resultado === 'observado' || r.resultado === 'escalado') ? 'f2row-obs' : (valores[g.clave] ? 'f2row-ok' : null); if (c) row.classList.add(c); } } });
+  if (tipo === 'credito') actualizarPillCredito(ticket);
+  if (tipo === 'finanzas') actualizarPillFinanzas(ticket);
   const foot = $(prefijo + '_foot'); if (foot) foot.innerHTML = bandaFiltro2HTML(evaluarFiltro2JS(cat, valores, ticket));
   const rt = $(prefijo + '_ratios'); if (rt && cat.ratios) rt.innerHTML = ratiosTablaHTML(evaluarFiltro2JS(cat, valores, ticket).ratios);
 }
@@ -5762,9 +5996,13 @@ function panelCredito(semGuardado, modo) {
   const reps = sujetos.filter(x => x.tipoSujeto === 'representante');
   const vinc = sujetos.filter(x => x.tipoSujeto === 'vinculada');
 
-  let html = '<div class="fb-body">';
-  html += '<div class="fb-cred-cons">Consolidado: <span id="fbCredConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
-  html += '<p class="sub">Empresa, representantes y vinculadas se evalúan con el mismo motor (gates KO + puntaje), dependiente del ticket. Consolidación = <b>peor caso</b>: un sujeto en Rojo (KO seco, Dudoso/Pérdida, listas, o límites del ticket excedidos) contagia y hace Rojo todo el filtro.</p>';
+  let html = '<div class="fb-body fcr-body">';
+  // Cabecera del cuerpo: título + sub, y a la derecha el estado vivo + Guardar filtro.
+  html += '<div class="fcr-head"><span class="fcr-head-ic">📋</span>' +
+    '<div><div class="fcr-tit">Filtro crédito</div><div class="fcr-sub">Define los criterios de evaluación crediticia · consolidación por <b>peor caso</b> (empresa, representantes y vinculadas)</div></div>' +
+    '<span class="fcr-pill fcr-pill-p" id="fcrEstadoPill">◌ …</span>' +
+    '<button class="btn fcr-guardar" onclick="guardarCredito()">💾 Guardar filtro</button></div>';
+  html += '<span id="fbCredConsolidado" class="oculto"></span>';
   html += '<div class="fb-sec">Empresa</div>';
   html += empresa ? sujetoCard(empresa, false) : '<div class="sub">—</div>';
   html += '<div class="fb-sec">Representantes (' + reps.length + ')</div>';
@@ -5773,7 +6011,6 @@ function panelCredito(semGuardado, modo) {
   html += '<div class="fb-sec">Empresas vinculadas (' + vinc.length + ')</div>';
   html += vinc.map(v => sujetoCard(v, true)).join('') || '<div class="sub" style="margin-bottom:8px">Sin empresas vinculadas.</div>';
   html += '<button class="btn-sunat" onclick="agregarSujeto(\'vinculada\')">＋ Agregar vinculada</button>';
-  // Link único de Drive para los archivos de esta etapa de crédito.
   const linkVal = (FICHA.solicitud && FICHA.solicitud.creditoLinkDrive) ? FICHA.solicitud.creditoLinkDrive.replace(/"/g, '&quot;') : '';
   html += '<div class="fb-sec">Archivos de crédito (link de Drive)</div>' +
     '<div class="fb-link-drive">' +
@@ -5782,8 +6019,8 @@ function panelCredito(semGuardado, modo) {
     (linkVal ? '<a class="btn-sunat" href="' + linkVal + '" target="_blank" rel="noopener">🔗 Abrir</a>' : '') +
     '</div>' +
     '<div class="sub" style="font-size:11px;margin-top:4px">Pega la carpeta de Drive donde el equipo sube reportes de central, DJ, sustentos, etc.</div>';
-  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarCredito()">Guardar</button></div>';
   html += '</div>';
+  setTimeout(() => actualizarPillCredito(), 0);
   return fbPanelWrap('credito', '📋', '2 · Filtro crédito', estadoHtml, true, html, false, modo, 'Filtro credito');
 }
 
@@ -5802,7 +6039,7 @@ function sujetoCard(su, editable) {
     (docs.length ? docsList + ' ' : '<span class="fb-doc-pend">Reporte de central pendiente</span> ') +
     '<button class="btn-sunat" onclick="agregarLinkDoc(\'credito\',\'Reporte central\',' + su.id + ')">🔗 Agregar link</button>' +
     '</div>';
-  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
+  return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + (su.tipoSujeto === 'empresa' ? ' fb-suj-empresa' : '') + '"><div class="fb-suj-head' + (su.tipoSujeto === 'empresa' ? ' fcr-emp' : '') + '">' + (su.tipoSujeto === 'empresa' ? '<span class="fcr-emp-ic">🏢</span>' : '') + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
 }
 
 function recalcConsolidado() {
@@ -5832,16 +6069,17 @@ function actualizarConsolidadoGarantiaVivo() {
   const cons = consolidadoGarantiaVivoJS();
   const el = $('fbGarConsolidado');
   if (el) el.innerHTML = cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>';
+  actualizarPillGarantia();
 }
 function inmuebleCard(inm) {
   let valores = {};
   try { valores = typeof inm.checklist === 'string' ? JSON.parse(inm.checklist || '{}') : (inm.checklist || {}); } catch (e) { valores = {}; }
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   const pf = 'inm' + inm.id;
-  const head = '<input class="fb-suj-nom" id="inm_alias_' + inm.id + '" value="' + (inm.alias ? inm.alias.replace(/"/g, '&quot;') : '') + '" placeholder="Alias / dirección">' +
-    '<input class="fb-suj-nom" id="inm_distrito_' + inm.id + '" value="' + (inm.distrito ? inm.distrito.replace(/"/g, '&quot;') : '') + '" placeholder="Distrito" style="max-width:150px">' +
-    '<span style="margin-left:auto"><button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarInmueble(' + inm.id + ')" title="Quitar">✕</button></span>';
-  return '<div class="fb-suj' + (inm._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head">' + head + '</div>' +
+  const head = '<span class="fga-inwrap"><span class="fcr-ico fga-ico-b">🏢</span><input class="fb-suj-nom" id="inm_alias_' + inm.id + '" value="' + (inm.alias ? inm.alias.replace(/"/g, '&quot;') : '') + '" placeholder="Inmueble ' + (inm.id || '') + '"></span>' +
+    '<span class="fga-inwrap"><span class="fcr-ico">📍</span><input class="fb-suj-nom" id="inm_distrito_' + inm.id + '" value="' + (inm.distrito ? inm.distrito.replace(/"/g, '&quot;') : '') + '" placeholder="Distrito" style="max-width:150px"></span>' +
+    '<span style="margin-left:auto"><button class="fga-trash" onclick="eliminarInmueble(' + inm.id + ')" title="Quitar inmueble">🗑</button></span>';
+  return '<div class="fb-suj' + (inm._nuevo ? ' fb-suj-nueva' : '') + '"><div class="fb-suj-head fga-suj-head">' + head + '</div>' +
     renderGarantiaInmueble(valores, pf, ticket) + '</div>';
 }
 // Render de un inmueble: casilla Apto, valor ref + moneda, LTV calculado, y un ÚNICO link de Drive.
@@ -5851,7 +6089,7 @@ function renderGarantiaInmueble(valores, prefijo, ticket) {
   // 1) Casilla Apto.
   const apto = valores.apto || '';
   const tipG = k => { const g = (cat.gates || []).find(x => x.clave === k); return g && g.tip; };
-  const aptoHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Apto SUNARP</b>' + f2Help(tipG('apto') || '¿El inmueble está apto/saneado según la copia literal de SUNARP? No = KO; Observado = subsanable.') + '</span><span class="mtr-ctrl">' +
+  const aptoHtml = '<div class="mtr-row mtr-row-cred"><span class="fcr-ico">✅</span><span class="mtr-lbl"><b>Apto SUNARP</b>' + f2Help(tipG('apto') || '¿El inmueble está apto/saneado según la copia literal de SUNARP? No = KO; Observado = subsanable.') + '</span><span class="mtr-ctrl">' +
     '<select class="mtr-in" data-f2="' + prefijo + '" data-k="apto" onchange="' + cb + '">' +
     '<option value="">—</option>' +
     '<option value="si"' + (apto === 'si' ? ' selected' : '') + '>Sí</option>' +
@@ -5860,21 +6098,21 @@ function renderGarantiaInmueble(valores, prefijo, ticket) {
     '</select></span></div>';
   // 2) Valor referencial + moneda.
   const moneda = valores.valorRefMoneda || 'soles';
-  const valorHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Valor referencial</b>' + f2Help(tipG('valorRef') || 'Valor referencial del inmueble (m² × precio de zona). De aquí sale el LTV = monto ÷ valor.') + '</span><span class="mtr-ctrl">' +
+  const valorHtml = '<div class="mtr-row mtr-row-cred"><span class="fcr-ico">💲</span><span class="mtr-lbl"><b>Valor referencial</b>' + f2Help(tipG('valorRef') || 'Valor referencial del inmueble (m² × precio de zona). De aquí sale el LTV = monto ÷ valor.') + '</span><span class="mtr-ctrl">' +
     '<select class="mtr-in" style="width:74px" data-f2="' + prefijo + '" data-k="valorRefMoneda" onchange="' + cb + '">' +
     '<option value="soles"' + (moneda === 'soles' ? ' selected' : '') + '>S/</option>' +
     '<option value="dolares"' + (moneda === 'dolares' ? ' selected' : '') + '>US$</option>' +
     '</select>' +
     '<input type="text" inputmode="decimal" class="mtr-in mtr-num" style="width:110px" data-f2="' + prefijo + '" data-k="valorRef" value="' + (valores.valorRef != null ? valores.valorRef : '') + '" placeholder="0" onkeypress="return b2bSoloNumero(event,true)" oninput="' + cb + '"></span></div>';
   // 3) LTV calculado (en vivo).
-  const ltvHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>LTV</b>' + f2Help('LTV = monto de la solicitud ÷ valor referencial (misma moneda; TC 3.45 si difieren). LTV mayor al umbral = observado.') + '</span>' +
+  const ltvHtml = '<div class="mtr-row mtr-row-cred"><span class="fcr-ico">📊</span><span class="mtr-lbl"><b>LTV</b>' + f2Help('LTV = monto de la solicitud ÷ valor referencial (misma moneda; TC 3.45 si difieren). LTV mayor al umbral = observado.') + '</span>' +
     '<span class="mtr-ctrl"><span id="' + prefijo + '_ltv" class="gd-ltv">' + ltvTextoJS(valores, ticket) + '</span></span></div>';
   // 4) Un único link de Drive con TODOS los documentos (último campo, obligatorio).
   const link = valores.linkDrive || ''; const linkOk = link && /^https?:\/\//i.test(link);
-  const linkHtml = '<div class="gd-row gd-row-link"><span class="gd-lbl"><b>Link Drive</b>' + f2Help(tipG('linkDrive') || 'Un único link de Drive con todos los documentos: copia literal, HR/PU, DNI, recibo de servicios y fotos.') + '</span>' +
+  const linkHtml = '<div class="gd-row gd-row-link mtr-row-cred"><span class="fcr-ico">🗂️</span><span class="gd-lbl"><b>Link Drive</b>' + f2Help(tipG('linkDrive') || 'Un único link de Drive con todos los documentos: copia literal, HR/PU, DNI, recibo de servicios y fotos.') + '</span>' +
     '<span class="gd-st ' + (linkOk ? 'gd-ok' : 'gd-pend') + '">' + (linkOk ? '✓' : 'pendiente') + '</span>' +
     '<input type="url" class="mtr-in gd-link" data-f2="' + prefijo + '" data-k="linkDrive" value="' + (link ? link.replace(/"/g, '&quot;') : '') + '" placeholder="https://drive.google.com/…" oninput="' + cb + '">' +
-    (linkOk ? '<a class="gd-open" href="' + link + '" target="_blank" rel="noopener">abrir</a>' : '') + '</div>';
+    (linkOk ? '<a class="gd-open" href="' + link + '" target="_blank" rel="noopener">Abrir ↗</a>' : '') + '</div>';
   const ev = evaluarFiltro2JS(cat, valores, ticket);
   return '<div class="f2-box"><div class="fb-sec">Evaluación</div>' + aptoHtml + valorHtml + ltvHtml +
     '<div class="fb-sec">Documentos</div>' + linkHtml +
@@ -5924,14 +6162,34 @@ function panelGarantia(desbloqueada, sem, modo) {
   estadoHtml += btnInfoFiltro('garantia');
   if (!open) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, false, '', false, modo, 'Filtro garantia');
   const inms = FICHA.garantiaInmuebles || [];
-  let html = '<div class="fb-body">';
-  html += '<div class="fb-cred-cons">Consolidado: <span id="fbGarConsolidado">' + (cons ? (SEM_EMOJI[cons] + ' ' + cons + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="sub">pendiente</span>') + '</span></div>';
-  html += '<p class="sub">Registra uno o varios inmuebles. Consolidación = <b>mejor caso</b>: basta con que UN inmueble pase. Objetivo: verificar que el inmueble esté <b>apto/saneado en SUNARP</b> (evidencia: los documentos) y fijar un <b>valor referencial</b> para calcular el LTV. Los documentos, la casilla Apto y el valor referencial son obligatorios para avanzar.</p>';
+  let html = '<div class="fb-body fga-body">';
+  html += '<div class="fcr-head"><span class="fcr-head-ic fga-head-ic">🏠</span>' +
+    '<div><div class="fcr-tit">Filtro garantía</div><div class="fcr-sub">Registra uno o varios inmuebles para evaluar su garantía · consolidación por <b>mejor inmueble</b></div></div>' +
+    '<span class="fcr-pill-wrap" id="fgaEstadoPill"></span>' +
+    '<button class="btn" onclick="guardarGarantia()">💾 Guardar</button></div>';
+  html += '<span id="fbGarConsolidado" class="oculto"></span>';
   html += inms.map(inmuebleCard).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas inmuebles.</div>';
   html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
-  html += '<div class="fb-acc" style="margin-top:16px"><button class="btn" onclick="guardarGarantia()">Guardar</button></div>';
   html += '</div>';
+  setTimeout(() => actualizarPillGarantia(), 0);
   return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, true, html, false, modo, 'Filtro garantia');
+}
+// Pill vivo de garantía (v1.251): mejor caso entre inmuebles + completitud de campos obligatorios.
+function actualizarPillGarantia() {
+  const el = $('fgaEstadoPill'); if (!el) return;
+  const inms = FICHA.garantiaInmuebles || [];
+  if (!inms.length) { el.innerHTML = pillSemHTML(null, 0).replace('Completo', 'Sin inmuebles'); return; }
+  let faltan = 0;
+  inms.forEach(inm => {
+    const pf = 'inm' + inm.id;
+    if (!document.querySelector('[data-f2="' + pf + '"]')) return;
+    const v = leerFiltro2(pf);
+    if (!v.apto) faltan++;
+    const n = Number(v.valorRef); if (!isFinite(n) || n <= 0) faltan++;
+    if (!v.linkDrive || !/^https?:\/\//i.test(String(v.linkDrive))) faltan++;
+  });
+  const sem = consolidadoGarantiaVivoJS();
+  el.innerHTML = pillSemHTML(sem, faltan);
 }
 
 function panelFinanzas(desbloqueada, sem, modo) {
@@ -5942,14 +6200,19 @@ function panelFinanzas(desbloqueada, sem, modo) {
   if (sem === 'Verde') head = '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75;font-weight:800">AVANZA ✓' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
   else if (sem === 'Amarillo') head = '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F;font-weight:800">Avanza con observación' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
   else if (sem === 'Rojo') head = '<span class="fb-pill" style="background:#FDE8E7;color:#CC0000;font-weight:800">DESESTIMADO</span>';
-  head += btnInfoFiltro('sunat');
+  head += btnInfoFiltro('finanzas');
   if (!open) return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, false, '', false, modo, 'Filtro finanzas');
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
   let chkF = {};
   try { const raw = f.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
-  const cuerpo = '<div class="fb-body"><p class="sub">Ticket <b>' + ticket + '</b> · umbrales por ticket.</p>' +
+  const cuerpo = '<div class="fb-body fin-body">' +
+    '<div class="fcr-head"><span class="fcr-head-ic fin-head-ic">💰</span>' +
+    '<div><div class="fcr-tit">Filtro finanzas y negocio</div><div class="fcr-sub">Documentos, cifras y ratios para el Business Case · Ticket <b>' + ticket + '</b> (umbrales por ticket)</div></div>' +
+    '<span class="fcr-pill-wrap" id="finEstadoPill"></span>' +
+    '<button class="btn fcr-guardar" onclick="guardarFinanzas()">💾 Guardar filtro</button></div>' +
     renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
-    '<div class="fb-acc"><button class="btn" onclick="guardarFinanzas()">Guardar</button></div></div>';
+    '</div>';
+  setTimeout(() => actualizarPillFinanzas(ticket), 0);
   return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
 }
 
@@ -5969,42 +6232,121 @@ function panelBusinessCase(desbloqueada, modo) {
   const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
   if (!open) return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, false, '', false, modo, 'Business case');
   const s = FICHA.solicitud; const f = FICHA.filtros || {};
-  const fila = (k, label) => {
-    const ff = f[k] || {};
-    const sem = ff.semaforo;
-    const pts = ff.puntaje != null ? (' · ' + ff.puntaje + '%') : '';
-    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? ('<div class="f2-ko">✕ ' + ff.motivos.kos.join(' · ') + '</div>') : '';
-    return '<div class="bc-row"><span class="mtr-lbl">' + label + '</span><span>' + (sem ? (SEM_EMOJI[sem] + ' ' + sem + pts) : '<span class="sub">pendiente</span>') + '</span>' + kos + '</div>';
-  };
-  const gobText = glob === 'Rojo' ? 'Al menos un filtro en Rojo → operación BLOQUEADA / a descartar.' :
-    glob === 'Amarillo' ? 'Hay filtros en Amarillo → avanza con excepción / aprobación de comité.' :
-      glob === 'Verde' ? 'Todos los filtros en Verde → apto para expediente.' : 'Faltan filtros por evaluar.';
-  let html = '<div class="fb-body">';
-  html += '<div class="fb-cred-cons">Semáforo global: <span>' + (glob ? (SEM_EMOJI[glob] + ' ' + glob) : '<span class="sub">pendiente</span>') + '</span></div>';
-  html += '<p class="sub">' + gobText + '</p>';
-  html += '<div class="fb-sec">Veredicto por filtro (peor caso gobierna)</div>';
-  html += fila('sunat', 'SUNAT (elegibilidad)') + fila('credito', 'Crédito') + fila('garantia', 'Garantía') + fila('finanzas', 'Finanzas y negocio');
-  html += '<div class="fb-sec">Resumen comercial</div>';
+
+  // Completitud: 4 filtros con semáforo + comentario de reunión.
+  const rReu = (f.reunion && f.reunion.checklist) || {};
+  let faltan = 0;
+  ['sunat', 'credito', 'garantia', 'finanzas'].forEach(k => { if (!(f[k] && f[k].semaforo)) faltan++; });
+  if (!(rReu.comentario && String(rReu.comentario).trim())) faltan++;
+
+  // Banda de veredicto global
+  const gob = {
+    Verde: { t: 'APTO PARA EXPEDIENTE', d: 'Todos los filtros en Verde. El caso pasa a armado de expediente y comité.', cls: 'bc-band-ok' },
+    Amarillo: { t: 'AVANZA CON EXCEPCIÓN', d: 'Hay filtros en Amarillo: requiere levantar observaciones o aprobación de comité.', cls: 'bc-band-obs' },
+    Rojo: { t: 'OPERACIÓN BLOQUEADA', d: 'Al menos un filtro en Rojo (killer): la operación se descarta salvo excepción extraordinaria.', cls: 'bc-band-ko' }
+  }[glob] || { t: 'EN EVALUACIÓN', d: 'Faltan filtros por evaluar para emitir el veredicto.', cls: 'bc-band-p' };
+  const banda = '<div class="bc-band ' + gob.cls + '"><div class="bc-band-t">' + (glob ? SEM_EMOJI[glob] + ' ' : '') + gob.t + '</div><div class="bc-band-d">' + gob.d + '</div>' +
+    '<span class="fcr-pill-wrap" style="margin-left:auto">' + pillSemHTML(glob, faltan) + '</span></div>';
+
+  // Resumen comercial (grid de datos)
   const montoTxt = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
-  html += '<div class="bc-resumen">' +
-    '<div><span class="sub">Empresa</span><b>' + (s.razonSocial || '—') + '</b></div>' +
-    '<div><span class="sub">RUC</span><b>' + (s.ruc || '—') + '</b></div>' +
-    '<div><span class="sub">Ticket</span><b>' + (s.ticket || '—') + '</b></div>' +
-    '<div><span class="sub">Sector</span><b>' + (s.sector || '—') + '</b></div>' +
-    '<div><span class="sub">Monto solicitado</span><b>' + montoTxt + '</b></div>' +
-    '<div><span class="sub">Contacto</span><b>' + (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '') + '</b></div>' +
+  const celda = (ico, k, v) => '<div class="fsu-celda"><span class="fsu-celda-ic">' + ico + '</span><div><div class="fsu-celda-k">' + k + '</div><div class="fsu-celda-v">' + (v || '—') + '</div></div></div>';
+  const resumen = '<div class="fb-sec">Resumen comercial</div><div class="fsu-grid">' +
+    celda('🏢', 'Empresa', s.razonSocial) + celda('🪪', 'RUC', s.ruc) +
+    celda('🎟️', 'Ticket', s.ticket) + celda('🧭', 'Sector', s.sector) +
+    celda('💰', 'Monto solicitado', '<span class="sol-monto">' + montoTxt + '</span>') +
+    celda('👤', 'Contacto', (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '')) + '</div>';
+
+  // Veredicto por filtro: cards clicables con semáforo + puntaje + KOs
+  const cardF = (k, titulo, ico, panel) => {
+    const ff = f[k] || {}; const sem = ff.semaforo || null;
+    const cls = sem === 'Verde' ? 'reu-card-ok' : sem === 'Amarillo' ? 'reu-card-obs' : sem === 'Rojo' ? 'reu-card-ko' : 'reu-card-p';
+    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? '<div class="bc-kos">✕ ' + ff.motivos.kos.join(' · ') + '</div>' : '';
+    return '<div class="reu-card ' + cls + '" onclick="fbToggle(\'' + panel + '\')"><span class="reu-card-ic">' + ico + '</span>' +
+      '<div style="min-width:0"><div class="reu-card-t">' + titulo + '</div>' +
+      '<div class="reu-card-s">' + (sem ? '<span class="sem-word sem-' + sem.toLowerCase() + '" style="padding:2px 9px;font-size:10.5px">' + sem + '</span>' + (ff.puntaje != null ? ' ' + ff.puntaje + '%' : '') : 'Pendiente') + '</div>' + kos + '</div>' +
+      '<span class="reu-card-fl">›</span></div>';
+  };
+  const veredicto = '<div class="fb-sec">Veredicto por filtro <span class="sub" style="font-weight:400">(el peor caso gobierna)</span></div>' +
+    '<div class="bc-cards">' + cardF('sunat', 'SUNAT', '🏢', 'fsunat') + cardF('credito', 'Crédito', '🛡️', 'credito') +
+    cardF('garantia', 'Garantía', '🏠', 'garantia') + cardF('finanzas', 'Finanzas', '💰', 'finanzas') + '</div>';
+
+  // Reunión comercial heredada
+  const reuHtml = bcReunionHTML(rReu);
+
+  // Línea de tiempo del proceso (qué pasó y cuándo, de lo guardado)
+  const timeline = bcTimelineHTML();
+
+  // Observaciones vivas (misma recolección que la reunión) como tabla
+  const obs = recolectarObservacionesB2B();
+  const chipO = o => '<span class="reu-chip">' + o.ico + ' ' + o.origen + '</span>';
+  const obsHtml = '<div class="fb-sec">Observaciones a levantar <span class="reu-badge" style="margin-left:6px">' + obs.length + '</span></div>' +
+    (obs.length
+      ? '<table class="reu-tabla"><thead><tr><th>Origen</th><th>Campo</th><th>Detalle</th><th>Acción sugerida</th></tr></thead><tbody>' +
+        obs.map(o => '<tr><td>' + chipO(o) + '</td><td>' + o.campo + '</td><td><span class="reu-dot"></span> <b>' + o.valor + '</b> ' + o.lim + '</td><td class="reu-acc">' + o.accion + '</td></tr>').join('') + '</tbody></table>'
+      : '<div class="reu-sinobs">✓ Sin observaciones pendientes.</div>');
+
+  // Recomendación final
+  const rec = glob === 'Rojo' ? { t: '🚫 Descartar', cls: 'bc-band-ko' } : glob === 'Amarillo' ? { t: '⚠ Avanzar con observaciones (comité)', cls: 'bc-band-obs' } : glob === 'Verde' ? { t: '✅ Avanzar a expediente', cls: 'bc-band-ok' } : { t: 'Pendiente de completar filtros', cls: 'bc-band-p' };
+  const recomendacion = '<div class="fb-sec">Recomendación comercial</div><div class="bc-band ' + rec.cls + '" style="padding:12px 14px"><div class="bc-band-t" style="font-size:14px">' + rec.t + '</div></div>';
+
+  const cuerpo = '<div class="fb-body bc-body">' +
+    '<div class="fcr-head"><span class="fcr-head-ic bc-head-ic">📑</span>' +
+    '<div><div class="fcr-tit">Business Case</div><div class="fcr-sub">Expediente ejecutivo: consolida todo lo sucedido en las etapas anteriores</div></div>' +
+    '<span class="fcr-pill-wrap">' + pillSemHTML(glob, faltan) + '</span>' +
+    '<button class="btn" onclick="imprimirBusinessCase()" data-nodirty>🖨 Imprimir / PDF</button></div>' +
+    banda + resumen + veredicto + bcDatosClaveHTML() + reuHtml + bcAnalisisHTML() + obsHtml + timeline + recomendacion + '</div>';
+  return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, cuerpo, false, modo, 'Business case');
+}
+// Reunión comercial dentro del Business Case (fecha, modalidad, asesor, comentario, próximos pasos).
+function bcReunionHTML(r) {
+  r = r || {};
+  if (!r.fecha && !r.comentario) return '<div class="fb-sec">Reunión comercial</div><div class="sub" style="padding:4px 0;margin-bottom:8px">Sin reunión registrada.</div>';
+  const fFmt = r.fecha ? new Date(r.fecha + 'T' + (r.hora || '00:00')).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+  return '<div class="fb-sec">Reunión comercial</div><div class="bc-reu">' +
+    '<div class="bc-reu-meta">' +
+    '<span>📅 <b>' + fFmt + '</b>' + (r.hora ? ' · 🕒 ' + r.hora : '') + '</span>' +
+    (r.modalidad ? '<span>📍 ' + r.modalidad + (r.lugar ? ' · ' + String(r.lugar).replace(/</g, '&lt;') : '') + '</span>' : '') +
+    '<span>👤 ' + (FICHA.solicitud.responsableActual || 'Sin asignar') + ' <span class="sub">(asesor comercial)</span></span></div>' +
+    (r.comentario ? '<div class="bc-reu-com"><span class="sub">Acuerdos / comentarios</span><div>' + String(r.comentario).replace(/</g, '&lt;') + '</div></div>' : '') +
+    (r.proximosPasos ? '<div class="bc-reu-com"><span class="sub">Próximos pasos</span><div>' + String(r.proximosPasos).replace(/</g, '&lt;') + '</div></div>' : '') +
     '</div>';
-  // Datos clave heredados de los filtros (auto).
-  html += bcDatosClaveHTML();
-  // Análisis heredado del filtro Finanzas (destino, repago, mitigantes, motivo).
-  html += bcAnalisisHTML();
-  // Observaciones automáticas: todo lo que quedó en amarillo/escalado en los 4 filtros.
-  html += bcObservacionesHTML();
-  // Recomendación auto-sugerida según el consolidado.
-  const rec = glob === 'Rojo' ? { t: 'Descartar', c: '#E24B4A' } : glob === 'Amarillo' ? { t: 'Avanzar con observaciones', c: '#EF9F27' } : glob === 'Verde' ? { t: 'Avanzar a expediente', c: '#1D9E75' } : { t: 'Pendiente de completar filtros', c: '#94a3b8' };
-  html += '<div class="fb-sec">Recomendación comercial</div><div class="bc-rec" style="border-color:' + rec.c + '55;background:' + rec.c + '11"><b style="color:' + rec.c + '">' + rec.t + '</b></div>';
-  html += '</div>';
-  return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, html, false, modo, 'Business case');
+}
+// Línea de tiempo del expediente: hitos guardados (ingreso, filtros, reunión, etapa actual).
+function bcTimelineHTML() {
+  const s = FICHA.solicitud; const f = FICHA.filtros || {};
+  const fmt = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const items = [];
+  if (s.fechaIngreso) items.push({ f: s.fechaIngreso, ico: '📥', t: 'Ingreso de la solicitud', d: s.fuente ? 'Origen: ' + s.fuente : '' });
+  const nomF = { sunat: 'Filtro SUNAT', credito: 'Filtro crédito', garantia: 'Filtro garantía', finanzas: 'Filtro finanzas' };
+  ['sunat', 'credito', 'garantia', 'finanzas'].forEach(k => {
+    const ff = f[k]; if (ff && ff.actualizadoEn) items.push({ f: ff.actualizadoEn, ico: '💾', t: nomF[k] + (ff.semaforo ? ' → ' + ff.semaforo : ''), d: (ff.responsable ? 'por ' + primerNombre(ff.responsable) : '') + (ff.puntaje != null ? ' · ' + ff.puntaje + '%' : '') });
+  });
+  const r = f.reunion || {};
+  if (r.actualizadoEn) items.push({ f: r.actualizadoEn, ico: '🤝', t: 'Reunión comercial registrada', d: ((r.checklist || {}).fecha ? 'programada ' + (r.checklist || {}).fecha : '') + (r.responsable ? ' · por ' + primerNombre(r.responsable) : '') });
+  items.sort((a, b) => String(a.f).localeCompare(String(b.f)));
+  items.push({ f: null, ico: '📌', t: 'Etapa actual: ' + trEstadoB2B(FICHA.etapaKanban || ''), d: '' });
+  return '<div class="fb-sec">Línea de tiempo del expediente</div><div class="bc-tl">' +
+    items.map(i => '<div class="bc-tl-item"><span class="bc-tl-ic">' + i.ico + '</span><div><div class="bc-tl-t">' + i.t + '</div><div class="bc-tl-d">' + (i.f ? fmt(i.f) : '') + (i.d ? (i.f ? ' · ' : '') + i.d : '') + '</div></div></div>').join('') + '</div>';
+}
+// Genera el formato imprimible del Business Case en una ventana nueva (Imprimir / guardar como PDF).
+function imprimirBusinessCase() {
+  const cont = document.querySelector('.fb-panel[data-fb="businesscase"] .bc-body');
+  if (!cont) return;
+  const s = FICHA.solicitud;
+  let inner = cont.innerHTML
+    .replace(/ onclick="[^"]*"/g, '')
+    .replace(/<button[^>]*>[\s\S]*?<\/button>/g, '');
+  const css = document.querySelector('link[href*="styles.css"]');
+  const w = window.open('', '_blank');
+  if (!w) { alert('Permite las ventanas emergentes para imprimir el Business Case.'); return; }
+  w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Business Case · ' + (s.razonSocial || s.codigo) + '</title>' +
+    (css ? '<link rel="stylesheet" href="' + css.href + '">' : '') +
+    '<style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:24px;color:#1E293B;font-size:13px}.bc-print-head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0B5FFF;padding-bottom:10px;margin-bottom:14px}.bc-print-head h1{font-size:18px;margin:0}.bc-print-head .sub{color:#6B7A8D;font-size:12px}@media print{.reu-card-fl{display:none}}</style></head><body>' +
+    '<div class="bc-print-head"><div><h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1><div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + '</div></div><div class="sub"><b>TasaTop</b> · CRM B2B</div></div>' +
+    inner + '</body></html>');
+  w.document.close();
+  setTimeout(() => { try { w.print(); } catch (e) {} }, 600);
 }
 // Datos clave que el Business Case hereda de los filtros ya cargados.
 function bcDatosClaveHTML() {
