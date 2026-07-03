@@ -5259,15 +5259,20 @@ function bandaFiltro2HTML(ev) {
   if (ev.escalados && ev.escalados.length) h += '<div class="f2-esc">⚠ Escalado a excepción: ' + ev.escalados.join(' · ') + '</div>';
   return h;
 }
+// Ícono "?" con tooltip (v1.248): la etiqueta corta va en mtr-lbl y la explicación larga en data-tip.
+function f2Help(tip) {
+  if (!tip) return '';
+  return ' <span class="f2-help" data-tip="' + String(tip).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '">?</span>';
+}
 function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   const cat = (FILTROS_B2B_CACHE && FILTROS_B2B_CACHE[tipo]); if (!cat) return '<div class="sub">Catálogo no disponible.</div>';
   valores = valores || {};
   const gatesHtml = cat.gates.filter(g => g.tipo !== 'textoReq').map(g =>
-    '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + '</span>' +
+    '<div class="mtr-row"><span class="f2-dot" id="' + prefijo + '_g_' + g.clave + '"></span><span class="mtr-lbl">' + g.etiqueta + f2Help(g.tip) + '</span>' +
     '<span class="mtr-ctrl">' + inputFiltro2(g, valores, prefijo, tipo, ticket) + (g.sufijo && g.formato !== 'aniosMeses' ? '<span class="mtr-suf">' + g.sufijo + '</span>' : '') + '</span></div>').join('');
   const scoreVisibles = cat.score.filter(it => !it.refGate);
   const scoreHtml = scoreVisibles.map(it =>
-    '<div class="mtr-row"><span class="mtr-lbl">' + it.etiqueta + ' <span class="f2-peso">(' + it.peso + ')</span></span>' +
+    '<div class="mtr-row"><span class="mtr-lbl">' + it.etiqueta + ' <span class="f2-peso">(' + it.peso + ')</span>' + f2Help(it.tip) + '</span>' +
     '<span class="mtr-ctrl">' + inputFiltro2(it, valores, prefijo, tipo, ticket) + (it.sufijo ? '<span class="mtr-suf">' + it.sufijo + '</span>' : '') + '</span></div>').join('');
   // Penalizaciones activables (solo crédito): checkbox que habilita el input y castiga el puntaje.
   const penalActivables = (cat.penal || []).filter(p => p.activable);
@@ -5288,7 +5293,7 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
   if (cat.insumos && cat.insumos.length) {
     const insHtml = cat.insumos.map(i => {
       const val = valores[i.clave];
-      return '<div class="mtr-row"><span class="mtr-lbl">' + i.etiqueta + '</span><span class="mtr-ctrl">' +
+      return '<div class="mtr-row"><span class="mtr-lbl">' + i.etiqueta + f2Help(i.tip) + '</span><span class="mtr-ctrl">' +
         '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + i.clave + '" value="' + (val != null ? val : '') + '" oninput="recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')">' +
         (i.sufijo ? '<span class="mtr-suf">' + i.sufijo + '</span>' : '') + '</span></div>';
     }).join('');
@@ -5301,7 +5306,7 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     const anHtml = cat.analisis.map(a => {
       const val = valores[a.clave];
       if (a.tipo === 'selectReq') {
-        return '<div class="mtr-row"><span class="mtr-lbl">' + a.etiqueta + '</span><span class="mtr-ctrl">' +
+        return '<div class="mtr-row"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><span class="mtr-ctrl">' +
           '<select class="mtr-in" style="max-width:none;width:240px" data-f2="' + prefijo + '" data-k="' + a.clave + '" onchange="' + cb + '"><option value="">—</option>' +
           a.opciones.map(o => '<option value="' + o.v + '"' + (val === o.v ? ' selected' : '') + '>' + o.label + '</option>').join('') + '</select></span></div>';
       }
@@ -5311,10 +5316,10 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
           const on = arr.includes(o.v);
           return '<label class="an-chip' + (on ? ' an-chip-on' : '') + '"><input type="checkbox" ' + (on ? 'checked' : '') + ' data-f2multi="' + prefijo + '" data-k="' + a.clave + '" value="' + o.v + '" onchange="' + cb + '"> ' + o.label + '</label>';
         }).join('');
-        return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + '</span><div class="an-chips">' + chips + '</div></div>';
+        return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><div class="an-chips">' + chips + '</div></div>';
       }
       // textoLibreReq
-      return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + '</span>' +
+      return '<div class="mtr-row mtr-row-multi"><span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span>' +
         '<textarea class="mtr-in an-textarea" data-f2="' + prefijo + '" data-k="' + a.clave + '" placeholder="Explica por qué el caso merece evaluación…" oninput="' + cb + '">' + (val ? String(val).replace(/</g, '&lt;') : '') + '</textarea></div>';
     }).join('');
     html += '<div class="fb-sec">Análisis del caso (para el Business Case)</div>' + anHtml;
@@ -5333,7 +5338,8 @@ function ratiosTablaHTML(ratios) {
   else cuotaNota = '<div class="rt-cuota rt-cuota-pend">Define el monto exacto (botón Editar en Solicitud) para estimar la cuota del DSCR.</div>';
   let rows = ratios.detalle.map(d => {
     const est = d.cumple == null ? '<span class="rt-na">sin dato</span>' : (d.cumple ? '<span class="rt-ok">✓ cumple</span>' : '<span class="rt-obs">⚠ observar</span>');
-    return '<tr><td>' + d.etiqueta + '</td><td class="rt-c">' + fmtUmb(d.umbral, d.fmt, d.dir) + '</td><td class="rt-c"><b>' + fmtVal(d.valor, d.fmt) + '</b></td><td class="rt-c">' + est + '</td></tr>';
+    const rcat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas && (FILTROS_B2B_CACHE.finanzas.ratios || []).find(r => r.clave === d.clave);
+    return '<tr><td>' + d.etiqueta + f2Help(rcat && rcat.tip) + '</td><td class="rt-c">' + fmtUmb(d.umbral, d.fmt, d.dir) + '</td><td class="rt-c"><b>' + fmtVal(d.valor, d.fmt) + '</b></td><td class="rt-c">' + est + '</td></tr>';
   }).join('');
   let cap = '';
   const dscr = ratios.detalle.find(d => d.clave === 'dscr');
@@ -5690,7 +5696,8 @@ function renderGarantiaInmueble(valores, prefijo, ticket) {
   const cb = 'recalcGarantia(\'' + prefijo + '\',\'' + ticket + '\')';
   // 1) Casilla Apto.
   const apto = valores.apto || '';
-  const aptoHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Apto / saneado (SUNARP)</b></span><span class="mtr-ctrl">' +
+  const tipG = k => { const g = (cat.gates || []).find(x => x.clave === k); return g && g.tip; };
+  const aptoHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Apto SUNARP</b>' + f2Help(tipG('apto') || '¿El inmueble está apto/saneado según la copia literal de SUNARP? No = KO; Observado = subsanable.') + '</span><span class="mtr-ctrl">' +
     '<select class="mtr-in" data-f2="' + prefijo + '" data-k="apto" onchange="' + cb + '">' +
     '<option value="">—</option>' +
     '<option value="si"' + (apto === 'si' ? ' selected' : '') + '>Sí</option>' +
@@ -5699,18 +5706,18 @@ function renderGarantiaInmueble(valores, prefijo, ticket) {
     '</select></span></div>';
   // 2) Valor referencial + moneda.
   const moneda = valores.valorRefMoneda || 'soles';
-  const valorHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Valor referencial</b></span><span class="mtr-ctrl">' +
+  const valorHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>Valor referencial</b>' + f2Help(tipG('valorRef') || 'Valor referencial del inmueble (m² × precio de zona). De aquí sale el LTV = monto ÷ valor.') + '</span><span class="mtr-ctrl">' +
     '<select class="mtr-in" style="width:74px" data-f2="' + prefijo + '" data-k="valorRefMoneda" onchange="' + cb + '">' +
     '<option value="soles"' + (moneda === 'soles' ? ' selected' : '') + '>S/</option>' +
     '<option value="dolares"' + (moneda === 'dolares' ? ' selected' : '') + '>US$</option>' +
     '</select>' +
     '<input type="text" inputmode="decimal" class="mtr-in mtr-num" style="width:110px" data-f2="' + prefijo + '" data-k="valorRef" value="' + (valores.valorRef != null ? valores.valorRef : '') + '" placeholder="0" onkeypress="return b2bSoloNumero(event,true)" oninput="' + cb + '"></span></div>';
   // 3) LTV calculado (en vivo).
-  const ltvHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>LTV</b> <span class="sub" style="font-size:11px">(monto ÷ valor ref)</span></span>' +
+  const ltvHtml = '<div class="mtr-row"><span class="mtr-lbl"><b>LTV</b>' + f2Help('LTV = monto de la solicitud ÷ valor referencial (misma moneda; TC 3.45 si difieren). LTV mayor al umbral = observado.') + '</span>' +
     '<span class="mtr-ctrl"><span id="' + prefijo + '_ltv" class="gd-ltv">' + ltvTextoJS(valores, ticket) + '</span></span></div>';
   // 4) Un único link de Drive con TODOS los documentos (último campo, obligatorio).
   const link = valores.linkDrive || ''; const linkOk = link && /^https?:\/\//i.test(link);
-  const linkHtml = '<div class="gd-row gd-row-link"><span class="gd-lbl"><b>Link de Drive</b> <span class="sub" style="font-size:11px">(copia literal, HR/PU, DNI, recibo, fotos)</span></span>' +
+  const linkHtml = '<div class="gd-row gd-row-link"><span class="gd-lbl"><b>Link Drive</b>' + f2Help(tipG('linkDrive') || 'Un único link de Drive con todos los documentos: copia literal, HR/PU, DNI, recibo de servicios y fotos.') + '</span>' +
     '<span class="gd-st ' + (linkOk ? 'gd-ok' : 'gd-pend') + '">' + (linkOk ? '✓' : 'pendiente') + '</span>' +
     '<input type="url" class="mtr-in gd-link" data-f2="' + prefijo + '" data-k="linkDrive" value="' + (link ? link.replace(/"/g, '&quot;') : '') + '" placeholder="https://drive.google.com/…" oninput="' + cb + '">' +
     (linkOk ? '<a class="gd-open" href="' + link + '" target="_blank" rel="noopener">abrir</a>' : '') + '</div>';
@@ -5906,9 +5913,7 @@ function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado, modo
   const onclick = bloqueado ? '' : ' onclick="fbToggle(\'' + tipo + '\')"';
   const modoAttr = modo ? ' data-modo="' + modo + '"' : '';
   // Botón de gestión: solo en la etapa editable (actual), para registrar contacto + próxima acción.
-  const btnGestion = (modo === 'editable' && colGestion)
-    ? '<button class="fb-gestion-btn" onclick="event.stopPropagation();abrirModalGestion(\'' + colGestion + '\')">＋ Gestión</button>'
-    : '';
+  const btnGestion = ''; // boton +Gestion eliminado (la gestion se registra via Revisar o el timeline)
   const candado = (modo === 'lectura') ? '<span class="fb-lock-tag">🔒 solo lectura</span>' : (modo === 'bloqueado' ? '<span class="fb-lock-tag fb-lock-fut">🔒 bloqueada</span>' : '');
   return '<div class="fb-panel' + cls + '"' + modoAttr + '>' +
     '<div class="fb-panel-head"' + onclick + '>' +

@@ -1427,8 +1427,8 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .mtr-chip-obs { background:#FFF4E0; color:#B7791F; }
 .mtr-chip-ko { background:#FDE8E7; color:#CC0000; }
 .mtr-chip-p { background:#EEF3F9; color:#6B7A8D; font-weight:600; }
-/* Ficha B2B 25% mas ancha */
-#ovFichaB2B .modal, #ovFichaB2B .mg-modal, #ovFichaB2B > div:first-child > div { width:min(1250px,96vw) !important; max-width:96vw; }
+/* Ficha B2B: ancho definido en el HTML del modal (1100px), sin overflow horizontal */
+#ovFichaB2B .fb-body { overflow-x:hidden; }
 /* Boton Guardar de cada etapa: arriba a la derecha, a la altura del encabezado; verde al hover */
 .fb-panel-open { position:relative; }
 .fb-panel-open > .fb-body > .fb-acc:last-child { position:absolute; top:8px; right:52px; margin:0; z-index:3; }
@@ -1437,7 +1437,9 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fb-revisar { background:#FFF4E0; color:#B7791F; border:1px solid #F1D9A7; border-radius:8px; padding:2px 10px; font-size:12px; font-weight:700; cursor:pointer; margin-left:4px; }
 .fb-revisar:hover { background:#B7791F; color:#fff; }
 /* Solicitud homogenea: labels con primera letra en mayuscula, valores alineados */
-.fb-campo .fb-k { text-transform:capitalize; color:#41505F; font-weight:600; }
+.fb-campo .fb-k { color:#41505F; font-weight:600; }
+.fb-campo .fb-k::first-letter { text-transform:uppercase; }
+.mtr-lbl::first-letter, .fb-sec::first-letter { text-transform:uppercase; }
 .fb-campo .fb-v { color:#1B2A41; }
 /* Cajones de datos SUNAT (auto) */
 .fb-panel .mtr-row { background:#FAFCFE; border:1px solid #EDF2F8; border-radius:10px; padding:7px 10px; margin-bottom:6px; }
@@ -1706,3 +1708,34 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .bc-resumen { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-top: 6px; }
 .bc-resumen > div { display: flex; flex-direction: column; }
 .bc-resumen .sub { font-size: 11px; }
+
+/* ===== v1.248: ícono "?" con tooltip en labels de filtros B2B ===== */
+.f2-help {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-left: 4px; flex: 0 0 auto;
+  border-radius: 50%; background: #E4EAF2; color: #64748B;
+  font-size: 9.5px; font-weight: 700; line-height: 1;
+  cursor: help; position: relative; vertical-align: middle;
+  user-select: none;
+}
+.f2-help:hover { background: #0B5FFF; color: #fff; }
+.f2-help::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
+  width: max-content; max-width: 260px;
+  background: #1E293B; color: #F1F5F9;
+  font-size: 11.5px; font-weight: 400; line-height: 1.45; text-transform: none;
+  padding: 8px 10px; border-radius: 8px; white-space: normal;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .25);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease; z-index: 60;
+}
+.f2-help::before {
+  content: ''; position: absolute; left: 50%; bottom: calc(100% + 2px); transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1E293B;
+  opacity: 0; visibility: hidden; transition: opacity .12s ease; z-index: 60;
+}
+.f2-help:hover::after, .f2-help:hover::before { opacity: 1; visibility: visible; }
+/* Evita que el panel recorte el tooltip en las primeras filas */
+.mtr-row, .gd-row { overflow: visible; }
+.f2-box, .mtr-box { overflow: visible; }

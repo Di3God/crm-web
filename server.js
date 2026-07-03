@@ -4271,21 +4271,21 @@ const FILTROS_B2B = {
   sunat: {
     titulo: 'Filtro SUNAT',
     gates: [
-      { clave: 'personaJuridica', etiqueta: 'Persona jurídica (RUC 20)', tipo: 'select', auto: true, opciones: [
+      { clave: 'personaJuridica', etiqueta: 'Persona jurídica', tip: 'Debe ser persona jurídica (RUC que inicia en 20). RUC 10 (persona natural) se observa; otro caso es KO.', tipo: 'select', auto: true, opciones: [
         { v: 'si', label: 'Sí (RUC 20)', resultado: 'ok' },
         { v: 'observar', label: 'RUC 10 — observar', resultado: 'observado', motivo: 'RUC 10 (persona natural): revisar' },
         { v: 'no', label: 'No', resultado: 'ko', motivo: 'No es persona jurídica' }
       ] },
-      { clave: 'estado', etiqueta: 'Estado SUNAT', tipo: 'select', auto: true, opciones: [
+      { clave: 'estado', etiqueta: 'Estado SUNAT', tip: 'Estado del contribuyente en SUNAT: debe estar Activo. Baja provisional/de oficio se observa; no activo es KO.', tipo: 'select', auto: true, opciones: [
         { v: 'activo', label: 'Activo', resultado: 'ok' },
         { v: 'bajaprov', label: 'Baja provisional / de oficio', resultado: 'observado', motivo: 'Estado SUNAT en baja provisional/de oficio: observar' },
         { v: 'no', label: 'No activo', resultado: 'ko', motivo: 'Estado SUNAT no activo' }
       ] },
-      { clave: 'condicion', etiqueta: 'Condición SUNAT', tipo: 'select', auto: true, opciones: [
+      { clave: 'condicion', etiqueta: 'Condición SUNAT', tip: 'Condición del domicilio fiscal en SUNAT: debe ser Habido. No habido es KO.', tipo: 'select', auto: true, opciones: [
         { v: 'habido', label: 'Habido', resultado: 'ok' },
         { v: 'no', label: 'No habido', resultado: 'ko', motivo: 'Condición SUNAT ≠ Habido' }
       ] },
-      { clave: 'antiguedad', etiqueta: 'Antigüedad', tipo: 'numMinTicket', formato: 'aniosMeses', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' }
+      { clave: 'antiguedad', etiqueta: 'Antigüedad', tip: 'Antigüedad del RUC en meses. Mínimo 12 meses para avanzar (todos los tickets).', tipo: 'numMinTicket', formato: 'aniosMeses', sufijo: 'meses', minTicket: ANTIG_MIN_TICKET, motivo: 'Antigüedad menor al mínimo del ticket' }
     ],
     // SUNAT no lleva puntaje proporcional: si los gates pasan es Verde 100; un 'observado' lo baja a Amarillo.
     score: []
@@ -4296,26 +4296,26 @@ const FILTROS_B2B = {
     titulo: 'Filtro Crédito (por sujeto)',
     gates: [
       // ---- KILLERS (matan el sujeto) ----
-      { clave: 'clasActual', etiqueta: 'Clasificación actual', tipo: 'select', opciones: [
+      { clave: 'clasActual', etiqueta: 'Clasificación actual', tip: 'Clasificación SBS vigente del sujeto. Dudoso o Pérdida = KO seco (mata al sujeto y contagia el filtro).', tipo: 'select', opciones: [
         { v: 'normal', label: 'Normal', resultado: 'ok' },
         { v: 'cpp', label: 'CPP', resultado: 'ok' },
         { v: 'deficiente', label: 'Deficiente', resultado: 'ok' },
         { v: 'dudoso', label: 'Dudoso', resultado: 'ko', motivo: 'Clasificación actual Dudoso' },
         { v: 'perdida', label: 'Pérdida', resultado: 'ko', motivo: 'Clasificación actual Pérdida' }
       ] },
-      { clave: 'listaNegra', etiqueta: 'Lista negra interna Tasatop', tipo: 'select', opciones: [
+      { clave: 'listaNegra', etiqueta: 'Lista negra', tip: 'Lista negra interna de Tasatop. Estar en la lista = KO seco.', tipo: 'select', opciones: [
         { v: 'no', label: 'No', resultado: 'ok' }, { v: 'si', label: 'Sí', resultado: 'ko', motivo: 'Lista negra interna Tasatop' }
       ] },
-      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida histórico', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido (KO)' },
-      { clave: 'castigados', etiqueta: 'Castigados', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos (KO)' },
+      { clave: 'dudosoPerdidaHist', etiqueta: 'Dudoso/Pérdida hist.', tip: 'Cantidad de clasificaciones Dudoso o Pérdida en el histórico. No se permite ninguna en ningún ticket (KO).', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Dudoso/Pérdida histórico no permitido (KO)' },
+      { clave: 'castigados', etiqueta: 'Castigados', tip: 'Créditos castigados en el sistema financiero. No se permiten en ningún ticket (KO).', tipo: 'numMaxTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Créditos castigados no permitidos (KO)' },
       // ---- OBSERVABLES por límite de ticket (exceder = Amarillo, no mata) ----
-      { clave: 'cppEvalPct', etiqueta: 'CPP en evaluación', tipo: 'numObsTicket', unidad: 'porcentaje', maxTicket: { Bajo: 75, Medio: 50, Alto: 25 }, motivo: 'CPP en evaluación excede el límite del ticket' },
-      { clave: 'cppHist', etiqueta: 'CPP histórico', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 2, Medio: 2, Alto: 2 }, motivo: 'CPP histórico excede el límite del ticket' },
-      { clave: 'deficienteHist', etiqueta: 'Deficiente histórico', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 1, Medio: 0, Alto: 0 }, motivo: 'Deficiente histórico excede el límite del ticket' },
-      { clave: 'refis', etiqueta: 'Refinanciamientos (últ. 12m)', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Refinanciamientos observados (excede límite)' },
-      { clave: 'protestadosCant', etiqueta: 'Documentos protestados', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Documentos protestados (subsanable, observado)' },
-      { clave: 'morososMonto', etiqueta: 'Documentos morosos', tipo: 'numObsTicket', unidad: 'monto', maxTicket: { Bajo: 1000, Medio: 3000, Alto: 5000 }, motivo: 'Monto de morosos excede el límite del ticket' },
-      { clave: 'coactivaVigente', etiqueta: 'Cobranza coactiva vigente', tipo: 'select', opciones: [
+      { clave: 'cppEvalPct', etiqueta: 'CPP evaluación', tip: '% de deuda en CPP en la evaluación vigente. Límite por ticket: Bajo 75% · Medio 50% · Alto 25%. Exceder = observado (Amarillo, no mata).', tipo: 'numObsTicket', unidad: 'porcentaje', maxTicket: { Bajo: 75, Medio: 50, Alto: 25 }, motivo: 'CPP en evaluación excede el límite del ticket' },
+      { clave: 'cppHist', etiqueta: 'CPP histórico', tip: 'Cantidad de CPP en el histórico. Límite: 2 (todos los tickets). Exceder = observado.', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 2, Medio: 2, Alto: 2 }, motivo: 'CPP histórico excede el límite del ticket' },
+      { clave: 'deficienteHist', etiqueta: 'Deficiente hist.', tip: 'Cantidad de Deficiente en el histórico. Límite: Bajo 1 · Medio 0 · Alto 0. Exceder = observado.', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 1, Medio: 0, Alto: 0 }, motivo: 'Deficiente histórico excede el límite del ticket' },
+      { clave: 'refis', etiqueta: 'Refinanciamientos', tip: 'Refinanciamientos en los últimos 12 meses. No se permiten; tener alguno = observado.', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Refinanciamientos observados (excede límite)' },
+      { clave: 'protestadosCant', etiqueta: 'Protestados', tip: 'Documentos protestados sin aclarar. Subsanable: tener alguno = observado.', tipo: 'numObsTicket', unidad: 'cantidad', maxTicket: { Bajo: 0, Medio: 0, Alto: 0 }, motivo: 'Documentos protestados (subsanable, observado)' },
+      { clave: 'morososMonto', etiqueta: 'Morosos', tip: 'Monto total de documentos morosos. Límite: Bajo S/1,000 · Medio S/3,000 · Alto S/5,000. Exceder = observado.', tipo: 'numObsTicket', unidad: 'monto', maxTicket: { Bajo: 1000, Medio: 3000, Alto: 5000 }, motivo: 'Monto de morosos excede el límite del ticket' },
+      { clave: 'coactivaVigente', etiqueta: 'Coactiva vigente', tip: 'Cobranza coactiva (SUNAT/municipal) vigente. Sí = observado: requiere subsanación o aprobación de comité.', tipo: 'select', opciones: [
         { v: 'no', label: 'No', resultado: 'ok' },
         { v: 'si', label: 'Sí', resultado: 'observado', motivo: 'Coactiva vigente: requiere subsanación/aprobación de comité' }
       ] }
@@ -4329,51 +4329,51 @@ const FILTROS_B2B = {
     titulo: 'Filtro Finanzas y Negocios',
     // Documentos obligatorios por ticket: faltante = escalado (bloquea avance a Business Case).
     gates: [
-      { clave: 'djAnual', etiqueta: 'DJ Anual SUNAT', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DJ Anual SUNAT' },
-      { clave: 'eeff', etiqueta: 'Estados Financieros situacionales (3m)', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan Estados Financieros (Medio/Alto)' },
-      { clave: 'flujoProyectado', etiqueta: 'Flujo de caja proyectado', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta flujo de caja proyectado (Medio/Alto)' },
-      { clave: 'reporteTributario', etiqueta: 'Reporte tributario', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta reporte tributario' },
-      { clave: 'fichaRuc', etiqueta: 'Ficha RUC', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta Ficha RUC' }
+      { clave: 'djAnual', etiqueta: 'DJ Anual', tip: 'Declaración Jurada Anual SUNAT. Obligatoria en todos los tickets; faltante bloquea el avance a Business Case.', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta DJ Anual SUNAT' },
+      { clave: 'eeff', etiqueta: 'EEFF situacionales', tip: 'Estados financieros situacionales con antigüedad máxima de 3 meses. Obligatorios en ticket Medio y Alto.', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Faltan Estados Financieros (Medio/Alto)' },
+      { clave: 'flujoProyectado', etiqueta: 'Flujo proyectado', tip: 'Flujo de caja proyectado del negocio. Obligatorio en ticket Medio y Alto.', tipo: 'docTicket', requeridoTicket: { Bajo: false, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta flujo de caja proyectado (Medio/Alto)' },
+      { clave: 'reporteTributario', etiqueta: 'Reporte tributario', tip: 'Reporte tributario de SUNAT. Obligatorio en todos los tickets.', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta reporte tributario' },
+      { clave: 'fichaRuc', etiqueta: 'Ficha RUC', tip: 'Ficha RUC actualizada. Obligatoria en todos los tickets.', tipo: 'docTicket', requeridoTicket: { Bajo: true, Medio: true, Alto: true }, opciones: [{ v: 'si', label: 'Recibido' }, { v: 'no', label: 'Falta' }], motivo: 'Falta Ficha RUC' }
     ],
     // Insumos numéricos (2 años consecutivos, cierre de año) para calcular los ratios.
     insumos: [
-      { clave: 'ventasAct', etiqueta: 'Ventas anuales (año actual)', sufijo: 'S/' },
-      { clave: 'ventasAnt', etiqueta: 'Ventas anuales (año anterior)', sufijo: 'S/' },
-      { clave: 'utilidadAct', etiqueta: 'Utilidad neta / EBITDA (actual)', sufijo: 'S/' },
-      { clave: 'utilidadAnt', etiqueta: 'Utilidad neta / EBITDA (anterior)', sufijo: 'S/' },
-      { clave: 'deudaFin', etiqueta: 'Deuda financiera total', sufijo: 'S/' },
-      { clave: 'patrimonio', etiqueta: 'Patrimonio', sufijo: 'S/' },
-      { clave: 'flujoMensual', etiqueta: 'Flujo disponible mensual', sufijo: 'S/' }
+      { clave: 'ventasAct', etiqueta: 'Ventas actual', tip: 'Ventas anuales del último cierre de año (S/).', sufijo: 'S/' },
+      { clave: 'ventasAnt', etiqueta: 'Ventas anterior', tip: 'Ventas anuales del cierre previo (S/); insumo del crecimiento.', sufijo: 'S/' },
+      { clave: 'utilidadAct', etiqueta: 'Utilidad actual', tip: 'Utilidad neta o EBITDA del último cierre de año (S/).', sufijo: 'S/' },
+      { clave: 'utilidadAnt', etiqueta: 'Utilidad anterior', tip: 'Utilidad neta o EBITDA del cierre previo (S/).', sufijo: 'S/' },
+      { clave: 'deudaFin', etiqueta: 'Deuda financiera', tip: 'Deuda financiera total vigente en el sistema (S/); insumo del endeudamiento.', sufijo: 'S/' },
+      { clave: 'patrimonio', etiqueta: 'Patrimonio', tip: 'Patrimonio neto según EEFF (S/); insumo del endeudamiento.', sufijo: 'S/' },
+      { clave: 'flujoMensual', etiqueta: 'Flujo mensual', tip: 'Flujo de caja disponible mensual para atender la cuota (S/); insumo del DSCR.', sufijo: 'S/' }
     ],
     // 5 ratios que PUNTÚAN (ninguno mata). No cumplir el umbral = observación (no suma su peso).
     // dir: 'min' cumple si valor>=umbral; 'max' cumple si valor<=umbral. Umbral por ticket.
     ratios: [
-      { clave: 'dscr', etiqueta: 'DSCR (cobertura de cuota)', peso: 35, dir: 'min', umbral: { Bajo: 1.2, Medio: 1.3, Alto: 1.4 }, fmt: 'x',
+      { clave: 'dscr', etiqueta: 'DSCR', tip: 'Cobertura de cuota: flujo mensual ÷ cuota estimada (francés, 25% anual ref., 12m). Mínimo: Bajo 1.2x · Medio 1.3x · Alto 1.4x. Peso 35.', peso: 35, dir: 'min', umbral: { Bajo: 1.2, Medio: 1.3, Alto: 1.4 }, fmt: 'x',
         calc: (v) => (v.flujoMensual && v.cuotaMensual) ? v.flujoMensual / v.cuotaMensual : null },
-      { clave: 'endeudamiento', etiqueta: 'Endeudamiento (deuda/patrimonio)', peso: 20, dir: 'max', umbral: { Bajo: 2.5, Medio: 2.0, Alto: 1.8 }, fmt: 'x',
+      { clave: 'endeudamiento', etiqueta: 'Endeudamiento', tip: 'Deuda financiera ÷ patrimonio. Máximo: Bajo 2.5x · Medio 2.0x · Alto 1.8x. Peso 20.', peso: 20, dir: 'max', umbral: { Bajo: 2.5, Medio: 2.0, Alto: 1.8 }, fmt: 'x',
         calc: (v) => (v.deudaFin != null && v.patrimonio) ? v.deudaFin / v.patrimonio : null },
-      { clave: 'cargaFin', etiqueta: 'Carga financiera (cuota anual/ventas)', peso: 20, dir: 'max', umbral: { Bajo: 0.30, Medio: 0.25, Alto: 0.20 }, fmt: '%',
+      { clave: 'cargaFin', etiqueta: 'Carga financiera', tip: 'Cuota anual estimada ÷ ventas anuales. Máximo: Bajo 30% · Medio 25% · Alto 20%. Peso 20.', peso: 20, dir: 'max', umbral: { Bajo: 0.30, Medio: 0.25, Alto: 0.20 }, fmt: '%',
         calc: (v) => (v.cuotaMensual && v.ventasAct) ? (v.cuotaMensual * 12) / v.ventasAct : null },
-      { clave: 'margen', etiqueta: 'Margen neto (utilidad/ventas)', peso: 15, dir: 'min', umbral: { Bajo: 0.05, Medio: 0.08, Alto: 0.10 }, fmt: '%',
+      { clave: 'margen', etiqueta: 'Margen neto', tip: 'Utilidad ÷ ventas. Mínimo: Bajo 5% · Medio 8% · Alto 10%. Peso 15.', peso: 15, dir: 'min', umbral: { Bajo: 0.05, Medio: 0.08, Alto: 0.10 }, fmt: '%',
         calc: (v) => (v.utilidadAct != null && v.ventasAct) ? v.utilidadAct / v.ventasAct : null },
-      { clave: 'crecimiento', etiqueta: 'Crecimiento de ventas (act/ant −1)', peso: 10, dir: 'min', umbral: { Bajo: -0.10, Medio: 0.00, Alto: 0.05 }, fmt: '%',
+      { clave: 'crecimiento', etiqueta: 'Crecimiento ventas', tip: 'Variación de ventas: (actual ÷ anterior) − 1. Mínimo: Bajo −10% · Medio 0% · Alto +5%. Peso 10.', peso: 10, dir: 'min', umbral: { Bajo: -0.10, Medio: 0.00, Alto: 0.05 }, fmt: '%',
         calc: (v) => (v.ventasAct != null && v.ventasAnt) ? (v.ventasAct / v.ventasAnt - 1) : null }
     ],
     // Análisis comercial/financiero (obligatorio para cerrar). El Business Case lo hereda.
     analisis: [
-      { clave: 'destinoFondos', etiqueta: 'Destino de los fondos', tipo: 'selectReq', motivo: 'Falta el destino de los fondos', opciones: [
+      { clave: 'destinoFondos', etiqueta: 'Destino fondos', tip: 'Uso previsto del financiamiento (capital de trabajo, activo fijo, compra de deuda, expansión). Obligatorio para cerrar el filtro.', tipo: 'selectReq', motivo: 'Falta el destino de los fondos', opciones: [
         { v: 'capital', label: 'Capital de trabajo' },
         { v: 'activo', label: 'Activo fijo productivo' },
         { v: 'deuda', label: 'Compra de deuda' },
         { v: 'expansion', label: 'Expansión selectiva' }
       ] },
-      { clave: 'fuenteRepago', etiqueta: 'Fuente de repago', tipo: 'selectReq', motivo: 'Falta la fuente de repago', opciones: [
+      { clave: 'fuenteRepago', etiqueta: 'Fuente repago', tip: 'De dónde saldrá el pago de las cuotas (flujo operativo, CxC, contratos, mixto). Obligatorio.', tipo: 'selectReq', motivo: 'Falta la fuente de repago', opciones: [
         { v: 'operativo', label: 'Flujo operativo del negocio' },
         { v: 'cxc', label: 'Flujo + cuentas por cobrar' },
         { v: 'contratos', label: 'Ingresos por contratos/proyectos vigentes' },
         { v: 'mixto', label: 'Mixto (varias fuentes)' }
       ] },
-      { clave: 'mitigantes', etiqueta: 'Mitigantes principales', tipo: 'multiReq', motivo: 'Falta indicar mitigantes', opciones: [
+      { clave: 'mitigantes', etiqueta: 'Mitigantes', tip: 'Mitigantes de riesgo del caso: aval, garantía adicional, LTV conservador, plazo reducido, DSCR alto. Obligatorio.', tipo: 'multiReq', motivo: 'Falta indicar mitigantes', opciones: [
         { v: 'aval', label: 'Aval personal' },
         { v: 'garantiaAdic', label: 'Garantía adicional' },
         { v: 'ltvConserv', label: 'LTV conservador' },
@@ -4381,7 +4381,7 @@ const FILTROS_B2B = {
         { v: 'dscrAlto', label: 'Mayor cobertura de flujo (DSCR alto)' },
         { v: 'ninguno', label: 'Sin mitigantes especiales' }
       ] },
-      { clave: 'motivoEvaluacion', etiqueta: 'Motivo por el que el caso merece evaluación', tipo: 'textoLibreReq', motivo: 'Falta el motivo de evaluación' }
+      { clave: 'motivoEvaluacion', etiqueta: 'Motivo evaluación', tip: 'Justificación breve de por qué el caso merece pasar a evaluación. Obligatorio; el Business Case lo hereda.', tipo: 'textoLibreReq', motivo: 'Falta el motivo de evaluación' }
     ],
     score: []
   },
@@ -4394,15 +4394,15 @@ const FILTROS_B2B = {
     titulo: 'Filtro Garantía (por inmueble)',
     gates: [
       // Casilla 1: ¿Inmueble apto/saneado en SUNARP? (de la copia literal). No = mata el inmueble.
-      { clave: 'apto', etiqueta: 'Apto / saneado (SUNARP)', tipo: 'select', oblig: true, opciones: [
+      { clave: 'apto', etiqueta: 'Apto SUNARP', tip: '¿El inmueble está apto/saneado según la copia literal de SUNARP? No = KO (esta garantía no va); Observado = subsanable.', tipo: 'select', oblig: true, opciones: [
         { v: 'si', label: 'Sí', resultado: 'ok' },
         { v: 'observado', label: 'Observado (subsanable)', resultado: 'observado', motivo: 'Inmueble observado: requiere subsanación/excepción' },
         { v: 'no', label: 'No', resultado: 'ko', motivo: 'Inmueble no apto/saneado: esta garantía no va' }
       ] },
       // Casilla 2: Valor referencial (número) + moneda. Obligatorio.
-      { clave: 'valorRef', etiqueta: 'Valor referencial', tipo: 'numReq', motivo: 'Falta el valor referencial del inmueble' },
+      { clave: 'valorRef', etiqueta: 'Valor referencial', tip: 'Valor referencial del inmueble (m² × precio de zona). De aquí sale el LTV = monto ÷ valor.', tipo: 'numReq', motivo: 'Falta el valor referencial del inmueble' },
       // Casilla 3: un ÚNICO link de Drive con todos los documentos (copia literal, HR/PU, DNI, recibo, fotos).
-      { clave: 'linkDrive', etiqueta: 'Link de Drive (documentos)', tipo: 'linkReq', motivo: 'Falta el link de Drive con los documentos del inmueble' }
+      { clave: 'linkDrive', etiqueta: 'Link Drive', tip: 'Un único link de Drive con todos los documentos: copia literal, HR/PU, DNI, recibo de servicios y fotos.', tipo: 'linkReq', motivo: 'Falta el link de Drive con los documentos del inmueble' }
     ],
     // LTV = monto solicitud ÷ valor referencial (misma moneda; TC 3.45 si difieren). Semáforo especial.
     ltv: { tc: 3.45, umbralObservado: 0.35 },
@@ -5844,7 +5844,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.246 (UX ficha B2B: 25% mas ancha; el resumen (prob·accion·SLA) va junto al CODIGO en la cabecera; RUC dentro de la tarjeta Solicitud (ya no en el head) y editable SOLO en la primera etapa (despues inamovible); monto sin la banda de origen; labels homogeneos capitalizados; datos SUNAT en cajones + UBICACION en el filtro; boton GUARDAR arriba a la altura del encabezado de cada etapa con hover VERDE. LOGICA: tieneInmueble=no NO avanza (queda en Solicitud observado 'Sin inmueble'); antiguedad minima 12 meses (1 anio) en todos los tickets (server+espejo). Boton REVISAR junto al semaforo cuando la etapa esta en Amarillo: registra la excepcion (que hara + fecha) via modal de gestion — aplica a SUNAT/Credito/Garantia/Finanzas. REQUIERE RESTART) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.248 (Labels cortos + tooltips en filtros B2B: etiquetas de 2-3 palabras en SUNAT/Credito/Garantia/Finanzas, explicacion larga movida a icono ? con tooltip CSS; catalogo con campo tip en server.js. Frontend + server: requiere restart Railway); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
