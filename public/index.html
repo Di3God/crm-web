@@ -524,12 +524,9 @@
       <div id="b2bScorecards" class="b2b-scorecards oculto"></div>
       <div class="b2b-barra-ctrl">
         <div class="b2b-filtros-mini" id="b2bKanbanFiltros">
-          <select id="b2bkfFecha" onchange="renderKanbanFiltrado()">
-            <option value="">Cualquier fecha</option>
-            <option value="hoy">Hoy</option>
-            <option value="7">Últimos 7 días</option>
-            <option value="30">Últimos 30 días</option>
-          </select>
+          <label class="b2bkf-lbl">📅 <input type="date" id="b2bkfDesde" onchange="renderKanbanFiltrado()" title="Desde"></label>
+          <span class="b2bkf-sep">→</span>
+          <label class="b2bkf-lbl"><input type="date" id="b2bkfHasta" onchange="renderKanbanFiltrado()" title="Hasta"></label>
           <select id="b2bkfPersona" onchange="renderKanbanFiltrado()"><option value="">Toda persona</option></select>
           <select id="b2bkfEtapa" onchange="renderKanbanFiltrado()"><option value="">Toda etapa</option></select>
         </div>

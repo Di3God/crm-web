@@ -2071,3 +2071,20 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 
 /* ===== v1.257: Business Case minimal (cards + previsualizar/Word/PDF) ===== */
 .bc-acciones { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
+
+/* ===== v1.258: alineado bandera roja, pill SUNAT acotado, filtros kanban compactos ===== */
+.rf-opt { justify-content:flex-start; text-align:left; }
+.rf-opt input { flex:0 0 auto; }
+
+/* Columna SUNAT en la lista: ancho contenido, mensaje completo en tooltip */
+.b2b-pill-sunat { display:inline-block; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
+
+/* Filtros del kanban: compactos y prolijos */
+.b2b-filtros-mini { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.b2b-filtros-mini select, .b2b-filtros-mini input[type="date"] {
+  width:auto; max-width:190px; padding:7px 10px; font-size:12px; border:1px solid var(--line);
+  border-radius:10px; background:#fff; color:#334155; font-weight:600;
+}
+.b2b-filtros-mini select:focus, .b2b-filtros-mini input[type="date"]:focus { border-color:#0B5FFF; outline:none; }
+.b2bkf-lbl { display:inline-flex; align-items:center; gap:5px; font-size:13px; }
+.b2bkf-sep { color:#94A3B8; font-weight:700; }

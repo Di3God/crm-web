@@ -4149,8 +4149,11 @@ function celdaSunat(s) {
     const ok = activo && habido;
     const col = ok ? '#1D9E75' : (activo || habido ? '#EF9F27' : '#E24B4A');
     const acti = Array.isArray(d.actividadesEconomicas) && d.actividadesEconomicas[0] ? d.actividadesEconomicas[0] : '';
-    return '<span class="b2b-pill" style="background:' + col + '22;color:' + col + '" title="' + (acti ? acti.replace(/"/g, "'") : '') + '">' +
-      (d.estado || '?') + ' · ' + (d.condicion || '?') + '</span>' +
+    // Solo la parte en MAYÚSCULAS (ACTIVO, NO HABIDO, BAJA DE OFICIO…); el detalle largo va al tooltip.
+    const corto = t => { if (!t) return '?'; const m = String(t).match(/^[^a-zá-úñ]+/); return m ? m[0].replace(/\s+[A-ZÁ-ÚÑ]?$/, '').trim() || String(t).slice(0, 20) : String(t).slice(0, 20); };
+    const tip = ((d.estado || '') + ' · ' + (d.condicion || '') + (acti ? ' — ' + acti : '')).replace(/"/g, "'");
+    return '<span class="b2b-pill b2b-pill-sunat" style="background:' + col + '22;color:' + col + '" title="' + tip + '">' +
+      corto(d.estado) + ' · ' + corto(d.condicion) + '</span>' +
       ' <button class="btn-sunat" onclick="validarSunat(\'' + s.codigo + '\', this)" title="Reconsultar">⟳</button>';
   }
   if (s.sunatEstado === 'error') return '<span class="b2b-sub" style="color:#E24B4A">Error</span> ' + btn('Reintentar');
@@ -4317,15 +4320,16 @@ function poblarFiltrosKanbanB2B(cards) {
 
 // Aplica los filtros (fecha / persona / etapa) sobre las tarjetas y re-renderiza.
 function renderKanbanFiltrado() {
-  const fFecha = ($('b2bkfFecha') && $('b2bkfFecha').value) || '';
+  const fDesde = ($('b2bkfDesde') && $('b2bkfDesde').value) || '';
+  const fHasta = ($('b2bkfHasta') && $('b2bkfHasta').value) || '';
   const fPersona = ($('b2bkfPersona') && $('b2bkfPersona').value) || '';
   const fEtapa = ($('b2bkfEtapa') && $('b2bkfEtapa').value) || '';
-  let corte = 0;
-  if (fFecha === 'hoy') { const d = new Date(); d.setHours(0, 0, 0, 0); corte = d.getTime(); }
-  else if (fFecha === '7') corte = Date.now() - 7 * 86400000;
-  else if (fFecha === '30') corte = Date.now() - 30 * 86400000;
+  const tDesde = fDesde ? new Date(fDesde + 'T00:00:00').getTime() : 0;
+  const tHasta = fHasta ? new Date(fHasta + 'T23:59:59').getTime() : 0;
   const filtradas = B2B_KANBAN_CARDS.filter(c => {
-    if (corte && !(c.fechaIngreso && new Date(c.fechaIngreso).getTime() >= corte)) return false;
+    const ti = c.fechaIngreso ? new Date(c.fechaIngreso).getTime() : 0;
+    if (tDesde && !(ti && ti >= tDesde)) return false;
+    if (tHasta && !(ti && ti <= tHasta)) return false;
     if (fPersona && c.responsableActual !== fPersona) return false;
     if (fEtapa && c.etapaKanban !== fEtapa) return false;
     if (B2B_SC_FILTRO === 'obs' && !(c.observaciones && c.observaciones.length)) return false;
@@ -4614,8 +4618,9 @@ async function cargarEquipoB2B() {
         const enRotacion = !esJefe && m.autoasignar;
         const estadoTxt = esJefe ? '<span class="b2b-sub">Supervisa (no rota)</span>' :
           (enRotacion ? '<span class="b2b-pill" style="background:#1D9E7522;color:#1D9E75">En rotación</span>' : '<span class="b2b-pill" style="background:#88878022;color:#888780">Fuera</span>');
-        const btn = (gestiona && !esJefe) ?
+        let btn = (gestiona && !esJefe) ?
           '<button class="btn sec" onclick="toggleAutoB2B(\'' + m.usuario + '\')">' + (enRotacion ? 'Quitar de rotación' : 'Poner en rotación') + '</button>' : '';
+        if (typeof YO !== 'undefined' && YO && YO.rol === 'admin') btn += ' <button class="btn sec" title="Cambiar contraseña" onclick="cambiarClaveB2B(\'' + m.usuario + '\',\'' + m.nombre.replace(/'/g, '') + '\')">🔑</button>';
         return '<tr>' +
           '<td><b>' + m.nombre + '</b><div class="b2b-sub">' + m.usuario + '</div></td>' +
           '<td>' + (B2B_ROL_TXT[m.rol] || m.rol) + '</td>' +
@@ -4629,6 +4634,16 @@ async function cargarEquipoB2B() {
   }
 }
 
+// Cambia la contraseña de un miembro del equipo B2B (solo admin; usa el endpoint global de claves).
+async function cambiarClaveB2B(usuario, nombre) {
+  const nueva = prompt('Nueva contraseña para ' + nombre + ' (mínimo 8 caracteres):');
+  if (nueva === null) return;
+  if (!nueva || nueva.length < 8) { alert('La contraseña debe tener al menos 8 caracteres.'); return; }
+  try {
+    await api('/api/cambiar-clave', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usuarioObjetivo: usuario, claveNueva: nueva }) });
+    alert('✓ Contraseña actualizada para ' + nombre + '.');
+  } catch (e) { alert(e.message || 'No se pudo cambiar la contraseña.'); }
+}
 async function toggleAutoB2B(usuario) {
   try {
     await api('/api/b2b/equipo/' + encodeURIComponent(usuario) + '/autoasignar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
@@ -5058,10 +5073,10 @@ function panelReunion(modo) {
   const enReunion = FICHA.etapaKanban === 'Reunion comercial';
   const pasada = ['Filtro finanzas', 'Business case'].includes(FICHA.etapaKanban);
   const r = (FICHA.filtros.reunion && FICHA.filtros.reunion.checklist) || {};
-  const head = pasada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Realizada</span>'
-    : (r.realizada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Se dio</span>'
-      : (r.fecha ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">📅 Programada</span>'
-        : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>')));
+  const head = pasada ? '<span class="hp hp-verde">✓ Realizada</span>'
+    : (r.realizada ? '<span class="hp hp-verde">✓ Se dio</span>'
+      : (r.fecha ? '<span class="hp hp-amar">📅 Programada</span>'
+        : '<span class="hp hp-pend">Por evaluar</span>'));
   if (!open) return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, false, '', false, modo, 'Reunion comercial');
 
   const asesor = FICHA.solicitud.responsableActual || 'Sin asignar';
@@ -5097,17 +5112,13 @@ function panelReunion(modo) {
     '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">obligatorio solo para pasar a Finanzas</span></div>' +
     '<div class="reu-com-sub">Registra los acuerdos, aclaraciones y validación de las observaciones.</div>' +
     '<textarea id="fbReuComentario" class="mtr-in reu-txt" maxlength="2000" placeholder="Escribe tus comentarios aquí…" oninput="contadorReuComentario()">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea>' +
-    '<div class="sub" id="fbReuContador" style="font-size:11px">' + ((r.comentario || '').length) + ' / 2000 caracteres</div></div>' +
-    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">📋 Próximos pasos <span class="sub" style="font-weight:400">(opcional)</span> <span class="sub" style="margin-left:auto;font-weight:400">👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</span></div>' +
-    '<textarea id="fbReuPasos" class="mtr-in reu-txt" maxlength="1000" placeholder="Define los próximos pasos acordados…">' + (r.proximosPasos ? String(r.proximosPasos).replace(/</g, '&lt;') : '') + '</textarea></div>';
-
-  const avanzar = pasada ? '<div class="sub" style="margin-top:10px">✓ Este lead ya pasó la reunión comercial.</div>'
-    : '<div class="fb-acc" style="margin-top:12px"><button class="btn" onclick="reunionEfectivaB2B()">✅ Reunión efectiva → pasar a Finanzas</button></div>';
+    '<div class="sub" id="fbReuContador" style="font-size:11px">' + ((r.comentario || '').length) + ' / 2000 caracteres · 👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</div></div>';
 
   const cuerpo = '<div class="fb-body reu-body">' +
     '<div class="reu-top"><span class="fcr-sub">Validación de observaciones y definición de próximos pasos</span>' +
     '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar</button></div>' +
-    banda + cards + puntos + comentarios + avanzar + '</div>';
+    banda + cards + puntos + comentarios +
+    (pasada ? '<div class="sub" style="margin-top:8px">✓ Este lead ya pasó la reunión comercial.</div>' : '') + '</div>';
   return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, true, cuerpo, false, modo, 'Reunion comercial');
 }
 async function guardarReunionB2B(silencioso) {
@@ -5122,6 +5133,12 @@ async function guardarReunionB2B(silencioso) {
     proximosPasos: $('fbReuPasos') ? $('fbReuPasos').value : null,
     realizada: $('reuRealizada') ? $('reuRealizada').checked : !!prev.realizada
   };
+  datos.proximosPasos = prev.proximosPasos || null; // campo retirado de la UI; se conserva lo ya guardado
+  if (datos.realizada && (!datos.comentario || !datos.comentario.trim())) {
+    alert('Marcaste "✅ La reunión se dio": el comentario de la reunión es obligatorio para guardar.');
+    const t = $('fbReuComentario'); if (t) { t.focus(); t.classList.add('reu-txt-err'); setTimeout(() => t.classList.remove('reu-txt-err'), 1600); }
+    return false;
+  }
   try {
     const resp = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/reunion', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos)
@@ -6149,11 +6166,9 @@ function sujetoCard(su, editable) {
     : '<b>' + (su.nombre || '—') + '</b>' + (su.documento ? ' <span class="sub">· ' + su.documento + '</span>' : '');
   const delBtn = editable ? '<button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarSujeto(' + su.id + ')" title="Quitar">✕</button>' : '';
   const metricas = renderFiltroDosCapas('credito', valores, 'suj' + su.id, ticket);
+  // v1.258: los links de sustento van únicamente en "Archivos de crédito (link de Drive)" del panel.
   const docsList = docs.map(d => docAnchor(d) + ' <button class="btn-sunat" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarDoc(' + d.id + ')">✕</button>').join(' ');
-  const docHtml = '<div class="fb-doc" style="margin-top:8px">' +
-    (docs.length ? docsList + ' ' : '<span class="fb-doc-pend">Reporte de central pendiente</span> ') +
-    '<button class="btn-sunat" onclick="agregarLinkDoc(\'credito\',\'Reporte central\',' + su.id + ')">🔗 Agregar link</button>' +
-    '</div>';
+  const docHtml = docs.length ? '<div class="fb-doc" style="margin-top:8px">' + docsList + '</div>' : '';
   return '<div class="fb-suj' + (su._nuevo ? ' fb-suj-nueva' : '') + (su.tipoSujeto === 'empresa' ? ' fb-suj-empresa' : '') + '"><div class="fb-suj-head' + (su.tipoSujeto === 'empresa' ? ' fcr-emp' : '') + '">' + (su.tipoSujeto === 'empresa' ? '<span class="fcr-emp-ic">🏢</span>' : '') + nombreHtml + '<span style="margin-left:auto">' + delBtn + '</span></div>' + metricas + docHtml + '</div>';
 }
 
@@ -6349,7 +6364,11 @@ function panelBusinessCase(desbloqueada, modo) {
   if (!desbloqueada) return fbPanelWrap('businesscase', '📑', 'Business case', '<span class="sub" style="color:#94a3b8">🔒 requiere finanzas en verde</span>', false, '', true);
   const glob = semGlobalB2B();
   const open = FICHA_ETAPA_OPEN === 'businesscase';
-  const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
+  // Listo = las 4 etapas completas + reunión realizada con comentario; si no, Esperando.
+  const rBC = ((FICHA.filtros || {}).reunion && FICHA.filtros.reunion.checklist) || {};
+  const listo = ['fsunat', 'credito', 'garantia', 'finanzas'].every(t => { const st = estadoHeaderB2B(t); return st && st.sem && st.faltan === 0; })
+    && !!rBC.realizada && !!(rBC.comentario && String(rBC.comentario).trim());
+  const estadoHtml = listo ? '<span class="hp hp-verde">Listo</span>' : '<span class="hp hp-pend">Esperando</span>';
   if (!open) return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, false, '', false, modo, 'Business case');
 
   // Card por etapa: semáforo (palabra con fondo) + Completo/Incompleto, según la misma lógica de cabeceras.
