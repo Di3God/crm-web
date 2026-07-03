@@ -1247,6 +1247,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
   enriquecerSunatYAvisar(codigo, !!ruc); // SUNAT primero, luego el aviso WA con ubicación y status
+  try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
@@ -1425,7 +1426,7 @@ function procesarLeadMarketing(norm, opts = {}) {
     enviarAlertaWA(txt); // fire-and-forget: no bloquea la respuesta del webhook
     enColaVerificacion(codigo, gp, norm.nombre); // chequeo "¿atendido?" a los 10 min (solo leads en tiempo real)
   }
-  try { watchdogLeads.registrarLead(); } catch (e) { } // resetea el reloj del watchdog: llegó un lead de campaña
+  try { watchdogLeads.registrarLead('b2c'); } catch (e) { } // resetea el reloj B2C del watchdog
   return { estado: 'creado', codigoLead: codigo, mensajeError: avisoMismoNombre, asignadoA: gp || null };
 }
 
@@ -5939,7 +5940,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.267 (Watchdog de leads: avisa al grupo de marketing WA_GRUPO_MKT_JID cuando dejan de llegar leads de campana - primera alerta a las 2h de silencio (WATCH_PRIMERA_H), luego repite cada 1h (WATCH_REPITE_H) hasta que llegue un lead, que resetea el reloj y rearma el ciclo. Nuevo archivo watchdog-leads.js. Server: restart Railway + variable WA_GRUPO_MKT_JID) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.268 (Watchdog de leads unificado B2C+B2B: un solo mensaje al grupo de marketing que reporta ambos canales con su tiempo de silencio; alerta cuando algun canal supera WATCH_PRIMERA_H (def 2h), repite cada WATCH_REPITE_H (def 2h) hasta WATCH_MAX_ALERTAS (def 3) y solo en horario laboral Peru WATCH_INICIO-WATCH_FIN (def 8-22h); cada lead resetea su canal y rearma el ciclo. Server: restart Railway + WA_GRUPO_MKT_JID), luego repite cada 1h (WATCH_REPITE_H) hasta que llegue un lead, que resetea el reloj y rearma el ciclo. Nuevo archivo watchdog-leads.js. Server: restart Railway + variable WA_GRUPO_MKT_JID) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
