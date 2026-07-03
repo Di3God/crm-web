@@ -1226,6 +1226,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
   enriquecerSunatAsync(codigo); // enriquecimiento SUNAT en segundo plano (no bloquea el webhook)
+  try { alertasWAB2B.alertaNuevaSolicitud(codigo); } catch (e) {} // aviso al grupo B2B (no bloquea)
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
@@ -1275,6 +1276,9 @@ async function enviarAlertaWA(texto, jid) {
 
 // ===== Planes de accion por WhatsApp (cortes 9am/1pm/6pm, estado vivo) =====
 const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolidado, enviarAlertaWA, peruFecha });
+// Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
+const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
+alertasWAB2B.iniciarCortes();
 alertasWA.iniciarCortes();
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
 app.get('/api/wa/plan', soloAdminOJefa, async (req, res) => {
@@ -5133,6 +5137,21 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
 // Descartar (sale del tablero, va a Desestimados). Motivo por defecto: "No contactable".
 // Trazabilidad de UNA solicitud (v1.249): solo cambios GUARDADOS (auditoría b2b_* del código).
 // Visible para cualquier usuario B2B que pueda abrir la ficha (no solo admin).
+// Alertas WA B2B: previsualizar el texto de un corte y enviarlo AHORA (admin / jefe_b2b).
+app.get('/api/b2b/alertas-wa/preview', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  const corte = req.query.corte === '6pm' ? '6pm' : '9am';
+  res.json({ corte, jidConfigurado: !!process.env.WA_GRUPO_B2B_JID, texto: alertasWAB2B.generarCorte(corte) || '(sin contenido: no hay solicitudes activas)' });
+});
+app.post('/api/b2b/alertas-wa/enviar', soloB2B, async (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (!process.env.WA_GRUPO_B2B_JID) return res.status(422).json({ error: 'Configura WA_GRUPO_B2B_JID en Railway primero' });
+  const corte = (req.body && req.body.corte) === '6pm' ? '6pm' : '9am';
+  const ok = await alertasWAB2B.enviarCorteAhora(corte);
+  auditar(req, 'b2b_wa_corte_manual', null, corte);
+  res.json({ ok, corte });
+});
+
 app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -5889,7 +5908,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.258 (Reunion: sin boton pasar a Finanzas, comentario OBLIGATORIO al guardar con La-reunion-se-dio, sin proximos pasos, comentario a todo el ancho, cabecera Por evaluar; Business Case cabecera Listo/Esperando; credito sin boton Agregar link por sujeto (queda el link de Drive del panel); lista con pill SUNAT acotado (texto corto + tooltip); kanban con filtro de fechas desde/hasta (date picker) y filtros compactos; boton admin para cambiar contrasena de funcionarios/creditos; Brillite->Brillith con migracion idempotente. Server + frontend: restart Railway + Ctrl+F5) y acciones Previsualizar / Descargar Word editable (.doc) / Imprimir-PDF; el expediente completo (veredicto global, resumen, veredicto por filtro, datos clave, reunion, analisis, observaciones, timeline, recomendacion) se genera en la previsualizacion y descargas. Cierra la ronda v1.255-1.257. Frontend; el paquete acumulado incluye cambios de server (reunion realizada + tasa seleccionable): restart Railway + Ctrl+F5), comentarios y proximos pasos en franjas a todo el ancho, boton Guardar. Finanzas: sub Informacion financiera, sin pill de cuerpo, Guardar, insumos con anios dinamicos (Ventas/Utilidad Operativa 2025-2024), cuota con tasa seleccionable 25/27.5/30/32 que recalcula DSCR y carga financiera (server + cliente), mitigantes en desplegable de checkboxes, motivo de evaluacion a todo el ancho, sin banda final. Server + frontend: restart Railway + Ctrl+F5), origen sin campana; SUNAT con Estado/Condicion en el grid, seccion Validacion automatica no editable con chips de color, sin Guardar (auto-save silencioso) y sin banda Verde-100; Garantia con sub simple, Guardar validado por completitud + Guardar avance, sin bandas de escalado ni placeholder de LTV; cabeceras de TODOS los paneles con [Completo/Incompleto]+[Avanza/No Avanza] con fondo de color. Solo frontend: Ctrl+F5), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.259 (Alertas WhatsApp B2B a grupo propio via WA_GRUPO_B2B_JID: cortes 9am plan del dia (nuevas, reuniones HOY, SLA vencidos, tablero con montos) y 6pm cierre (actividad de auditoria + pendientes), alerta instantanea de nueva solicitud del webhook, endpoints /api/b2b/alertas-wa/preview y /enviar para admin y jefe_b2b. Nuevo archivo alertas-wa-b2b.js. Server: restart Railway + variable WA_GRUPO_B2B_JID); lista con pill SUNAT acotado (texto corto + tooltip); kanban con filtro de fechas desde/hasta (date picker) y filtros compactos; boton admin para cambiar contrasena de funcionarios/creditos; Brillite->Brillith con migracion idempotente. Server + frontend: restart Railway + Ctrl+F5) y acciones Previsualizar / Descargar Word editable (.doc) / Imprimir-PDF; el expediente completo (veredicto global, resumen, veredicto por filtro, datos clave, reunion, analisis, observaciones, timeline, recomendacion) se genera en la previsualizacion y descargas. Cierra la ronda v1.255-1.257. Frontend; el paquete acumulado incluye cambios de server (reunion realizada + tasa seleccionable): restart Railway + Ctrl+F5), comentarios y proximos pasos en franjas a todo el ancho, boton Guardar. Finanzas: sub Informacion financiera, sin pill de cuerpo, Guardar, insumos con anios dinamicos (Ventas/Utilidad Operativa 2025-2024), cuota con tasa seleccionable 25/27.5/30/32 que recalcula DSCR y carga financiera (server + cliente), mitigantes en desplegable de checkboxes, motivo de evaluacion a todo el ancho, sin banda final. Server + frontend: restart Railway + Ctrl+F5), origen sin campana; SUNAT con Estado/Condicion en el grid, seccion Validacion automatica no editable con chips de color, sin Guardar (auto-save silencioso) y sin banda Verde-100; Garantia con sub simple, Guardar validado por completitud + Guardar avance, sin bandas de escalado ni placeholder de LTV; cabeceras de TODOS los paneles con [Completo/Incompleto]+[Avanza/No Avanza] con fondo de color. Solo frontend: Ctrl+F5), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
