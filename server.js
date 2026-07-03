@@ -4261,9 +4261,11 @@ const RANGOS_VENTAS_TICKET = { Bajo: [500000, 3000000], Medio: [3000000, 1000000
 const ANTIG_MIN_TICKET = { Bajo: 12, Medio: 12, Alto: 12 }; // minimo 1 anio para avanzar (todos los tickets)
 // Cuota estimada "gruesa" para el DSCR: cuota fija (francés), tasa piso referencial 25% anual, 12 meses.
 const CUOTA_REF = { tasaAnual: 0.25, meses: 12 };
-function cuotaEstimadaB2B(monto) {
+const TASAS_REF_B2B = [0.25, 0.275, 0.30, 0.32]; // tasas seleccionables para estimar la cuota
+function cuotaEstimadaB2B(monto, tasa) {
   const m = Number(monto); if (!isFinite(m) || m <= 0) return null;
-  const i = CUOTA_REF.tasaAnual / 12, n = CUOTA_REF.meses;
+  const t = TASAS_REF_B2B.includes(Number(tasa)) ? Number(tasa) : CUOTA_REF.tasaAnual;
+  const i = t / 12, n = CUOTA_REF.meses;
   return m * (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
 }
 
@@ -4508,8 +4510,9 @@ function calcularLTV(cat, valores, montoSolicitud) {
 function evaluarRatiosB2B(cat, valores, ticket, monto) {
   const v = {};
   (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
-  const cuotaEst = cuotaEstimadaB2B(monto);
-  v.cuotaMensual = cuotaEst; // inyectada: alimenta DSCR y carga financiera
+  const tasa = TASAS_REF_B2B.includes(Number(valores.tasaRef)) ? Number(valores.tasaRef) : CUOTA_REF.tasaAnual;
+  const cuotaEst = cuotaEstimadaB2B(monto, tasa);
+  v.cuotaMensual = cuotaEst; // inyectada: alimenta DSCR y carga financiera (con la tasa seleccionada)
   let ganado = 0, pesoTotal = 0;
   const detalle = [], observaciones = [];
   let capacidad = null;
@@ -4530,7 +4533,7 @@ function evaluarRatiosB2B(cat, valores, ticket, monto) {
     if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
   }
   const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
-  return { puntaje, detalle, observaciones, capacidad, cuotaEst };
+  return { puntaje, detalle, observaciones, capacidad, cuotaEst, tasa };
 }
 
 // Aplica una penalización directa al puntaje según su tipo. Devuelve puntos a RESTAR (>=0).
@@ -5090,7 +5093,8 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
     modalidad: b.modalidad || null,
     lugar: (b.lugar || '').slice(0, 200) || null,
     comentario: (b.comentario || '').slice(0, 2000) || null,
-    proximosPasos: (b.proximosPasos || '').slice(0, 1000) || null
+    proximosPasos: (b.proximosPasos || '').slice(0, 1000) || null,
+    realizada: !!b.realizada
   };
   const ahora = new Date().toISOString();
   db.prepare(`INSERT INTO b2b_filtros (codigoSolicitud, tipoFiltro, checklist, semaforo, puntaje, motivos, observaciones, responsable, actualizadoEn)
@@ -5115,8 +5119,9 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
   // v1.252: para avanzar a Filtro finanzas el comentario de la reunión comercial es OBLIGATORIO.
   if (hacia === 'Filtro finanzas') {
     const fr = db.prepare("SELECT checklist FROM b2b_filtros WHERE codigoSolicitud=? AND tipoFiltro='reunion'").get(s.codigo);
-    let com = null; try { com = fr && fr.checklist ? (JSON.parse(fr.checklist).comentario || null) : null; } catch (e) {}
-    if (!com || !String(com).trim()) return res.status(409).json({ error: 'Para pasar a Finanzas primero registra y GUARDA el comentario de la reunión comercial (acuerdos y validación de observaciones).' });
+    let r = {}; try { r = fr && fr.checklist ? JSON.parse(fr.checklist) : {}; } catch (e) {}
+    if (!r.realizada) return res.status(409).json({ error: 'Para pasar a Finanzas primero activa "La reunión se dio" y guarda la reunión comercial.' });
+    if (!r.comentario || !String(r.comentario).trim()) return res.status(409).json({ error: 'Para pasar a Finanzas primero registra y GUARDA el comentario de la reunión comercial (acuerdos y validación de observaciones).' });
   }
   db.prepare('UPDATE b2b_solicitudes SET estado=? WHERE codigo=?').run(regla.estado, s.codigo);
   auditar(req, 'b2b_kanban_mover', s.codigo, actual + ' → ' + hacia);
@@ -5882,7 +5887,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.254 (Business Case como expediente ejecutivo final: banda de veredicto global, resumen comercial en grid, veredicto por filtro en cards con semaforo palabra-fondo + KOs, datos clave heredados, reunion comercial heredada (acuerdos + proximos pasos), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.257 (Business Case final: panel minimal con 4 cards de etapas (semaforo palabra-fondo + Completo/Incompleto segun la logica de cabeceras) y acciones Previsualizar / Descargar Word editable (.doc) / Imprimir-PDF; el expediente completo (veredicto global, resumen, veredicto por filtro, datos clave, reunion, analisis, observaciones, timeline, recomendacion) se genera en la previsualizacion y descargas. Cierra la ronda v1.255-1.257. Frontend; el paquete acumulado incluye cambios de server (reunion realizada + tasa seleccionable): restart Railway + Ctrl+F5), comentarios y proximos pasos en franjas a todo el ancho, boton Guardar. Finanzas: sub Informacion financiera, sin pill de cuerpo, Guardar, insumos con anios dinamicos (Ventas/Utilidad Operativa 2025-2024), cuota con tasa seleccionable 25/27.5/30/32 que recalcula DSCR y carga financiera (server + cliente), mitigantes en desplegable de checkboxes, motivo de evaluacion a todo el ancho, sin banda final. Server + frontend: restart Railway + Ctrl+F5), origen sin campana; SUNAT con Estado/Condicion en el grid, seccion Validacion automatica no editable con chips de color, sin Guardar (auto-save silencioso) y sin banda Verde-100; Garantia con sub simple, Guardar validado por completitud + Guardar avance, sin bandas de escalado ni placeholder de LTV; cabeceras de TODOS los paneles con [Completo/Incompleto]+[Avanza/No Avanza] con fondo de color. Solo frontend: Ctrl+F5), tabla de observaciones vivas con accion sugerida, linea de tiempo del expediente y recomendacion final; boton Imprimir/PDF que genera el formato en ventana limpia. Solo frontend: Ctrl+F5), cifras alineadas a la derecha, tabla de ratios como tarjeta con chips cumple/observar, mitigantes tipo pastilla, cabecera con pill vivo (Completo/Incompleto + %) y Guardar arriba; fix btnInfoFiltro que apuntaba a sunat. Solo frontend: Ctrl+F5). Comentario OBLIGATORIO para pasar a Finanzas: validado en cliente y en server (/mover). Nuevo endpoint PUT /reunion. Server + frontend: restart Railway + Ctrl+F5) + Completo/Incompleto al costado, aplicado tambien a credito. Solo frontend: Ctrl+F5) al lado de Guardar filtro; filas con icono por campo, chips KO/obs que no se cortan, selects coloreados por estado en vivo, banda verde de empresa. Solo frontend: Ctrl+F5); bandera roja con modal de motivos + comentario obligatorio; Cerrar bloqueado con cambios sin guardar (marca paneles en rojo) y hover rojo; rediseno visual de Solicitud y Filtro SUNAT segun mockups. Server + frontend: restart Railway + Ctrl+F5); boton +Gestion ELIMINADO de los paneles; capitalizacion correcta de la PRIMERA letra en labels/secciones (::first-letter, ya no capitalize por palabra). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

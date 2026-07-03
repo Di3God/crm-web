@@ -2024,3 +2024,50 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .bc-body .bc-analisis { background:#fff; border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:10px; display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
 .bc-body .bc-analisis .sub { font-size:11px; margin-right:6px; }
 .bc-body .fsu-grid { margin-bottom:10px; }
+
+/* ===== v1.255: cabecera de paneles [Completo/Incompleto] + [Avanza/No Avanza] ===== */
+.hp { display:inline-block; font-size:11px; font-weight:800; border-radius:8px; padding:4px 11px; letter-spacing:.2px; white-space:nowrap; }
+.hp-comp  { background:#1D9E75; color:#fff; }
+.hp-inc   { background:#EF9F27; color:#fff; }
+.hp-verde { background:#1D9E75; color:#fff; }
+.hp-amar  { background:#EF9F27; color:#fff; }
+.hp-rojo  { background:#E24B4A; color:#fff; }
+.hp-pend  { background:#EEF2F7; color:#6B7A8D; }
+/* SUNAT: filas de validación en modo lectura (chips a la derecha) */
+.fsu-body .mtr-row .mtr-ctrl { margin-left:auto; }
+.fsu-body .fsu-celda-v .mtr-chip { font-size:11px; padding:2px 9px; }
+
+/* ===== v1.256: Reunión en franjas + tasa seleccionable + mitigantes desplegable ===== */
+.reu-top { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.reu-top .fcr-sub { flex:1; }
+.reu-band-prog { align-items:center; gap:10px; }
+.reu-prog-lbl { font-size:12.5px; font-weight:800; white-space:nowrap; }
+.reu-band-prog .mtr-in { min-width:0; }
+.reu-switch { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800; border:1.5px solid var(--line); border-radius:10px; padding:7px 12px; cursor:pointer; white-space:nowrap; background:#fff; color:#6B7A8D; transition:all .12s ease; }
+.reu-switch input { accent-color:#1D9E75; }
+.reu-switch-on { background:#E7F6EF; border-color:#1D9E75; color:#1D9E75; }
+.reu-com-franja { width:100%; margin-bottom:10px; }
+.reu-com-franja .reu-txt { min-height:90px; }
+.reu-com-franja .reu-com-tit { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+/* Selector de tasa dentro de la nota de cuota */
+.rt-tasa { width:auto; padding:2px 6px; font-size:12px; font-weight:700; display:inline-block; margin:0 3px; }
+.rt-cuota { display:flex; align-items:center; gap:4px; flex-wrap:wrap; background:#F1F6FF; border:1px solid #D6E4FF; border-radius:10px; padding:8px 12px; font-size:12.5px; margin-bottom:8px; }
+.rt-cuota-pend { background:#FFF8E8; border-color:#F3D98A; }
+
+/* Mitigantes: desplegable de checkboxes */
+.an-dd { position:relative; display:inline-block; }
+.an-dd-btn { min-width:220px; text-align:left; cursor:pointer; display:inline-flex; align-items:center; justify-content:space-between; gap:8px; }
+.an-dd-caret { color:#94A3B8; }
+.an-dd-menu { position:absolute; right:0; top:calc(100% + 4px); z-index:50; background:#fff; border:1px solid var(--line); border-radius:12px; box-shadow:0 8px 24px rgba(15,23,42,.14); padding:6px; display:flex; flex-direction:column; gap:2px; min-width:260px; }
+.an-dd-item { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:7px 10px; border-radius:8px; cursor:pointer; }
+.an-dd-item:hover { background:#F7FAFF; }
+.an-dd-item input { accent-color:#0B5FFF; }
+
+/* Motivo de evaluación: franja a todo el ancho */
+.mtr-row-block { flex-direction:column; align-items:stretch !important; }
+.mtr-row-block .mtr-lbl { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.mtr-row-block .an-textarea { width:100%; min-height:90px; }
+
+/* ===== v1.257: Business Case minimal (cards + previsualizar/Word/PDF) ===== */
+.bc-acciones { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }

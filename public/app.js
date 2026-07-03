@@ -5030,6 +5030,24 @@ function reuCardFiltro(tipo, titulo, ico, panel) {
     '<span class="reu-card-ic">' + ico + '</span><div><div class="reu-card-t">' + titulo + '</div>' +
     '<div class="reu-card-s">' + (sem ? SEM_EMOJI[sem] + ' ' : '') + txt + '</div></div><span class="reu-card-fl">›</span></div>';
 }
+// Desplegable de checkboxes (mitigantes): abre/cierra el menú y actualiza el contador del botón.
+function toggleAnDD(btn) {
+  const menu = btn.parentElement.querySelector('.an-dd-menu'); if (!menu) return;
+  const abierto = !menu.classList.contains('oculto');
+  document.querySelectorAll('.an-dd-menu').forEach(m => m.classList.add('oculto'));
+  if (!abierto) {
+    menu.classList.remove('oculto');
+    setTimeout(() => document.addEventListener('click', function cerrarDD(ev) {
+      if (!menu.contains(ev.target) && ev.target !== btn) { menu.classList.add('oculto'); document.removeEventListener('click', cerrarDD); }
+    }), 0);
+  }
+}
+function anDDContador(chk) {
+  const dd = chk.closest('.an-dd'); if (!dd) return;
+  const n = dd.querySelectorAll('input:checked').length;
+  const btn = dd.querySelector('.an-dd-btn');
+  if (btn) btn.innerHTML = (n ? n + ' seleccionado' + (n > 1 ? 's' : '') : 'Seleccionar…') + ' <span class="an-dd-caret">▾</span>';
+}
 function contadorReuComentario() {
   const t = $('fbReuComentario'); const c = $('fbReuContador');
   if (t && c) c.textContent = (t.value || '').length + ' / 2000 caracteres';
@@ -5041,40 +5059,28 @@ function panelReunion(modo) {
   const pasada = ['Filtro finanzas', 'Business case'].includes(FICHA.etapaKanban);
   const r = (FICHA.filtros.reunion && FICHA.filtros.reunion.checklist) || {};
   const head = pasada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Realizada</span>'
-    : (r.fecha ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">📅 Programada</span>'
-      : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>'));
+    : (r.realizada ? '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75">✓ Se dio</span>'
+      : (r.fecha ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">📅 Programada</span>'
+        : (enReunion ? '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F">En espera</span>' : '<span class="sub">pendiente</span>')));
   if (!open) return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, false, '', false, modo, 'Reunion comercial');
 
-  // Pill de cabecera del cuerpo (formato unificado: palabra + Completo/Incompleto)
-  const comOk = !!(r.comentario && String(r.comentario).trim());
-  const faltanReu = (r.fecha ? 0 : 1) + (comOk ? 0 : 1);
-  const pillCuerpo = pasada ? '<span class="sem-word sem-verde">Realizada</span>'
-    : pillSemHTML(r.fecha ? 'Amarillo' : null, faltanReu).replace('sem-amarillo">Amarillo', 'sem-amarillo">Programada');
-
-  // Banda de programación (fecha / modalidad / asesor) + form de (re)programación
   const asesor = FICHA.solicitud.responsableActual || 'Sin asignar';
-  const fFmt = r.fecha ? new Date(r.fecha + 'T' + (r.hora || '00:00')).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : null;
-  const banda = r.fecha
-    ? '<div class="reu-band">' +
-      '<div class="reu-cell"><span class="reu-cell-ic">📅</span><div><div class="reu-cell-k">Fecha programada</div><div class="reu-cell-v">' + fFmt + '</div>' + (r.hora ? '<div class="reu-cell-h">🕒 ' + r.hora + '</div>' : '') + '</div></div>' +
-      '<div class="reu-cell"><span class="reu-cell-ic">📍</span><div><div class="reu-cell-k">Modalidad</div><div class="reu-cell-v">' + (r.modalidad || '—') + '</div>' + (r.lugar ? '<div class="reu-cell-h">' + String(r.lugar).replace(/</g, '&lt;') + '</div>' : '') + '</div></div>' +
-      '<div class="reu-cell"><span class="reu-cell-ic">👤</span><div><div class="reu-cell-k">Asesor responsable</div><div class="reu-cell-v">' + asesor + '</div><div class="reu-cell-h">Asesor Comercial</div></div></div>' +
-      '<button class="btn sec reu-reprog" onclick="toggleReprogramarReunion()">📅 Reprogramar</button></div>'
-    : '<div class="reu-band reu-band-vacia"><span class="sub">Aún no hay reunión programada.</span><button class="btn sec reu-reprog" onclick="toggleReprogramarReunion()">📅 Programar reunión</button></div>';
-  const form = '<div id="reuForm" class="reu-form' + (r.fecha ? ' oculto' : '') + '">' +
-    '<label>Fecha <input type="date" class="mtr-in" id="reuFecha" value="' + (r.fecha || '') + '"></label>' +
-    '<label>Hora <input type="time" class="mtr-in" id="reuHora" value="' + (r.hora || '') + '"></label>' +
-    '<label>Modalidad <select class="mtr-in" id="reuModalidad">' +
-    ['Presencial', 'Virtual (videollamada)', 'Llamada'].map(m => '<option' + (r.modalidad === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select></label>' +
-    '<label style="flex:1;min-width:180px">Lugar / link <input type="text" class="mtr-in" id="reuLugar" style="width:100%" placeholder="Oficina, dirección o link de la videollamada" value="' + (r.lugar ? String(r.lugar).replace(/"/g, '&quot;') : '') + '"></label></div>';
+  // Franja única de programación: label a la izquierda, reloj (fecha+hora) + modalidad + lugar a la derecha.
+  const fh = r.fecha ? (r.fecha + 'T' + (r.hora || '09:00')) : '';
+  const banda = '<div class="reu-band reu-band-prog">' +
+    '<span class="reu-prog-lbl">📅 Programar reunión</span>' +
+    '<input type="datetime-local" class="mtr-in" id="reuFechaHora" value="' + fh + '">' +
+    '<select class="mtr-in" id="reuModalidad">' +
+    ['Presencial', 'Virtual (videollamada)', 'Llamada'].map(m => '<option' + (r.modalidad === m ? ' selected' : '') + '>' + m + '</option>').join('') + '</select>' +
+    '<input type="text" class="mtr-in" id="reuLugar" style="flex:1;min-width:160px" placeholder="Oficina, dirección o link" value="' + (r.lugar ? String(r.lugar).replace(/"/g, '&quot;') : '') + '">' +
+    '<label class="reu-switch' + (r.realizada ? ' reu-switch-on' : '') + '" title="Actívalo cuando la reunión se haya realizado (requisito para pasar a Finanzas)">' +
+    '<input type="checkbox" id="reuRealizada"' + (r.realizada ? ' checked' : '') + ' onchange="this.closest(\'.reu-switch\').classList.toggle(\'reu-switch-on\', this.checked)"> ✅ La reunión se dio</label></div>';
 
-  // Cards de estado de los 3 filtros previos
   const cards = '<div class="reu-cards">' +
     reuCardFiltro('sunat', 'Filtro SUNAT', '🏢', 'fsunat') +
     reuCardFiltro('credito', 'Filtro Crédito', '🛡️', 'credito') +
     reuCardFiltro('garantia', 'Filtro Garantía', '🏠', 'garantia') + '</div>';
 
-  // Tabla de puntos a validar (todas las observaciones amarillas)
   const obs = recolectarObservacionesB2B();
   const chipO = o => '<span class="reu-chip">' + o.ico + ' ' + o.origen + '</span>';
   const tabla = obs.length
@@ -5086,35 +5092,35 @@ function panelReunion(modo) {
     '<div><div class="reu-puntos-t">Puntos a validar en la reunión</div><div class="reu-puntos-s">Se muestran solo las observaciones (amarillas) de los filtros, para validar con el cliente.</div></div>' +
     '<span class="reu-badge">' + obs.length + ' ' + (obs.length === 1 ? 'observación' : 'observaciones') + '</span></div>' + tabla + '</div>';
 
-  // Comentarios (obligatorio para avanzar) + próximos pasos (opcional). Sin selector de responsable: es el asesor comercial.
-  const comentarios = '<div class="reu-com-grid">' +
-    '<div class="reu-com"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">obligatorio para pasar a Finanzas</span></div>' +
+  // Comentarios en FRANJAS horizontales a todo el ancho.
+  const comentarios =
+    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">obligatorio solo para pasar a Finanzas</span></div>' +
     '<div class="reu-com-sub">Registra los acuerdos, aclaraciones y validación de las observaciones.</div>' +
     '<textarea id="fbReuComentario" class="mtr-in reu-txt" maxlength="2000" placeholder="Escribe tus comentarios aquí…" oninput="contadorReuComentario()">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea>' +
     '<div class="sub" id="fbReuContador" style="font-size:11px">' + ((r.comentario || '').length) + ' / 2000 caracteres</div></div>' +
-    '<div class="reu-com"><div class="reu-com-tit">📋 Próximos pasos <span class="sub" style="font-weight:400">(opcional)</span></div>' +
-    '<textarea id="fbReuPasos" class="mtr-in reu-txt" maxlength="1000" placeholder="Define los próximos pasos acordados…">' + (r.proximosPasos ? String(r.proximosPasos).replace(/</g, '&lt;') : '') + '</textarea>' +
-    '<div class="reu-com-sub" style="margin-top:8px">👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</div></div></div>';
+    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">📋 Próximos pasos <span class="sub" style="font-weight:400">(opcional)</span> <span class="sub" style="margin-left:auto;font-weight:400">👤 Responsable: <b>' + asesor + '</b> (asesor comercial)</span></div>' +
+    '<textarea id="fbReuPasos" class="mtr-in reu-txt" maxlength="1000" placeholder="Define los próximos pasos acordados…">' + (r.proximosPasos ? String(r.proximosPasos).replace(/</g, '&lt;') : '') + '</textarea></div>';
 
   const avanzar = pasada ? '<div class="sub" style="margin-top:10px">✓ Este lead ya pasó la reunión comercial.</div>'
     : '<div class="fb-acc" style="margin-top:12px"><button class="btn" onclick="reunionEfectivaB2B()">✅ Reunión efectiva → pasar a Finanzas</button></div>';
 
   const cuerpo = '<div class="fb-body reu-body">' +
-    '<div class="fcr-head"><span class="fcr-head-ic reu-head-ic">🤝</span>' +
-    '<div><div class="fcr-tit">Reunión comercial</div><div class="fcr-sub">Validación de observaciones y definición de próximos pasos</div></div>' +
-    '<span class="fcr-pill-wrap">' + pillCuerpo + '</span>' +
-    '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar reunión</button></div>' +
-    banda + form + cards + puntos + comentarios + avanzar + '</div>';
+    '<div class="reu-top"><span class="fcr-sub">Validación de observaciones y definición de próximos pasos</span>' +
+    '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar</button></div>' +
+    banda + cards + puntos + comentarios + avanzar + '</div>';
   return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, true, cuerpo, false, modo, 'Reunion comercial');
 }
 async function guardarReunionB2B(silencioso) {
+  const fh = $('reuFechaHora') ? $('reuFechaHora').value : '';
+  const prev = (FICHA.filtros.reunion && FICHA.filtros.reunion.checklist) || {};
   const datos = {
-    fecha: $('reuFecha') ? $('reuFecha').value : ((FICHA.filtros.reunion && FICHA.filtros.reunion.checklist || {}).fecha || null),
-    hora: $('reuHora') ? $('reuHora').value : null,
+    fecha: fh ? fh.slice(0, 10) : (prev.fecha || null),
+    hora: fh ? fh.slice(11, 16) : (prev.hora || null),
     modalidad: $('reuModalidad') ? $('reuModalidad').value : null,
     lugar: $('reuLugar') ? $('reuLugar').value : null,
     comentario: $('fbReuComentario') ? $('fbReuComentario').value : null,
-    proximosPasos: $('fbReuPasos') ? $('fbReuPasos').value : null
+    proximosPasos: $('fbReuPasos') ? $('fbReuPasos').value : null,
+    realizada: $('reuRealizada') ? $('reuRealizada').checked : !!prev.realizada
   };
   try {
     const resp = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/reunion', {
@@ -5127,7 +5133,13 @@ async function guardarReunionB2B(silencioso) {
   } catch (e) { if (!silencioso) alert('No se pudo guardar la reunión: ' + e.message); return false; }
 }
 async function reunionEfectivaB2B() {
-  // El comentario de la reunión es requisito para avanzar a Finanzas (también lo valida el server).
+  // Para avanzar a Finanzas: switch "La reunión se dio" activado + comentario (también lo valida el server).
+  const dio = $('reuRealizada') ? $('reuRealizada').checked : !!((FICHA.filtros.reunion && FICHA.filtros.reunion.checklist || {}).realizada);
+  if (!dio) {
+    alert('Activa "✅ La reunión se dio" en la franja de programación para poder pasar a Finanzas.');
+    const sw = document.querySelector('.reu-switch'); if (sw) { sw.classList.add('reu-txt-err'); setTimeout(() => sw.classList.remove('reu-txt-err'), 1600); }
+    return;
+  }
   const txt = $('fbReuComentario') ? $('fbReuComentario').value.trim() : ((FICHA.filtros.reunion && FICHA.filtros.reunion.checklist || {}).comentario || '');
   if (!txt) {
     alert('Registra el comentario de la reunión (acuerdos y validación de observaciones) antes de pasar a Finanzas.');
@@ -5385,16 +5397,19 @@ const RATIO_CALC_JS = {
 };
 // Cuota estimada gruesa (cuota fija 25% a 12m) sobre el monto sincerado; alimenta el DSCR.
 const CUOTA_REF_JS = { tasaAnual: 0.25, meses: 12 };
-function cuotaEstimadaJS(monto) {
+const TASAS_REF_JS = [0.25, 0.275, 0.30, 0.32];
+function cuotaEstimadaJS(monto, tasa) {
   const m = Number(monto); if (!isFinite(m) || m <= 0) return null;
-  const i = CUOTA_REF_JS.tasaAnual / 12, n = CUOTA_REF_JS.meses;
+  const t = TASAS_REF_JS.includes(Number(tasa)) ? Number(tasa) : CUOTA_REF_JS.tasaAnual;
+  const i = t / 12, n = CUOTA_REF_JS.meses;
   return m * (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
 }
 function evaluarRatiosJS(cat, valores, ticket) {
   const v = {};
   (cat.insumos || []).forEach(i => { const n = Number(valores[i.clave]); v[i.clave] = isFinite(n) ? n : null; });
   const monto = FICHA.solicitud && Number(FICHA.solicitud.montoSolicitado);
-  const cuotaEst = cuotaEstimadaJS(monto);
+  const tasa = TASAS_REF_JS.includes(Number(valores.tasaRef)) ? Number(valores.tasaRef) : CUOTA_REF_JS.tasaAnual;
+  const cuotaEst = cuotaEstimadaJS(monto, tasa);
   v.cuotaMensual = cuotaEst;
   let ganado = 0, pesoTotal = 0; const detalle = []; const observaciones = []; let capacidad = null;
   (cat.ratios || []).forEach(r => {
@@ -5410,7 +5425,7 @@ function evaluarRatiosJS(cat, valores, ticket) {
     if (r.clave === 'dscr' && v.flujoMensual) capacidad = v.flujoMensual / umbral;
   });
   const puntaje = pesoTotal ? Math.round(ganado / pesoTotal * 100) : 0;
-  return { puntaje, detalle, observaciones, capacidad, cuotaEst };
+  return { puntaje, detalle, observaciones, capacidad, cuotaEst, tasa };
 }
 function penalJS(p, valores) {
   const val = valores[p.clave];
@@ -5466,7 +5481,12 @@ function inputFiltro2(campo, valores, prefijo, tipo, ticket) {
   if (campo.formato === 'aniosMeses') {
     const meses = val != null && val !== '' ? Number(val) : null;
     const txt = meses != null && isFinite(meses) ? fmtAniosMeses(meses) : '—';
-    return '<span class="mtr-am">' + txt + '</span><input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (meses != null ? meses : '') + '">';
+    let cls = 'mtr-chip-p';
+    if (meses != null && isFinite(meses) && campo.minTicket) {
+      const min = campo.minTicket[ticket] != null ? campo.minTicket[ticket] : campo.minTicket.Bajo;
+      cls = meses < min ? 'mtr-chip-ko' : 'mtr-chip-ok';
+    }
+    return '<span class="mtr-chip ' + cls + '">' + txt + '</span><input type="hidden" data-f2="' + prefijo + '" data-k="' + campo.clave + '" value="' + (meses != null ? meses : '') + '">';
   }
   // Numérico con límite por ticket (KO o observado). Unidad clara + bloqueo de letras + límite visible.
   if (campo.tipo === 'numMaxTicket' || campo.tipo === 'numObsTicket') {
@@ -5574,6 +5594,10 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     finanzas: { djAnual: '📄', eeff: '📊', flujoProyectado: '📈', reporteTributario: '🧾', fichaRuc: '🪪', ventasAct: '💵', ventasAnt: '💵', utilidadAct: '📈', utilidadAnt: '📉', deudaFin: '🏦', patrimonio: '🏛️', flujoMensual: '💧', destinoFondos: '🎯', fuenteRepago: '🔁', mitigantes: '🛡️', motivoEvaluacion: '📝' }
   };
   const icoDe = k => (ICO_F2[tipo] && ICO_F2[tipo][k]) || null;
+  // Etiquetas dinámicas por año de cierre (finanzas): actual = año pasado, anterior = hace dos.
+  const _yA = new Date().getFullYear() - 1, _yB = _yA - 1;
+  const ETIQ_FIN = { ventasAct: 'Ventas ' + _yA, ventasAnt: 'Ventas ' + _yB, utilidadAct: 'Utilidad Operativa ' + _yA, utilidadAnt: 'Utilidad Operativa ' + _yB };
+  const etiquetaDe = it => (tipo === 'finanzas' && ETIQ_FIN[it.clave]) || it.etiqueta;
   const conIco = tipo === 'credito' || tipo === 'finanzas';
   const rowCls = conIco ? 'mtr-row mtr-row-cred' : 'mtr-row';
   const icoHtml = k => { const i = conIco ? (icoDe(k) || '•') : null; return i ? '<span class="fcr-ico">' + i + '</span>' : ''; };
@@ -5596,14 +5620,15 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
     '<span class="mtr-ctrl">' + inputFiltro2({ clave: p.clave, tipo: 'num', activable: true }, valores, prefijo, tipo, ticket) +
     (sufPenal[p.clave] ? '<span class="mtr-suf">' + sufPenal[p.clave] + '</span>' : '') + '</span></div>').join('');
   const ev = evaluarFiltro2JS(cat, valores, ticket);
-  let html = '<div class="f2-box"><div class="fb-sec">' + (tipo === 'finanzas' ? 'Documentos (por ticket)' : 'Gates (eliminatorios)') + '</div>' + gatesHtml;
+  const tituloGates = tipo === 'finanzas' ? 'Documentos (por ticket)' : (tipo === 'sunat' ? '' : 'Gates (eliminatorios)');
+  let html = '<div class="f2-box">' + (tituloGates ? '<div class="fb-sec">' + tituloGates + '</div>' : '') + gatesHtml;
   if (scoreHtml) html += '<div class="fb-sec">Puntaje de calidad</div>' + scoreHtml;
   if (penalHtml) html += '<div class="fb-sec">Antecedentes (activa el que aplique)</div>' + penalHtml;
   // Bloque de insumos numéricos + ratios calculados (finanzas).
   if (cat.insumos && cat.insumos.length) {
     const insHtml = cat.insumos.map(i => {
       const val = valores[i.clave];
-      return '<div class="' + rowCls + '">' + icoHtml(i.clave) + '<span class="mtr-lbl">' + i.etiqueta + f2Help(i.tip) + '</span><span class="mtr-ctrl">' +
+      return '<div class="' + rowCls + '">' + icoHtml(i.clave) + '<span class="mtr-lbl">' + etiquetaDe(i) + f2Help(i.tip) + '</span><span class="mtr-ctrl">' +
         '<input type="number" step="any" class="mtr-in mtr-num" data-f2="' + prefijo + '" data-k="' + i.clave + '" value="' + (val != null ? val : '') + '" oninput="recalcFiltro2(\'' + prefijo + '\',\'' + tipo + '\',\'' + ticket + '\')">' +
         (i.sufijo ? '<span class="mtr-suf">' + i.sufijo + '</span>' : '') + '</span></div>';
     }).join('');
@@ -5622,19 +5647,23 @@ function renderFiltroDosCapas(tipo, valores, prefijo, ticket) {
       }
       if (a.tipo === 'multiReq') {
         const arr = Array.isArray(val) ? val : (val ? String(val).split(',') : []);
-        const chips = a.opciones.map(o => {
+        const items = a.opciones.map(o => {
           const on = arr.includes(o.v);
-          return '<label class="an-chip' + (on ? ' an-chip-on' : '') + '"><input type="checkbox" ' + (on ? 'checked' : '') + ' data-f2multi="' + prefijo + '" data-k="' + a.clave + '" value="' + o.v + '" onchange="' + cb + '"> ' + o.label + '</label>';
+          return '<label class="an-dd-item"><input type="checkbox" ' + (on ? 'checked' : '') + ' data-f2multi="' + prefijo + '" data-k="' + a.clave + '" value="' + o.v + '" onchange="' + cb + ';anDDContador(this)"> ' + o.label + '</label>';
         }).join('');
-        return '<div class="' + rowCls + ' mtr-row-multi">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span><div class="an-chips">' + chips + '</div></div>';
+        return '<div class="' + rowCls + '">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span>' +
+          '<span class="mtr-ctrl"><span class="an-dd"><button type="button" class="mtr-in an-dd-btn" onclick="toggleAnDD(this)">' +
+          (arr.length ? arr.length + ' seleccionado' + (arr.length > 1 ? 's' : '') : 'Seleccionar…') + ' <span class="an-dd-caret">▾</span></button>' +
+          '<span class="an-dd-menu oculto">' + items + '</span></span></span></div>';
       }
       // textoLibreReq
-      return '<div class="' + rowCls + ' mtr-row-multi">' + icoHtml(a.clave) + '<span class="mtr-lbl">' + a.etiqueta + f2Help(a.tip) + '</span>' +
+      return '<div class="' + rowCls + ' mtr-row-multi mtr-row-block">' + '<span class="mtr-lbl">' + icoHtml(a.clave) + a.etiqueta + f2Help(a.tip) + '</span>' +
         '<textarea class="mtr-in an-textarea" data-f2="' + prefijo + '" data-k="' + a.clave + '" placeholder="Explica por qué el caso merece evaluación…" oninput="' + cb + '">' + (val ? String(val).replace(/</g, '&lt;') : '') + '</textarea></div>';
     }).join('');
     html += '<div class="fb-sec">Análisis del caso (para el Business Case)</div>' + anHtml;
   }
-  html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+  if (tipo !== 'sunat' && tipo !== 'finanzas') html += '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div>';
+  html += '</div>';
   return html;
 }
 // Tabla de ratios con su umbral, valor calculado y semáforo; + cruce de capacidad para DSCR.
@@ -5644,8 +5673,12 @@ function ratiosTablaHTML(ratios) {
   const fmtUmb = (u, f, dir) => (dir === 'min' ? '≥ ' : '≤ ') + (f === '%' ? (u * 100).toFixed(0) + '%' : u.toFixed(1) + 'x');
   // Nota de la cuota estimada usada para el DSCR (gruesa: 25% a 12m sobre el monto sincerado).
   let cuotaNota = '';
-  if (ratios.cuotaEst != null) cuotaNota = '<div class="rt-cuota">Cuota estimada (25% a 12m sobre el monto): <b>S/ ' + Math.round(ratios.cuotaEst).toLocaleString('es-PE') + '</b>/mes</div>';
-  else cuotaNota = '<div class="rt-cuota rt-cuota-pend">Define el monto exacto (botón Editar en Solicitud) para estimar la cuota del DSCR.</div>';
+  const tasaAct = ratios.tasa != null ? ratios.tasa : 0.25;
+  const tk = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const selTasa = '<select class="mtr-in rt-tasa" data-f2="fin" data-k="tasaRef" onchange="recalcFiltro2(\'fin\',\'finanzas\',\'' + tk + '\')">' +
+    TASAS_REF_JS.map(t => '<option value="' + t + '"' + (Number(tasaAct) === t ? ' selected' : '') + '>' + (t * 100).toFixed(t === 0.275 ? 1 : 0) + '%</option>').join('') + '</select>';
+  if (ratios.cuotaEst != null) cuotaNota = '<div class="rt-cuota">Cuota estimada (tasa ' + selTasa + ' a 12m sobre el monto): <b>S/ ' + Math.round(ratios.cuotaEst).toLocaleString('es-PE') + '</b>/mes · alimenta DSCR y carga financiera</div>';
+  else cuotaNota = '<div class="rt-cuota rt-cuota-pend">Define el monto exacto (botón Editar en Solicitud) para estimar la cuota del DSCR. Tasa: ' + selTasa + '</div>';
   let rows = ratios.detalle.map(d => {
     const est = d.cumple == null ? '<span class="rt-na">sin dato</span>' : (d.cumple ? '<span class="rt-ok">✓ cumple</span>' : '<span class="rt-obs">⚠ observar</span>');
     const rcat = FILTROS_B2B_CACHE && FILTROS_B2B_CACHE.finanzas && (FILTROS_B2B_CACHE.finanzas.ratios || []).find(r => r.clave === d.clave);
@@ -5681,6 +5714,87 @@ function actualizarPillFinanzas(ticket) {
   const sem = faltan > 0 && ev.semaforo === 'Verde' ? null : ev.semaforo;
   el.className = 'fcr-pill-wrap';
   el.innerHTML = pillSemHTML(sem, faltan) + (ev.puntaje != null && !faltan ? ' <span class="sub" style="font-size:11px">' + ev.puntaje + '%</span>' : '');
+}
+// Enmascara texto crudo de ads en el frontend: 'la_libertad' -> 'La Libertad'.
+function fmtTextoAds(t) {
+  if (t == null || t === '') return '—';
+  return String(t).replace(/[_\-]+/g, ' ').trim().split(/\s+/)
+    .map(w => w.length > 2 ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w.toUpperCase() === w ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    .replace(/\b(De|Del|La|Las|Los|El|Y)\b/g, m => m.toLowerCase())
+    .replace(/^./, c => c.toUpperCase());
+}
+// Estado por panel para la CABECERA del acordeón (v1.255): desde datos GUARDADOS de la ficha.
+function estadoHeaderB2B(tipo) {
+  const f = FICHA.filtros || {}; const cat = FILTROS_B2B_CACHE || {};
+  const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
+  const parse = x => { try { return typeof x === 'string' ? JSON.parse(x || '{}') : (x || {}); } catch (e) { return {}; } };
+  const vacio = x => x === undefined || x === null || x === '' || (Array.isArray(x) && !x.length);
+  const cuentaGates = (c, v) => (c.gates || []).filter(g => g.tipo !== 'textoReq').filter(g => vacio((v || {})[g.clave])).length;
+  if (tipo === 'solicitud') {
+    const so = FICHA.solicitud; let faltan = 0;
+    ['ruc', 'contacto', 'telefono'].forEach(k => { if (!so[k]) faltan++; });
+    if (so.montoSolicitado == null && !so.montoRango) faltan++;
+    const rucBad = so.sunatEstado === 'error' || (so.ruc && !/^(10|15|17|20)\d{9}$/.test(String(so.ruc).trim()));
+    return { sem: rucBad ? 'Rojo' : (so.sunatEstado === 'ok' ? 'Verde' : (so.ruc ? 'Amarillo' : null)), faltan };
+  }
+  if (tipo === 'fsunat') {
+    const c = cat.sunat; if (!c) return null;
+    const v = Object.assign(autoValoresSunat(FICHA.solicitud), parse((f.sunat || {}).checklist));
+    const faltan = cuentaGates(c, v);
+    const sem = faltan === (c.gates || []).length ? null : evaluarFiltro2JS(c, v, ticket).semaforo;
+    return { sem, faltan };
+  }
+  if (tipo === 'credito') {
+    const c = cat.credito; if (!c) return null;
+    let sem = null, faltan = 0, algo = false;
+    (FICHA.creditoSujetos || []).forEach(su => {
+      const v = parse(su.checklist);
+      faltan += cuentaGates(c, v);
+      if (Object.keys(v).length) { algo = true; sem = peorColorJS(sem, evaluarFiltro2JS(c, v, ticket).semaforo); }
+    });
+    return { sem: algo ? sem : null, faltan: (FICHA.creditoSujetos || []).length ? faltan : 1 };
+  }
+  if (tipo === 'garantia') {
+    const c = cat.garantia; if (!c) return null;
+    const inms = FICHA.garantiaInmuebles || [];
+    if (!inms.length) return { sem: null, faltan: 3 };
+    let mejor = null, faltan = 0;
+    inms.forEach(inm => {
+      const v = parse(inm.checklist);
+      let ft = 0;
+      if (!v.apto) ft++;
+      const n = Number(v.valorRef); if (!isFinite(n) || n <= 0) ft++;
+      if (!v.linkDrive || !/^https?:\/\//i.test(String(v.linkDrive))) ft++;
+      faltan += ft;
+      if (ft < 3) {
+        let semI = evaluarFiltro2JS(c, v, ticket).semaforo;
+        const info = ltvInfoJS(v); if (info && info.obs && semI === 'Verde') semI = 'Amarillo';
+        if (semI && (mejor == null || ORDEN_SEM_JS[semI] < ORDEN_SEM_JS[mejor])) mejor = semI;
+      }
+    });
+    return { sem: mejor, faltan };
+  }
+  if (tipo === 'finanzas') {
+    const c = cat.finanzas; if (!c) return null;
+    const v = parse((f.finanzas || {}).checklist);
+    let faltan = 0;
+    (c.gates || []).forEach(g => { if (g.requeridoTicket && g.requeridoTicket[ticket] && v[g.clave] !== 'si') faltan++; });
+    (c.insumos || []).forEach(i => { if (vacio(v[i.clave])) faltan++; });
+    (c.analisis || []).forEach(a => { if (vacio(v[a.clave])) faltan++; });
+    return { sem: Object.keys(v).length ? evaluarFiltro2JS(c, v, ticket).semaforo : null, faltan };
+  }
+  return null;
+}
+// Cabecera del acordeón: [Completo/Incompleto] + [Avanza/No Avanza] con fondo verde/ámbar/rojo.
+function headerPillB2B(tipo) {
+  const st = estadoHeaderB2B(tipo);
+  if (!st) return '<span class="sub">pendiente</span>';
+  const comp = st.faltan > 0 ? '<span class="hp hp-inc">Incompleto</span>' : '<span class="hp hp-comp">Completo</span>';
+  const av = st.sem === 'Rojo' ? '<span class="hp hp-rojo">No Avanza</span>'
+    : st.sem === 'Amarillo' ? '<span class="hp hp-amar">Avanza</span>'
+    : st.sem === 'Verde' ? '<span class="hp hp-verde">Avanza</span>'
+    : '<span class="hp hp-pend">Por evaluar</span>';
+  return comp + ' ' + av;
 }
 // Pill de estado (v1.251): la palabra del semáforo con FONDO de color + al costado Completo/Incompleto.
 function pillSemHTML(sem, faltan) {
@@ -5768,11 +5882,7 @@ function verInfoFiltro(tipo) {
 function panelFiltroSunat(s, modo) {
   const open = FICHA_ETAPA_OPEN === 'fsunat';
   const f = FICHA.filtros.sunat || {};
-  const sem = f.semaforo || null;
-  let head = '<span class="sub">pendiente</span>';
-  if (sem === 'Verde') head = '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75;font-weight:800">AVANZA ✓' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
-  else if (sem === 'Amarillo') head = '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F;font-weight:800">Avanza con observación' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
-  else if (sem === 'Rojo') head = '<span class="fb-pill" style="background:#FDE8E7;color:#CC0000;font-weight:800">DESESTIMADO</span>';
+  let head = headerPillB2B('fsunat');
   head += btnInfoFiltro('sunat');
   if (!open) return fbPanelWrap('fsunat', '🏢', '1 · Filtro SUNAT', head, false, '', false, modo, 'Solicitud');
   const ticket = s.ticket || 'Bajo';
@@ -5782,10 +5892,7 @@ function panelFiltroSunat(s, modo) {
   if (auto.personaJuridica != null) valores.personaJuridica = auto.personaJuridica;
   let raw = {}; try { raw = s.sunatRaw ? (typeof s.sunatRaw === 'string' ? JSON.parse(s.sunatRaw) : s.sunatRaw) : {}; } catch (e) { }
   const estadoTxt = raw.estado || null, condTxt = raw.condicion || null;
-  const chip = (txt, ok) => '<span class="fsu-chip ' + (ok ? 'fsu-chip-ok' : 'fsu-chip-warn') + '">' + (ok ? '✓' : '!') + ' ' + String(txt).toUpperCase() + '</span>';
-  const chips = (estadoTxt || condTxt) ? '<div class="fsu-chips">' +
-    (estadoTxt ? chip(estadoTxt, /activ/i.test(estadoTxt)) : '') +
-    (condTxt ? chip(condTxt, /^\s*habido/i.test(condTxt)) : '') + '</div>' : '';
+  const chipEC = (txt, ok) => txt ? '<span class="mtr-chip ' + (ok ? 'mtr-chip-ok' : 'mtr-chip-ko') + '">' + fmtTextoAds(txt) + '</span>' : '<span class="sub">—</span>';
   const celda = (ico, k, v) => '<div class="fsu-celda"><span class="fsu-celda-ic">' + ico + '</span><div><div class="fsu-celda-k">' + k + '</div><div class="fsu-celda-v">' + (v || '—') + '</div></div></div>';
   const grid = '<div class="fsu-grid">' +
     celda('🏢', 'Razón social', s.razonSocial) +
@@ -5795,21 +5902,39 @@ function panelFiltroSunat(s, modo) {
     celda('🧭', 'Sector', s.sector) +
     celda('⚙️', 'Actividad principal', s.actividad) +
     celda('📅', 'Antigüedad', fmtAntiguedad(s.antiguedadMeses)) +
+    celda('✔️', 'Estado / Condición', chipEC(estadoTxt, /activ/i.test(estadoTxt || '')) + ' ' + chipEC(condTxt, /^\s*habido/i.test(condTxt || ''))) +
     '</div>';
   const fAct = f.actualizadoEn ? new Date(f.actualizadoEn).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
   const footMeta = '<div class="fsu-foot">' +
-    '<span>🕒 <b>Última actualización</b> ' + (fAct ? fAct + (f.responsable ? ' por ' + primerNombre(f.responsable) : '') : 'sin guardar aún') + '</span>' +
+    '<span>🕒 <b>Última actualización</b> ' + (fAct ? fAct + (f.responsable ? ' por ' + primerNombre(f.responsable) : '') : 'automática al abrir') + '</span>' +
     '<span>🛡 <b>Fuente</b> SUNAT · Consulta RUC</span>' +
     '<span>🔄 <b>Actualización automática</b> cada 24 horas</span>' +
     '</div>';
   const cuerpo = '<div class="fb-body fsu-body">' +
-    '<div class="fsu-head"><div><div class="fsu-tit">Filtro SUNAT</div><div class="fsu-sub">Consulta y validación de información en SUNAT · Ticket <b>' + ticket + '</b></div></div>' +
-    '<button class="btn fsu-guardar" onclick="guardarFiltroSunat()">💾 Guardar filtro</button></div>' +
-    chips + grid +
-    '<div class="fsu-sec">Datos (información)</div>' +
+    '<div class="fcr-head"><span class="fcr-head-ic">🏢</span>' +
+    '<div><div class="fcr-tit">Filtro SUNAT</div><div class="fcr-sub">Consulta y validación automática en SUNAT · Ticket <b>' + ticket + '</b></div></div></div>' +
+    grid +
+    '<div class="fsu-sec">Validación <span class="sub" style="font-weight:400;font-size:11px">automática · no editable</span></div>' +
     renderFiltroDosCapas('sunat', valores, 'fsunat', ticket) +
     footMeta + '</div>';
+  // Persistencia automática (es un filtro 100% automático: sin botón Guardar).
+  setTimeout(() => autoGuardarSunat(valores), 0);
   return fbPanelWrap('fsunat', '🏢', '1 · Filtro SUNAT', head, true, cuerpo, false, modo, 'Solicitud');
+}
+// Guarda el filtro SUNAT en silencio si lo calculado difiere de lo persistido.
+let _SUNAT_AUTOSAVE = false;
+async function autoGuardarSunat(valores) {
+  const f = FICHA.filtros.sunat || {};
+  const saved = (f.checklist && typeof f.checklist === 'object') ? f.checklist : {};
+  if (_SUNAT_AUTOSAVE) return;
+  if (JSON.stringify(saved) === JSON.stringify(valores) && f.semaforo) return;
+  _SUNAT_AUTOSAVE = true;
+  try {
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/sunat', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    FICHA.filtros.sunat = Object.assign({}, FICHA.filtros.sunat, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos, actualizadoEn: new Date().toISOString(), responsable: (typeof YO !== 'undefined' && YO && YO.nombre) || null });
+    setPanelPill('fsunat', r.semaforo);
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
+  } catch (e) { /* silencioso */ } finally { _SUNAT_AUTOSAVE = false; }
 }
 async function guardarFiltroSunat() {
   try {
@@ -5835,43 +5960,33 @@ function panelSolicitud(s) {
     const rucCtrl = enSolicitud
       ? '<input id="fbRucEdit" class="mtr-in" style="width:130px" value="' + rucVal + '" maxlength="11" onkeypress="return b2bSoloNumero(event,false)"> <button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="validarRucB2B()">🔎 Validar</button> ' + rucBadge
       : '<b>' + (rucVal || '—') + '</b> ' + rucBadge;
-    const tel = String(s.telefono || '').replace(/[^0-9+]/g, '');
     const filaSol = (ico, k, v) => '<div class="sol-fila"><span class="sol-ic">' + ico + '</span><span class="sol-k">' + k + '</span><span class="sol-v">' + v + '</span></div>';
     const izq = '<div class="sol-card"><div class="sol-card-tit">👤 Información del solicitante</div>' +
       filaSol('🪪', 'RUC', rucCtrl) +
       filaSol('👤', 'Contacto', '<b>' + (s.contacto || '—') + '</b>') +
-      filaSol('📞', 'Teléfono', (s.telefono || '—') + (tel ? ' <a class="sol-wa" href="https://wa.me/51' + tel.replace(/^\+?51/, '') + '" target="_blank" rel="noopener" title="Abrir WhatsApp">🟢</a>' : '')) +
+      filaSol('📞', 'Teléfono', s.telefono || '—') +
       filaSol('✉️', 'Email', s.email || '—') +
       filaSol('💰', 'Monto solicitado', '<span class="sol-monto">' + montoStr + '</span> <button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="editarMontoB2B()">✏️ Editar</button>') +
-      (s.destinoFondos ? filaSol('🎯', 'Destino de fondos', s.destinoFondos) : '') +
+      (s.destinoFondos ? filaSol('🎯', 'Destino de fondos', fmtTextoAds(s.destinoFondos)) : '') +
       '</div>';
     const tiene = /^s/i.test(String(s.tieneInmueble || ''));
     const der = '<div class="sol-card"><div class="sol-card-tit">🛡 Garantía declarada</div>' +
-      '<div class="sol-gar ' + (tiene ? 'sol-gar-si' : 'sol-gar-no') + '"><span class="sol-gar-ic">🏠</span><span>¿Tiene inmueble?</span><b class="sol-gar-val">' + (s.tieneInmueble || '—') + '</b></div>' +
-      (s.tipoInmueble ? filaSol('🏢', 'Tipo', s.tipoInmueble) : '') +
+      '<div class="sol-gar ' + (tiene ? 'sol-gar-si' : 'sol-gar-no') + '"><span class="sol-gar-ic">🏠</span><span>¿Tiene inmueble?</span><b class="sol-gar-val">' + fmtTextoAds(s.tieneInmueble) + '</b></div>' +
+      (s.tipoInmueble ? filaSol('🏢', 'Tipo', fmtTextoAds(s.tipoInmueble)) : '') +
       (s.areaInmueble ? filaSol('📐', 'Área (m²)', s.areaInmueble) : '') +
-      (s.registradoSunarp ? filaSol('📜', 'Registrado SUNARP', s.registradoSunarp) : '') +
-      filaSol('📍', 'Ubicación del inmueble', s.departamentoInmueble || '—') +
+      (s.registradoSunarp ? filaSol('📜', 'Registrado SUNARP', fmtTextoAds(s.registradoSunarp)) : '') +
+      filaSol('📍', 'Ubicación del inmueble', fmtTextoAds(s.departamentoInmueble)) +
       '</div>';
-    const mail = s.email ? String(s.email).trim() : '';
-    const acciones = '<div class="sol-card" data-nodirty><div class="sol-card-tit">⚡ Acciones rápidas</div><div class="sol-acc">' +
-      (tel ? '<a class="sol-acc-btn" href="tel:+51' + tel.replace(/^\+?51/, '') + '"><span>📞</span>Llamar</a>' : '') +
-      (tel ? '<a class="sol-acc-btn" href="https://wa.me/51' + tel.replace(/^\+?51/, '') + '" target="_blank" rel="noopener"><span>🟢</span>WhatsApp</a>' : '') +
-      (mail ? '<a class="sol-acc-btn" href="mailto:' + mail + '"><span>✉️</span>Email</a>' : '') +
-      '<button class="sol-acc-btn" onclick="abrirModalGestion(\'Solicitud\')"><span>📝</span>Agregar nota</button>' +
-      '</div></div>';
     const fIng = s.fechaIngreso ? new Date(s.fechaIngreso).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
     const footer = '<div class="sol-foot">' +
       '<span>🕒 <b>Ingreso</b> ' + fIng + '</span>' +
-      (s.fuente ? '<span>🏷 <b>Origen</b> ' + s.fuente + (s.campana ? ' · ' + s.campana : '') + '</span>' : '') +
+      (s.fuente ? '<span>🏷 <b>Origen</b> ' + fmtTextoAds(s.fuente) + '</span>' : '') +
       (s.temperatura ? '<span>🌡 <b>Temperatura</b> ' + s.temperatura + '</span>' : '') +
       '</div>';
     cuerpo = '<div class="fb-body sol-body">' +
-      '<div class="sol-hero"><span class="sol-hero-ic">📥</span><div><div class="sol-hero-t">Solicitud del lead</div><div class="sol-hero-s">Información de la solicitud y datos del contacto</div></div>' +
-      '<div class="sol-hero-der">' + (s.sunatEstado === 'ok' ? '<span class="sol-hero-badge">✓ VALIDADO<small>datos del lead</small></span>' : '') + '</div></div>' +
-      '<div class="sol-grid">' + izq + der + '</div>' + acciones + footer + '</div>';
+      '<div class="sol-grid">' + izq + der + '</div>' + footer + '</div>';
   }
-  return fbPanelWrap('solicitud', '📥', 'Solicitud', '<span style="font-size:12px;color:#6B7A8D">datos del lead</span>', open, cuerpo);
+  return fbPanelWrap('solicitud', '📥', 'Solicitud', headerPillB2B('solicitud'), open, cuerpo);
 }
 
 function consolidadoCreditoJS() {
@@ -5975,7 +6090,7 @@ function actualizarConsolidadoVivo() {
 }
 function setPanelPill(tipo, sem) {
   const el = $('fbEstado_' + tipo);
-  if (el) el.innerHTML = sem ? (SEM_EMOJI[sem] + ' ' + sem) : '<span class="sub">pendiente</span>';
+  if (el) el.innerHTML = headerPillB2B(tipo === 'fsunat' ? 'fsunat' : tipo) + (typeof btnInfoFiltro === 'function' && tipo !== 'solicitud' ? btnInfoFiltro(tipo === 'fsunat' ? 'sunat' : tipo) : '');
 }
 
 function consolidadoGuardadoJS() {
@@ -5988,7 +6103,7 @@ function consolidadoGuardadoJS() {
 function panelCredito(semGuardado, modo) {
   const cons = consolidadoGuardadoJS() || semGuardado;
   const open = FICHA_ETAPA_OPEN === 'credito';
-  let estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">consolidado</span>') : '<span class="sub">pendiente</span>';
+  let estadoHtml = headerPillB2B('credito');
   estadoHtml += btnInfoFiltro('credito');
   if (!open) return fbPanelWrap('credito', '📋', '2 · Filtro crédito', estadoHtml, false, '', false, modo, 'Filtro credito');
   const sujetos = FICHA.creditoSujetos || [];
@@ -6113,10 +6228,8 @@ function renderGarantiaInmueble(valores, prefijo, ticket) {
     '<span class="gd-st ' + (linkOk ? 'gd-ok' : 'gd-pend') + '">' + (linkOk ? '✓' : 'pendiente') + '</span>' +
     '<input type="url" class="mtr-in gd-link" data-f2="' + prefijo + '" data-k="linkDrive" value="' + (link ? link.replace(/"/g, '&quot;') : '') + '" placeholder="https://drive.google.com/…" oninput="' + cb + '">' +
     (linkOk ? '<a class="gd-open" href="' + link + '" target="_blank" rel="noopener">Abrir ↗</a>' : '') + '</div>';
-  const ev = evaluarFiltro2JS(cat, valores, ticket);
   return '<div class="f2-box"><div class="fb-sec">Evaluación</div>' + aptoHtml + valorHtml + ltvHtml +
-    '<div class="fb-sec">Documentos</div>' + linkHtml +
-    '<div class="f2-foot" id="' + prefijo + '_foot">' + bandaFiltro2HTML(ev) + '</div></div>';
+    '<div class="fb-sec">Documentos</div>' + linkHtml + '</div>';
 }
 // Calcula el LTV en el cliente para mostrarlo (TC 3.45 si el inmueble está en dólares).
 function ltvInfoJS(valores) {
@@ -6132,7 +6245,7 @@ function ltvInfoJS(valores) {
 }
 function ltvTextoJS(valores, ticket) {
   const info = ltvInfoJS(valores);
-  if (!info) return '<span class="sub">ingresa valor referencial y monto exacto</span>';
+  if (!info) return '<span class="sub">—</span>';
   const pct = (info.ltv * 100).toFixed(1) + '%';
   const clase = info.obs ? 'gd-ltv-obs' : 'gd-ltv-ok';
   const nota = info.moneda === 'dolares' ? ' <span class="sub" style="font-size:10.5px">(TC ' + info.tc + ')</span>' : '';
@@ -6156,23 +6269,35 @@ function recalcGarantia(prefijo, ticket) {
 }
 function panelGarantia(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', '<span class="sub" style="color:#94a3b8">🔒 requiere crédito en verde</span>', false, '', true);
-  const cons = consolidadoGarantiaGuardadoJS() || sem;
   const open = FICHA_ETAPA_OPEN === 'garantia';
-  let estadoHtml = cons ? (fbPill(cons) + ' <span class="sub" style="font-size:11px">mejor inmueble</span>') : '<span class="b2b-pill" style="background:#EF9F2722;color:#EF9F27">En proceso</span>';
+  let estadoHtml = headerPillB2B('garantia');
   estadoHtml += btnInfoFiltro('garantia');
   if (!open) return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, false, '', false, modo, 'Filtro garantia');
   const inms = FICHA.garantiaInmuebles || [];
   let html = '<div class="fb-body fga-body">';
   html += '<div class="fcr-head"><span class="fcr-head-ic fga-head-ic">🏠</span>' +
-    '<div><div class="fcr-tit">Filtro garantía</div><div class="fcr-sub">Registra uno o varios inmuebles para evaluar su garantía · consolidación por <b>mejor inmueble</b></div></div>' +
-    '<span class="fcr-pill-wrap" id="fgaEstadoPill"></span>' +
-    '<button class="btn" onclick="guardarGarantia()">💾 Guardar</button></div>';
+    '<div><div class="fcr-tit">Filtro garantía</div><div class="fcr-sub">Registra uno o varios inmuebles para evaluar su garantía.</div></div>' +
+    '<button class="btn sec" onclick="guardarGarantia(\'avance\')" title="Guarda lo trabajado aunque falten campos">Guardar avance</button>' +
+    '<button class="btn" onclick="guardarGarantia(\'completo\')">💾 Guardar</button></div>';
   html += '<span id="fbGarConsolidado" class="oculto"></span>';
   html += inms.map(inmuebleCard).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas inmuebles.</div>';
   html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
   html += '</div>';
-  setTimeout(() => actualizarPillGarantia(), 0);
   return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, true, html, false, modo, 'Filtro garantia');
+}
+// Campos obligatorios que faltan por inmueble (para validar el Guardar completo).
+function faltantesGarantia() {
+  const out = [];
+  (FICHA.garantiaInmuebles || []).forEach((inm, ix) => {
+    const pf = 'inm' + inm.id;
+    if (!document.querySelector('[data-f2="' + pf + '"]')) return;
+    const v = leerFiltro2(pf);
+    const nom = ($('inm_alias_' + inm.id) && $('inm_alias_' + inm.id).value.trim()) || ('Inmueble ' + (ix + 1));
+    if (!v.apto) out.push(nom + ': Apto SUNARP');
+    const n = Number(v.valorRef); if (!isFinite(n) || n <= 0) out.push(nom + ': Valor referencial');
+    if (!v.linkDrive || !/^https?:\/\//i.test(String(v.linkDrive))) out.push(nom + ': Link Drive');
+  });
+  return out;
 }
 // Pill vivo de garantía (v1.251): mejor caso entre inmuebles + completitud de campos obligatorios.
 function actualizarPillGarantia() {
@@ -6196,10 +6321,7 @@ function panelFinanzas(desbloqueada, sem, modo) {
   if (!desbloqueada) return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', '<span class="sub" style="color:#94a3b8">🔒 requiere garantía en verde</span>', false, '', true);
   const open = FICHA_ETAPA_OPEN === 'finanzas';
   const f = FICHA.filtros.finanzas || {};
-  let head = '<span class="sub">pendiente</span>';
-  if (sem === 'Verde') head = '<span class="fb-pill" style="background:#E7F6EF;color:#1D9E75;font-weight:800">AVANZA ✓' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
-  else if (sem === 'Amarillo') head = '<span class="fb-pill" style="background:#FFF4E0;color:#B7791F;font-weight:800">Avanza con observación' + (f.puntaje != null ? ' · ' + f.puntaje + '%' : '') + '</span>';
-  else if (sem === 'Rojo') head = '<span class="fb-pill" style="background:#FDE8E7;color:#CC0000;font-weight:800">DESESTIMADO</span>';
+  let head = headerPillB2B('finanzas');
   head += btnInfoFiltro('finanzas');
   if (!open) return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, false, '', false, modo, 'Filtro finanzas');
   const ticket = (FICHA.solicitud && FICHA.solicitud.ticket) || 'Bajo';
@@ -6207,12 +6329,10 @@ function panelFinanzas(desbloqueada, sem, modo) {
   try { const raw = f.checklist; chkF = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); } catch (e) { chkF = {}; }
   const cuerpo = '<div class="fb-body fin-body">' +
     '<div class="fcr-head"><span class="fcr-head-ic fin-head-ic">💰</span>' +
-    '<div><div class="fcr-tit">Filtro finanzas y negocio</div><div class="fcr-sub">Documentos, cifras y ratios para el Business Case · Ticket <b>' + ticket + '</b> (umbrales por ticket)</div></div>' +
-    '<span class="fcr-pill-wrap" id="finEstadoPill"></span>' +
-    '<button class="btn fcr-guardar" onclick="guardarFinanzas()">💾 Guardar filtro</button></div>' +
+    '<div><div class="fcr-tit">Filtro finanzas y negocio</div><div class="fcr-sub">Información financiera</div></div>' +
+    '<button class="btn fcr-guardar" onclick="guardarFinanzas()">💾 Guardar</button></div>' +
     renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
     '</div>';
-  setTimeout(() => actualizarPillFinanzas(ticket), 0);
   return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
 }
 
@@ -6231,72 +6351,114 @@ function panelBusinessCase(desbloqueada, modo) {
   const open = FICHA_ETAPA_OPEN === 'businesscase';
   const estadoHtml = glob ? fbPill(glob) : '<span class="sub">pendiente</span>';
   if (!open) return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, false, '', false, modo, 'Business case');
+
+  // Card por etapa: semáforo (palabra con fondo) + Completo/Incompleto, según la misma lógica de cabeceras.
+  const cardEtapa = (tipoHdr, tipoF, titulo, ico, panel) => {
+    const st = estadoHeaderB2B(tipoHdr) || { sem: null, faltan: 1 };
+    const ff = (FICHA.filtros || {})[tipoF] || {};
+    const cls = st.sem === 'Verde' ? 'reu-card-ok' : st.sem === 'Amarillo' ? 'reu-card-obs' : st.sem === 'Rojo' ? 'reu-card-ko' : 'reu-card-p';
+    const semTag = st.sem ? '<span class="sem-word sem-' + st.sem.toLowerCase() + '" style="padding:2px 9px;font-size:10.5px">' + st.sem + '</span>' + (ff.puntaje != null ? ' <span class="sub">' + ff.puntaje + '%</span>' : '') : '<span class="sub">Pendiente</span>';
+    const comp = st.faltan > 0 ? '<span class="sub" style="color:#B7791F;font-weight:700">Incompleto</span>' : '<span class="sub" style="color:#1D9E75;font-weight:700">Completo</span>';
+    return '<div class="reu-card ' + cls + '" onclick="fbToggle(\'' + panel + '\')"><span class="reu-card-ic">' + ico + '</span>' +
+      '<div style="min-width:0"><div class="reu-card-t">' + titulo + '</div><div class="reu-card-s">' + semTag + ' · ' + comp + '</div></div>' +
+      '<span class="reu-card-fl">›</span></div>';
+  };
+  const cards = '<div class="bc-cards">' +
+    cardEtapa('fsunat', 'sunat', 'SUNAT', '🏢', 'fsunat') +
+    cardEtapa('credito', 'credito', 'Crédito', '🛡️', 'credito') +
+    cardEtapa('garantia', 'garantia', 'Garantía', '🏠', 'garantia') +
+    cardEtapa('finanzas', 'finanzas', 'Finanzas', '💰', 'finanzas') + '</div>';
+
+  const cuerpo = '<div class="fb-body bc-body">' +
+    '<div class="fcr-head"><span class="fcr-head-ic bc-head-ic">📑</span>' +
+    '<div><div class="fcr-tit">Business Case</div><div class="fcr-sub">Expediente ejecutivo con todo lo sucedido en las etapas anteriores</div></div></div>' +
+    cards +
+    '<div class="bc-acciones" data-nodirty>' +
+    '<button class="btn sec" onclick="previsualizarBusinessCase()">👁 Previsualizar</button>' +
+    '<button class="btn sec" onclick="descargarWordBusinessCase()">📝 Descargar Word</button>' +
+    '<button class="btn" onclick="imprimirBusinessCase()">🖨 Imprimir / PDF</button>' +
+    '</div></div>';
+  return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, cuerpo, false, modo, 'Business case');
+}
+// Construye el HTML COMPLETO del expediente (independiente del DOM del panel).
+function bcReporteHTML() {
   const s = FICHA.solicitud; const f = FICHA.filtros || {};
-
-  // Completitud: 4 filtros con semáforo + comentario de reunión.
-  const rReu = (f.reunion && f.reunion.checklist) || {};
-  let faltan = 0;
-  ['sunat', 'credito', 'garantia', 'finanzas'].forEach(k => { if (!(f[k] && f[k].semaforo)) faltan++; });
-  if (!(rReu.comentario && String(rReu.comentario).trim())) faltan++;
-
-  // Banda de veredicto global
+  const glob = semGlobalB2B();
   const gob = {
     Verde: { t: 'APTO PARA EXPEDIENTE', d: 'Todos los filtros en Verde. El caso pasa a armado de expediente y comité.', cls: 'bc-band-ok' },
     Amarillo: { t: 'AVANZA CON EXCEPCIÓN', d: 'Hay filtros en Amarillo: requiere levantar observaciones o aprobación de comité.', cls: 'bc-band-obs' },
     Rojo: { t: 'OPERACIÓN BLOQUEADA', d: 'Al menos un filtro en Rojo (killer): la operación se descarta salvo excepción extraordinaria.', cls: 'bc-band-ko' }
   }[glob] || { t: 'EN EVALUACIÓN', d: 'Faltan filtros por evaluar para emitir el veredicto.', cls: 'bc-band-p' };
-  const banda = '<div class="bc-band ' + gob.cls + '"><div class="bc-band-t">' + (glob ? SEM_EMOJI[glob] + ' ' : '') + gob.t + '</div><div class="bc-band-d">' + gob.d + '</div>' +
-    '<span class="fcr-pill-wrap" style="margin-left:auto">' + pillSemHTML(glob, faltan) + '</span></div>';
-
-  // Resumen comercial (grid de datos)
+  const banda = '<div class="bc-band ' + gob.cls + '"><div class="bc-band-t">' + (glob ? SEM_EMOJI[glob] + ' ' : '') + gob.t + '</div><div class="bc-band-d">' + gob.d + '</div></div>';
   const montoTxt = s.montoSolicitado != null ? fmtSoles(s.montoSolicitado) : (s.montoRango || '—');
   const celda = (ico, k, v) => '<div class="fsu-celda"><span class="fsu-celda-ic">' + ico + '</span><div><div class="fsu-celda-k">' + k + '</div><div class="fsu-celda-v">' + (v || '—') + '</div></div></div>';
   const resumen = '<div class="fb-sec">Resumen comercial</div><div class="fsu-grid">' +
     celda('🏢', 'Empresa', s.razonSocial) + celda('🪪', 'RUC', s.ruc) +
     celda('🎟️', 'Ticket', s.ticket) + celda('🧭', 'Sector', s.sector) +
-    celda('💰', 'Monto solicitado', '<span class="sol-monto">' + montoTxt + '</span>') +
+    celda('💰', 'Monto solicitado', montoTxt) +
     celda('👤', 'Contacto', (s.contacto || '—') + (s.telefono ? ' · ' + s.telefono : '')) + '</div>';
-
-  // Veredicto por filtro: cards clicables con semáforo + puntaje + KOs
-  const cardF = (k, titulo, ico, panel) => {
+  const filaV = (k, titulo) => {
     const ff = f[k] || {}; const sem = ff.semaforo || null;
-    const cls = sem === 'Verde' ? 'reu-card-ok' : sem === 'Amarillo' ? 'reu-card-obs' : sem === 'Rojo' ? 'reu-card-ko' : 'reu-card-p';
-    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? '<div class="bc-kos">✕ ' + ff.motivos.kos.join(' · ') + '</div>' : '';
-    return '<div class="reu-card ' + cls + '" onclick="fbToggle(\'' + panel + '\')"><span class="reu-card-ic">' + ico + '</span>' +
-      '<div style="min-width:0"><div class="reu-card-t">' + titulo + '</div>' +
-      '<div class="reu-card-s">' + (sem ? '<span class="sem-word sem-' + sem.toLowerCase() + '" style="padding:2px 9px;font-size:10.5px">' + sem + '</span>' + (ff.puntaje != null ? ' ' + ff.puntaje + '%' : '') : 'Pendiente') + '</div>' + kos + '</div>' +
-      '<span class="reu-card-fl">›</span></div>';
+    const kos = (ff.motivos && ff.motivos.kos && ff.motivos.kos.length) ? ' <span class="bc-kos">✕ ' + ff.motivos.kos.join(' · ') + '</span>' : '';
+    return '<tr><td><b>' + titulo + '</b></td><td>' + (sem ? '<span class="sem-word sem-' + sem.toLowerCase() + '">' + sem + '</span>' : 'Pendiente') + (ff.puntaje != null ? ' ' + ff.puntaje + '%' : '') + kos + '</td></tr>';
   };
-  const veredicto = '<div class="fb-sec">Veredicto por filtro <span class="sub" style="font-weight:400">(el peor caso gobierna)</span></div>' +
-    '<div class="bc-cards">' + cardF('sunat', 'SUNAT', '🏢', 'fsunat') + cardF('credito', 'Crédito', '🛡️', 'credito') +
-    cardF('garantia', 'Garantía', '🏠', 'garantia') + cardF('finanzas', 'Finanzas', '💰', 'finanzas') + '</div>';
-
-  // Reunión comercial heredada
-  const reuHtml = bcReunionHTML(rReu);
-
-  // Línea de tiempo del proceso (qué pasó y cuándo, de lo guardado)
-  const timeline = bcTimelineHTML();
-
-  // Observaciones vivas (misma recolección que la reunión) como tabla
+  const veredicto = '<div class="fb-sec">Veredicto por filtro (el peor caso gobierna)</div><table class="reu-tabla"><tbody>' +
+    filaV('sunat', 'SUNAT (elegibilidad)') + filaV('credito', 'Crédito') + filaV('garantia', 'Garantía') + filaV('finanzas', 'Finanzas y negocio') + '</tbody></table>';
   const obs = recolectarObservacionesB2B();
-  const chipO = o => '<span class="reu-chip">' + o.ico + ' ' + o.origen + '</span>';
-  const obsHtml = '<div class="fb-sec">Observaciones a levantar <span class="reu-badge" style="margin-left:6px">' + obs.length + '</span></div>' +
+  const obsHtml = '<div class="fb-sec">Observaciones a levantar (' + obs.length + ')</div>' +
     (obs.length
       ? '<table class="reu-tabla"><thead><tr><th>Origen</th><th>Campo</th><th>Detalle</th><th>Acción sugerida</th></tr></thead><tbody>' +
-        obs.map(o => '<tr><td>' + chipO(o) + '</td><td>' + o.campo + '</td><td><span class="reu-dot"></span> <b>' + o.valor + '</b> ' + o.lim + '</td><td class="reu-acc">' + o.accion + '</td></tr>').join('') + '</tbody></table>'
+        obs.map(o => '<tr><td>' + o.origen + '</td><td>' + o.campo + '</td><td><b>' + o.valor + '</b> ' + o.lim + '</td><td>' + o.accion + '</td></tr>').join('') + '</tbody></table>'
       : '<div class="reu-sinobs">✓ Sin observaciones pendientes.</div>');
-
-  // Recomendación final
   const rec = glob === 'Rojo' ? { t: '🚫 Descartar', cls: 'bc-band-ko' } : glob === 'Amarillo' ? { t: '⚠ Avanzar con observaciones (comité)', cls: 'bc-band-obs' } : glob === 'Verde' ? { t: '✅ Avanzar a expediente', cls: 'bc-band-ok' } : { t: 'Pendiente de completar filtros', cls: 'bc-band-p' };
-  const recomendacion = '<div class="fb-sec">Recomendación comercial</div><div class="bc-band ' + rec.cls + '" style="padding:12px 14px"><div class="bc-band-t" style="font-size:14px">' + rec.t + '</div></div>';
-
-  const cuerpo = '<div class="fb-body bc-body">' +
-    '<div class="fcr-head"><span class="fcr-head-ic bc-head-ic">📑</span>' +
-    '<div><div class="fcr-tit">Business Case</div><div class="fcr-sub">Expediente ejecutivo: consolida todo lo sucedido en las etapas anteriores</div></div>' +
-    '<span class="fcr-pill-wrap">' + pillSemHTML(glob, faltan) + '</span>' +
-    '<button class="btn" onclick="imprimirBusinessCase()" data-nodirty>🖨 Imprimir / PDF</button></div>' +
-    banda + resumen + veredicto + bcDatosClaveHTML() + reuHtml + bcAnalisisHTML() + obsHtml + timeline + recomendacion + '</div>';
-  return fbPanelWrap('businesscase', '📑', '6 · Business case', estadoHtml, true, cuerpo, false, modo, 'Business case');
+  const recomendacion = '<div class="fb-sec">Recomendación comercial</div><div class="bc-band ' + rec.cls + '"><div class="bc-band-t" style="font-size:14px">' + rec.t + '</div></div>';
+  const rReu = (f.reunion && f.reunion.checklist) || {};
+  return banda + resumen + veredicto + bcDatosClaveHTML() + bcReunionHTML(rReu) + bcAnalisisHTML() + obsHtml + bcTimelineHTML() + recomendacion;
+}
+// Abre el expediente en ventana limpia. imprimir=true dispara el diálogo (Imprimir / guardar PDF).
+function abrirVentanaBC(imprimir) {
+  const s = FICHA.solicitud;
+  const inner = bcReporteHTML().replace(/ onclick="[^"]*"/g, '');
+  const css = document.querySelector('link[href*="styles.css"]');
+  const w = window.open('', '_blank');
+  if (!w) { alert('Permite las ventanas emergentes para ver el Business Case.'); return; }
+  w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Business Case · ' + (s.razonSocial || s.codigo) + '</title>' +
+    (css ? '<link rel="stylesheet" href="' + css.href + '">' : '') +
+    '<style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:24px;color:#1E293B;font-size:13px;max-width:900px}.bc-print-head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0B5FFF;padding-bottom:10px;margin-bottom:14px}.bc-print-head h1{font-size:18px;margin:0}.bc-print-head .sub{color:#6B7A8D;font-size:12px}</style></head><body>' +
+    '<div class="bc-print-head"><div><h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1><div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + '</div></div><div class="sub"><b>TasaTop</b> · CRM B2B</div></div>' +
+    inner + '</body></html>');
+  w.document.close();
+  if (imprimir) setTimeout(() => { try { w.print(); } catch (e) {} }, 600);
+}
+function previsualizarBusinessCase() { abrirVentanaBC(false); }
+function imprimirBusinessCase() { abrirVentanaBC(true); }
+// Descarga el expediente como .doc EDITABLE (HTML compatible con Word).
+function descargarWordBusinessCase() {
+  const s = FICHA.solicitud;
+  const inner = bcReporteHTML().replace(/ onclick="[^"]*"/g, '');
+  const estilos = 'body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#1E293B}' +
+    'h1{font-size:16pt;color:#0B5FFF;margin:0 0 2pt}' +
+    '.sub{color:#6B7A8D;font-size:9pt}' +
+    '.fb-sec{font-size:12pt;font-weight:bold;margin:14pt 0 5pt;color:#0B5FFF;border-bottom:1pt solid #D6E4FF;padding-bottom:2pt}' +
+    '.bc-band{border:1pt solid #ccc;padding:8pt;margin:6pt 0}.bc-band-t{font-weight:bold;font-size:12pt}' +
+    '.bc-band-ok{background:#EAF7F0}.bc-band-obs{background:#FFF7E8}.bc-band-ko{background:#FDF0EF}.bc-band-p{background:#F3F6FA}' +
+    '.sem-word{font-weight:bold;padding:1pt 6pt}.sem-verde{background:#1D9E75;color:#fff}.sem-amarillo{background:#EF9F27;color:#fff}.sem-rojo{background:#E24B4A;color:#fff}.sem-pend{background:#EEF2F7}' +
+    'table{border-collapse:collapse;width:100%;margin:4pt 0}td,th{border:1pt solid #D8E0EA;padding:4pt 6pt;font-size:10pt;text-align:left}th{background:#F7F9FC}' +
+    '.fsu-grid{width:100%}.fsu-celda{margin:2pt 0}.fsu-celda-k{color:#6B7A8D;font-size:8.5pt}.fsu-celda-v{font-weight:bold}' +
+    '.bc-resumen>div{margin:2pt 0}.bc-tl-item{margin:3pt 0}.bc-kos{color:#CC0000;font-size:9pt}' +
+    '.reu-sinobs{background:#EAF7F0;color:#1D9E75;font-weight:bold;padding:6pt}' +
+    '.mtr-lim{font-size:8.5pt;color:#B7791F}.fcr-ico,.fsu-celda-ic,.reu-card-fl,.bc-tl-ic{display:none}';
+  const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+    '<head><meta charset="utf-8"><title>Business Case</title><style>' + estilos + '</style></head><body>' +
+    '<h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1>' +
+    '<div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + ' · TasaTop CRM B2B</div>' +
+    inner + '</body></html>';
+  const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'BusinessCase_' + (s.codigo || 'B2B') + '.doc';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
 }
 // Reunión comercial dentro del Business Case (fecha, modalidad, asesor, comentario, próximos pasos).
 function bcReunionHTML(r) {
@@ -6537,8 +6699,16 @@ async function eliminarInmueble(id) {
     renderFichaB2B();
   } catch (e) { alert('No se pudo quitar: ' + e.message); }
 }
-async function guardarGarantia() {
+async function guardarGarantia(modo) {
   const inms = FICHA.garantiaInmuebles || [];
+  if (!inms.length) { alert('Agrega al menos un inmueble.'); return; }
+  if (modo !== 'avance') {
+    const faltas = faltantesGarantia();
+    if (faltas.length) {
+      alert('Para guardar el filtro completo faltan:\n• ' + faltas.join('\n• ') + '\n\nUsa "Guardar avance" para no perder lo trabajado.');
+      return;
+    }
+  }
   try {
     let cons = null;
     for (const inm of inms) {
@@ -6555,7 +6725,7 @@ async function guardarGarantia() {
     setPanelPill('garantia', cons);
     actualizarConsolidadoGarantiaVivo();
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
-      limpiarDirty('garantia');
+    limpiarDirty('garantia');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
