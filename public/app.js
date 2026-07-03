@@ -4971,27 +4971,47 @@ async function validarRucB2B() {
 }
 
 // Stepper del viaje del lead: 5 pasos con semáforo, etapa actual resaltada.
+// Chip condensado de estado para el stepper (Opción A): un solo texto por paso.
+function stepperChip(tipoPanel, esActual, esFuturo, bloqueado) {
+  if (bloqueado) return '<i class="fbs-chip fbs-chip-lock">🔒</i>';
+  const st = (typeof estadoHeaderB2B === 'function') ? estadoHeaderB2B(tipoPanel) : null;
+  if (!st) return esFuturo ? '' : '<i class="fbs-chip fbs-chip-pend">Pendiente</i>';
+  if (st.sem === 'Rojo') return '<i class="fbs-chip fbs-chip-ko">No avanza</i>';
+  if (st.faltan > 0) return '<i class="fbs-chip fbs-chip-inc">Faltan datos</i>';
+  if (st.sem === 'Amarillo') return '<i class="fbs-chip fbs-chip-obs">Avanza · obs.</i>';
+  if (st.sem === 'Verde') return '<i class="fbs-chip fbs-chip-ok">✓ Avanza</i>';
+  return '<i class="fbs-chip fbs-chip-pend">Pendiente</i>';
+}
 function stepperFichaB2B() {
   const f = FICHA.filtros || {};
   const col = FICHA.etapaKanban || 'Solicitud';
+  // tipoPanel = id que usa fbToggle/estadoHeaderB2B; colDesbloqueo = etapa mínima para poder abrirlo.
   const PASOS = [
-    { n: 1, t: 'SUNAT', col: 'Solicitud', sem: f.sunat && f.sunat.semaforo },
-    { n: 2, t: 'Crédito', col: 'Filtro credito', sem: f.credito && f.credito.semaforo },
-    { n: 3, t: 'Garantía', col: 'Filtro garantia', sem: f.garantia && f.garantia.semaforo },
-    { n: 4, t: 'Reunión', col: 'Reunion comercial', sem: null },
-    { n: 5, t: 'Finanzas', col: 'Filtro finanzas', sem: f.finanzas && f.finanzas.semaforo },
-    { n: 6, t: 'Business Case', col: 'Business case', sem: null }
+    { n: 1, t: 'Solicitud', tipo: 'solicitud', colDesbloqueo: 'Solicitud' },
+    { n: 2, t: 'SUNAT', tipo: 'fsunat', colDesbloqueo: 'Solicitud' },
+    { n: 3, t: 'Crédito', tipo: 'credito', colDesbloqueo: 'Filtro credito' },
+    { n: 4, t: 'Garantía', tipo: 'garantia', colDesbloqueo: 'Filtro garantia' },
+    { n: 5, t: 'Reunión', tipo: 'reunion', colDesbloqueo: 'Reunion comercial' },
+    { n: 6, t: 'Finanzas', tipo: 'finanzas', colDesbloqueo: 'Filtro finanzas' },
+    { n: 7, t: 'Business Case', tipo: 'businesscase', colDesbloqueo: 'Business case' }
   ];
-  const orden = PASOS.map(p => p.col);
-  const idxAct = orden.indexOf(col === 'Desestimado' ? 'Solicitud' : col);
+  const ORDEN_COL = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+  const idxCol = ORDEN_COL.indexOf(col === 'Desestimado' ? 'Solicitud' : col);
   return '<div class="fb-stepper">' + PASOS.map((p, i) => {
-    let cls = 'fbs-paso', dotStyle = '';
-    if (i === idxAct) cls += ' fbs-actual';
-    else if (i < idxAct) cls += ' fbs-done';
-    if (p.sem) dotStyle = ' style="background:' + (SEM_COL[p.sem] || '#DDE4EC') + '"';
-    else if (i < idxAct) dotStyle = ' style="background:' + SEM_COL['Verde'] + '"';
-    const linea = i < PASOS.length - 1 ? '<span class="fbs-linea' + (i < idxAct ? ' fbs-linea-done' : '') + '"></span>' : '';
-    return '<span class="' + cls + '"><span class="fbs-dot"' + dotStyle + '>' + p.n + '</span><span class="fbs-txt">' + p.t + (p.sem ? ' <i class="fbs-sem">' + p.sem + '</i>' : '') + '</span></span>' + linea;
+    const idxDesb = ORDEN_COL.indexOf(p.colDesbloqueo);
+    const bloqueado = idxDesb > idxCol;
+    const esActual = FICHA_ETAPA_OPEN === p.tipo;
+    const esFuturo = idxDesb > idxCol;
+    let cls = 'fbs-paso';
+    if (esActual) cls += ' fbs-actual';
+    else if (!bloqueado) cls += ' fbs-open-able';
+    if (bloqueado) cls += ' fbs-bloq';
+    const chip = stepperChip(p.tipo, esActual, esFuturo, bloqueado);
+    const onclick = bloqueado ? '' : ' onclick="fbToggle(\'' + p.tipo + '\')"';
+    const linea = i < PASOS.length - 1 ? '<span class="fbs-linea' + (idxDesb < idxCol ? ' fbs-linea-done' : '') + '"></span>' : '';
+    return '<span class="' + cls + '"' + onclick + '><span class="fbs-dot">' + p.n + '</span>' +
+      '<span class="fbs-body"><span class="fbs-txt">' + p.t + '</span>' + chip + '</span>' +
+      '<span class="fbs-caret">' + (esActual ? '▴' : '▾') + '</span></span>' + linea;
   }).join('') + '</div>';
 }
 
@@ -5265,7 +5285,7 @@ function renderFichaB2B() {
     panelBusinessCase(modoPanel('businesscase') !== 'bloqueado', modoPanel('businesscase'))
   ];
   const _rh = $('fbResumenHead'); if (_rh) _rh.innerHTML = resumenFichaB2B();
-  $('fbAcordeon').innerHTML = stepperFichaB2B() + panels.join('');
+  $('fbAcordeon').innerHTML = '<div id="fbStepperWrap">' + stepperFichaB2B() + '</div>' + panels.join('');
   FICHA_DIRTY.clear(); instalarDirtyTracking();
   const _av = $('fbAvisoDirty'); if (_av) _av.remove();
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
@@ -6212,6 +6232,11 @@ function actualizarConsolidadoVivo() {
 function setPanelPill(tipo, sem) {
   const el = $('fbEstado_' + tipo);
   if (el) el.innerHTML = headerPillB2B(tipo === 'fsunat' ? 'fsunat' : tipo) + (typeof btnInfoFiltro === 'function' && tipo !== 'solicitud' ? btnInfoFiltro(tipo === 'fsunat' ? 'sunat' : tipo) : '');
+  refrescarStepper();
+}
+// Redibuja solo la barra del stepper (chips vivos) sin re-render del panel abierto.
+function refrescarStepper() {
+  const w = $('fbStepperWrap'); if (w) w.innerHTML = stepperFichaB2B();
 }
 
 function consolidadoGuardadoJS() {
@@ -6783,20 +6808,14 @@ function bcObservacionesHTML() {
 }
 
 function fbPanelWrap(tipo, ic, titulo, estadoHtml, open, cuerpo, bloqueado, modo, colGestion) {
-  const cls = open ? ' fb-panel-open' : '';
-  const onclick = bloqueado ? '' : ' onclick="fbToggle(\'' + tipo + '\')"';
+  // Opción A (v1.265): el stepper de arriba controla la apertura y muestra el estado.
+  // El panel ya no repite su cabecera-título: si está abierto, renderiza solo el contenido; si no, nada.
   const modoAttr = modo ? ' data-modo="' + modo + '"' : '';
-  // Botón de gestión: solo en la etapa editable (actual), para registrar contacto + próxima acción.
-  const btnGestion = ''; // boton +Gestion eliminado (la gestion se registra via Revisar o el timeline)
-  const candado = (modo === 'lectura') ? '<span class="fb-lock-tag">🔒 solo lectura</span>' : (modo === 'bloqueado' ? '<span class="fb-lock-tag fb-lock-fut">🔒 bloqueada</span>' : '');
-  return '<div class="fb-panel' + cls + '" data-fb="' + tipo + '"' + modoAttr + '>' +
-    '<div class="fb-panel-head"' + onclick + '>' +
-    '<span class="fb-ic">' + ic + '</span>' +
-    '<span class="fb-titulo">' + titulo + '</span>' +
-    '<span class="fb-estado" id="fbEstado_' + tipo + '">' + estadoHtml + '</span>' +
-    candado + btnGestion +
-    (bloqueado ? '' : '<span class="fb-caret">' + (open ? '▴' : '▾') + '</span>') +
-    '</div>' + (cuerpo || '') + '</div>';
+  const candado = (modo === 'lectura') ? '<div class="fb-lock-banner">🔒 Solo lectura · esta etapa ya pasó</div>' : (modo === 'bloqueado' ? '<div class="fb-lock-banner fb-lock-fut">🔒 Etapa bloqueada · requiere completar las anteriores</div>' : '');
+  if (!open) return '<div class="fb-panel" data-fb="' + tipo + '"' + modoAttr + '></div>';
+  return '<div class="fb-panel fb-panel-open" data-fb="' + tipo + '"' + modoAttr + '>' +
+    '<span class="fb-estado oculto" id="fbEstado_' + tipo + '">' + estadoHtml + '</span>' +
+    candado + (cuerpo || '') + '</div>';
 }
 
 function fbToggle(tipo) { sincronizarFichaDOM(); FICHA_ETAPA_OPEN = (FICHA_ETAPA_OPEN === tipo) ? null : tipo; renderFichaB2B(); }
