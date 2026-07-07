@@ -5366,6 +5366,7 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
 // GET /api/b2b/dia?fecha=YYYY-MM-DD  (admin/jefes B2B)
 app.get('/api/b2b/dia', soloB2B, (req, res) => {
   if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  try {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha) ? req.query.fecha : hoyP;
   // Rango del día en hora Perú (00:00→24:00) convertido a ISO UTC (+5h)
@@ -5374,7 +5375,7 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
 
   // Datos de solicitudes (para nombre/etapa)
   const sols = {};
-  db.prepare('SELECT codigo, ruc, razonSocial, contacto, telefono, estado, asignadoA FROM b2b_solicitudes').all().forEach(s => { sols[s.codigo] = s; });
+  db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(s => { sols[s.codigo] = s; });
 
   // 1) Gestiones del día
   const gest = db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha DESC').all(ini, fin);
@@ -5417,6 +5418,7 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
     resumen: { solicitudesTocadas: tocadas.size, totalGestiones: gest.length, avancesEtapa: avances.length },
     resumenResp, resultados, gestiones, avances
   });
+  } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
 // RESET del tablero a etapa inicial (nada gestionado aún):
@@ -6791,7 +6793,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.325 (Panel Gestion B2B del dia (admin/jefes B2B): nueva pestana con cuantas solicitudes se tocaron hoy, gestiones registradas, avances de etapa; resumen por responsable, desglose de resultados, tabla de avances y detalle de gestiones (etapa, resultado, proxima accion, hora) con filtro de fecha. Endpoint /api/b2b/dia. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.326 (Fix panel Gestion B2B del dia: el endpoint /api/b2b/dia daba Error de servidor generico; ahora esta blindado con try/catch que expone el mensaje real en el JSON, y usa SELECT * tolerante a columnas para evitar fallos por esquema de BD. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
