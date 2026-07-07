@@ -555,7 +555,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -564,13 +564,13 @@ async function arrancar() {
   } else if (r === 'jefa') {
     verMundo('B2C'); verMundo('Mkt'); ver(['mi-leads', 'mi-dash', 'mi-comite', 'mi-brutos', 'mi-releads', 'mi-supervisor']); ver(['mi-mkt-atrib']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
-    verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
@@ -629,6 +629,7 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
+  if (v === 'b2b-dia') cargarB2BDia();
   if (v === 'atribucion') cargarMarketing();
   if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
 }
@@ -650,6 +651,7 @@ function navB2B(which) {
   cerrarMundos();
   if (which === 'releads') { ir('b2b-releads'); return; }
   if (which === 'audit') { ir('b2b-audit'); return; }
+  if (which === 'dia') { ir('b2b-dia'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -8435,4 +8437,57 @@ async function analizarComiteIA() {
     box.innerHTML = '<div class="com-ia-head">🤖 Análisis ejecutivo (IA)</div><div class="com-ia-body">' + txt + '</div>';
   } catch (e) { box.innerHTML = '<div class="com-ia-load">Error: ' + e.message + '</div>'; }
   if (btn) { btn.disabled = false; btn.textContent = '🤖 Análisis IA'; }
+}
+
+// ===== GESTIÓN B2B DEL DÍA =====
+async function cargarB2BDia() {
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  if ($('bdFecha') && !$('bdFecha').value) $('bdFecha').value = hoy;
+  const fecha = $('bdFecha') ? $('bdFecha').value : hoy;
+  try {
+    const d = await api('/api/b2b/dia?fecha=' + fecha);
+    renderB2BDia(d);
+  } catch (e) { if ($('bdCards')) $('bdCards').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>'; }
+}
+
+function renderB2BDia(d) {
+  const R = d.resumen || {};
+  // Cards
+  $('bdCards').innerHTML = [
+    ['Solicitudes tocadas', R.solicitudesTocadas],
+    ['Gestiones registradas', R.totalGestiones],
+    ['Avances de etapa', R.avancesEtapa]
+  ].map(c => '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div></div>').join('');
+
+  // Por responsable
+  const rr = d.resumenResp || [];
+  $('bdResp').innerHTML = rr.length ? '<table class="com-tabla"><thead><tr><th>Responsable</th><th>Gestiones</th><th>Solicitudes</th></tr></thead><tbody>' +
+    rr.map(r => '<tr><td>' + primerNombre(r.responsable) + '</td><td>' + r.gestiones + '</td><td>' + r.solicitudes + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">Sin gestiones en la fecha.</div>';
+
+  // Resultados
+  const res = d.resultados || [];
+  const maxR = Math.max(1, ...res.map(x => x.n));
+  $('bdResultados').innerHTML = res.length ? res.map(x =>
+    '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.resultado + '</span>' +
+    '<div class="com-bar-track"><div class="com-bar-fill" style="width:' + Math.round((x.n / maxR) * 100) + '%"></div></div>' +
+    '<span class="com-bar-val">' + x.n + '</span></div>').join('') : '<div class="vacio">Sin resultados.</div>';
+
+  // Avances de etapa
+  const av = d.avances || [];
+  $('bdAvances').innerHTML = av.length ? '<table class="com-tabla"><thead><tr><th>Empresa</th><th>Movimiento</th><th>Responsable</th><th>Hora</th></tr></thead><tbody>' +
+    av.map(a => '<tr><td>' + a.empresa + '</td><td style="text-align:left">' + (a.detalle || '') + '</td><td>' + primerNombre(a.responsable) + '</td><td>' + horaCorta(a.hora) + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">Sin avances de etapa en la fecha.</div>';
+
+  // Detalle de gestiones
+  const g = d.gestiones || [];
+  $('bdGestiones').innerHTML = g.length ? '<table class="com-tabla com-tabla-l"><thead><tr><th>Hora</th><th>Empresa</th><th>Etapa</th><th>Resultado</th><th>Próxima acción</th><th>Responsable</th></tr></thead><tbody>' +
+    g.map(x => '<tr><td>' + horaCorta(x.hora) + '</td><td style="text-align:left">' + x.empresa + (x.telefono ? '<br><small style="color:#94a3b8">' + x.telefono + '</small>' : '') + '</td><td>' + (x.etapa || '') + '</td><td>' + (x.resultado || '') + '</td><td style="text-align:left">' + (x.proximaAccion || '') + (x.fechaProxAccion ? '<br><small style="color:#94a3b8">📅 ' + (x.fechaProxAccion || '').slice(0, 10) + '</small>' : '') + '</td><td>' + primerNombre(x.responsable) + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">Sin gestiones registradas en la fecha.</div>';
+}
+
+function horaCorta(iso) {
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() - 5 * 3600000);
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
 }

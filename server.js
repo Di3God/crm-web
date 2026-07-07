@@ -5362,6 +5362,63 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
   res.json({ ok: true, reunion: datos, avanzo });
 });
 
+// ===== SEGUIMIENTO DIARIO B2B: qué se gestionó hoy, avances de etapa =====
+// GET /api/b2b/dia?fecha=YYYY-MM-DD  (admin/jefes B2B)
+app.get('/api/b2b/dia', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha) ? req.query.fecha : hoyP;
+  // Rango del día en hora Perú (00:00→24:00) convertido a ISO UTC (+5h)
+  const ini = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+  const fin = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+
+  // Datos de solicitudes (para nombre/etapa)
+  const sols = {};
+  db.prepare('SELECT codigo, ruc, razonSocial, contacto, telefono, estado, asignadoA FROM b2b_solicitudes').all().forEach(s => { sols[s.codigo] = s; });
+
+  // 1) Gestiones del día
+  const gest = db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha DESC').all(ini, fin);
+  const gestiones = gest.map(g => {
+    const s = sols[g.codigoSolicitud] || {};
+    return {
+      codigo: g.codigoSolicitud, empresa: s.razonSocial || '—', contacto: s.contacto || '', telefono: s.telefono || '',
+      etapa: g.etapa || s.estado || '', canal: g.canal || '', resultado: g.resultado || '',
+      proximaAccion: g.proximaAccion || '', fechaProxAccion: g.fechaProxAccion || '',
+      responsable: g.responsable || '', hora: g.fecha
+    };
+  });
+
+  // 2) Solicitudes tocadas (únicas) hoy
+  const tocadas = new Set(gest.map(g => g.codigoSolicitud));
+
+  // 3) Avances de etapa hoy (de auditoría: b2b_kanban_mover / b2b_kanban_forzar / avances por consolidado)
+  const avancesRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_guardar_filtro','b2b_reunion_guardar') ORDER BY fecha DESC").all(ini, fin);
+  const avances = avancesRaw.filter(a => a.accion === 'b2b_kanban_mover' || a.accion === 'b2b_kanban_forzar' || (a.detalle && /avanz/i.test(a.detalle))).map(a => {
+    const s = sols[a.objetivo] || {};
+    return { codigo: a.objetivo, empresa: s.razonSocial || '—', detalle: a.detalle || '', responsable: a.nombre || '', hora: a.fecha };
+  });
+
+  // 4) Resumen por responsable
+  const porResp = {};
+  gest.forEach(g => {
+    const r = g.responsable || 'Sin asignar';
+    const o = (porResp[r] = porResp[r] || { responsable: r, gestiones: 0, solicitudes: new Set() });
+    o.gestiones++; o.solicitudes.add(g.codigoSolicitud);
+  });
+  const resumenResp = Object.values(porResp).map(o => ({ responsable: o.responsable, gestiones: o.gestiones, solicitudes: o.solicitudes.size })).sort((a, b) => b.gestiones - a.gestiones);
+
+  // 5) Desglose de resultados de gestión
+  const porResultado = {};
+  gest.forEach(g => { const r = g.resultado || 'Sin resultado'; porResultado[r] = (porResultado[r] || 0) + 1; });
+  const resultados = Object.entries(porResultado).map(([resultado, n]) => ({ resultado, n })).sort((a, b) => b.n - a.n);
+
+  res.json({
+    fecha,
+    resumen: { solicitudesTocadas: tocadas.size, totalGestiones: gest.length, avancesEtapa: avances.length },
+    resumenResp, resultados, gestiones, avances
+  });
+});
+
 // RESET del tablero a etapa inicial (nada gestionado aún):
 //  - RUC validado por SUNAT (sunatEstado='ok')  → 'Filtro credito' (columna crédito).
 //  - RUC no validado/error/pendiente             → 'Nuevo' (primera columna, Solicitud).
@@ -6734,7 +6791,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.324 (Dashboard COMITE B2C: nueva pestana (admin/jefa) con metricas del periodo -leads, contactabilidad, cierres+monto, tasa cierre, 3x5, velocidad al primer contacto-, embudo de conversion, tiempo por etapa, ranking por gestor y desestimados por motivo; filtro de fechas; boton Analisis IA (tipo=comite) que da lectura ejecutiva + acciones. Endpoint /api/b2c/comite reutilizable. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.325 (Panel Gestion B2B del dia (admin/jefes B2B): nueva pestana con cuantas solicitudes se tocaron hoy, gestiones registradas, avances de etapa; resumen por responsable, desglose de resultados, tabla de avances y detalle de gestiones (etapa, resultado, proxima accion, hora) con filtro de fecha. Endpoint /api/b2b/dia. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -36,6 +36,7 @@
         <button class="mundo-item oculto" id="mi-b2b-sol" onclick="navB2B('sol')">Solicitudes</button>
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
+        <button class="mundo-item oculto" id="mi-b2b-dia" onclick="navB2B('dia')">📊 Gestión del día</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
       </div>
     </div>
@@ -631,6 +632,20 @@
   </section>
 
   <!-- ===== VISTA: AUDITORÍA B2B ===== -->
+  <section id="v-b2b-dia" class="vista">
+    <div class="barra">
+      <h2>📊 Gestión B2B del día</h2>
+      <input type="date" id="bdFecha" onchange="cargarB2BDia()">
+      <button class="btn sec" onclick="cargarB2BDia()">⟳ Actualizar</button>
+    </div>
+    <div id="bdCards" class="com-cards"></div>
+    <div class="com-grid">
+      <div class="com-panel"><div class="com-panel-tit">Gestiones por responsable</div><div id="bdResp"></div></div>
+      <div class="com-panel"><div class="com-panel-tit">Resultados de gestión</div><div id="bdResultados"></div></div>
+    </div>
+    <div class="com-panel" style="margin-bottom:14px"><div class="com-panel-tit">Avances de etapa hoy</div><div id="bdAvances"></div></div>
+    <div class="com-panel"><div class="com-panel-tit">Detalle de gestiones</div><div id="bdGestiones"></div></div>
+  </section>
   <section id="v-b2b-audit" class="vista">
     <div class="barra">
       <h2>Auditoría B2B</h2>
