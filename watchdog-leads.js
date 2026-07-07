@@ -1,85 +1,99 @@
 // =============================================================
-// WATCHDOG DE LEADS — un solo aviso al grupo de MARKETING para AMBOS canales (B2C + B2B).
-//   · Primera alerta cuando ALGÚN canal lleva WATCH_PRIMERA_H horas seco (def. 2).
-//   · Repite cada WATCH_REPITE_H horas (def. 2), hasta WATCH_MAX_ALERTAS avisos (def. 3).
-//   · Solo en horario laboral Perú (WATCH_INICIO..WATCH_FIN, def. 8..22).
-//   · Cada lead resetea SU canal; el mensaje siempre reporta ambos.
-// Destino: WA_GRUPO_MKT_JID. Sin esa variable, el watchdog no hace nada.
+// REPORTES DE LEADS POR FRANJA — al grupo de MARKETING (WA_GRUPO_MKT_JID).
+// 4 cortes diarios (hora Perú), cada uno reporta cuántos leads entraron en su franja:
+//   · 09:00 → franja 00:00–09:00
+//   · 13:00 → franja 09:00–13:00
+//   · 18:00 → franja 13:00–18:00
+//   · 23:59 → franja 18:00–23:59
+// Cuenta B2C (leads de campaña) y B2B (solicitudes creadas), con desglose por origen.
+// Un solo envío por corte y día (dedup en app_config). Sin variable, no hace nada.
 // =============================================================
-module.exports = function ({ db, enviarAlertaWA }) {
-  const H = 3600000, LIMA_OFF = -5 * 3600000;
-  const PRIMERA_MS = (Number(process.env.WATCH_PRIMERA_H) || 2) * H;
-  const REPITE_MS = (Number(process.env.WATCH_REPITE_H) || 2) * H;
-  const MAX_ALERTAS = Number(process.env.WATCH_MAX_ALERTAS) || 3;
-  const HORA_INI = Number(process.env.WATCH_INICIO) || 8;   // 8am Perú
-  const HORA_FIN = Number(process.env.WATCH_FIN) || 22;      // 10pm Perú
+module.exports = function ({ db, enviarAlertaWA, peruFecha }) {
+  const LIMA_OFF = -5 * 3600000;
   const JID = () => process.env.WA_GRUPO_MKT_JID || null;
-
   const getCfg = k => { try { const r = db.prepare('SELECT valor FROM app_config WHERE clave=?').get(k); return r ? r.valor : null; } catch (e) { return null; } };
   const setCfg = (k, v) => { try { db.prepare('INSERT INTO app_config (clave,valor) VALUES (?,?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor').run(k, String(v)); } catch (e) { } };
-  const horaPeru = () => new Date(Date.now() + LIMA_OFF).getUTCHours();
-  const fmtDur = ms => { const h = Math.floor(ms / H), m = Math.floor((ms % H) / 60000); return h > 0 ? h + 'h ' + m + 'min' : m + ' min'; };
+  const hoyPeru = () => peruFecha(new Date().toISOString());
 
-  // Llamar cuando entra un lead de ese canal ('b2c' | 'b2b'): resetea su reloj y rearma el ciclo de alertas.
-  function registrarLead(canal) {
-    const c = canal === 'b2b' ? 'b2b' : 'b2c';
-    setCfg('watch_ultimo_' + c, Date.now());
-    setCfg('watch_ultima_alerta', '');
-    setCfg('watch_n_alertas', '0');
+  // Cortes: hora Perú -> [franjaInicio, franjaFin] en horas.
+  const CORTES = {
+    '09:00': { ini: 0, fin: 9, etq: '12am a 9am' },
+    '13:00': { ini: 9, fin: 13, etq: '9am a 1pm' },
+    '18:00': { ini: 13, fin: 18, etq: '1pm a 6pm' },
+    '23:59': { ini: 18, fin: 24, etq: '6pm a 12am' }
+  };
+  const DIAS_SEM = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function fechaLarga(diaPeru) {
+    const d = new Date(diaPeru + 'T12:00:00.000Z');
+    const dow = DIAS_SEM[d.getUTCDay()];
+    return dow.charAt(0).toUpperCase() + dow.slice(1) + ' ' + d.getUTCDate() + ' de ' + MESES[d.getUTCMonth()];
   }
 
-  // Último ingreso por canal; en el primer arranque toma el más reciente de la BD (o ahora).
-  function ultimo(canal) {
-    let t = Number(getCfg('watch_ultimo_' + canal));
-    if (!t || !isFinite(t)) {
-      let base = Date.now();
-      try {
-        const r = canal === 'b2b'
-          ? db.prepare("SELECT MAX(fechaIngreso) AS f FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0").get()
-          : db.prepare("SELECT MAX(fechaCarga) AS f FROM leads WHERE COALESCE(archivado,0)=0").get();
-        if (r && r.f) { const x = new Date(r.f).getTime(); if (isFinite(x)) base = x; }
-      } catch (e) { }
-      setCfg('watch_ultimo_' + canal, base); t = base;
+  // Convierte "YYYY-MM-DD" + hora Perú a un ISO UTC comparable con las columnas de fecha (guardadas en UTC).
+  const limitePeru = (diaPeru, horaPeru) => new Date(new Date(diaPeru + 'T00:00:00.000Z').getTime() - LIMA_OFF + horaPeru * 3600000).toISOString();
+
+  // Estados de ingreso que NO cuentan (descartes y errores). Todo lo demás (creado + duplicados) SÍ:
+  // vino por campaña -> costó, así que se cuenta aunque sea duplicado.
+  const EXCLUIR = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+  function contar(desdeIso, hastaIso) {
+    // B2C: ingresos brutos de campaña (marketing_ingresos), excluyendo descartes y errores.
+    const b2cN = db.prepare(
+      "SELECT COUNT(*) AS n FROM marketing_ingresos WHERE fechaRecepcion >= ? AND fechaRecepcion < ? " +
+      "AND estado NOT IN " + EXCLUIR
+    ).get(desdeIso, hastaIso).n;
+    // B2B: ingresos brutos de campaña (b2b_ingresos), mismo criterio.
+    const b2bN = db.prepare(
+      "SELECT COUNT(*) AS n FROM b2b_ingresos WHERE fechaRecepcion >= ? AND fechaRecepcion < ? " +
+      "AND estado NOT IN " + EXCLUIR
+    ).get(desdeIso, hastaIso).n;
+    return { b2cN, b2bN };
+  }
+
+  function generarReporte(corte, diaPeru) {
+    const c = CORTES[corte]; if (!c) return null;
+    diaPeru = diaPeru || hoyPeru();
+    const desde = limitePeru(diaPeru, c.ini);
+    const hasta = limitePeru(diaPeru, c.fin);
+    const { b2cN, b2bN } = contar(desde, hasta);
+    let txt = '📊 *Reporte de leads · ' + c.etq + '*\n🗓 ' + fechaLarga(diaPeru) + '\n\n' +
+      '👥 *B2C:* ' + b2cN + ' lead' + (b2cN === 1 ? '' : 's') + '\n' +
+      '🏢 *B2B:* ' + b2bN + ' lead' + (b2bN === 1 ? '' : 's');
+    // Último corte del día: agrega el consolidado por canal (sin total mezclado).
+    if (corte === '23:59') {
+      const dia = contar(limitePeru(diaPeru, 0), limitePeru(diaPeru, 24));
+      txt += '\n\n🌙 *Total del día*\n' +
+        '👥 B2C: ' + dia.b2cN + ' · 🏢 B2B: ' + dia.b2bN;
     }
-    return t;
+    return txt;
   }
 
-  async function chequear() {
-    const jid = JID(); if (!jid) return;
-    const ahora = Date.now();
-    const silB2C = ahora - ultimo('b2c');
-    const silB2B = ahora - ultimo('b2b');
-    const peor = Math.max(silB2C, silB2B);
-    if (peor < PRIMERA_MS) return;                 // ningún canal llegó al umbral
-    const h = horaPeru();
-    if (h < HORA_INI || h >= HORA_FIN) return;      // fuera de horario laboral: no molesta
-
-    const ultimaAlerta = Number(getCfg('watch_ultima_alerta'));
-    const nAlertas = Number(getCfg('watch_n_alertas')) || 0;
-    const tocaPrimera = !ultimaAlerta || !isFinite(ultimaAlerta);
-    const tocaRepite = ultimaAlerta && isFinite(ultimaAlerta) && (ahora - ultimaAlerta) >= REPITE_MS;
-    if (!tocaPrimera && !tocaRepite) return;
-    if (nAlertas >= MAX_ALERTAS) return;            // tope alcanzado: espera a que llegue un lead
-
-    const linea = (nombre, sil) => (sil >= PRIMERA_MS ? '🔴' : '🟢') + ' ' + nombre + ': ' +
-      (sil >= PRIMERA_MS ? 'hace ' + fmtDur(sil) : 'ok (' + fmtDur(sil) + ')');
-    const ultimo3 = (nAlertas + 1 >= MAX_ALERTAS);
-    const msg = '🚨 *¡No están llegando leads!*\nJean, por favor tu apoyo. 🙏\n\n' +
-      linea('B2C', silB2C) + '\n' + linea('B2B', silB2B) +
-      (ultimo3 ? '\n\n_(último recordatorio hasta que ingrese un lead)_' : '');
-    try {
-      await enviarAlertaWA(msg, jid);
-      setCfg('watch_ultima_alerta', ahora);
-      setCfg('watch_n_alertas', nAlertas + 1);
-      console.log('[WATCHDOG] alerta ' + (nAlertas + 1) + '/' + MAX_ALERTAS + ' · B2C ' + fmtDur(silB2C) + ' · B2B ' + fmtDur(silB2B));
-    } catch (e) { console.error('[WATCHDOG] fallo:', e.message); }
+  async function enviarCorte(corte) {
+    const txt = generarReporte(corte);
+    if (!txt) return false;
+    await enviarAlertaWA(txt, JID());
+    return true;
   }
 
   function iniciar() {
-    if (!JID()) { console.log('[WATCHDOG] WA_GRUPO_MKT_JID no configurado: desactivado'); return; }
-    setInterval(() => { chequear().catch(() => { }); }, 60000);
-    console.log('[WATCHDOG] activo · 1ª a las ' + (PRIMERA_MS / H) + 'h, repite cada ' + (REPITE_MS / H) + 'h, máx ' + MAX_ALERTAS + ', ' + HORA_INI + '-' + HORA_FIN + 'h Perú');
+    if (!JID()) { console.log('[REPORTES] WA_GRUPO_MKT_JID no configurado: reportes por franja desactivados'); return; }
+    setInterval(async () => {
+      try {
+        const now = new Date(Date.now() + LIMA_OFF);
+        const hhmm = now.toISOString().slice(11, 16);
+        if (!CORTES[hhmm]) return;
+        const clave = 'rep_franja_' + hhmm + '_' + hoyPeru();
+        if (getCfg(clave)) return; // ya enviado hoy
+        setCfg(clave, new Date().toISOString());
+        await enviarAlertaWA(generarReporte(hhmm), JID());
+        console.log('[REPORTES] corte ' + hhmm + ' enviado');
+      } catch (e) { console.error('[REPORTES] fallo:', e.message); }
+    }, 60000);
+    console.log('[REPORTES] activo · cortes 09:00 / 13:00 / 18:00 / 23:59 Perú');
   }
 
-  return { registrarLead, iniciar, chequear };
+  // Compat: el server aún llama registrarLead(); ya no se usa para alertas, se deja como no-op.
+  function registrarLead() { }
+
+  return { iniciar, registrarLead, generarReporte, enviarCorte };
 };

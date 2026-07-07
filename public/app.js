@@ -551,19 +551,25 @@ async function arrancar() {
   let mundoInicial = null;
   const r = YO.rol;
   if (r === 'admin') {
-    verMundo('B2C'); verMundo('B2B');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-atribucion', 'mi-supervisor', 'mi-audit']);
+    document.querySelectorAll('.soloAdminMkt').forEach(e => e.classList.remove('oculto'));
+    document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
+    document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
+    verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
+    ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
     verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); ver(['mi-leads', 'mi-dash', 'mi-brutos', 'mi-releads', 'mi-supervisor']); mundoInicial = 'B2C';
+    verMundo('B2C'); verMundo('Mkt'); ver(['mi-leads', 'mi-dash', 'mi-comite', 'mi-brutos', 'mi-releads', 'mi-supervisor']); ver(['mi-mkt-atrib']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
+    document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2B'); ver(['mi-b2b-sol']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
+    document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
@@ -614,6 +620,7 @@ function ir(v) {
   const vista = $('v-' + v); if (vista) vista.classList.add('act');
   const nvBtn = $('nv-' + v); if (nvBtn) nvBtn.classList.add('act');
   if (v === 'dash') cargarDashboard();
+  if (v === 'comite') cargarComite();
   if (v === 'audit') cargarAuditoria();
   if (v === 'cohortes') cargarCohortes();
   if (v === 'brutos') cargarBrutos();
@@ -631,14 +638,14 @@ let MUNDO_INICIAL = null;
 function toggleMundo(m, ev) {
   if (ev) ev.stopPropagation();
   const abrir = $('menu' + m);
-  const otro = $('menu' + (m === 'B2C' ? 'B2B' : 'B2C'));
-  if (otro) otro.classList.add('oculto');
+  ['B2C', 'B2B', 'Mkt'].filter(x => x !== m).forEach(x => { const e = $('menu' + x); if (e) e.classList.add('oculto'); });
   if (abrir) abrir.classList.toggle('oculto');
 }
 function cerrarMundos() {
-  ['menuB2C', 'menuB2B'].forEach(id => { const e = $(id); if (e) e.classList.add('oculto'); });
+  ['menuB2C', 'menuB2B', 'menuMkt'].forEach(id => { const e = $(id); if (e) e.classList.add('oculto'); });
 }
 function navB2C(v) { cerrarMundos(); ir(v); }
+function navMkt(v) { cerrarMundos(); ir(v); }
 function navB2B(which) {
   cerrarMundos();
   if (which === 'releads') { ir('b2b-releads'); return; }
@@ -4242,7 +4249,7 @@ function b2bTab(which) {
 }
 
 // ===== Kanban B2B =====
-let B2B_VISTA = 'tabla';        // 'tabla' | 'kanban' (tabla primero; el usuario cambia a Kanban)
+let B2B_VISTA = 'kanban';       // 'kanban' por defecto; el botón Lista solo lo ven jefes/admin
 let B2B_KANBAN_DRAG = null;      // { codigo, desde }
 const B2B_KANBAN_COLS = [
   { id: 'Solicitud', label: 'Solicitud / SUNAT', hint: '' },
@@ -4256,6 +4263,29 @@ const B2B_KANBAN_COLS = [
 const B2B_ETAPAS_FILTRO = ['Filtro credito', 'Filtro garantia', 'Filtro finanzas'];
 const SEM_COL = { Verde: '#2E8B57', Amarillo: '#E0A800', Rojo: '#CC0000' };
 
+async function descargarB2BCsv() {
+  try {
+    const d = await api('/api/b2b/solicitudes');
+    const rows = Array.isArray(d) ? d : (d.solicitudes || d.filas || []);
+    if (!rows.length) { alert('No hay solicitudes para exportar.'); return; }
+    const cols = [
+      ['codigo', 'Código'], ['ruc', 'RUC'], ['razonSocial', 'Razón social'], ['contacto', 'Contacto'],
+      ['telefono', 'Teléfono'], ['email', 'Email'], ['estado', 'Etapa'], ['ticket', 'Ticket'],
+      ['montoSolicitado', 'Monto'], ['sector', 'Sector'], ['responsable', 'Responsable'],
+      ['resultadoCredito', 'Crédito'], ['resultadoGarantia', 'Garantía'], ['resultadoFinanzas', 'Finanzas'],
+      ['origen', 'Origen'], ['campana', 'Campaña'], ['fechaIngreso', 'Ingreso']
+    ];
+    const esc = v => { const t = (v == null ? '' : String(v)).replace(/"/g, '""'); return /[",\n;]/.test(t) ? '"' + t + '"' : t; };
+    const head = cols.map(c => c[1]).join(';');
+    const body = rows.map(r => cols.map(c => esc(r[c[0]])).join(';')).join('\n');
+    const csv = '\ufeff' + head + '\n' + body; // BOM para Excel
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'solicitudes_b2b_' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (e) { alert('No se pudo descargar: ' + (e.message || e)); }
+}
 function b2bVista(v) {
   B2B_VISTA = v;
   $('b2bViewKanban').classList.toggle('act', v === 'kanban');
@@ -4410,23 +4440,16 @@ function b2bKanbanCard(c) {
     else cuando = '<span class="kb-sla-quedan">⏳ Quedan ' + fmtHorasRestantes(sla.horasRestantes) + '</span>';
     slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
   }
-  // Primera gestión: máximo 15 minutos desde el ingreso del lead.
-  let primeraHtml = '';
-  if (!c.tieneGestion && c.fechaIngreso && c.etapaKanban !== 'Business case') {
-    const mins = Math.floor((Date.now() - new Date(c.fechaIngreso).getTime()) / 60000);
-    primeraHtml = mins <= 15
-      ? '<div class="kb-primera kb-primera-ok">⏱ 1ª gestión: quedan ' + (15 - mins) + ' min</div>'
-      : '<div class="kb-primera kb-primera-venc">🔥 1ª gestión pendiente · +' + (mins < 60 ? mins + ' min' : Math.floor(mins / 60) + 'h') + '</div>';
-  }
+  const primeraHtml = ''; // eliminado: la próxima acción del modal de gestión se muestra en slaHtml
   return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
     '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket kb-ticket-' + (c.ticket || '').toLowerCase() + '">' + c.ticket + '</span>' : '') + '</div>' +
-    '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) + ' · ' : '') + (c.ruc || '—') + '</div>' +
+    '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) : '—') + (c.telefono ? ' · ' + c.telefono : '') + '</div>' +
     ubicHtml +
     (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + probChip + '</div>' : (probChip ? '<div class="kb-monto-row">' + probChip + '</div>' : '')) +
     obsHtml + primeraHtml +
     slaHtml +
-    '<div class="kb-foot">' + dots + resp + '</div>' +
+    '<div class="kb-foot">' + dots + '</div>' +
     '</div>';
 }
 // Texto de las etiquetas de observación del kanban (RUC unificado a "Validar RUC").
@@ -4539,7 +4562,7 @@ function abrirRedFlagB2B() {
     '<div class="tl-card rf-card"><div class="tl-head"><b>🚩 Bandera roja · descartar solicitud</b><button class="gm-x" onclick="abrirRedFlagB2B()">✕</button></div>' +
     '<div class="rf-body"><div class="rf-sub">Selecciona el motivo principal. La solicitud sale del tablero (se puede reactivar después).</div>' +
     radios +
-    '<div class="rf-lbl">Comentario <span class="rf-oblig">obligatorio</span></div>' +
+    '<div class="rf-lbl">Comentario</div>' +
     '<textarea id="rfComentario" class="mtr-in rf-txt" placeholder="Detalla el motivo: qué se revisó, con quién se habló, evidencia…"></textarea>' +
     '<div class="rf-err oculto" id="rfError"></div>' +
     '<div class="rf-foot"><button class="btn sec" onclick="abrirRedFlagB2B()">Cancelar</button>' +
@@ -4553,7 +4576,7 @@ async function confirmarRedFlagB2B() {
   const com = ($('rfComentario') && $('rfComentario').value || '').trim();
   const err = $('rfError');
   if (!sel) { err.textContent = 'Selecciona un motivo.'; err.classList.remove('oculto'); return; }
-  if (!com) { err.textContent = 'El comentario es obligatorio.'; err.classList.remove('oculto'); $('rfComentario').focus(); return; }
+  if (!com) { err.textContent = 'Escribe un comentario del motivo.'; err.classList.remove('oculto'); $('rfComentario').focus(); return; }
   err.classList.add('oculto');
   try {
     await api('/api/b2b/solicitudes/' + FICHA.solicitud.codigo + '/descartar', {
@@ -4993,7 +5016,7 @@ function stepperFichaB2B() {
     { n: 4, t: 'Garantía', tipo: 'garantia', colDesbloqueo: 'Filtro garantia' },
     { n: 5, t: 'Reunión', tipo: 'reunion', colDesbloqueo: 'Reunion comercial' },
     { n: 6, t: 'Finanzas', tipo: 'finanzas', colDesbloqueo: 'Filtro finanzas' },
-    { n: 7, t: 'Business Case', tipo: 'businesscase', colDesbloqueo: 'Business case' }
+    { n: 7, t: 'Business C', tipo: 'businesscase', colDesbloqueo: 'Business case' }
   ];
   const ORDEN_COL = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
   const idxCol = ORDEN_COL.indexOf(col === 'Desestimado' ? 'Solicitud' : col);
@@ -5156,7 +5179,7 @@ function panelReunion(modo) {
 
   // Comentarios en FRANJAS horizontales a todo el ancho.
   const comentarios =
-    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión <span class="rf-oblig">Obligatorio al pasar a Finanzas</span></div>' +
+    '<div class="reu-com reu-com-franja"><div class="reu-com-tit">💬 Comentarios de la reunión</div>' +
     '<div class="reu-com-sub">Registra los acuerdos, aclaraciones y validación de las observaciones.</div>' +
     '<textarea id="fbReuComentario" class="mtr-in reu-txt reu-txt-full" maxlength="2000" placeholder="Escribe tus comentarios aquí…">' + (r.comentario ? String(r.comentario).replace(/</g, '&lt;') : '') + '</textarea></div>';
 
@@ -5181,7 +5204,7 @@ async function guardarReunionB2B(silencioso) {
   };
   datos.proximosPasos = prev.proximosPasos || null; // campo retirado de la UI; se conserva lo ya guardado
   if (datos.realizada && (!datos.comentario || !datos.comentario.trim())) {
-    alert('Marcaste "✅ La reunión se dio": el comentario de la reunión es obligatorio para guardar.');
+    alert('Marcaste "✅ La reunión se dio": escribe el comentario de la reunión para guardar.');
     const t = $('fbReuComentario'); if (t) { t.focus(); t.classList.add('reu-txt-err'); setTimeout(() => t.classList.remove('reu-txt-err'), 1600); }
     return false;
   }
@@ -5191,6 +5214,7 @@ async function guardarReunionB2B(silencioso) {
     });
     FICHA.filtros.reunion = Object.assign({}, FICHA.filtros.reunion, { checklist: resp.reunion });
     limpiarDirty('reunion');
+    if (resp.avanzo && !silencioso) { await abrirFichaB2B(FICHA.solicitud.codigo); if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B(); return true; }
     if (!silencioso) renderFichaB2B();
     return true;
   } catch (e) { if (!silencioso) alert('No se pudo guardar la reunión: ' + e.message); return false; }
@@ -5327,14 +5351,15 @@ function contactabilidadB2B() {
   const dia = iso => Math.floor((new Date(iso).getTime() + OFF) / 86400000);
   const hora = iso => new Date(new Date(iso).getTime() + OFF).getUTCHours();
   const d0 = dia(s.fechaIngreso), hoy = dia(new Date().toISOString());
+  const DIAS_B2B = 30; // cadencia B2B: 30 días
   const dias = [];
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < DIAS_B2B; i++) {
     const dAbs = new Date((d0 + i) * 86400000 - OFF);
     dias.push({ etiqueta: 'D' + (i + 1), dm: String(dAbs.getUTCDate()).padStart(2, '0') + '/' + String(dAbs.getUTCMonth() + 1).padStart(2, '0'),
       etapa: null, franjas: [{ estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }] });
   }
   (FICHA._gestiones || []).forEach(g => {
-    const ix = dia(g.fecha) - d0; if (ix < 0 || ix > 9) return;
+    const ix = dia(g.fecha) - d0; if (ix < 0 || ix >= DIAS_B2B) return;
     const h = hora(g.fecha); const fr = h < 12 ? 0 : (h < 16 ? 1 : 2);
     const esIntento = RES_INTENTO_B2B.test(g.resultado || '');
     const cel = dias[ix].franjas[fr];
@@ -5342,13 +5367,8 @@ function contactabilidadB2B() {
     dias[ix].etapa = g.etapa || dias[ix].etapa; // última etapa registrada ese día
   });
   const ixHoy = hoy - d0;
-  if (ixHoy >= 0 && ixHoy <= 9 && !dias[ixHoy].etapa) dias[ixHoy].etapa = FICHA.etapaKanban;
-  // Mínimos por corte de llegada: <12h → 3 intentos D1 · 12-16h → 2 · >16h → 1. Días siguientes: 3/día.
-  const h0 = hora(s.fechaIngreso);
-  const minD1 = h0 < 12 ? 3 : (h0 < 16 ? 2 : 1);
-  const hechosHoy = ixHoy >= 0 && ixHoy <= 9 ? dias[ixHoy].franjas.filter(f => f.estado === 'contacto' || f.estado === 'intento').length : 0;
-  const minHoy = ixHoy === 0 ? minD1 : 3;
-  return { dias, minD1, minHoy, hechosHoy, ixHoy };
+  if (ixHoy >= 0 && ixHoy < DIAS_B2B && !dias[ixHoy].etapa) dias[ixHoy].etapa = FICHA.etapaKanban;
+  return { dias };
 }
 function renderContactabilidadB2B() {
   const host = $('fbContactabilidad'); if (!host) return;
@@ -5368,13 +5388,70 @@ function renderContactabilidadB2B() {
       '<div class="g35-lbl">' + d.etiqueta + '<br><i>' + d.dm + '</i></div></div>';
   }).join('');
   const filaFr = '<div class="g35-frcol">' + ['M', 'T', 'N'].map(x => '<span class="g35-fr">' + x + '</span>').join('') + '<span class="g35-fr g35-fr-et">Et.</span></div>';
-  const hoyOK = cb.ixHoy >= 0 && cb.ixHoy <= 9;
-  const cumple = cb.hechosHoy >= cb.minHoy;
-  const fIngFmt = FICHA.solicitud.fechaIngreso ? new Date(FICHA.solicitud.fechaIngreso).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
-  const hint = hoyOK ? '<span class="g35-min ' + (cumple ? 'g35-min-ok' : 'g35-min-falta') + '">Hoy: ' + cb.hechosHoy + '/' + cb.minHoy + ' intentos mín.' + (cb.ixHoy === 0 && fIngFmt ? ' (' + fIngFmt + ')' : '') + '</span>' : '';
-  host.innerHTML = '<div class="g35-wrap"><div class="g35-head">Contactabilidad <span class="sub">(3 franjas/día · 10 días desde el ingreso)</span>' + hint +
-    '<span class="g35-leyenda"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 20%,#FFE599 20% 40%,#D9EAD3 40% 60%,#CFE2F3 60% 80%,#D9D2E9 80% 100%)"></i>Fila Et. = etapa del embudo</span></div>' +
-    '<div class="g35-grid">' + filaFr + cols + '</div></div>';
+  const leyenda = '<div class="g35-leyenda g35-leyenda-abajo"><i style="background:#1D9E75"></i>Contacto <i style="background:#EF9F27"></i>Intento <i style="background:#E9EEF4"></i>Sin intento <i style="background:#fff;border:1px dashed #C9D4E0"></i>Futuro <i style="background:linear-gradient(90deg,#F4CCCC 0 20%,#FFE599 20% 40%,#D9EAD3 40% 60%,#CFE2F3 60% 80%,#D9D2E9 80% 100%)"></i>Fila Et. = etapa del embudo</div>';
+  host.innerHTML = '<div class="g35-wrap"><div class="g35-head">Contactabilidad</div>' + leyenda +
+    '<div class="g35-grid g35-grid-30">' + filaFr + cols + '</div></div>';
+}
+// ===== Módulo: tiempos (SLA) por etapa B2B — definir manualmente cuánto permanece un lead en cada etapa =====
+const SLA_ETAPAS_LABEL = {
+  'Solicitud': 'Solicitud / SUNAT', 'Filtro credito': 'Filtro Crédito', 'Filtro garantia': 'Filtro Garantía',
+  'Reunion comercial': 'Reunión comercial', 'Filtro finanzas': 'Finanzas y negocio', 'Business case': 'Business Case'
+};
+async function abrirConfigSLA() {
+  let data;
+  try { data = await api('/api/b2b/sla-etapas'); } catch (e) { alert('No se pudo cargar la configuración.'); return; }
+  const et = data.etapas || {};
+  const filas = Object.keys(SLA_ETAPAS_LABEL).map(k => {
+    const h = (et[k] && et[k].horas) || 0;
+    const dias = Math.floor(h / 24), horas = +(h - dias * 24).toFixed(2);
+    return '<div class="sla-fila"><span class="sla-et">' + SLA_ETAPAS_LABEL[k] + '</span>' +
+      '<span class="sla-in"><input type="number" min="0" id="slaD_' + k.replace(/\s/g, '_') + '" value="' + dias + '"> <i>días</i></span>' +
+      '<span class="sla-in"><input type="number" min="0" max="23" id="slaH_' + k.replace(/\s/g, '_') + '" value="' + horas + '"> <i>horas</i></span></div>';
+  }).join('');
+  const host = document.createElement('div');
+  host.id = 'slaHost'; host.className = 'gm-back';
+  host.onclick = e => { if (e.target === host) host.remove(); };
+  host.innerHTML = '<div class="gm-card" style="max-width:560px">' +
+    '<div class="gm-head"><b>⏱ Tiempos por etapa</b> <span class="sub">· cuánto debe permanecer un lead en cada etapa</span>' +
+    '<button class="gm-x" onclick="document.getElementById(\'slaHost\').remove()">✕</button></div>' +
+    '<div class="sla-body"><div class="sla-fila sla-head"><span class="sla-et">Etapa</span><span>Días</span><span>Horas</span></div>' + filas + '</div>' +
+    '<div class="error" id="slaMsg"></div>' +
+    '<div class="gm-foot"><button class="btn sec" onclick="document.getElementById(\'slaHost\').remove()">Cancelar</button><button class="btn" onclick="guardarConfigSLA()">Guardar</button></div>' +
+    '</div>';
+  document.body.appendChild(host);
+}
+async function guardarConfigSLA() {
+  const etapas = {};
+  for (const k in SLA_ETAPAS_LABEL) {
+    const kk = k.replace(/\s/g, '_');
+    const d = Number(($('slaD_' + kk) || {}).value || 0);
+    const h = Number(($('slaH_' + kk) || {}).value || 0);
+    const total = d * 24 + h;
+    if (total > 0) etapas[k] = { horas: total };
+  }
+  const msg = $('slaMsg');
+  try {
+    await api('/api/b2b/sla-etapas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ etapas }) });
+    const h = $('slaHost'); if (h) h.remove();
+    if (typeof cargarKanbanB2B === 'function') cargarKanbanB2B();
+  } catch (e) { if (msg) msg.textContent = e.message || 'No se pudo guardar.'; }
+}
+// ¿La solicitud tiene al menos una gestión registrada en la etapa actual? (para exigir gestión al guardar)
+function tieneGestionEtapaActual() {
+  const gs = (FICHA && FICHA._gestiones) || [];
+  if (!gs.length) return false;
+  const et = FICHA && FICHA.etapaKanban;
+  // Si las gestiones traen la etapa, filtra por ella; si no, basta con que exista alguna gestión.
+  const conEtapa = gs.filter(g => g.etapa || g.etapaKanban);
+  if (et && conEtapa.length) return conEtapa.some(g => (g.etapa || g.etapaKanban) === et);
+  return gs.length > 0;
+}
+// Exige gestión antes de guardar/avanzar: si falta, abre el modal de gestión y devuelve false.
+function exigirGestionAntesDeGuardar() {
+  if (tieneGestionEtapaActual()) return true;
+  alert('Antes de guardar y avanzar, registra la gestión de esta etapa (con quién hablaste y la próxima acción).');
+  abrirModalGestion(FICHA.etapaKanban || 'Filtro credito');
+  return false;
 }
 function abrirModalGestion(col) {
   GESTION_COL = col;
@@ -5393,13 +5470,13 @@ function abrirModalGestion(col) {
     // Paso 1: Gestión realizada
     '<div class="gm-col gm-col-1"><div class="gm-col-tit"><span class="gm-num gm-num-1">1</span> Gestión realizada</div>' +
     '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
-    '<div class="gm-row"><label>Resultado <span class="gm-oblig">obligatorio</span></label><select id="gmResultado" class="mtr-in"><option value="">— elige —</option>' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in"><option value="">— elige —</option>' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea></div></div>' +
     // Paso 2: Próximo paso
     '<div class="gm-col gm-col-2"><div class="gm-col-tit"><span class="gm-num gm-num-2">2</span> Próximo paso</div>' +
-    '<div class="gm-row"><label>Próxima acción <span class="gm-oblig">obligatorio</span></label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
+    '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
     '<div class="gm-row" id="gmOtroWrap" style="display:none"><label>Especifica</label><input id="gmProxOtro" class="mtr-in" placeholder="Describe la próxima acción"></div>' +
-    '<div class="gm-row"><label>Fecha y hora <span class="gm-oblig">obligatorio</span></label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
+    '<div class="gm-row"><label>Fecha y hora</label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
     '<div class="gm-row"><label>Atajos rápidos</label><div class="gm-atajos">' + atajos + '</div></div></div>' +
     '</div>' +
     '<div class="error" id="gmMsg"></div>' +
@@ -6262,7 +6339,8 @@ function panelCredito(semGuardado, modo) {
   html += '<div class="fcr-head"><span class="fcr-head-ic">📋</span>' +
     '<div><div class="fcr-tit">Filtro crédito</div><div class="fcr-sub">Define los criterios de evaluación crediticia</div></div>' +
     '<span class="fcr-pill fcr-pill-p" id="fcrEstadoPill">◌ …</span>' +
-    '<button class="btn fcr-guardar" onclick="guardarCredito()">💾 Guardar filtro</button></div>';
+    '<button class="btn sec" onclick="guardarCredito(\'avance\')" title="Guarda lo trabajado sin avanzar">Guardar avance</button>' +
+    '<button class="btn fcr-guardar" onclick="guardarCredito(\'completo\')">💾 Guardar filtro</button></div>';
   html += '<span id="fbCredConsolidado" class="oculto"></span>';
   html += '<div class="fb-sec">Empresa</div>';
   html += empresa ? sujetoCard(empresa, false) : '<div class="sub">—</div>';
@@ -6475,7 +6553,8 @@ function panelFinanzas(desbloqueada, sem, modo) {
   const cuerpo = '<div class="fb-body fin-body">' +
     '<div class="fcr-head"><span class="fcr-head-ic fin-head-ic">💰</span>' +
     '<div><div class="fcr-tit">Filtro finanzas y negocio</div><div class="fcr-sub">Información financiera</div></div>' +
-    '<button class="btn fcr-guardar" onclick="guardarFinanzas()">💾 Guardar</button></div>' +
+    '<button class="btn sec" onclick="guardarFinanzas(\'avance\')" title="Guarda lo trabajado sin avanzar">Guardar avance</button>' +
+    '<button class="btn fcr-guardar" onclick="guardarFinanzas(\'completo\')">💾 Guardar</button></div>' +
     renderFiltroDosCapas('finanzas', chkF, 'fin', ticket) +
     '</div>';
   return fbPanelWrap('finanzas', '💰', '5 · Filtro finanzas y negocio', head, true, cuerpo, false, modo, 'Filtro finanzas');
@@ -6943,6 +7022,7 @@ async function guardarGarantia(modo) {
       alert('Para guardar el filtro completo faltan:\n• ' + faltas.join('\n• ') + '\n\nUsa "Guardar avance" para no perder lo trabajado.');
       return;
     }
+    if (!exigirGestionAntesDeGuardar()) return;
   }
   try {
     let cons = null;
@@ -6959,19 +7039,24 @@ async function guardarGarantia(modo) {
     FICHA.filtros.garantia = Object.assign({}, FICHA.filtros.garantia, { semaforo: cons });
     setPanelPill('garantia', cons);
     actualizarConsolidadoGarantiaVivo();
-    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
     limpiarDirty('garantia');
+    // Guardar completo con Verde/Amarillo: el backend ya avanzó a Reunión; refrescar ficha para reflejarlo.
+    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); }
+    if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
-async function guardarFinanzas() {
+async function guardarFinanzas(modo) {
+  if (modo !== 'avance' && !exigirGestionAntesDeGuardar()) return;
   try {
     const valores = leerFiltro2('fin');
-    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/finanzas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores }) });
+    const borrador = modo === 'avance';
+    const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/filtro/finanzas', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: valores, borrador }) });
     FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
     setPanelPill('finanzas', r.semaforo);
+    limpiarDirty('finanzas');
+    if (r.avanzo) { await abrirFichaB2B(FICHA.solicitud.codigo); }
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
-      limpiarDirty('finanzas');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
@@ -7084,8 +7169,28 @@ async function guardarLinkCredito() {
   } catch (e) { alert('No se pudo guardar el link: ' + e.message); }
 }
 
-async function guardarCredito() {
+async function guardarCredito(modo) {
   const sujetos = FICHA.creditoSujetos || [];
+  // Mínimo de sujetos según RUC (20 → empresa + rep. legal = 2; 10 → 1). Solo se exige al "Guardar" completo.
+  if (modo !== 'avance') {
+    const ruc = String((FICHA.solicitud && FICHA.solicitud.ruc) || '').trim();
+    const minReq = ruc.startsWith('20') ? 2 : 1;
+    if (sujetos.length < minReq) {
+      alert(ruc.startsWith('20')
+        ? 'Este RUC 20 requiere registrar al menos 2 sujetos: la empresa y su representante legal (más las vinculadas si las hay).\n\nUsa "Guardar avance" para no perder lo trabajado.'
+        : 'Este RUC 10 requiere registrar al menos 1 sujeto.\n\nUsa "Guardar avance" para no perder lo trabajado.');
+      return;
+    }
+    // Link de Drive requerido para avanzar de crédito.
+    const linkEl = $('fbCredLink');
+    const link = linkEl ? linkEl.value.trim() : ((FICHA.solicitud && FICHA.solicitud.creditoLinkDrive) || '');
+    if (!link || !/^https?:\/\//i.test(link)) {
+      alert('Para guardar y avanzar de Crédito, primero pega el link de Drive con los documentos y dale "Guardar link".\n\nUsa "Guardar avance" si aún no lo tienes.');
+      if (linkEl) linkEl.focus();
+      return;
+    }
+    if (!exigirGestionAntesDeGuardar()) return;
+  }
   try {
     let cons = null;
     for (const su of sujetos) {
@@ -7094,14 +7199,16 @@ async function guardarCredito() {
       const body = { checklist: valores };
       if (nomEl) body.nombre = nomEl.value.trim();
       const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/sujeto/' + su.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      su.checklist = valores; su.semaforo = r.semaforo; su.puntaje = r.puntaje; su.motivos = r.motivos; // el server calcula todo
+      su.checklist = valores; su.semaforo = r.semaforo; su.puntaje = r.puntaje; su.motivos = r.motivos;
       cons = r.consolidado;
     }
     FICHA.filtros.credito = Object.assign({}, FICHA.filtros.credito, { semaforo: cons });
     setPanelPill('credito', cons);
     actualizarConsolidadoVivo();
+    limpiarDirty('credito');
+    // Guardar completo con Verde/Amarillo: el backend ya avanzó a Garantía; refrescar ficha.
+    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); }
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
-      limpiarDirty('credito');
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
 
@@ -7162,6 +7269,17 @@ function setNivelAtrib(n) {
   cargarAtribucion();
 }
 
+async function corregirConjAnun() {
+  if (typeof YO !== 'undefined' && YO && YO.rol !== 'admin') return;
+  const desde = prompt('Corregir leads de FORMULARIO con conjunto/anuncio invertidos.\n\nDesde (YYYY-MM-DD, vacío = todo el histórico):', '');
+  if (desde === null) return;
+  if (!confirm('Esto intercambia conjunto ↔ anuncio de forma PERMANENTE en los leads cuya campaña contiene "formulario"' + (desde ? ' desde ' + desde : ' (todo el histórico)') + '.\n\n¿Continuar?')) return;
+  try {
+    const r = await api('/api/marketing/corregir-conjunto-anuncio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(desde ? { desde } : {}) });
+    alert('Corregidos: ' + r.leadsCorregidos + ' leads y ' + r.ingresosCorregidos + ' ingresos brutos.');
+    if (typeof cargarMktLeads === 'function') cargarMktLeads();
+  } catch (e) { alert('Error: ' + (e.message || e)); }
+}
 async function cargarAtribucion() {
   const cont = $('atrCont');
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
@@ -7174,6 +7292,12 @@ async function cargarAtribucion() {
   }
 }
 
+function fmtMin1er(m) {
+  if (m == null) return '—';
+  if (m < 60) return m + 'm';
+  if (m < 1440) return (Math.round(m / 6) / 10) + 'h';
+  return (Math.round(m / 144) / 10) + 'd';
+}
 function renderAtribucion() {
   const cont = $('atrCont');
   const filas = ATRIB_DATA.filas || [];
@@ -7181,7 +7305,12 @@ function renderAtribucion() {
   const esAnuncio = ATRIB_NIVEL === 'anuncio';
   const head = '<table class="atr-tabla"><thead><tr>' +
     '<th class="atr-l">' + (ATRIB_NIVEL === 'campana' ? 'Campaña' : ATRIB_NIVEL === 'conjunto' ? 'Conjunto' : 'Anuncio') + '</th>' +
-    '<th>Leads</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Cierre</th><th>Conv.</th>' +
+    '<th>Leads</th>' +
+    '<th title="GESTIÓN: % de leads con al menos un intento">Atend.</th>' +
+    '<th title="GESTIÓN: intentos promedio por lead atendido">Int/lead</th>' +
+    '<th title="GESTIÓN: mediana de tiempo hasta el primer intento">⚡1er</th>' +
+    '<th title="CAMPAÑA: % de atendidos que respondieron">%Conex</th>' +
+    '<th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Cierre</th><th>Conv.</th>' +
     '</tr></thead><tbody>';
   const body = filas.map((f, i) => {
     const convCol = f.conversion >= 3 ? 'atr-conv-ok' : (f.conversion > 0 ? '' : 'atr-conv-0');
@@ -7192,6 +7321,10 @@ function renderAtribucion() {
     return '<tr onclick="abrirAnuncio(' + i + ')" style="cursor:pointer">' +
       '<td class="atr-l"><div class="atr-fuente">' + thumb + '<div class="atr-fuente-txt"><div class="atr-nom">' + f.fuente + '</div>' + sub + '</div></div></td>' +
       '<td>' + f.leads + '</td>' +
+      '<td class="' + (f.pctAtendido >= 90 ? 'atr-conv-ok' : (f.pctAtendido < 60 ? 'atr-conv-0' : '')) + '">' + (f.pctAtendido != null ? f.pctAtendido + '%' : '—') + '</td>' +
+      '<td>' + (f.intPorLead || '—') + '</td>' +
+      '<td>' + fmtMin1er(f.t1erMin) + '</td>' +
+      '<td class="' + (f.pctConexion >= 40 ? 'atr-conv-ok' : (f.pctConexion > 0 && f.pctConexion < 15 ? 'atr-conv-0' : '')) + '">' + (f.atendidos ? f.pctConexion + '%' : '—') + '</td>' +
       '<td>' + f.contactado + '</td>' +
       '<td>' + f.calificado + '</td>' +
       '<td class="atr-agend">' + f.agendado + '</td>' +
@@ -7236,7 +7369,118 @@ function setTabMkt(t) {
   $('mktEmbudo').style.display = t === 'embudo' ? '' : 'none';
   $('mktLeads').style.display = t === 'leads' ? '' : 'none';
   $('mktInversion').style.display = t === 'inversion' ? '' : 'none';
+  const cpl = $('mktCplMeta'); if (cpl) cpl.style.display = t === 'cplmeta' ? '' : 'none';
   if (t === 'inversion') cargarInversion();
+  if (t === 'cplmeta') {
+    const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    if ($('cplDesde') && !$('cplDesde').value) $('cplDesde').value = hoyP;
+    if ($('cplHasta') && !$('cplHasta').value) $('cplHasta').value = hoyP;
+    cargarCplMeta();
+  }
+}
+
+let CPL_TIPO = 'todos', CPL_NIVEL = 'campana';
+function setTipoCpl(t) {
+  CPL_TIPO = t;
+  document.querySelectorAll('[data-cpl]').forEach(b => b.classList.toggle('act', b.getAttribute('data-cpl') === t));
+  cargarCplMeta();
+}
+function setNivelCpl(n) {
+  CPL_NIVEL = n;
+  document.querySelectorAll('[data-cplniv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-cplniv') === n));
+  cargarCplMeta();
+}
+async function cargarCplMeta(force) {
+  const cont = $('cplCont'), cards = $('cplCards'), status = $('cplStatus');
+  if (!cont) return;
+  const desde = $('cplDesde') ? $('cplDesde').value : '';
+  const hasta = $('cplHasta') ? $('cplHasta').value : '';
+  if (!desde || !hasta) { cont.innerHTML = '<div class="vacio">Elige un rango de fechas.</div>'; cards.innerHTML = ''; return; }
+  cont.innerHTML = '<div class="vacio">Consultando a Meta…</div>';
+  if (status) status.textContent = '';
+  try { CPL_DATA = await api('/api/marketing/inversion-meta?desde=' + desde + '&hasta=' + hasta + (force ? '&force=1' : '')); }
+  catch (e) { cont.innerHTML = '<div class="vacio" style="color:#C0392B">' + (e.message || 'Error') + '</div>'; cards.innerHTML = ''; return; }
+  if (status) status.textContent = (CPL_DATA.cacheHit ? '🗄 caché · ' : '🔄 en vivo · ') + 'act. ' + new Date(CPL_DATA.actualizado).toLocaleString('es-PE');
+  renderCplPanel();
+}
+let CPL_DATA = null, CPL_EXPAND = {}, CPL_CANAL = 'todos';
+function setCanalCpl(c) {
+  CPL_CANAL = c;
+  document.querySelectorAll('[data-cplcanal]').forEach(b => b.classList.toggle('act', b.getAttribute('data-cplcanal') === c));
+  renderCplPanel();
+}
+function canalDeFila(f) {
+  if (f.esRelead) return 'b2c'; // releads: base B2C
+  if (/b2b/i.test(f.campana || '')) return 'b2b';
+  if (/b2c/i.test(f.campana || '')) return 'b2c';
+  return 'todos'; // orgánico/sin clasificar: visible siempre
+}
+function filasCplFiltradas() {
+  const filas = (CPL_DATA && CPL_DATA.filas) || [];
+  if (CPL_CANAL === 'todos') return filas;
+  return filas.filter(f => { const c = canalDeFila(f); return c === CPL_CANAL || c === 'todos'; });
+}
+const fmtUsd = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function cplToggle(k) { CPL_EXPAND[k] = !CPL_EXPAND[k]; renderCplPanel(); }
+function cplExpandirTodo(abrir) {
+  CPL_EXPAND = {};
+  if (abrir && CPL_DATA) invArbol(CPL_DATA.filas).forEach(C => { CPL_EXPAND['c:' + C.nombre] = true; Object.values(C.conjuntos).forEach(J => { CPL_EXPAND['j:' + C.nombre + '|' + J.nombre] = true; }); });
+  renderCplPanel();
+}
+function dotEstado(st) {
+  if (!st) return '';
+  return st === 'ACTIVE' ? ' <span title="Activo en Meta" style="color:#1D9E75">●</span>' : ' <span title="' + st + '" style="color:#94A3B8">⏸</span>';
+}
+function estadoAgg(anuncios) {
+  if (!anuncios || !anuncios.length) return null;
+  return anuncios.some(a => a.adStatus === 'ACTIVE') ? 'ACTIVE' : (anuncios.some(a => a.adStatus) ? 'PAUSED' : null);
+}
+function cplCeldas(a) {
+  const cpl = (a.leadsCRM && a.costo > 0) ? Math.round((a.costo / a.leadsCRM) * 100) / 100 : null;
+  return '<td>' + fmtUsd(a.costo) + '</td>' +
+    '<td><b>' + (a.leadsCRM || 0) + '</b></td>' +
+    '<td>' + (a.tocados || 0) + '</td><td>' + (a.contactado || 0) + '</td><td>' + (a.calificado || 0) + '</td>' +
+    '<td class="inv-agend">' + (a.agendado || 0) + '</td><td>' + (a.reunion || 0) + '</td><td><b>' + (a.cierre || 0) + '</b></td>' +
+    '<td><b>' + fmtUsd(cpl) + '</b></td>';
+}
+function renderCplPanel() {
+  const cont = $('cplCont'), cards = $('cplCards');
+  const filas = filasCplFiltradas();
+  // Totales recalculados CLIENT-SIDE sobre las filas filtradas (responden al filtro B2C/B2B).
+  const T = filas.reduce((a, f) => {
+    a.costo += f.costo || 0; a.leadsCRM += f.leadsCRM || 0; a.cierre += f.cierre || 0;
+    if (f.esOrganico) a.organicos += f.leadsCRM || 0;
+    else if (f.esRelead) a.releads += f.leadsCRM || 0;
+    else a.pagados += f.leadsCRM || 0;
+    return a;
+  }, { costo: 0, leadsCRM: 0, cierre: 0, organicos: 0, releads: 0, pagados: 0 });
+  T.cplReal = T.pagados > 0 ? Math.round((T.costo / T.pagados) * 100) / 100 : null;
+  T.costoCierre = T.cierre > 0 ? Math.round((T.costo / T.cierre) * 100) / 100 : null;
+  if (!filas.length) { cards.innerHTML = ''; cont.innerHTML = '<div class="vacio">Sin datos para ese rango.</div>'; return; }
+  cards.innerHTML = '<div class="cpl-cards">' +
+    '<div class="cpl-card"><div class="cpl-k">Gasto (vivo)</div><div class="cpl-v">' + fmtUsd(T.costo) + '</div></div>' +
+    '<div class="cpl-card"><div class="cpl-k">Leads (CRM)</div><div class="cpl-v">' + (T.leadsCRM || 0) + (T.organicos ? ' <small style="color:#1D9E75">+' + T.organicos + ' 🌱</small>' : '') + (T.releads ? ' <small style="color:#B7791F">+' + T.releads + ' ♻️</small>' : '') + (T.sinDesglose ? ' <small style="color:#94A3B8">+' + T.sinDesglose + ' s/d</small>' : '') + '</div></div>' +
+    '<div class="cpl-card cpl-card-hl"><div class="cpl-k">CPL pagado</div><div class="cpl-v" title="Gasto ÷ leads atribuidos a campañas (excluye orgánicos)">' + fmtUsd(T.cplReal) + '</div></div>' +
+    '<div class="cpl-card"><div class="cpl-k">Costo por cierre</div><div class="cpl-v">' + (T.costoCierre != null ? fmtUsd(T.costoCierre) : '—') + '</div></div>' +
+    '</div>';
+  const head = '<table class="atr-tabla inv-tabla"><thead><tr><th class="atr-l">Campaña / Conjunto / Anuncio</th><th>Gasto</th><th>Leads</th><th>Tocados</th><th>Contact.</th><th>Calif.</th><th>Agend.</th><th>Reunión</th><th>Cierre</th><th>CPL</th></tr></thead><tbody>';
+  let body = '';
+  invArbol(filas).forEach(C => {
+    const cKey = 'c:' + C.nombre, cAb = !!CPL_EXPAND[cKey];
+    const anunsC = Object.values(C.conjuntos).flatMap(J => J.anuncios);
+    body += '<tr class="inv-nivel-c" onclick="cplToggle(\'' + cKey.replace(/'/g, "\\'") + '\')" style="cursor:pointer"><td class="atr-l"><b>' + (cAb ? '▾ ' : '▸ ') + '📣 ' + C.nombre + '</b>' + dotEstado(estadoAgg(anunsC)) + ' <span class="sub">' + Object.keys(C.conjuntos).length + ' conj.</span></td>' + cplCeldas(C.agg) + '</tr>';
+    if (!cAb) return;
+    Object.values(C.conjuntos).forEach(J => {
+      const jKey = 'j:' + C.nombre + '|' + J.nombre, jAb = !!CPL_EXPAND[jKey];
+      body += '<tr class="inv-nivel-j" onclick="cplToggle(\'' + jKey.replace(/'/g, "\\'") + '\')" style="cursor:pointer"><td class="atr-l" style="padding-left:26px">' + (jAb ? '▾ ' : '▸ ') + '🗂 ' + J.nombre + dotEstado(estadoAgg(J.anuncios)) + ' <span class="sub">' + J.anuncios.length + ' anun.</span></td>' + cplCeldas(J.agg) + '</tr>';
+      if (!jAb) return;
+      J.anuncios.forEach(a => {
+        const thumb = '<span class="cpl-thumb">' + (a.creativeUrl ? '<img src="' + a.creativeUrl + '" onerror="this.style.display=\'none\'">' : '🖼') + '</span>';
+        body += '<tr class="inv-nivel-a"><td class="atr-l" style="padding-left:48px">' + thumb + dotEstado(a.adStatus) + ' ' + (a.anuncio || '—') + '</td>' + cplCeldas(a) + '</tr>';
+      });
+    });
+  });
+  cont.innerHTML = head + body + '</tbody></table>';
 }
 
 async function cargarMktLeads() {
@@ -7276,16 +7520,33 @@ function mktOrigenLabel(o) {
   return { make: 'Campaña', relead: 'Relead', manual: 'Manual' }[o] || (o || 'Manual');
 }
 
+const MKT_SEL = new Set();
+function mktSelUno(cb) { if (cb.checked) MKT_SEL.add(cb.getAttribute('data-cod')); else MKT_SEL.delete(cb.getAttribute('data-cod')); mktSelInfo(); }
+function mktSelTodos(on) { document.querySelectorAll('.mktSel').forEach(cb => { cb.checked = on; if (on) MKT_SEL.add(cb.getAttribute('data-cod')); else MKT_SEL.delete(cb.getAttribute('data-cod')); }); mktSelInfo(); }
+function mktSelInfo() { const b = document.getElementById('btnInvSel'); if (b) b.textContent = '⇄ Invertir seleccionados' + (MKT_SEL.size ? ' (' + MKT_SEL.size + ')' : ''); }
+async function invertirSeleccionados() {
+  if (!MKT_SEL.size) { alert('Marca primero los leads con conjunto/anuncio cruzados.'); return; }
+  if (!confirm('Se intercambiará conjunto ↔ anuncio de ' + MKT_SEL.size + ' lead(s) de forma PERMANENTE. ¿Continuar?')) return;
+  try {
+    const r = await api('/api/marketing/corregir-conjunto-anuncio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codigos: [...MKT_SEL] }) });
+    alert('Invertidos: ' + r.leadsCorregidos + ' leads y ' + r.ingresosCorregidos + ' ingresos.');
+    MKT_SEL.clear(); mktSelInfo(); cargarMktLeads();
+  } catch (e) { alert('Error: ' + (e.message || e)); }
+}
 function renderMktLeads() {
   const cont = $('mktLeadsCont');
+  const b = document.getElementById('btnInvSel');
+  const esAdmin = !!(b && !b.classList.contains('oculto')); // admin = el botón ya fue destapado al login
   const filas = mktFiltrados();
   if ($('mktTotal')) $('mktTotal').textContent = filas.length + ' de ' + MKT_LEADS.length + ' leads';
   if (!MKT_LEADS.length) { cont.innerHTML = '<div class="vacio">No hay leads.</div>'; return; }
   const head = '<div style="overflow-x:auto"><table class="mkt-tabla"><thead><tr>' +
+    '<th class="mkt-chk"><input type="checkbox" onclick="mktSelTodos(this.checked)" title="Seleccionar todos los visibles"></th>' +
     '<th>Código</th><th>Nombre</th><th>Origen</th><th>Campaña</th><th>Conjunto</th><th>Anuncio</th><th>Creado</th><th>Asignado</th><th>Asesor</th><th>Etapa</th><th>Estado</th>' +
     '</tr></thead><tbody>' +
     filas.map(l =>
       '<tr>' +
+      '<td class="mkt-chk"><input type="checkbox" class="mktSel" data-cod="' + l.codigo + '"' + (MKT_SEL.has(l.codigo) ? ' checked' : '') + ' onclick="mktSelUno(this)"></td>' +
       '<td class="mkt-cod">' + l.codigo + '</td>' +
       '<td>' + (l.nombre || '—') + '</td>' +
       '<td>' + mktOrigenBadge(l.origenCreacion) + (l.esDuplicadoActivo ? ' <span style="background:#FAEEDA;color:#854F0B;font-size:10px;padding:1px 6px;border-radius:9px;white-space:nowrap">dup. activo</span>' : '') + '</td>' +
@@ -7300,6 +7561,7 @@ function renderMktLeads() {
       '</tr>').join('') +
     '</tbody></table></div>';
   cont.innerHTML = head;
+  mktSelInfo();
 }
 
 function mktOrigenBadge(o) {
@@ -7727,15 +7989,32 @@ function abrirTendencias() {
   if ($('tendDesde') && $('invDesde')) $('tendDesde').value = $('invDesde').value || '';
   if ($('tendHasta') && $('invHasta')) $('tendHasta').value = $('invHasta').value || '';
   cargarTendencias();
+  setVistaTend('serie');
 }
 
 function limpiarFechasTend() {
   $('tendDesde').value = ''; $('tendHasta').value = '';
   cargarTendencias();
+  if (TEND_VISTA === 'serie') cargarSerieLeads(); else if (TEND_VISTA === 'embudo') cargarEmbudoCpl();
 }
 
 function setVistaTend(v) {
   TEND_VISTA = v;
+  document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
+  const wrap = $('tendChartWrap'), emb = $('tendEmbudoCont');
+  if (v === 'serie' || v === 'embudo') {
+    if (wrap) wrap.style.display = v === 'serie' ? '' : 'none';
+    if (emb) emb.style.display = v === 'embudo' ? '' : 'none';
+    if ($('tendMetricaY')) $('tendMetricaY').style.display = 'none';
+    if ($('tendMetricaX')) $('tendMetricaX').style.display = 'none';
+    if ($('tendEjes')) $('tendEjes').style.display = 'none';
+    if ($('tendLegend')) $('tendLegend').innerHTML = '';
+    if ($('tendCard')) $('tendCard').style.display = 'none';
+    if (v === 'serie') cargarSerieLeads(); else cargarEmbudoCpl();
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+  if (emb) emb.style.display = 'none';
   document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
   if ($('tendMetricaY')) $('tendMetricaY').style.display = (v === 'cuadrante') ? '' : 'none';
   if ($('tendMetricaX')) $('tendMetricaX').style.display = (v === 'cuadrante') ? '' : 'none';
@@ -7767,6 +8046,58 @@ function poblarConjuntosTend() {
   selJ.value = prevJ || '';
 }
 
+let SERIE_CHART = null, TEND_CANAL = 'todos';
+function setCanalTend(c) {
+  TEND_CANAL = c;
+  document.querySelectorAll('[data-tcanal]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tcanal') === c));
+  if (TEND_VISTA === 'serie') cargarSerieLeads();
+  else if (TEND_VISTA === 'embudo') cargarEmbudoCpl();
+}
+async function cargarSerieLeads() {
+  const desde = $('tendDesde').value || '', hasta = $('tendHasta').value || '';
+  $('tendMsg').textContent = 'Cargando…';
+  let d;
+  try { d = await api('/api/marketing/serie' + ((desde || hasta) ? ('?desde=' + desde + '&hasta=' + hasta) : '')); }
+  catch (e) { $('tendMsg').textContent = 'Serie: ' + e.message; return; }
+  $('tendMsg').textContent = '';
+  const ctx = document.getElementById('tendChart');
+  if (!ctx || typeof Chart === 'undefined') return;
+  const prev = Chart.getChart(ctx); if (prev) prev.destroy();
+  SERIE_CHART = null; if (typeof TEND_CHART !== 'undefined') TEND_CHART = null;
+  const c = TEND_CANAL;
+  const leads = d.dias.map(x => c === 'b2c' ? x.b2c : c === 'b2b' ? x.b2b : (x.b2c + x.b2b));
+  const org = d.dias.map(x => c === 'b2c' ? (x.b2cOrg || 0) : c === 'b2b' ? (x.b2bOrg || 0) : ((x.b2cOrg || 0) + (x.b2bOrg || 0)));
+  const cpl = d.dias.map(x => c === 'b2c' ? x.cplB2C : c === 'b2b' ? x.cplB2B : x.cplTotal);
+  const dsets = [{ type: 'bar', label: 'Leads pagados', data: leads, backgroundColor: c === 'b2b' ? 'rgba(11,95,255,.55)' : c === 'b2c' ? 'rgba(29,158,117,.55)' : 'rgba(99,102,241,.55)', yAxisID: 'y', order: 2, stack: 's' },
+    { type: 'bar', label: '🌱 Orgánicos', data: org, backgroundColor: 'rgba(148,163,184,.45)', yAxisID: 'y', order: 2, stack: 's' }];
+  if (cpl.some(v => v != null)) dsets.push({ type: 'line', label: 'CPL ($)', data: cpl, borderColor: '#EF9F27', backgroundColor: '#EF9F27', tension: .3, yAxisID: 'y2', spanGaps: true, order: 1 });
+  SERIE_CHART = new Chart(ctx, {
+    data: { labels: d.dias.map(x => x.fecha.slice(5)), datasets: dsets },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
+        y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } }
+  });
+}
+async function cargarEmbudoCpl() {
+  const cont = $('tendEmbudoCont'); if (!cont) return;
+  const desde = $('tendDesde').value || '', hasta = $('tendHasta').value || '';
+  cont.innerHTML = '<div class="vacio">Cargando…</div>';
+  let d;
+  try { d = await api('/api/marketing/embudo-cpl' + ((desde || hasta) ? ('?desde=' + desde + '&hasta=' + hasta) : '')); }
+  catch (e) { cont.innerHTML = '<div class="vacio">' + e.message + '</div>'; return; }
+  const fmtU = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const bloque = (titulo, gasto, filas, color) => {
+    const maxN = filas.length ? filas[0].n || 1 : 1;
+    return '<div class="emb-bloque"><div class="emb-tit">' + titulo + ' <span class="sub">· gasto ' + fmtU(gasto) + '</span></div>' +
+      filas.map(f => '<div class="emb-fila"><div class="emb-lbl">' + f.etapa + '</div>' +
+        '<div class="emb-barwrap"><div class="emb-bar" style="width:' + Math.max(3, Math.round((f.n / maxN) * 100)) + '%;background:' + color + '">' + f.n + '</div></div>' +
+        '<div class="emb-pct">' + f.pct + '%</div><div class="emb-cpl">' + fmtU(f.cpl) + '</div></div>').join('') + '</div>';
+  };
+  let html = (d.organicosFuera ? '<div class="sub" style="margin:4px 0 8px">🌱 ' + d.organicosFuera + ' leads orgánicos fuera del cálculo (sin gasto atribuible)</div>' : '') + '<div class="emb-head"><span></span><span></span><span class="sub" style="text-align:right">% del total</span><span class="sub" style="text-align:right">CPL etapa</span></div>';
+  if (TEND_CANAL !== 'b2b') html += bloque('👥 B2C', d.gastoB2C, d.b2c, '#1D9E75');
+  if (TEND_CANAL !== 'b2c') html += bloque('🏢 B2B', d.gastoB2B, d.b2b, '#0B5FFF');
+  cont.innerHTML = html;
+}
 async function cargarTendencias() {
   $('tendMsg').textContent = 'Cargando…';
   const qs = [];
@@ -7778,7 +8109,9 @@ async function cargarTendencias() {
     TEND_DATA = await api('/api/marketing/tendencias' + (qs.length ? '?' + qs.join('&') : ''));
     poblarCamposTend();
     $('tendMsg').textContent = '';
-    renderTendencias();
+    if (TEND_VISTA === 'serie') { cargarSerieLeads(); }
+    else if (TEND_VISTA === 'embudo') { cargarEmbudoCpl(); }
+    else renderTendencias();
   } catch (e) {
     $('tendMsg').textContent = 'No se pudo cargar: ' + e.message;
   }
@@ -7791,10 +8124,13 @@ function tendLeyenda(items) {
 }
 
 function renderTendencias() {
+  if (TEND_VISTA === 'serie' || TEND_VISTA === 'embudo') return; // esas vistas tienen su propio render
   if (!TEND_DATA) return;
   const dias = TEND_DATA.dias || [];
-  if (TEND_CHART) { TEND_CHART.destroy(); TEND_CHART = null; }
   const ctx = $('tendChart');
+  const prevC = (typeof Chart !== 'undefined') ? Chart.getChart(ctx) : null;
+  if (prevC) prevC.destroy();
+  TEND_CHART = null;
   if ((TEND_VISTA === 'leads' || TEND_VISTA === 'costo') && !dias.length) { $('tendMsg').textContent = 'No hay datos en este rango/filtro.'; return; }
   if (TEND_VISTA === 'cuadrante' && !((TEND_DATA.anuncios || []).length)) { $('tendMsg').textContent = 'No hay anuncios con datos en este rango/filtro.'; return; }
   $('tendMsg').textContent = '';
@@ -8023,4 +8359,80 @@ async function waPrueba(tipo, texto) {
 function waPruebaLibre() {
   const t = prompt('Mensaje a enviar al grupo de pruebas (acepta *negrita* y saltos de línea):');
   if (t && t.trim()) waPrueba('libre', t.trim());
+}
+
+// ===== DASHBOARD COMITÉ B2C =====
+let COMITE_DATA = null;
+async function cargarComite() {
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  if ($('comHasta') && !$('comHasta').value) $('comHasta').value = hoy;
+  const desde = $('comDesde') ? $('comDesde').value : '2026-06-23';
+  const hasta = $('comHasta') ? $('comHasta').value : hoy;
+  try {
+    const d = await api('/api/b2c/comite?desde=' + desde + '&hasta=' + hasta);
+    COMITE_DATA = d;
+    renderComite(d);
+  } catch (e) { if ($('comCards')) $('comCards').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>'; }
+}
+
+function renderComite(d) {
+  const R = d.resumen || {}, V = d.velocidad || {};
+  const soles = n => 'S/ ' + (Number(n || 0)).toLocaleString('es-PE');
+  // Cards
+  const cards = [
+    ['Leads trabajados', R.totalLeads, ''],
+    ['Contactabilidad', R.contactabilidad + '%', R.contactados + ' contactados'],
+    ['Cerrados ganados', R.ganados, soles(R.montoGanado)],
+    ['Tasa de cierre', R.tasaCierre + '%', ''],
+    ['Completaron 3x5', R.hicieron3x5, 'de ' + R.totalLeads],
+    ['1er contacto (mediana)', V.medianaMinPrimerContacto != null ? V.medianaMinPrimerContacto + ' min' : '—', V.promIntentosPrimerContacto != null ? V.promIntentosPrimerContacto + ' intentos prom.' : ''],
+    ['Desestimados', R.perdidos, '']
+  ];
+  $('comCards').innerHTML = cards.map(c =>
+    '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div>' + (c[2] ? '<div class="com-card-s">' + c[2] + '</div>' : '') + '</div>').join('');
+
+  // Embudo
+  const emb = d.embudo || [];
+  const maxE = Math.max(1, ...emb.map(e => e.alcanzaron));
+  const etLabel = { 'Contactabilidad 3x5': 'En 3x5', 'Contactado - por calificar': 'Contactado', 'Calificado - pendiente agendar': 'Calificado', 'Agendado - pendiente reunion': 'Agendado', 'Reunion efectiva - seguimiento': 'Reunión', 'Cierre pendiente': 'Cierre pend.', 'Cerrado ganado': 'Ganado' };
+  $('comEmbudo').innerHTML = emb.map(e =>
+    '<div class="com-bar-row"><span class="com-bar-lbl">' + (etLabel[e.etapa] || e.etapa) + '</span>' +
+    '<div class="com-bar-track"><div class="com-bar-fill" style="width:' + Math.round((e.alcanzaron / maxE) * 100) + '%"></div></div>' +
+    '<span class="com-bar-val">' + e.alcanzaron + ' <small>(' + e.pctDelTotal + '%)</small></span></div>').join('');
+
+  // Tiempo por etapa
+  const tpe = d.tiempoPorEtapa || [];
+  $('comTiempo').innerHTML = tpe.length ? tpe.map(t => {
+    const h = t.horasProm;
+    const txt = h >= 24 ? (Math.round(h / 24 * 10) / 10) + ' días' : h + ' h';
+    return '<div class="com-line"><span>' + (etLabel[t.etapa] || t.etapa) + '</span><b>' + txt + '</b><small>n=' + t.n + '</small></div>';
+  }).join('') : '<div class="vacio">Sin transiciones registradas en el periodo.</div>';
+
+  // Ranking
+  const rk = d.ranking || [];
+  $('comRanking').innerHTML = '<table class="com-tabla"><thead><tr><th>Gestor</th><th>Asig.</th><th>Cont.</th><th>%</th><th>Calif.</th><th>Agend.</th><th>Gan.</th><th>1er (min)</th></tr></thead><tbody>' +
+    rk.map(g => '<tr><td>' + primerNombre(g.gestor) + '</td><td>' + g.asignados + '</td><td>' + g.contactados + '</td><td>' + g.pctContacto + '%</td><td>' + g.calificados + '</td><td>' + g.agendados + '</td><td>' + g.ganados + '</td><td>' + (g.t1erMed != null ? g.t1erMed : '—') + '</td></tr>').join('') +
+    '</tbody></table>';
+
+  // Desestimados
+  const des = d.desestimados || [];
+  const maxD = Math.max(1, ...des.map(x => x.n));
+  $('comDesest').innerHTML = des.length ? des.map(x =>
+    '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.motivo + '</span>' +
+    '<div class="com-bar-track"><div class="com-bar-fill com-bar-fill-r" style="width:' + Math.round((x.n / maxD) * 100) + '%"></div></div>' +
+    '<span class="com-bar-val">' + x.n + '</span></div>').join('') : '<div class="vacio">Sin desestimados en el periodo.</div>';
+}
+
+async function analizarComiteIA() {
+  const btn = $('comIaBtn'); const box = $('comIaBox');
+  const desde = $('comDesde').value, hasta = $('comHasta').value;
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 Analizando…'; }
+  box.classList.remove('oculto');
+  box.innerHTML = '<div class="com-ia-load">Generando análisis ejecutivo…</div>';
+  try {
+    const r = await api('/api/ia/reporte/preview?tipo=comite&corte=' + desde + ':' + hasta);
+    const txt = (r.texto || 'No se pudo generar el análisis.').replace(/\*(.+?)\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+    box.innerHTML = '<div class="com-ia-head">🤖 Análisis ejecutivo (IA)</div><div class="com-ia-body">' + txt + '</div>';
+  } catch (e) { box.innerHTML = '<div class="com-ia-load">Error: ' + e.message + '</div>'; }
+  if (btn) { btn.disabled = false; btn.textContent = '🤖 Análisis IA'; }
 }

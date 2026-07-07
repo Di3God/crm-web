@@ -4,7 +4,7 @@
 // si la gestora ya gestiono entre cortes, el pendiente desaparece solo.
 // Sin codigos de lead (solo nombres) + monto en juego por lead y total.
 // =============================================================
-module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
+module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha, construirRankingDia }) {
 
   const UMBRAL_REU = 4;   // dias sin gestion en Reunion efectiva -> rojo
   const UMBRAL_NEG = 7;   // dias sin gestion en Cierre pendiente -> rojo
@@ -28,19 +28,31 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
     if (!gestiones.length) return null;
     return hoyLima() - diaLima(gestiones[gestiones.length - 1].fecha);
   }
-  // Minimo de intentos del D1 segun la hora de asignacion (regla 3/2/1); dias 2-5: 3 por dia.
+  // Mínimo de intentos del D1 según la hora de asignación (regla 3/2/1); días 2-5: 3 por día.
   function esperadosAcum(lead, diaCiclo) {
     const h = horaLima(lead.fechaAsignacion || lead.fechaCarga);
     const minD1 = h < 12 ? 3 : (h < 16 ? 2 : 1);
     if (diaCiclo <= 1) return minD1;
     return minD1 + Math.min(diaCiclo - 1, 4) * 3;
   }
+  // Mínimo esperado SOLO DE HOY (sin acumular):
+  //  · Si el lead LLEGÓ HOY (su D1 es hoy): regla 3/2/1 según la hora de llegada (no se le exige día completo).
+  //  · Cualquier día posterior: 3 intentos (es un día completo, sin importar a qué hora llegó en su día).
+  function minimoHoy(lead, diaCiclo) {
+    const f = lead.fechaAsignacion || lead.fechaCarga;
+    const llegoHoy = diaLima(f) === hoyLima();
+    if (diaCiclo <= 1 && llegoHoy) {
+      const h = horaLima(f);
+      return h < 12 ? 3 : (h < 16 ? 2 : 1);
+    }
+    return 3;
+  }
 
   // Reune el material de una gestora: leads activos con consolidado, gestiones y clasificacion.
   function materialGestora(nombre) {
     const leads = db.prepare('SELECT * FROM leads WHERE asesor = ?').all(nombre);
     const hoy = hoyLima();
-    const m = { agendadosHoy: [], reuEfectiva: [], negociacion: [], contactabilidad: [], manana: [] };
+    const m = { agendadosHoy: [], reuEfectiva: [], negociacion: [], contactabilidad: [], manana: [], frios: [] };
     for (const lead of leads) {
       const gestiones = db.prepare('SELECT * FROM gestiones WHERE codigo = ? ORDER BY fecha ASC').all(lead.codigo);
       const consol = consolidarLead(lead, gestiones) || { etapa: 'Contactabilidad 3x5' };
@@ -62,15 +74,17 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
       else if (etapa === 'Contactabilidad 3x5') {
         const dC = hoy - diaLima(lead.fechaAsignacion || lead.fechaCarga) + 1; // D1..D5
         if (dC >= 1 && dC <= 5) {
-          const intentos = gestiones.length;
-          const esperados = esperadosAcum(lead, dC);
-          m.contactabilidad.push({ ...item, dC, intentos, esperados });
+          const intentosHoy = gestiones.filter(g => diaLima(g.fecha) === hoy).length;
+          const minHoy = minimoHoy(lead, dC);
+          const cumpleHoy = intentosHoy >= minHoy;
+          m.contactabilidad.push({ ...item, dC, intentosHoy, minHoy, cumpleHoy, intentos: gestiones.length, esperados: esperadosAcum(lead, dC) });
         }
+        // Frío: 3+ días sin NINGUNA gestión (riesgo real, persiste hasta resolver).
+        if ((sinG == null && dC >= 3) || (sinG != null && sinG >= 3)) m.frios.push(item);
       }
     }
-    // 3x5: prioriza los mas atrasados vs. su esperado, luego mayor probabilidad. Tope 5.
-    m.contactabilidad.sort((a, b) => (a.intentos - a.esperados) - (b.intentos - b.esperados) || b.prob - a.prob);
-    m.contactabilidad = m.contactabilidad.slice(0, MAX_3X5);
+    // 3x5: ordena por los más atrasados de HOY (menor cumplimiento) primero.
+    m.contactabilidad.sort((a, b) => (a.intentosHoy - a.minHoy) - (b.intentosHoy - b.minHoy) || b.prob - a.prob);
     m.agendadosHoy.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
     m.reuEfectiva.sort((a, b) => (b.sinG || 0) - (a.sinG || 0));
     m.negociacion.sort((a, b) => (b.sinG || 0) - (a.sinG || 0));
@@ -87,65 +101,90 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
     return s;
   }
 
-  // ===== Texto por corte (formato WhatsApp) =====
+  // ===== Texto por corte (formato WhatsApp) — 3x5 DIARIO sin arrastre + fríos =====
+  const primerNom = n => (n || '').split(' ')[0];
+  const listaNombres = (arr, max) => arr.slice(0, max).map(i => '   • ' + i.lead.nombre + (i.montoN ? ' · ' + i.monto : '')).join('\n') + (arr.length > max ? '\n   • +' + (arr.length - max) + ' más' : '');
+  function bloqueFrios(m) {
+    if (!m.frios.length) return '';
+    return '\n⚠️ *' + m.frios.length + ' frío' + (m.frios.length === 1 ? '' : 's') + '* (3+ días sin contacto) → reactivar o cerrar';
+  }
+
+  // 9am · Plan del día: la meta, sin juzgar cumplimiento todavía.
   function plan9am(nombre, m) {
-    const P = ['🌅 *PLAN DEL DÍA — ' + nombre.split(' ')[0] + '* · ' + selloHora(), '━━━━━━━━━━━━'];
-    const todos = [];
-    if (m.agendadosHoy.length) {
-      P.push('📅 *AGENDADOS HOY* (atender sí o sí)');
-      m.agendadosHoy.forEach(i => { P.push('• *' + i.lead.nombre + '* · ' + (i.hora || '') + linMonto(i)); todos.push(i); });
-    }
-    const reu = m.reuEfectiva.filter(i => (i.sinG ?? 99) >= 2);
-    if (reu.length) {
-      P.push('', '🤝 *REUNIÓN EFECTIVA — HAY QUE CERRAR*');
-      reu.forEach(i => { P.push('• *' + i.lead.nombre + '* · ' + i.sinG + 'd sin gestión' + ((i.sinG >= UMBRAL_REU) ? ' 🔴' : '') + linMonto(i)); todos.push(i); });
-    }
-    const neg = m.negociacion.filter(i => (i.sinG ?? 99) >= 3);
-    if (neg.length) {
-      P.push('', '💰 *EN NEGOCIACIÓN — ¿QUÉ PASA AQUÍ?*');
-      neg.forEach(i => { P.push('• *' + i.lead.nombre + '* · ' + i.sinG + 'd esperando' + ((i.sinG >= UMBRAL_NEG) ? ' 🔴' : '') + linMonto(i)); todos.push(i); });
-    }
-    if (m.contactabilidad.length) {
-      P.push('', '📞 *TU 3x5 — CONTACTABILIDAD* (top ' + m.contactabilidad.length + ')');
-      m.contactabilidad.forEach(i => {
-        const flag = i.intentos < i.esperados ? ' ⚠️' : ' ✅';
-        P.push('• *' + i.lead.nombre + '* · D' + i.dC + ' de 5 · ' + i.intentos + '/' + i.esperados + ' int.' + flag + linMonto(i)); todos.push(i);
-      });
-    }
-    const tot = totalJuego(todos);
-    P.push('━━━━━━━━━━━━');
-    if (tot) P.push('💼 *En juego hoy: ' + tot + '*');
-    if (!todos.length) P.push('✅ Sin pendientes urgentes. ¡Buen arranque!');
+    const P = ['🌅 *PLAN DEL DÍA — ' + primerNom(nombre) + '* · ' + selloHora(), '━━━━━━━━━━━━'];
+    const activos = m.contactabilidad;
+    const metaInt = activos.reduce((s, i) => s + i.minHoy, 0);
+    const nuevos = activos.filter(i => i.intentos === 0);
+    P.push('📞 *3x5:* ' + activos.length + ' lead' + (activos.length === 1 ? '' : 's') + ' activos → ' + metaInt + ' intentos por hacer hoy');
+    if (nuevos.length) P.push('🆕 *' + nuevos.length + ' sin primer contacto* → arranca por acá');
+    if (m.agendadosHoy.length) P.push('📅 *' + m.agendadosHoy.length + ' reunion' + (m.agendadosHoy.length === 1 ? '' : 'es') + ' agendada' + (m.agendadosHoy.length === 1 ? '' : 's') + ' hoy*');
+    const frios = bloqueFrios(m); if (frios) P.push(frios.trim());
+    const tot = totalJuego(activos.concat(m.agendadosHoy));
+    if (tot) P.push('💼 En juego: ' + tot);
+    if (!activos.length && !m.agendadosHoy.length) P.push('✅ Sin pendientes de 3x5. ¡Buen arranque!');
     return P.join('\n');
   }
 
+  // 1pm · Pulso: quién ya se tocó HOY y quién falta (base viva al instante).
   function plan1pm(nombre, m) {
-    const P = ['☀️ *CORTE 1PM — ' + nombre.split(' ')[0] + '* · ' + selloHora(), '━━━━━━━━━━━━'];
-    let hubo = false;
-    const sec = (titulo) => { if (hubo) P.push(''); P.push(titulo); hubo = true; };
-    const sinHoy = (arr) => arr.filter(i => i.gHoy === 0);
-    const c = sinHoy(m.contactabilidad);
-    if (c.length) { sec('⚠️ *3x5 aún sin tocar hoy:*'); c.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.intentos + '/' + i.esperados + ' int.' + linMonto(i))); }
-    const r = sinHoy(m.reuEfectiva.filter(i => (i.sinG ?? 99) >= 2));
-    if (r.length) { sec('🤝 *Reunión efectiva sin gestión hoy:*'); r.forEach(i => P.push('• *' + i.lead.nombre + '*' + linMonto(i))); }
-    const n = sinHoy(m.negociacion.filter(i => (i.sinG ?? 99) >= 3));
-    if (n.length) { sec('💰 *Negociación sin gestión hoy:*'); n.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.sinG + 'd' + linMonto(i))); }
+    const P = ['☀️ *CORTE 1PM — ' + primerNom(nombre) + '* · ' + selloHora(), '━━━━━━━━━━━━'];
+    const activos = m.contactabilidad;
+    const conIntento = activos.filter(i => i.intentosHoy > 0);
+    const sinTocar = activos.filter(i => i.intentosHoy === 0);
+    P.push('📞 *3x5:* ' + activos.length + ' activos · ' + conIntento.length + ' ya con intento hoy');
+    if (sinTocar.length) { P.push('⚠️ *' + sinTocar.length + ' sin tocar aún* — contáctalos:'); P.push(listaNombres(sinTocar, 4)); }
+    else if (activos.length) P.push('✅ Todos con al menos un intento hoy 👏');
     const tarde = m.agendadosHoy.filter(i => (i.hora || '') >= '13:00');
-    if (tarde.length) { sec('📅 *Recuerda esta tarde:*'); tarde.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.hora)); }
-    if (!hubo) P.push('✅ Todo lo de la mañana está gestionado. 👏');
+    if (tarde.length) { P.push('📅 *Esta tarde:*'); tarde.forEach(i => P.push('   • ' + i.lead.nombre + ' · ' + i.hora)); }
+    const frios = bloqueFrios(m); if (frios) P.push(frios.trim());
     return P.join('\n');
   }
 
+  // 6pm · Cierre: veredicto del día (cumplió su mínimo de HOY), sin arrastre.
   function plan6pm(nombre, m) {
-    const P = ['🌙 *CIERRE DEL DÍA — ' + nombre.split(' ')[0] + '* · ' + selloHora(), '━━━━━━━━━━━━'];
-    const inc = m.contactabilidad.filter(i => i.intentos < i.esperados);
-    if (inc.length) { P.push('❌ *No llegaron a su mínimo hoy* (prioridad #1 mañana):'); inc.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.intentos + '/' + i.esperados + linMonto(i))); }
-    const negRojo = m.negociacion.filter(i => (i.sinG ?? 0) >= UMBRAL_NEG);
-    if (negRojo.length) { P.push('', '💰 *Sigue esperando:*'); negRojo.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.sinG + 'd en negociación 🔴' + linMonto(i))); }
-    if (m.manana.length) { P.push('', '📅 *Mañana tienes:*'); m.manana.forEach(i => P.push('• *' + i.lead.nombre + '* · ' + i.hora + linMonto(i))); }
-    if (P.length === 2) P.push('✅ Día cumplido. Mañana llega tu plan a las 9. 💪');
+    const P = ['🌙 *CIERRE — ' + primerNom(nombre) + '* · ' + selloHora(), '━━━━━━━━━━━━'];
+    const activos = m.contactabilidad;
+    const cumplen = activos.filter(i => i.cumpleHoy);
+    const cortos = activos.filter(i => !i.cumpleHoy);
+    if (activos.length) {
+      P.push('📞 *3x5 del día:* ' + activos.length + ' activos');
+      const icoOk = cumplen.length > 0 ? '✅' : '▫️';
+      const icoCorto = cortos.length > 0 ? '🔴' : '✅';
+      P.push('   ' + icoOk + ' ' + cumplen.length + ' cumplieron su mínimo · ' + icoCorto + ' ' + cortos.length + ' les faltan intentos');
+      if (cortos.length) { P.push('*Les faltan intentos hoy:*'); cortos.slice(0, 5).forEach(i => P.push('   • ' + i.lead.nombre + ' · ' + i.intentosHoy + '/' + i.minHoy)); if (cortos.length > 5) P.push('   • +' + (cortos.length - 5) + ' más'); }
+    }
+    const frios = bloqueFrios(m); if (frios) P.push(frios.trim());
+    if (m.manana.length) { P.push('📅 *Mañana:*'); m.manana.forEach(i => P.push('   • ' + i.lead.nombre + ' · ' + i.hora)); }
+    if (!activos.length && !m.manana.length && !m.frios.length) P.push('✅ Día cumplido. Plan nuevo a las 9am. 💪');
     return P.join('\n');
   }
+
+  // ===== Reporte de GESTIÓN del día (consolidado, 1 mensaje al grupo) — reusa el ranking del CRM =====
+  // corte '1pm' = actividad de la mañana hasta esa hora; '6pm' = total del día. Mismas métricas del ranking.
+  const MESES_G = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const DIASEM_G = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  function fechaCortaG() { const d = new Date(Date.now() + LIMA_OFF); return DIASEM_G[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + MESES_G[d.getUTCMonth()].slice(0, 3); }
+  function reporteGestion(corte) {
+    if (typeof construirRankingDia !== 'function') return null;
+    const rk = construirRankingDia();
+    const filas = (rk.ranking || []).filter(r => (r.intentos || 0) > 0 || (r.agendados || 0) > 0);
+    const titulo = corte === '6pm' ? 'GESTIÓN DEL DÍA · cierre 6pm' : 'GESTIÓN · corte 1pm (mañana)';
+    const P = ['📋 *' + titulo + '*', '🗓 ' + fechaCortaG(), '━━━━━━━━━━━━'];
+    if (!filas.length) { P.push('Sin gestiones registradas aún hoy.'); return P.join('\n'); }
+    // Totales del equipo
+    const T = filas.reduce((a, r) => ({ int: a.int + (r.intentos || 0), con: a.con + (r.conectados || 0), cal: a.cal + (r.calificados || 0), ag: a.ag + (r.agendados || 0) }), { int: 0, con: 0, cal: 0, ag: 0 });
+    P.push('👥 *Equipo:* ' + T.int + ' intentos · ' + T.con + ' conectados · ' + T.cal + ' calificados · ' + T.ag + ' agendados', '');
+    // Por GP, ordenado por puntaje (ya viene ordenado del ranking)
+    const medalla = i => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '▫️';
+    filas.forEach((r, i) => {
+      P.push(medalla(i) + ' *' + r.asesor + '* — ' + (r.puntaje != null ? r.puntaje : 0) + ' pts');
+      P.push('     ' + (r.intentos || 0) + ' intentos · ' + (r.conectados || 0) + ' conect · ' + (r.calificados || 0) + ' calif · ' + (r.agendados || 0) + ' agend');
+    });
+    return P.join('\n');
+  }
+
+  // ¿Domingo en Perú? (no se envía nada los domingos)
+  function esDomingoPeru() { return new Date(Date.now() + LIMA_OFF).getUTCDay() === 0; }
 
   // Genera los textos de un corte para todas las gestoras activas (estado VIVO al momento).
   function generarPlanes(corte) {
@@ -157,13 +196,21 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
     });
   }
 
-  // Envio manual de un corte AHORA (mismo texto vivo). Marca el flag para que el scheduler no duplique hoy.
+  // Envío manual de un corte AHORA (mismo texto vivo). Marca el flag para que el scheduler no duplique hoy.
   async function enviarCorteAhora(corte) {
     const planes = generarPlanes(corte);
     const clave = 'wa_corte_' + corte + '_' + peruFecha(new Date().toISOString());
     db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
     for (const p of planes) await enviarAlertaWA(p.texto);
+    // Reporte de gestión consolidado en 1pm y 6pm.
+    if (corte === '1pm' || corte === '6pm') { const rg = reporteGestion(corte); if (rg) await enviarAlertaWA(rg); }
     return planes.length;
+  }
+  // Envío manual SOLO del reporte de gestión (sin los planes por GP).
+  async function enviarGestionAhora(corte) {
+    const rg = reporteGestion(corte === '6pm' ? '6pm' : '1pm');
+    if (rg) await enviarAlertaWA(rg);
+    return !!rg;
   }
 
   // Scheduler: revisa cada minuto la hora Peru; envia cada corte una sola vez al dia.
@@ -171,6 +218,7 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
   function iniciarCortes() {
     setInterval(async () => {
       try {
+        if (esDomingoPeru()) return; // domingos no se envía nada
         const now = new Date(Date.now() + LIMA_OFF);
         const hhmm = now.toISOString().slice(11, 16);
         const corte = CORTES[hhmm];
@@ -180,10 +228,11 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha }) {
         if (ya) return;
         db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
         for (const p of generarPlanes(corte)) await enviarAlertaWA(p.texto);
+        if (corte === '1pm' || corte === '6pm') { const rg = reporteGestion(corte); if (rg) await enviarAlertaWA(rg); }
         console.log('[WA] corte ' + corte + ' enviado');
       } catch (e) { console.error('[WA] corte fallo:', e.message); }
     }, 60000);
   }
 
-  return { generarPlanes, iniciarCortes, enviarCorteAhora };
+  return { generarPlanes, iniciarCortes, enviarCorteAhora, enviarGestionAhora, reporteGestion };
 };

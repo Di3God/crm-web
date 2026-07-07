@@ -524,6 +524,14 @@ try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } ca
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE marketing_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
+// v1.300: backfill de conjunto/anuncio en ingresos históricos (previos a los ALTERs): se rellenan
+// desde el lead vinculado (codigoLead), para que no caigan como "(sin conjunto)" en el panel de costos.
+try {
+  db.exec(`UPDATE marketing_ingresos SET
+    conjunto = COALESCE(NULLIF(conjunto,''), (SELECT l.conjunto FROM leads l WHERE l.codigo = marketing_ingresos.codigoLead)),
+    anuncio  = COALESCE(NULLIF(anuncio,''),  (SELECT l.anuncio  FROM leads l WHERE l.codigo = marketing_ingresos.codigoLead))
+    WHERE (COALESCE(conjunto,'')='' OR COALESCE(anuncio,'')='') AND codigoLead IS NOT NULL`);
+} catch (e) { }
 // Catálogo de anuncios: junta cada anuncio único y permite guardar su imagen (creativo).
 db.exec(`CREATE TABLE IF NOT EXISTS anuncios_meta (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1233,7 +1241,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
   }
   // Nueva: se crea automática en estado Nuevo, con round-robin entre operadores B2B.
   const codigo = generarCodigoB2B();
-  const ahora = new Date().toISOString();
+  const ahora = (opts.fechaIngreso || new Date().toISOString()); // reproceso conserva la fecha original de llegada
   const ticket = norm.monto != null ? ticketDeMonto(norm.monto) : null;
   const op = opts.sinAutoasignar ? null : elegirOperadorB2BRoundRobin();
   db.prepare(`INSERT INTO b2b_solicitudes
@@ -1246,7 +1254,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.registradoSunarp, norm.departamentoInmueble,
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
-  enriquecerSunatYAvisar(codigo, !!ruc); // SUNAT primero, luego el aviso WA con ubicación y status
+  enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
   try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
@@ -1296,12 +1304,15 @@ async function enviarAlertaWA(texto, jid) {
 }
 
 // ===== Planes de accion por WhatsApp (cortes 9am/1pm/6pm, estado vivo) =====
-const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolidado, enviarAlertaWA, peruFecha });
+const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolidado, enviarAlertaWA, peruFecha, construirRankingDia });
+const iaReportes = require('./ia-reportes.js');
 // Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
 const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
 alertasWAB2B.iniciarCortes();
 // Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
-const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA });
+const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
+// Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
+const metaInsights = require('./meta-insights.js')({ db });
 watchdogLeads.iniciar();
 alertasWA.iniciarCortes();
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
@@ -3408,6 +3419,151 @@ const ORD_ETAPA_ATRIB = {
   'Agendado - pendiente reunion': 3, 'Reunion efectiva - seguimiento': 4, 'Cierre pendiente': 5,
   'Cerrado ganado': 6, 'Cerrado perdido': -1
 };
+// ===== DASHBOARD COMITÉ B2C: métricas de gestión de un periodo =====
+// GET /api/b2c/comite?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  (admin/jefa)
+function calcularComiteB2C(desdeIn, hastaIn) {
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(desdeIn) ? desdeIn : '2026-06-23';
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(hastaIn) ? hastaIn : hoyP;
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const enRango = pf => pf && pf >= desde && pf <= hasta;
+
+  // Leads del periodo (por fecha de carga), no archivados
+  const leads = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0").all()
+    .filter(l => enRango(peruFecha(l.fechaCarga)));
+  const cods = leads.map(l => l.codigo);
+  const gPorCod = {};
+  db.prepare('SELECT * FROM gestiones ORDER BY fecha ASC, id ASC').all().forEach(g => { (gPorCod[g.codigo] = gPorCod[g.codigo] || []).push(g); });
+
+  // ---- 1. PIPELINE actual (foto por etapa) + conversión ----
+  const etapas = ['Contactabilidad 3x5', 'Contactado - por calificar', 'Calificado - pendiente agendar', 'Agendado - pendiente reunion', 'Reunion efectiva - seguimiento', 'Cierre pendiente', 'Cerrado ganado'];
+  const pipeline = {}; etapas.forEach(e => pipeline[e] = 0);
+  let ganados = 0, perdidos = 0, montoGanado = 0;
+  // Alcance acumulado (llegó a la etapa o más allá) para conversión de embudo
+  const alcanzo = {}; etapas.forEach(e => alcanzo[e] = 0);
+  let contactados = 0;
+  leads.forEach(l => {
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    const et = cons.etapa;
+    if (et === 'Cerrado perdido') { perdidos++; return; }
+    if (pipeline[et] != null) pipeline[et]++;
+    if (et === 'Cerrado ganado') { ganados++; montoGanado += Number(l.montoReal || 0) || 0; }
+    const ord = ORD_ETAPA_ATRIB[et] != null ? ORD_ETAPA_ATRIB[et] : 0;
+    // alcance por etapa
+    etapas.forEach(e => { if (ord >= ORD_ETAPA_ATRIB[e]) alcanzo[e]++; });
+    if (gs.some(g => !SIN.includes(g.resultado))) contactados++;
+  });
+  const totalLeads = leads.length;
+  const embudo = etapas.map(e => ({ etapa: e, enEtapa: pipeline[e], alcanzaron: alcanzo[e], pctDelTotal: totalLeads ? Math.round((alcanzo[e] / totalLeads) * 100) : 0 }));
+
+  // ---- 2. CONTACTABILIDAD ----
+  const contactabilidad = totalLeads ? Math.round((contactados / totalLeads) * 100) : 0;
+
+  // ---- 3. 3x5: cuántos completaron los 15 intentos / cuántos siguen activos ----
+  let hicieron3x5 = 0, con1masIntento = 0;
+  leads.forEach(l => {
+    const gs = gPorCod[l.codigo] || [];
+    if (gs.length >= 1) con1masIntento++;
+    if (gs.length >= 15) hicieron3x5++;
+  });
+
+  // ---- 4. TIEMPO al primer contacto (minutos desde carga hasta 1ª gestión) ----
+  const t1er = [];
+  leads.forEach(l => {
+    const gs = gPorCod[l.codigo] || [];
+    if (!gs.length) return;
+    const base = new Date(l.fechaAsignacion || l.fechaCarga).getTime();
+    const t1 = new Date(gs[0].fecha).getTime();
+    if (isFinite(base) && isFinite(t1) && t1 >= base) t1er.push((t1 - base) / 60000);
+  });
+  t1er.sort((a, b) => a - b);
+  const medianaMin = t1er.length ? Math.round(t1er[Math.floor(t1er.length / 2)]) : null;
+  const promMin = t1er.length ? Math.round(t1er.reduce((a, b) => a + b, 0) / t1er.length) : null;
+
+  // ---- 5. N° promedio de intentos hasta el PRIMER CONTACTO efectivo ----
+  const intentosHastaContacto = [];
+  leads.forEach(l => {
+    const gs = gPorCod[l.codigo] || [];
+    let n = 0, logrado = false;
+    for (const g of gs) { n++; if (!SIN.includes(g.resultado)) { logrado = true; break; } }
+    if (logrado) intentosHastaContacto.push(n);
+  });
+  const promIntentos = intentosHastaContacto.length ? Math.round((intentosHastaContacto.reduce((a, b) => a + b, 0) / intentosHastaContacto.length) * 10) / 10 : null;
+
+  // ---- 6. TIEMPO promedio en cada etapa (desde transiciones_etapa) ----
+  const trans = db.prepare('SELECT * FROM transiciones_etapa WHERE codigo IN (' + cods.map(() => '?').join(',') + ') ORDER BY codigo, fecha').all(...(cods.length ? cods : ['']));
+  const tiempoEtapa = {}; // etapa -> [horas...]
+  const porCod = {};
+  trans.forEach(t => { (porCod[t.codigo] = porCod[t.codigo] || []).push(t); });
+  Object.values(porCod).forEach(arr => {
+    for (let i = 0; i < arr.length - 1; i++) {
+      const et = arr[i].etapa_destino;
+      const dt = (new Date(arr[i + 1].fecha).getTime() - new Date(arr[i].fecha).getTime()) / 3600000;
+      if (dt >= 0 && dt < 24 * 60) { (tiempoEtapa[et] = tiempoEtapa[et] || []).push(dt); }
+    }
+  });
+  const tiempoPorEtapa = Object.entries(tiempoEtapa).map(([et, hs]) => ({ etapa: et, horasProm: Math.round((hs.reduce((a, b) => a + b, 0) / hs.length) * 10) / 10, n: hs.length }));
+
+  // ---- 7. DESESTIMADOS + motivo ----
+  const desestimados = {};
+  leads.forEach(l => {
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    if (cons.etapa === 'Cerrado perdido') {
+      const ult = gs[gs.length - 1] || {};
+      const mot = ult.motivoPerdida || 'Sin motivo registrado';
+      desestimados[mot] = (desestimados[mot] || 0) + 1;
+    }
+  });
+  const desestimadosArr = Object.entries(desestimados).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n);
+
+  // ---- 8. RANKING por gestor ----
+  const porGP = {};
+  leads.forEach(l => {
+    const gp = l.asesor || 'Sin asignar';
+    const g = (porGP[gp] = porGP[gp] || { gestor: gp, asignados: 0, contactados: 0, calificados: 0, agendados: 0, ganados: 0, intentos1er: [], t1er: [] });
+    g.asignados++;
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+    if (gs.some(x => !SIN.includes(x.resultado))) g.contactados++;
+    if (ord >= 2) g.calificados++;
+    if (ord >= 3) g.agendados++;
+    if (cons.etapa === 'Cerrado ganado') g.ganados++;
+    // tiempo y N° al primer contacto por GP
+    if (gs.length) {
+      const base = new Date(l.fechaAsignacion || l.fechaCarga).getTime();
+      const t1 = new Date(gs[0].fecha).getTime();
+      if (isFinite(base) && isFinite(t1) && t1 >= base) g.t1er.push((t1 - base) / 60000);
+      let n = 0, logrado = false;
+      for (const x of gs) { n++; if (!SIN.includes(x.resultado)) { logrado = true; break; } }
+      if (logrado) g.intentos1er.push(n);
+    }
+  });
+  const ranking = Object.values(porGP).map(g => {
+    const med = arr => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return Math.round(s[Math.floor(s.length / 2)]); };
+    return {
+      gestor: g.gestor, asignados: g.asignados, contactados: g.contactados, calificados: g.calificados, agendados: g.agendados, ganados: g.ganados,
+      pctContacto: g.asignados ? Math.round((g.contactados / g.asignados) * 100) : 0,
+      t1erMed: med(g.t1er), intentos1erProm: g.intentos1er.length ? Math.round((g.intentos1er.reduce((a, b) => a + b, 0) / g.intentos1er.length) * 10) / 10 : null
+    };
+  }).sort((a, b) => b.agendados - a.agendados || b.contactados - a.contactados);
+
+  return {
+    desde, hasta,
+    resumen: { totalLeads, contactados, contactabilidad, ganados, perdidos, montoGanado, hicieron3x5, con1masIntento,
+      tasaCierre: totalLeads ? Math.round((ganados / totalLeads) * 1000) / 10 : 0 },
+    velocidad: { medianaMinPrimerContacto: medianaMin, promMinPrimerContacto: promMin, promIntentosPrimerContacto: promIntentos },
+    embudo, tiempoPorEtapa, desestimados: desestimadosArr, ranking
+  };
+}
+
+app.get('/api/b2c/comite', soloAdminOJefa, (req, res) => {
+  try { res.json(calcularComiteB2C(req.query.desde, req.query.hasta)); }
+  catch (e) { console.error('[comite]', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
   try {
     const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'anuncio';
@@ -3426,16 +3582,27 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
       const gs = gPorCod[l.codigo] || [];
       const cons = leadConsolidado(l, gs);
       const contactado = gs.some(g => !SIN.includes(g.resultado));
-      return { campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, etapa: cons.etapa, contactado, esDuplicadoActivo: l.esDuplicadoActivo };
+      // Métricas de GESTIÓN: cuántos intentos recibió y cuánto tardó el primer contacto (min desde asignación).
+      const nGest = gs.length;
+      let min1er = null;
+      if (nGest) {
+        const base = new Date(l.fechaAsignacion || l.fechaCarga).getTime();
+        const t1 = new Date(gs[0].fecha).getTime(); // gs viene ordenado por fecha
+        if (isFinite(base) && isFinite(t1) && t1 >= base) min1er = Math.round((t1 - base) / 60000);
+      }
+      return { campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, etapa: cons.etapa, contactado, esDuplicadoActivo: l.esDuplicadoActivo, nGest, min1er };
     });
     // Agrupa por el nivel elegido.
     const grupos = {};
     leads.forEach(l => {
       const clave = ((l[nivel] || '').trim()) || '(sin dato)';
-      if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0 };
+      if (!grupos[clave]) grupos[clave] = { fuente: clave, campana: l.campana, conjunto: l.conjunto, anuncio: l.anuncio, adId: l.adId, leads: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, cierre: 0, atendidos: 0, sinGestion: 0, intentosTotal: 0, _t1: [] };
       const g = grupos[clave];
       g.leads++;
       if (l.esDuplicadoActivo) return; // duplicado activo: cuenta como lead pero no entra al embudo
+      // Gestión comercial: ¿lo trabajaron, cuánto y qué tan rápido?
+      if (l.nGest > 0) { g.atendidos++; g.intentosTotal += l.nGest; if (l.min1er != null) g._t1.push(l.min1er); }
+      else g.sinGestion++;
       if (l.contactado) g.contactado++;
       const ord = ORD_ETAPA_ATRIB[l.etapa] != null ? ORD_ETAPA_ATRIB[l.etapa] : 0;
       if (ord >= 2) g.calificado++;
@@ -3447,6 +3614,14 @@ app.get('/api/atribucion', soloAdminOJefa, (req, res) => {
     const cat = db.prepare('SELECT anuncio, imagenUrl FROM anuncios_meta').all();
     const filas = Object.values(grupos).map(g => {
       g.conversion = g.leads ? Math.round((g.cierre / g.leads) * 1000) / 10 : 0;
+      // Métricas del match campaña ↔ gestión:
+      const trabajables = g.atendidos + g.sinGestion; // sin duplicados
+      g.pctAtendido = trabajables ? Math.round((g.atendidos / trabajables) * 100) : 0;      // GESTIÓN: cobertura
+      g.intPorLead = g.atendidos ? Math.round((g.intentosTotal / g.atendidos) * 10) / 10 : 0; // GESTIÓN: esfuerzo
+      g._t1.sort((a, b) => a - b);
+      g.t1erMin = g._t1.length ? g._t1[Math.floor(g._t1.length / 2)] : null;                 // GESTIÓN: rapidez (mediana)
+      g.pctConexion = g.atendidos ? Math.round((g.contactado / g.atendidos) * 100) : 0;      // CAMPAÑA: calidad del lead dado que se trabajó
+      delete g._t1;
       if (nivel === 'anuncio') { const hit = cat.find(c => c.anuncio === g.fuente); g.imagenUrl = hit ? hit.imagenUrl : null; }
       return g;
     }).sort((a, b) => b.leads - a.leads);
@@ -4167,6 +4342,26 @@ app.delete('/api/b2b/solicitudes/:codigo', soloB2B, (req, res) => {
 // ===== FILTRO DE CRÉDITO: sujetos (empresa / representantes / vinculadas) y consolidado =====
 // Consolidado = el PEOR semáforo de todos los sujetos (Rojo > Amarillo > Verde).
 const ORDEN_SEM = { Verde: 0, Amarillo: 1, Rojo: 2 };
+// Secuencia de etapas y su columna de resultado. El avance automático (Verde/Amarillo) usa esto.
+const SEC_ETAPAS_B2B = ['Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+const AVANZA_SEM = sem => sem === 'Verde' || sem === 'Amarillo'; // Rojo NO avanza
+// Mínimo de sujetos de crédito según tipo de RUC (20 → empresa + rep. legal = 2; 10 → 1).
+function minSujetosCredito(ruc) { return String(ruc || '').trim().startsWith('20') ? 2 : 1; }
+// Avanza la solicitud a la siguiente etapa si el semáforo lo permite y aún no pasó de ahí.
+function autoAvanzarB2B(codigo, etapaActualKanban, sem, responsable) {
+  if (!AVANZA_SEM(sem)) return false;
+  const idx = SEC_ETAPAS_B2B.indexOf(etapaActualKanban);
+  if (idx < 0 || idx >= SEC_ETAPAS_B2B.length - 1) return false; // ya en la última o desconocida
+  const siguiente = SEC_ETAPAS_B2B[idx + 1];
+  const estadoDestino = siguiente === 'Business case' ? 'Expediente' : siguiente;
+  const s = db.prepare('SELECT estado FROM b2b_solicitudes WHERE codigo=?').get(codigo);
+  // Solo avanza si está en (o antes de) la etapa actual, para no retroceder ni saltar.
+  const estadosPrevios = { 'Filtro credito': ['Nuevo', 'Filtro credito', 'Apto credito', 'Amarillo/nurture'], 'Filtro garantia': ['Filtro garantia'], 'Reunion comercial': ['Reunion comercial'], 'Filtro finanzas': ['Filtro finanzas'] };
+  const ok = estadosPrevios[etapaActualKanban] && estadosPrevios[etapaActualKanban].includes(s && s.estado);
+  if (!ok) return false;
+  db.prepare('UPDATE b2b_solicitudes SET estado=?, fechaEtapa=? WHERE codigo=?').run(estadoDestino, new Date().toISOString(), codigo);
+  return true;
+}
 
 // ===== Criterios con MÉTRICAS por filtro (el semáforo se CALCULA, no se marca a mano) =====
 // Cada criterio evalúa a Verde/Amarillo/Rojo. El semáforo del filtro = el PEOR de los criterios evaluados.
@@ -4639,12 +4834,12 @@ function refrescarConsolidadoCredito(codigo, responsable) {
     ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
     .run(codigo, cons, responsable || null, ahora);
   if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoCredito=? WHERE codigo=?').run(cons, codigo);
-  // Auto-avance (v1.223): crédito Verde promueve la solicitud a Filtro garantía sin arrastre manual.
-  if (cons === 'Verde') {
-    const s = db.prepare("SELECT estado FROM b2b_solicitudes WHERE codigo=?").get(codigo);
-    if (s && ['Nuevo', 'Filtro credito', 'Apto credito', 'Amarillo/nurture'].includes(s.estado)) {
-      db.prepare("UPDATE b2b_solicitudes SET estado='Filtro garantia', fechaEtapa=? WHERE codigo=?").run(ahora, codigo);
-    }
+  // Auto-avance: crédito en Verde o Amarillo promueve a Garantía, SIEMPRE que se cumpla el mínimo de sujetos
+  // según el RUC (20 → 2 sujetos: empresa + rep. legal; 10 → 1). Rojo o mínimo incompleto NO avanza.
+  if (AVANZA_SEM(cons)) {
+    const sol = db.prepare("SELECT ruc FROM b2b_solicitudes WHERE codigo=?").get(codigo);
+    const nSuj = db.prepare('SELECT COUNT(*) n FROM b2b_credito_sujetos WHERE codigoSolicitud=?').get(codigo).n;
+    if (nSuj >= minSujetosCredito(sol && sol.ruc)) autoAvanzarB2B(codigo, 'Filtro credito', cons, responsable);
   }
   return cons;
 }
@@ -4666,6 +4861,7 @@ function refrescarConsolidadoGarantia(codigo, responsable) {
     ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET semaforo=excluded.semaforo, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
     .run(codigo, cons, responsable || null, ahora);
   if (cons) db.prepare('UPDATE b2b_solicitudes SET resultadoGarantia=? WHERE codigo=?').run(cons, codigo);
+  if (AVANZA_SEM(cons)) autoAvanzarB2B(codigo, 'Filtro garantia', cons, responsable);
   return cons;
 }
 
@@ -4878,8 +5074,15 @@ app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
   // Refleja el semáforo en la solicitud (columna resultado*).
   const colRes = { credito: 'resultadoCredito', garantia: 'resultadoGarantia', finanzas: 'resultadoFinanzas' }[tipo];
   if (colRes && semaforo) db.prepare('UPDATE b2b_solicitudes SET ' + colRes + '=? WHERE codigo=?').run(semaforo, s.codigo);
-  auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : ''));
-  res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null, ratios });
+  // Avance automático SOLO en "Guardar" completo (no en "Guardar avance"): Verde/Amarillo avanza, Rojo no.
+  // finanzas es checklist directo → avanza aquí. (credito/garantia avanzan por sus consolidados de sujetos/inmuebles.)
+  let avanzo = false;
+  const esBorrador = !!(b.borrador || b.avance);
+  if (!esBorrador && tipo === 'finanzas' && AVANZA_SEM(semaforo)) {
+    avanzo = autoAvanzarB2B(s.codigo, 'Filtro finanzas', semaforo, req.user.nombre);
+  }
+  auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : '') + (avanzo ? ' → avanzó' : ''));
+  res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null, ratios, avanzo });
 });
 
 // Guarda un documento como LINK de Drive (persiste al redeploy; no usa el filesystem efímero).
@@ -4967,6 +5170,7 @@ function etapaKanbanB2B(s) {
   if (s.estado === 'Filtro finanzas') return 'Filtro finanzas';
   if (s.estado === 'Reunion comercial') return 'Reunion comercial';
   if (s.estado === 'Filtro garantia') return 'Filtro garantia';
+  if (s.estado === 'Filtro credito' || s.estado === 'Apto credito') return 'Filtro credito'; // forzado o apto
   if (s.estado === 'Amarillo/nurture') return 'Filtro credito'; // en revisión, sigue en crédito
   // 'Nuevo' u otros: triaje por SUNAT. OK → crédito; cualquier otra cosa (error/pendiente) se queda en Solicitud.
   // Sin inmueble declarado: no avanza; queda en Solicitud con observacion (garantia inviable).
@@ -5035,7 +5239,7 @@ const CANALES_GESTION_B2B = ['Llamada', 'WhatsApp', 'Correo'];
 
 // ===== Deadline por etapa + próxima acción =====
 // SLA máximo en HORAS CORRIDAS que un lead debe permanecer en cada etapa (desde que entró a ella).
-const ETAPA_SLA = {
+const ETAPA_SLA_DEFAULT = {
   'Solicitud': { horas: 24, accion: 'Validar SUNAT / contactar' },
   'Filtro credito': { horas: 6, accion: 'Evaluar crédito en centrales' },
   'Filtro garantia': { horas: 72, accion: 'Reunir docs + valor referencial' },
@@ -5043,8 +5247,20 @@ const ETAPA_SLA = {
   'Filtro finanzas': { horas: 72, accion: 'Push de información financiera' },
   'Business case': { horas: 24, accion: 'Armar y enviar a Créditos' }
 };
+// SLA efectivo por etapa: default + override guardado en app_config (clave sla_etapas).
+function getEtapaSLA() {
+  const out = JSON.parse(JSON.stringify(ETAPA_SLA_DEFAULT));
+  try {
+    const r = db.prepare("SELECT valor FROM app_config WHERE clave='sla_etapas'").get();
+    if (r && r.valor) {
+      const ov = JSON.parse(r.valor);
+      for (const k in out) if (ov[k] && Number(ov[k].horas) > 0) out[k].horas = Number(ov[k].horas);
+    }
+  } catch (e) { }
+  return out;
+}
 function slaEtapaB2B(col, fechaEtapa) {
-  const cfg = ETAPA_SLA[col];
+  const cfg = getEtapaSLA()[col];
   if (!cfg) return { accion: null, horas: null, usadas: null, estado: 'ok', vencido: false, horasRestantes: null };
   if (!fechaEtapa) return { accion: cfg.accion, horas: cfg.horas, usadas: 0, estado: 'ok', vencido: false, horasRestantes: cfg.horas };
   const usadas = Math.max(0, Math.floor((Date.now() - new Date(fechaEtapa).getTime()) / 3600000));
@@ -5137,8 +5353,28 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?)
     ON CONFLICT(codigoSolicitud, tipoFiltro) DO UPDATE SET checklist=excluded.checklist, responsable=excluded.responsable, actualizadoEn=excluded.actualizadoEn`)
     .run(s.codigo, 'reunion', JSON.stringify(datos), null, null, null, null, req.user.nombre, ahora);
-  auditar(req, 'b2b_reunion_guardar', s.codigo, (datos.fecha ? datos.fecha + (datos.hora ? ' ' + datos.hora : '') + ' · ' + (datos.modalidad || '') : 'sin fecha') + (datos.comentario ? ' · comentario registrado' : ''));
-  res.json({ ok: true, reunion: datos });
+  // Avance automático a Finanzas: si la reunión se dio Y hay comentario, avanza sin botón aparte.
+  let avanzo = false;
+  if (datos.realizada && datos.comentario && datos.comentario.trim()) {
+    avanzo = autoAvanzarB2B(s.codigo, 'Reunion comercial', 'Verde', req.user.nombre);
+  }
+  auditar(req, 'b2b_reunion_guardar', s.codigo, (datos.fecha ? datos.fecha + (datos.hora ? ' ' + datos.hora : '') + ' · ' + (datos.modalidad || '') : 'sin fecha') + (datos.comentario ? ' · comentario' : '') + (avanzo ? ' → avanzó a Finanzas' : ''));
+  res.json({ ok: true, reunion: datos, avanzo });
+});
+
+// RESET del tablero a etapa inicial (nada gestionado aún):
+//  - RUC validado por SUNAT (sunatEstado='ok')  → 'Filtro credito' (columna crédito).
+//  - RUC no validado/error/pendiente             → 'Nuevo' (primera columna, Solicitud).
+// No toca las 'No elegible' ni archivadas. Solo admin.
+app.post('/api/b2b/demo/reset-inicial', soloB2B, (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const activas = "COALESCE(archivado,0)=0 AND estado <> 'No elegible'";
+  // Validadas por SUNAT → Filtro credito
+  const rOk = db.prepare("UPDATE b2b_solicitudes SET estado='Filtro credito', fechaEtapa=? WHERE " + activas + " AND sunatEstado='ok'").run(new Date().toISOString());
+  // No validadas (error/pendiente/null) → Nuevo (primera columna)
+  const rPend = db.prepare("UPDATE b2b_solicitudes SET estado='Nuevo', fechaEtapa=? WHERE " + activas + " AND (sunatEstado IS NULL OR sunatEstado <> 'ok')").run(new Date().toISOString());
+  auditar(req, 'b2b_reset_inicial', null, `credito=${rOk.changes} solicitud=${rPend.changes}`);
+  res.json({ ok: true, aFiltroCredito: rOk.changes, aSolicitud: rPend.changes });
 });
 
 app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
@@ -5151,9 +5387,12 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
   if (actual === hacia) return res.json({ ok: true, etapaKanban: actual });
   if (regla.desde !== actual) return res.status(400).json({ error: 'Solo se avanza una etapa a la vez, de izquierda a derecha (sin saltos ni retrocesos).' });
   const sem = semaforosB2BPorCodigo([s.codigo])[s.codigo] || {};
-  if (!regla.gate(s, sem)) return res.status(409).json({ error: regla.err });
+  // Override de DEMO (admin): con forzar:true se salta el candado de semáforo. Queda auditado.
+  const forzar = !!(req.body && req.body.forzar) && req.user && req.user.rol === 'admin';
+  if (!forzar && !regla.gate(s, sem)) return res.status(409).json({ error: regla.err });
+  if (forzar) auditar(req, 'b2b_kanban_forzar', s.codigo, actual + ' → ' + hacia + ' (override demo)');
   // v1.252: para avanzar a Filtro finanzas el comentario de la reunión comercial es OBLIGATORIO.
-  if (hacia === 'Filtro finanzas') {
+  if (hacia === 'Filtro finanzas' && !forzar) {
     const fr = db.prepare("SELECT checklist FROM b2b_filtros WHERE codigoSolicitud=? AND tipoFiltro='reunion'").get(s.codigo);
     let r = {}; try { r = fr && fr.checklist ? JSON.parse(fr.checklist) : {}; } catch (e) {}
     if (!r.realizada) return res.status(409).json({ error: 'Para pasar a Finanzas primero activa "La reunión se dio" y guarda la reunión comercial.' });
@@ -5168,6 +5407,561 @@ app.put('/api/b2b/solicitudes/:codigo/mover', soloB2B, (req, res) => {
 // Trazabilidad de UNA solicitud (v1.249): solo cambios GUARDADOS (auditoría b2b_* del código).
 // Visible para cualquier usuario B2B que pueda abrir la ficha (no solo admin).
 // Alertas WA B2B: previsualizar el texto de un corte y enviarlo AHORA (admin / jefe_b2b).
+// ===== Costos Meta / CPL: cruza el gasto de Meta (por campaña) con los leads del CRM =====
+// ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD [&force=1 para refrescar caché] [&tipo=b2b|b2c|todos]
+app.get('/api/meta/cpl', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  if (!metaInsights.configurado()) return res.status(422).json({ error: 'Faltan META_ACCESS_TOKEN o META_AD_ACCOUNT_ID en Railway' });
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : hoy;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoy;
+  const tipo = ['b2b', 'b2c'].includes(req.query.tipo) ? req.query.tipo : 'todos';
+  let meta;
+  try { meta = await metaInsights.insights(desde, hasta, req.query.force === '1'); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+
+  // Leads del CRM por campaña en el rango. B2C = tabla leads (campaña); B2B = b2b_solicitudes (campana).
+  const dIni = new Date(desde + 'T00:00:00.000Z').getTime() + 5 * 3600000; // medianoche Perú = 05:00 UTC
+  const dFin = new Date(hasta + 'T23:59:59.999Z').getTime() + 5 * 3600000;
+  const iniIso = new Date(dIni).toISOString(), finIso = new Date(dFin).toISOString();
+  const leadsB2C = db.prepare("SELECT COALESCE(campana,'(sin campaña)') AS c, COUNT(*) AS n FROM leads WHERE COALESCE(archivado,0)=0 AND fechaCarga >= ? AND fechaCarga <= ? GROUP BY c").all(iniIso, finIso);
+  const leadsB2B = db.prepare("SELECT COALESCE(campana,'(sin campaña)') AS c, COUNT(*) AS n FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND fechaIngreso >= ? AND fechaIngreso <= ? GROUP BY c").all(iniIso, finIso);
+
+  // Índice de leads por nombre de campaña normalizado.
+  const norm = x => String(x || '').trim().toLowerCase();
+  const mapLeads = {};
+  leadsB2C.forEach(r => { const k = norm(r.c); (mapLeads[k] = mapLeads[k] || { b2c: 0, b2b: 0, nombre: r.c }).b2c += r.n; });
+  leadsB2B.forEach(r => { const k = norm(r.c); (mapLeads[k] = mapLeads[k] || { b2c: 0, b2b: 0, nombre: r.c }).b2b += r.n; });
+
+  const esB2B = nom => /b2b/i.test(nom);
+  const esB2C = nom => /b2c/i.test(nom);
+  const filas = [];
+  meta.filas.forEach(mf => {
+    const k = norm(mf.campana);
+    const l = mapLeads[k] || { b2c: 0, b2b: 0 };
+    const canal = esB2B(mf.campana) ? 'B2B' : esB2C(mf.campana) ? 'B2C' : '—';
+    const leads = (l.b2c || 0) + (l.b2b || 0);
+    if (tipo === 'b2b' && canal !== 'B2B') return;
+    if (tipo === 'b2c' && canal !== 'B2C') return;
+    filas.push({
+      campana: mf.campana, canal, gasto: Math.round(mf.spend * 100) / 100,
+      impresiones: mf.impresiones, clicks: mf.clicks,
+      leads, leadsB2C: l.b2c || 0, leadsB2B: l.b2b || 0,
+      cpl: leads > 0 ? Math.round((mf.spend / leads) * 100) / 100 : null
+    });
+    delete mapLeads[k];
+  });
+  // Campañas con leads en el CRM pero sin gasto reportado por Meta (para no ocultarlas).
+  Object.values(mapLeads).forEach(l => {
+    const nom = l.nombre || '(sin campaña)';
+    const canal = esB2B(nom) ? 'B2B' : esB2C(nom) ? 'B2C' : '—';
+    const leads = (l.b2c || 0) + (l.b2b || 0);
+    if (tipo === 'b2b' && canal !== 'B2B') return;
+    if (tipo === 'b2c' && canal !== 'B2C') return;
+    filas.push({ campana: nom, canal, gasto: 0, impresiones: 0, clicks: 0, leads, leadsB2C: l.b2c || 0, leadsB2B: l.b2b || 0, cpl: null, sinGasto: true });
+  });
+
+  filas.sort((a, b) => b.gasto - a.gasto);
+  const tot = filas.reduce((a, f) => ({ gasto: a.gasto + f.gasto, leads: a.leads + f.leads }), { gasto: 0, leads: 0 });
+  res.json({
+    desde, hasta, tipo, actualizado: new Date(meta.ts).toISOString(), cacheHit: !!meta.cacheHit,
+    total: { gasto: Math.round(tot.gasto * 100) / 100, leads: tot.leads, cpl: tot.leads > 0 ? Math.round((tot.gasto / tot.leads) * 100) / 100 : null },
+    filas
+  });
+});
+
+// DIAGNÓSTICO: devuelve el crudo de Meta (actions completos por anuncio) para auditar qué llega realmente.
+app.get('/api/meta/debug', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  if (!metaInsights.configurado()) return res.status(422).json({ error: 'Faltan META_ACCESS_TOKEN o META_AD_ACCOUNT_ID' });
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : hoy;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoy;
+  try {
+    const filas = await metaInsights.fetchInsightsAd(desde, hasta);
+    // Devolver también qué action_types aparecen en total (para ver los duplicados)
+    const tiposVistos = {};
+    filas.forEach(f => { (f._actionsRaw || []).forEach(a => { tiposVistos[a.action_type] = (tiposVistos[a.action_type] || 0) + Number(a.value || 0); }); });
+    res.json({ desde, hasta, totalAnuncios: filas.length, resumenActionTypes: tiposVistos, filas });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// ===== Cruce detallado Meta vs CRM por nivel (formulario/campaña/conjunto/anuncio) =====
+// Muestra leads que reporta Meta vs leads que registró el CRM, para contrastar diferencias, + gasto y CPL.
+// ?desde=&hasta=&nivel=campana|conjunto|anuncio [&force=1] [&tipo=b2b|b2c|todos]
+app.get('/api/meta/cruce', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  if (!metaInsights.configurado()) return res.status(422).json({ error: 'Faltan META_ACCESS_TOKEN o META_AD_ACCOUNT_ID en Railway' });
+  const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : hoy;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoy;
+  const nivel = ['campana', 'conjunto', 'anuncio'].includes(req.query.nivel) ? req.query.nivel : 'campana';
+  const tipo = ['b2b', 'b2c'].includes(req.query.tipo) ? req.query.tipo : 'todos';
+
+  let meta;
+  try { meta = await metaInsights.insightsAd(desde, hasta, req.query.force === '1'); }
+  catch (e) { return res.status(502).json({ error: e.message }); }
+
+  const norm = x => String(x || '').trim().toLowerCase();
+  // Clave de agrupación según nivel elegido.
+  const claveDe = (camp, conj, anun) => nivel === 'anuncio' ? (norm(camp) + '||' + norm(conj) + '||' + norm(anun))
+    : nivel === 'conjunto' ? (norm(camp) + '||' + norm(conj)) : norm(camp);
+  const etiqueta = (camp, conj, anun) => nivel === 'anuncio' ? anun : nivel === 'conjunto' ? conj : camp;
+
+  // 1) Agregar gasto + leads de META por la clave del nivel.
+  const acc = {};
+  meta.filas.forEach(f => {
+    const k = claveDe(f.campana, f.conjunto, f.anuncio);
+    const a = (acc[k] = acc[k] || { clave: k, campana: f.campana, conjunto: f.conjunto, anuncio: f.anuncio, gasto: 0, impresiones: 0, metaForm: 0, metaPixel: 0, crmB2C: 0, crmB2B: 0 });
+    a.gasto += f.spend; a.impresiones += f.impresiones;
+    a.metaForm += (f.metaForm != null ? f.metaForm : f.metaLeads || 0); // compat con caché vieja
+    a.metaPixel += (f.metaPixel || 0);
+  });
+
+  // 2) Contar INGRESOS BRUTOS del CRM (lo que llegó por los webhooks de landing/formulario), en horario Perú.
+  // Criterio acordado: cuentan creados + TODOS los duplicados (vinieron por campaña, cuestan); se excluyen descartes y errores.
+  const iniIso = new Date(new Date(desde + 'T00:00:00.000Z').getTime() + 5 * 3600000).toISOString(); // medianoche Perú = 05:00 UTC
+  const finIso = new Date(new Date(hasta + 'T23:59:59.999Z').getTime() + 5 * 3600000).toISOString();
+  const EXCLUIR = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+  const colConj = nivel === 'campana' ? "''" : 'COALESCE(conjunto,\'\')';
+  const colAnun = nivel === 'anuncio' ? 'COALESCE(anuncio,\'\')' : "''";
+  const qB2C = "SELECT COALESCE(campana,'') camp, " + colConj + " conj, " + colAnun + " anun, COUNT(*) n FROM marketing_ingresos WHERE estado NOT IN " + EXCLUIR + " AND fechaRecepcion>=? AND fechaRecepcion<=? GROUP BY camp,conj,anun";
+  // B2B: el formulario de Meta no manda utm_campaign (solo la landing lo hace), así que el ingreso puede tener
+  // utmCampaign vacío. Fallback: la campana de la solicitud vinculada (codigoSolicitud), que sí se guarda siempre.
+  const colConjB2B = nivel === 'campana' ? "''" : "COALESCE(NULLIF(i.conjunto,''),(SELECT s.conjunto FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'')";
+  const colAnunB2B = nivel === 'anuncio' ? "COALESCE(NULLIF(i.anuncio,''),(SELECT s.anuncio FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'')" : "''";
+  const qB2B = "SELECT COALESCE(NULLIF(i.utmCampaign,''),(SELECT s.campana FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'') camp, " + colConjB2B + " conj, " + colAnunB2B + " anun, COUNT(*) n FROM b2b_ingresos i WHERE i.estado NOT IN " + EXCLUIR + " AND i.fechaRecepcion>=? AND i.fechaRecepcion<=? GROUP BY camp,conj,anun";
+  db.prepare(qB2C).all(iniIso, finIso).forEach(r => { const k = claveDe(r.camp, r.conj, r.anun); const a = (acc[k] = acc[k] || { clave: k, campana: r.camp, conjunto: r.conj, anuncio: r.anun, gasto: 0, impresiones: 0, metaForm: 0, metaPixel: 0, crmB2C: 0, crmB2B: 0 }); a.crmB2C += r.n; });
+  db.prepare(qB2B).all(iniIso, finIso).forEach(r => { const k = claveDe(r.camp, r.conj, r.anun); const a = (acc[k] = acc[k] || { clave: k, campana: r.camp, conjunto: r.conj, anuncio: r.anun, gasto: 0, impresiones: 0, metaForm: 0, metaPixel: 0, crmB2C: 0, crmB2B: 0 }); a.crmB2B += r.n; });
+
+  const esB2B = n => /b2b/i.test(n), esB2C = n => /b2c/i.test(n);
+  const filas = Object.values(acc).map(a => {
+    const crmTotal = a.crmB2C + a.crmB2B;
+    const canal = esB2B(a.campana) ? 'B2B' : esB2C(a.campana) ? 'B2C' : '—';
+    const metaLeads = Math.max(a.metaForm || 0, a.metaPixel || 0); // form y píxel se solapan: el mayor es el conteo real de la vía
+    return {
+      etiqueta: etiqueta(a.campana, a.conjunto, a.anuncio), campana: a.campana, conjunto: a.conjunto, anuncio: a.anuncio, canal,
+      gasto: Math.round(a.gasto * 100) / 100, impresiones: a.impresiones,
+      metaLeads, metaForm: a.metaForm || 0, metaPixel: a.metaPixel || 0,
+      crmLeads: crmTotal, crmB2C: a.crmB2C, crmB2B: a.crmB2B,
+      diferencia: crmTotal - metaLeads, // + = CRM registró más; - = posible fuga del webhook
+      cpl: crmTotal > 0 ? Math.round((a.gasto / crmTotal) * 100) / 100 : null,
+      cplMeta: metaLeads > 0 ? Math.round((a.gasto / metaLeads) * 100) / 100 : null
+    };
+  }).filter(f => tipo === 'todos' || (tipo === 'b2b' && f.canal === 'B2B') || (tipo === 'b2c' && f.canal === 'B2C'));
+
+  filas.sort((a, b) => b.gasto - a.gasto);
+  const T = filas.reduce((s, f) => ({ gasto: s.gasto + f.gasto, meta: s.meta + f.metaLeads, crm: s.crm + f.crmLeads }), { gasto: 0, meta: 0, crm: 0 });
+  res.json({
+    desde, hasta, nivel, tipo, actualizado: new Date(meta.ts).toISOString(), cacheHit: !!meta.cacheHit,
+    total: { gasto: Math.round(T.gasto * 100) / 100, metaLeads: T.meta, crmLeads: T.crm, diferencia: T.crm - T.meta, cpl: T.crm > 0 ? Math.round((T.gasto / T.crm) * 100) / 100 : null },
+    filas
+  });
+});
+
+// ===== PANEL UNIFICADO: gasto vivo de Meta + leads brutos + embudo de gestión, por campaña/conjunto/anuncio =====
+// Estructura compatible con la tabla jerárquica de Inversión, pero con gasto en TIEMPO REAL (USD) e imagen del anuncio.
+async function calcularInversionMeta(desde, hasta, force) {
+  const meta = await metaInsights.insightsAd(desde, hasta, force);
+  const imgs = await metaInsights.adImages(force);
+  const norm = x => String(x || '').trim().toLowerCase();
+  const filas = {};
+  const fila = (camp, conj, anun) => {
+    const k = norm(camp) + '||' + norm(conj) + '||' + norm(anun);
+    if (!filas[k]) filas[k] = { etiqueta: anun || '(sin anuncio)', campana: camp || '(sin campaña)', conjunto: conj || '(sin conjunto)', anuncio: anun || '(sin anuncio)',
+      costo: 0, impresiones: 0, resultadosMeta: 0, metaForm: 0, metaPixel: 0, creativeUrl: null,
+      leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 };
+    return filas[k];
+  };
+  // 1) Gasto vivo + leads Meta + imagen
+  meta.filas.forEach(mf => {
+    const f = fila(mf.campana, mf.conjunto, mf.anuncio);
+    f.costo += mf.spend; f.impresiones += mf.impresiones;
+    f.metaForm += (mf.metaForm || 0); f.metaPixel += (mf.metaPixel || 0);
+    const info = imgs[norm(mf.anuncio)] || null;
+    if (!f.creativeUrl && info) f.creativeUrl = info.img;
+    if (info && (f.adStatus !== 'ACTIVE')) f.adStatus = info.status;
+  });
+  Object.values(filas).forEach(f => { f.resultadosMeta = Math.max(f.metaForm, f.metaPixel); });
+  // 2) Leads BRUTOS del CRM (webhooks), horario Perú, criterio acordado
+  const iniIso = new Date(new Date(desde + 'T00:00:00.000Z').getTime() + 5 * 3600000).toISOString();
+  const finIso = new Date(new Date(hasta + 'T23:59:59.999Z').getTime() + 5 * 3600000).toISOString();
+  const EXC = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+  db.prepare("SELECT COALESCE(campana,'') c, COALESCE(conjunto,'') j, COALESCE(anuncio,'') a, COUNT(*) n FROM marketing_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<=? GROUP BY c,j,a").all(iniIso, finIso)
+    .forEach(r => { fila(r.c, r.j, r.a).leadsCRM += r.n; });
+  db.prepare("SELECT COALESCE(NULLIF(i.utmCampaign,''),(SELECT s.campana FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'') c, COALESCE(NULLIF(i.conjunto,''),(SELECT s.conjunto FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'') j, COALESCE(NULLIF(i.anuncio,''),(SELECT s.anuncio FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'') a, COUNT(*) n FROM b2b_ingresos i WHERE i.estado NOT IN " + EXC + " AND i.fechaRecepcion>=? AND i.fechaRecepcion<=? GROUP BY c,j,a").all(iniIso, finIso)
+    .forEach(r => { fila(r.c, r.j, r.a).leadsCRM += r.n; });
+  // 3) Embudo de gestión B2C (pipeline comercial) sobre leads gestionables
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const gPorCod = {};
+  db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+  db.prepare("SELECT * FROM leads WHERE origenCreacion='make'").all().forEach(l => {
+    const dia = peruFecha(l.fechaCarga);
+    if (!dia || dia < desde || dia > hasta) return;
+    const f = fila(l.campana, l.conjunto, l.anuncio);
+    if (l.esDuplicadoActivo) return;
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    if (gs.length) f.tocados++;
+    if (gs.some(g => !SIN.includes(g.resultado))) f.contactado++;
+    const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+    if (ord >= 2) f.calificado++;
+    if (ord >= 3) f.agendado++;
+    if (ord >= 4) f.reunion++;
+    if (cons.etapa === 'Negociación' || ord >= 5) f.negociacion++;
+    if (cons.etapa === 'Cerrado ganado') f.cierre++;
+  });
+  // RELEADS: leads de la base propia reasignados para trabajar. NO son de campaña vigente (su campana
+  // heredada es histórica): van en fila propia, con su embudo de gestión, sin gasto ni CPL.
+  const fRel = fila('♻️ Releads (base propia)', '', '');
+  fRel.esRelead = true;
+  db.prepare("SELECT * FROM leads WHERE origenCreacion='relead' AND COALESCE(esDuplicadoActivo,0)=0").all().forEach(l => {
+    const dia = peruFecha(l.fechaCarga);
+    if (!dia || dia < desde || dia > hasta) return;
+    fRel.leadsCRM++;
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    if (gs.length) fRel.tocados++;
+    if (gs.some(g => !SIN.includes(g.resultado))) fRel.contactado++;
+    const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+    if (ord >= 2) fRel.calificado++;
+    if (ord >= 3) fRel.agendado++;
+    if (ord >= 4) fRel.reunion++;
+    if (ord >= 5 || cons.etapa === 'Negociación') fRel.negociacion++;
+    if (cons.etapa === 'Cerrado ganado') fRel.cierre++;
+  });
+  if (!fRel.leadsCRM) delete filas[Object.keys(filas).find(k => filas[k] === fRel)];
+  const arr = Object.values(filas);
+  // Leads sin atribución = tráfico orgánico/directo (llegaron a la landing sin UTM): se etiquetan
+  // y se EXCLUYEN del CPL pagado, porque no tienen gasto de pauta atribuible.
+  let organicos = 0, releads = 0, sinDesglose = 0;
+  arr.forEach(f => {
+    if (f.esRelead) { releads += f.leadsCRM || 0; return; }
+    if (!f.campana || f.campana === '(sin campaña)') { f.campana = '🌱 Orgánico / Directo'; f.esOrganico = true; organicos += f.leadsCRM || 0; return; }
+    // Residual histórico: tiene campaña pero conjunto vacío y sin gasto propio (pre-migración o duplicado sin lead).
+    if ((!f.conjunto || f.conjunto === '(sin conjunto)') && (f.costo || 0) === 0 && (f.metaForm || 0) === 0 && (f.metaPixel || 0) === 0) {
+      f.esSinDesglose = true; sinDesglose += f.leadsCRM || 0;
+    }
+  });
+  const T = arr.reduce((a, f) => { for (const k of ['costo','resultadosMeta','leadsCRM','tocados','contactado','calificado','agendado','reunion','negociacion','cierre']) a[k]+=f[k]||0; return a; }, { costo:0,resultadosMeta:0,leadsCRM:0,tocados:0,contactado:0,calificado:0,agendado:0,reunion:0,negociacion:0,cierre:0 });
+  T.organicos = organicos; T.releads = releads; T.sinDesglose = sinDesglose;
+  const leadsPagados = T.leadsCRM - organicos - releads - sinDesglose;
+  T.cplReal = leadsPagados > 0 ? Math.round((T.costo / leadsPagados) * 100) / 100 : null; // CPL solo de pauta
+  T.costoCierre = T.cierre ? Math.round((T.costo / T.cierre) * 100) / 100 : null;
+  T.captura = T.resultadosMeta ? Math.round((T.leadsCRM / T.resultadosMeta) * 100) : null;
+  return { desde, hasta, actualizado: new Date(meta.ts).toISOString(), cacheHit: !!meta.cacheHit, moneda: 'USD', totales: T, filas: arr.sort((a,b)=>b.costo-a.costo) };
+}
+
+app.get('/api/marketing/inversion-meta', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  if (!metaInsights.configurado()) return res.status(422).json({ error: 'Faltan META_ACCESS_TOKEN o META_AD_ACCOUNT_ID' });
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : hoyP;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoyP;
+  try { res.json(await calcularInversionMeta(desde, hasta, req.query.force === '1')); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Serie diaria de leads por canal (para Tendencias): ingresos BRUTOS por webhook, horario Perú.
+app.get('/api/marketing/serie', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : new Date(Date.now() - 5 * 3600000 - 29 * 86400000).toISOString().slice(0, 10);
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoyP;
+  const EXC = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+  const iniIso = new Date(new Date(desde + 'T00:00:00.000Z').getTime() + 5 * 3600000).toISOString();
+  const finIso = new Date(new Date(hasta + 'T23:59:59.999Z').getTime() + 5 * 3600000).toISOString();
+  // Día Perú = fecha del timestamp menos 5h
+  const diaExpr = c => "date(datetime(" + c + ", '-5 hours'))";
+  const m = {};
+  const nuevoDia = d => ({ fecha: d, b2c: 0, b2b: 0, b2cOrg: 0, b2bOrg: 0 });
+  // Pagados = con campaña; Orgánicos = sin campaña (llegaron a la landing sin UTM).
+  db.prepare("SELECT " + diaExpr('fechaRecepcion') + " d, (COALESCE(campana,'')='') org, COUNT(*) n FROM marketing_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<=? GROUP BY d, org").all(iniIso, finIso).forEach(r => { const x = (m[r.d] = m[r.d] || nuevoDia(r.d)); if (r.org) x.b2cOrg += r.n; else x.b2c += r.n; });
+  db.prepare("SELECT " + diaExpr('i.fechaRecepcion') + " d, (COALESCE(NULLIF(i.utmCampaign,''),(SELECT s.campana FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'')='') org, COUNT(*) n FROM b2b_ingresos i WHERE i.estado NOT IN " + EXC + " AND i.fechaRecepcion>=? AND i.fechaRecepcion<=? GROUP BY d, org").all(iniIso, finIso).forEach(r => { const x = (m[r.d] = m[r.d] || nuevoDia(r.d)); if (r.org) x.b2bOrg += r.n; else x.b2b += r.n; });
+  const dias = [];
+  for (let t = new Date(desde + 'T12:00:00Z').getTime(); t <= new Date(hasta + 'T12:00:00Z').getTime(); t += 86400000) {
+    const d = new Date(t).toISOString().slice(0, 10);
+    dias.push(m[d] || nuevoDia(d));
+  }
+  // Gasto diario de Meta por canal (regex b2b/b2c en el nombre de campaña) → CPL por día.
+  (async () => {
+    try {
+      if (metaInsights.configurado()) {
+        const daily = await metaInsights.insightsDaily(desde, hasta, req.query.force === '1');
+        const gd = {};
+        daily.filas.forEach(f => {
+          const g = (gd[f.fecha] = gd[f.fecha] || { b2c: 0, b2b: 0 });
+          if (/b2b/i.test(f.campana)) g.b2b += f.spend; else if (/b2c/i.test(f.campana)) g.b2c += f.spend;
+        });
+        dias.forEach(d => {
+          const g = gd[d.fecha] || { b2c: 0, b2b: 0 };
+          d.gastoB2C = Math.round(g.b2c * 100) / 100; d.gastoB2B = Math.round(g.b2b * 100) / 100;
+          d.cplB2C = d.b2c ? Math.round((g.b2c / d.b2c) * 100) / 100 : null;
+          d.cplB2B = d.b2b ? Math.round((g.b2b / d.b2b) * 100) / 100 : null;
+          const lt = d.b2c + d.b2b, gt = g.b2c + g.b2b;
+          d.cplTotal = lt ? Math.round((gt / lt) * 100) / 100 : null;
+        });
+      }
+    } catch (e) { /* sin gasto: la serie de leads igual sale */ }
+    res.json({ desde, hasta, dias });
+  })();
+});
+
+// Embudo con CPL por etapa (B2C pipeline comercial + B2B pipeline kanban), filtrable por canal y fechas.
+app.get('/api/marketing/embudo-cpl', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : new Date(Date.now() - 5 * 3600000 - 29 * 86400000).toISOString().slice(0, 10);
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoyP;
+  // Gasto del rango por canal (nivel campaña, en vivo)
+  let gastoB2C = 0, gastoB2B = 0;
+  try {
+    if (metaInsights.configurado()) {
+      const m = await metaInsights.insights(desde, hasta, req.query.force === '1');
+      m.filas.forEach(f => { if (/b2b/i.test(f.campana)) gastoB2B += f.spend; else if (/b2c/i.test(f.campana)) gastoB2C += f.spend; });
+    }
+  } catch (e) { }
+  gastoB2C = Math.round(gastoB2C * 100) / 100; gastoB2B = Math.round(gastoB2B * 100) / 100;
+  const fila = (etapa, n, base, gasto) => ({ etapa, n, pct: base ? Math.round((n / base) * 100) : 0, cpl: n ? Math.round((gasto / n) * 100) / 100 : null });
+  // B2C: leads make del rango (día Perú), sin duplicados; etapa consolidada.
+  const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+  const gPorCod = {};
+  db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+  let tot = 0, cont = 0, cal = 0, ag = 0, reu = 0, neg = 0, cie = 0;
+  let orgFuera = 0;
+  db.prepare("SELECT * FROM leads WHERE origenCreacion='make' AND COALESCE(esDuplicadoActivo,0)=0").all().forEach(l => {
+    const dia = peruFecha(l.fechaCarga);
+    if (!dia || dia < desde || dia > hasta) return;
+    if (!String(l.campana || '').trim()) { orgFuera++; return; } // orgánico: fuera del embudo de pauta
+    tot++;
+    const gs = gPorCod[l.codigo] || [];
+    const cons = leadConsolidado(l, gs);
+    if (gs.some(g => !SIN.includes(g.resultado))) cont++;
+    const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+    if (ord >= 2) cal++;
+    if (ord >= 3) ag++;
+    if (ord >= 4) reu++;
+    if (ord >= 5 || cons.etapa === 'Negociación') neg++;
+    if (cons.etapa === 'Cerrado ganado') cie++;
+  });
+  const b2c = [fila('Leads', tot, tot, gastoB2C), fila('Contactados', cont, tot, gastoB2C), fila('Calificados', cal, tot, gastoB2C),
+    fila('Agendados', ag, tot, gastoB2C), fila('Reunión', reu, tot, gastoB2C), fila('Negociación', neg, tot, gastoB2C), fila('Cierre', cie, tot, gastoB2C)];
+  // B2B: solicitudes del rango; etapa alcanzada = índice de la etapa kanban actual.
+  const ORDEN_B2B = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+  const cnt = new Array(ORDEN_B2B.length).fill(0);
+  db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0').all().forEach(sol => {
+    const dia = peruFecha(sol.fechaIngreso);
+    if (!dia || dia < desde || dia > hasta) return;
+    const et = (typeof etapaKanbanB2B === 'function') ? etapaKanbanB2B(sol) : 'Solicitud';
+    const ix = Math.max(0, ORDEN_B2B.indexOf(et === 'Desestimado' ? 'Solicitud' : et));
+    for (let i = 0; i <= ix; i++) cnt[i]++;
+  });
+  const b2b = ORDEN_B2B.map((e, i) => fila(e, cnt[i], cnt[0], gastoB2B));
+  res.json({ desde, hasta, gastoB2C, gastoB2B, organicosFuera: orgFuera, b2c, b2b });
+});
+
+// Corrige el histórico de leads con conjunto/anuncio INVERTIDOS (bug de mapeo en el escenario Make
+// del formulario B2C). Intercambia ambas columnas de forma PERMANENTE en leads y marketing_ingresos.
+// body: { campanaLike (def '%formulario%'), desde?, hasta? (YYYY-MM-DD, día Perú) }
+app.post('/api/marketing/corregir-conjunto-anuncio', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  // Modo selección: swap SOLO de los códigos elegidos (checkboxes en Detalle de leads).
+  const codigos = (req.body && Array.isArray(req.body.codigos)) ? req.body.codigos.filter(c => /^[A-Z0-9-]+$/i.test(c)).slice(0, 500) : null;
+  if (codigos && codigos.length) {
+    const ph = codigos.map(() => '?').join(',');
+    const r1 = db.prepare("UPDATE leads SET conjunto = anuncio, anuncio = conjunto WHERE codigo IN (" + ph + ")").run(...codigos);
+    const r2 = db.prepare("UPDATE marketing_ingresos SET conjunto = anuncio, anuncio = conjunto WHERE codigoLead IN (" + ph + ")").run(...codigos);
+    auditar(req, 'corregir_conjunto_anuncio', null, `seleccion=${codigos.length} leads=${r1.changes} ingresos=${r2.changes}`);
+    return res.json({ ok: true, leadsCorregidos: r1.changes, ingresosCorregidos: r2.changes, modo: 'seleccion' });
+  }
+  const like = (req.body && req.body.campanaLike) || '%formulario%';
+  const desde = (req.body && /^\d{4}-\d{2}-\d{2}$/.test(req.body.desde)) ? req.body.desde : null;
+  const hasta = (req.body && /^\d{4}-\d{2}-\d{2}$/.test(req.body.hasta)) ? req.body.hasta : null;
+  const rango = (col) => (desde ? " AND " + col + " >= '" + new Date(new Date(desde + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString() + "'" : '') +
+    (hasta ? " AND " + col + " <= '" + new Date(new Date(hasta + 'T23:59:59Z').getTime() + 5 * 3600000).toISOString() + "'" : '');
+  // SQLite evalúa el lado derecho con los valores ORIGINALES de la fila: el swap simultáneo es seguro.
+  const r1 = db.prepare("UPDATE leads SET conjunto = anuncio, anuncio = conjunto WHERE origenCreacion='make' AND campana LIKE ? AND COALESCE(conjunto,'') <> '' AND COALESCE(anuncio,'') <> ''" + rango('fechaCarga')).run(like);
+  const r2 = db.prepare("UPDATE marketing_ingresos SET conjunto = anuncio, anuncio = conjunto WHERE campana LIKE ? AND COALESCE(conjunto,'') <> '' AND COALESCE(anuncio,'') <> ''" + rango('fechaRecepcion')).run(like);
+  auditar(req, 'corregir_conjunto_anuncio', null, `like=${like} leads=${r1.changes} ingresos=${r2.changes}${desde ? ' desde ' + desde : ''}${hasta ? ' hasta ' + hasta : ''}`);
+  res.json({ ok: true, leadsCorregidos: r1.changes, ingresosCorregidos: r2.changes, campanaLike: like });
+});
+
+// PILOTO IA: genera un reporte interpretado por Claude y opcionalmente lo envía al grupo de PRUEBA.
+// GET  /api/ia/reporte/preview?tipo=gestion|planes|marketing&corte=1pm   → solo texto (no envía)
+// POST /api/ia/reporte/enviar   body {tipo, corte}                        → envía al WA_GRUPO_IA_TEST_JID
+async function generarReporteIA(tipo, corte) {
+  const fechaTxt = new Date(Date.now() - 5 * 3600000).toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric', month: 'short' });
+  if (tipo === 'gestion') {
+    const rd = construirRankingDia();
+    return await iaReportes.interpretarGestion(rd.ranking || [], corte || '1pm', fechaTxt, { meta: rd.meta, agendadosEquipo: rd.agendadosEquipo });
+  }
+  if (tipo === 'planes') {
+    const rd = construirRankingDia();
+    const planes = (rd.ranking || []).map(r => ({ gestora: r.asesor, activos: (r.intentos || 0), sinTocar: 0 }));
+    return await iaReportes.interpretarPlanes(planes, corte || '1pm', fechaTxt);
+  }
+  if (tipo === 'comite') {
+    // corte puede traer 'desde:hasta'; por defecto usa el rango del piloto (23 jun → hoy)
+    let desde = '2026-06-23', hasta = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    if (corte && /^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$/.test(corte)) { const p = corte.split(':'); desde = p[0]; hasta = p[1]; }
+    let datos;
+    try { datos = calcularComiteB2C(desde, hasta); }
+    catch (e) { console.error('[ia comite]', e.message); return null; }
+    return await iaReportes.interpretarComite(datos);
+  }
+  if (tipo === 'performance') {
+    // Análisis del rendimiento de marketing. Acepta rango 'YYYY-MM-DD:YYYY-MM-DD' o un día suelto; por defecto AYER.
+    const ayer = new Date(Date.now() - 5 * 3600000 - 86400000).toISOString().slice(0, 10);
+    let desde = ayer, hasta = ayer;
+    if (corte && /^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$/.test(corte)) { const p = corte.split(':'); desde = p[0]; hasta = p[1]; }
+    else if (corte && /^\d{4}-\d{2}-\d{2}$/.test(corte)) { desde = hasta = corte; }
+    let panel;
+    try { panel = await calcularInversionMeta(desde, hasta, false); }
+    catch (e) { console.error('[ia performance] panel:', e.message); return null; }
+    return await iaReportes.interpretarPerformance(panel, fechaTxt);
+  }
+  if (tipo === 'marketing') {
+    const EXC = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+    // Cuenta B2C y B2B entre dos ISO (UTC). hastaIso exclusivo.
+    const cuenta = (desdeIso, hastaIso) => {
+      const c = db.prepare("SELECT COUNT(*) n FROM marketing_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<?").get(desdeIso, hastaIso).n;
+      const b = db.prepare("SELECT COUNT(*) n FROM b2b_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<?").get(desdeIso, hastaIso).n;
+      return { b2c: c, b2b: b };
+    };
+    // Un "corte" define la hora tope (en horas Perú) y la franja previa (desde el corte anterior).
+    // 9am: 0→9 | 1pm: 9→13 | 6pm: 13→18 | medianoche: 18→24
+    const CORTES = { '9am': [0, 9], '09:00': [0, 9], '1pm': [9, 13], '13:00': [9, 13], '6pm': [13, 18], '18:00': [13, 18], 'medianoche': [18, 24], '23:59': [18, 24], '00:00': [18, 24] };
+    const [hIni, hFin] = CORTES[corte] || [0, Math.min(24, Math.ceil((Date.now() - new Date(new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10) + 'T00:00:00Z').getTime() - 5 * 3600000) / 3600000))];
+    // Medianoche Perú de un día (offset en días desde hoy) en ISO UTC + hora h.
+    const hoyDia0 = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const isoDe = (offDias, h) => new Date(new Date(hoyDia0 + 'T00:00:00Z').getTime() + 5 * 3600000 - offDias * 86400000 + h * 3600000).toISOString();
+    // Para cada día (0=hoy,1=ayer,2=antier): acumulado 0→hFin y franja hIni→hFin.
+    const dia = off => ({ acum: cuenta(isoDe(off, 0), isoDe(off, hFin)), franja: cuenta(isoDe(off, hIni), isoDe(off, hFin)) });
+    const datos = { corte, franjaHoras: [hIni, hFin], hoy: dia(0), ayer: dia(1), antier: dia(2), fechaTxt };
+    return await iaReportes.interpretarMarketing(datos);
+  }
+  return null;
+}
+
+app.get('/api/ia/reporte/preview', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  if (!iaReportes.configurado()) return res.status(422).json({ error: 'Falta ANTHROPIC_API_KEY en Railway' });
+  const tipo = ['gestion', 'planes', 'marketing', 'performance', 'comite'].includes(req.query.tipo) ? req.query.tipo : 'gestion';
+  try {
+    const texto = await generarReporteIA(tipo, req.query.corte);
+    res.json({ tipo, corte: req.query.corte || null, texto: texto || '(la IA no devolvió texto; en producción se usaría la plantilla clásica)', usoIA: !!texto });
+  } catch (e) { console.error('[ia preview] error:', e.stack || e.message); res.json({ tipo, error: e.message, texto: '(error al generar; fallback a plantilla)', usoIA: false }); }
+});
+
+app.post('/api/ia/reporte/enviar', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  if (!iaReportes.configurado()) return res.status(422).json({ error: 'Falta ANTHROPIC_API_KEY en Railway' });
+  const jid = process.env.WA_GRUPO_IA_TEST_JID;
+  if (!jid) return res.status(422).json({ error: 'Falta WA_GRUPO_IA_TEST_JID en Railway' });
+  const tipo = (req.body && ['gestion', 'planes', 'marketing', 'performance'].includes(req.body.tipo)) ? req.body.tipo : 'gestion';
+  const corte = req.body && req.body.corte;
+  try {
+    const texto = await generarReporteIA(tipo, corte);
+    if (!texto) return res.json({ ok: false, motivo: 'IA no devolvió texto (sin datos o API caída)' });
+    await enviarAlertaWA('🤖 *[PRUEBA IA]*\n' + texto, jid);
+    auditar(req, 'ia_reporte_prueba', null, `tipo=${tipo} corte=${corte || ''}`);
+    res.json({ ok: true, tipo, enviadoA: jid, texto });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SLA por etapa B2B: leer (todos) y guardar overrides en horas. Admin/jefes.
+app.get('/api/b2b/sla-etapas', soloB2B, (req, res) => {
+  res.json({ etapas: getEtapaSLA(), defaults: ETAPA_SLA_DEFAULT });
+});
+app.put('/api/b2b/sla-etapas', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_creditos', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura o admin' });
+  const b = (req.body && req.body.etapas) || {};
+  const ov = {};
+  for (const k in ETAPA_SLA_DEFAULT) {
+    const h = b[k] && Number(b[k].horas);
+    if (isFinite(h) && h > 0) ov[k] = { horas: Math.round(h * 100) / 100 };
+  }
+  db.prepare("INSERT INTO app_config (clave,valor) VALUES ('sla_etapas',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(JSON.stringify(ov));
+  auditar(req, 'b2b_sla_etapas', null, Object.keys(ov).map(k => k + '=' + ov[k].horas + 'h').join(' · '));
+  res.json({ ok: true, etapas: getEtapaSLA() });
+});
+
+// Reprocesa ingresos B2B que quedaron en error (p.ej. el bug 'ruc is not defined' previo a v1.269).
+// Toma el rawJson original, lo re-normaliza y lo pasa por el flujo YA corregido. Idempotente por dedup.
+app.post('/api/b2b/reprocesar-errores', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_creditos', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura o admin' });
+  const desde = (req.body && req.body.desde) || null; // ISO 'YYYY-MM-DD' o completo; opcional
+  let filas = desde
+    ? db.prepare("SELECT * FROM b2b_ingresos WHERE estado='error_validacion' AND fechaRecepcion >= ? ORDER BY id ASC").all(desde)
+    : db.prepare("SELECT * FROM b2b_ingresos WHERE estado='error_validacion' ORDER BY id ASC").all();
+  const r = { total: filas.length, creados: 0, duplicados: 0, sinDatos: 0, fallidos: 0, detalle: [] };
+  for (const ing of filas) {
+    let norm;
+    try {
+      const raw = ing.rawJson ? JSON.parse(ing.rawJson) : {};
+      norm = normalizarB2B((ing.origen || 'meta'), raw);
+    } catch (e) { r.fallidos++; r.detalle.push({ id: ing.id, estado: 'no_normaliza', msg: e.message }); continue; }
+    try {
+      const out = procesarSolicitudB2B(norm, { fechaIngreso: ing.fechaRecepcion || undefined });
+      // Actualiza el ingreso viejo con el nuevo desenlace (deja de estar en error).
+      db.prepare("UPDATE b2b_ingresos SET estado=?, codigoSolicitud=?, mensajeError=? WHERE id=?")
+        .run(out.estado, out.codigoSolicitud || null, out.mensajeError || 'Reprocesado', ing.id);
+      if (out.estado === 'creado') r.creados++;
+      else if (out.estado === 'duplicado_activo' || out.estado === 'duplicado_historial') r.duplicados++;
+      else if (out.estado === 'sin_datos') r.sinDatos++;
+      r.detalle.push({ id: ing.id, ruc: ing.ruc, estado: out.estado, codigo: out.codigoSolicitud || null });
+    } catch (e) { r.fallidos++; r.detalle.push({ id: ing.id, estado: 'error', msg: e.message }); }
+  }
+  auditar(req, 'b2b_reprocesar_errores', null, `${r.creados} creados / ${r.duplicados} dup / ${r.fallidos} fallidos${desde ? ' desde ' + desde : ''}`);
+  res.json(r);
+});
+
+// Reportes de leads por franja (marketing): preview y envio manual sin boton en el CRM (solo admin).
+app.get('/api/marketing/reporte/preview', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const corte = ['09:00', '13:00', '18:00', '23:59'].includes(req.query.corte) ? req.query.corte : '13:00';
+  res.json({ corte, jidConfigurado: !!process.env.WA_GRUPO_MKT_JID, texto: watchdogLeads.generarReporte(corte) });
+});
+// Preview de los cortes B2C (3x5 por GP + gestión). No envía nada. Solo admin.
+// ?corte=9am|1pm|6pm  ·  &gestion=1 para ver el reporte de gestión consolidado.
+app.get('/api/b2c/reporte/preview', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const corte = ['9am', '1pm', '6pm'].includes(req.query.corte) ? req.query.corte : '9am';
+  if (req.query.gestion === '1') {
+    return res.json({ corte, tipo: 'gestion', texto: alertasWA.reporteGestion(corte === '6pm' ? '6pm' : '1pm') || '(sin datos)' });
+  }
+  const planes = alertasWA.generarPlanes(corte); // [{gestora, texto}]
+  res.json({ corte, tipo: 'planes', planes });
+});
+// Envío manual de un corte B2C AHORA (planes + gestión si aplica). Solo admin.
+app.post('/api/b2c/reporte/enviar', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const corte = ['9am', '1pm', '6pm'].includes(req.body && req.body.corte) ? req.body.corte : '9am';
+  const n = await alertasWA.enviarCorteAhora(corte);
+  res.json({ ok: true, corte, gestoras: n });
+});
+
+app.post('/api/marketing/reporte/enviar', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || u.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  if (!process.env.WA_GRUPO_MKT_JID) return res.status(422).json({ error: 'Falta WA_GRUPO_MKT_JID' });
+  const corte = ['09:00', '13:00', '18:00', '23:59'].includes(req.body && req.body.corte) ? req.body.corte : '13:00';
+  const ok = await watchdogLeads.enviarCorte(corte);
+  res.json({ ok, corte });
+});
+
 app.get('/api/b2b/alertas-wa/preview', soloB2B, (req, res) => {
   if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
   const corte = req.query.corte === '6pm' ? '6pm' : '9am';
@@ -5880,7 +6674,7 @@ function enColaVerificacion(codigo, asesor, nombre) {
 }
 function esHorarioLaboralWA() {
   const a = peruAhora(), d = a.getUTCDay(), h = a.getUTCHours();
-  return d >= 1 && d <= 5 && h >= 9 && h < 18; // Lunes a Viernes, 9am-6pm Perú
+  return d >= 1 && d <= 6 && h >= 9 && h < 18; // Lunes a Sábado, 9am-6pm Perú
 }
 setInterval(() => {
   const ahora = Date.now();
@@ -5940,7 +6734,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.268 (Watchdog de leads unificado B2C+B2B: un solo mensaje al grupo de marketing que reporta ambos canales con su tiempo de silencio; alerta cuando algun canal supera WATCH_PRIMERA_H (def 2h), repite cada WATCH_REPITE_H (def 2h) hasta WATCH_MAX_ALERTAS (def 3) y solo en horario laboral Peru WATCH_INICIO-WATCH_FIN (def 8-22h); cada lead resetea su canal y rearma el ciclo. Server: restart Railway + WA_GRUPO_MKT_JID), luego repite cada 1h (WATCH_REPITE_H) hasta que llegue un lead, que resetea el reloj y rearma el ciclo. Nuevo archivo watchdog-leads.js. Server: restart Railway + variable WA_GRUPO_MKT_JID) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.324 (Dashboard COMITE B2C: nueva pestana (admin/jefa) con metricas del periodo -leads, contactabilidad, cierres+monto, tasa cierre, 3x5, velocidad al primer contacto-, embudo de conversion, tiempo por etapa, ranking por gestor y desestimados por motivo; filtro de fechas; boton Analisis IA (tipo=comite) que da lectura ejecutiva + acciones. Endpoint /api/b2c/comite reutilizable. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

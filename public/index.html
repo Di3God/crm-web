@@ -25,7 +25,7 @@
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
-        <button class="mundo-item oculto" id="mi-atribucion" onclick="navB2C('atribucion')">Marketing</button>
+        <button class="mundo-item oculto" id="mi-comite" onclick="navB2C('comite')">📊 Comité</button>
         <button class="mundo-item oculto" id="mi-supervisor" onclick="navB2C('supervisor')">Supervisor</button>
         <button class="mundo-item oculto" id="mi-audit" onclick="navB2C('audit')">Auditoría</button>
       </div>
@@ -37,6 +37,12 @@
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
+      </div>
+    </div>
+    <div class="mundo oculto" id="mundoMkt">
+      <button class="mundo-btn" onclick="toggleMundo('Mkt', event)"><span class="mundo-ic">📣</span> Marketing <span class="tu-caret">▾</span></button>
+      <div class="mundo-menu oculto" id="menuMkt">
+        <button class="mundo-item oculto" id="mi-mkt-atrib" onclick="navMkt('atribucion')">Atribución y costos</button>
       </div>
     </div>
   </nav>
@@ -188,6 +194,26 @@
   </section>
 
   <!-- ===== DASHBOARD ===== -->
+  <section id="v-comite" class="vista">
+    <div class="barra">
+      <h2>📊 Resultados del comité · B2C</h2>
+      <input type="date" id="comDesde" value="2026-06-23" onchange="cargarComite()">
+      <span style="color:#94a3b8">→</span>
+      <input type="date" id="comHasta" onchange="cargarComite()">
+      <button class="btn sec" onclick="cargarComite()">⟳ Actualizar</button>
+      <button class="btn" id="comIaBtn" onclick="analizarComiteIA()" style="margin-left:auto">🤖 Análisis IA</button>
+    </div>
+    <div id="comCards" class="com-cards"></div>
+    <div id="comIaBox" class="com-ia oculto"></div>
+    <div class="com-grid">
+      <div class="com-panel"><div class="com-panel-tit">Embudo de conversión</div><div id="comEmbudo"></div></div>
+      <div class="com-panel"><div class="com-panel-tit">Tiempo promedio por etapa</div><div id="comTiempo"></div></div>
+    </div>
+    <div class="com-grid">
+      <div class="com-panel"><div class="com-panel-tit">Ranking por gestor</div><div id="comRanking"></div></div>
+      <div class="com-panel"><div class="com-panel-tit">Desestimados por motivo</div><div id="comDesest"></div></div>
+    </div>
+  </section>
   <section id="v-dash" class="vista">
     <div class="barra">
       <h2>Dashboard comercial</h2>
@@ -308,6 +334,7 @@
       <button class="atr-tab act" data-tab="embudo" onclick="setTabMkt('embudo')">Embudo por anuncio</button>
       <button class="atr-tab" data-tab="leads" onclick="setTabMkt('leads')">Detalle de leads</button>
       <button class="atr-tab" data-tab="inversion" onclick="setTabMkt('inversion')">Inversión</button>
+      <button class="atr-tab" data-tab="cplmeta" onclick="setTabMkt('cplmeta')">💰 Costo x Lead (Meta)</button>
     </div>
     <div id="mktEmbudo">
       <div class="atr-ctrl">
@@ -335,6 +362,8 @@
         <button class="btn sec" onclick="limpiarFechasMkt()" title="Quitar el filtro de fechas">Todo</button>
         <input id="mktBuscar" class="inp" placeholder="Buscar nombre, código, anuncio…" style="flex:1;min-width:160px" oninput="renderMktLeads()">
         <span id="mktTotal" class="sub"></span>
+        <button class="btn sec soloAdminMkt oculto" id="btnInvSel" onclick="invertirSeleccionados()" title="Intercambia conjunto ↔ anuncio SOLO de los leads marcados. Permanente.">⇄ Invertir seleccionados</button>
+        <button class="btn sec soloAdminMkt oculto" onclick="corregirConjAnun()" title="Intercambia conjunto ↔ anuncio en los leads de formulario (fix del mapeo de Make). Permanente.">⇄ Corregir conj/anuncio</button>
         <button class="btn sec" onclick="descargarMktLeads()">⬇ Descargar tabla (CSV)</button>
       </div>
       <div id="mktLeadsCont"><div class="vacio">Cargando…</div></div>
@@ -356,6 +385,25 @@
       </div>
       <div id="invCards"></div>
       <div id="invCont"><div class="vacio">Carga el Excel de costos para ver el cruce con el embudo.</div></div>
+    </div>
+    <div id="mktCplMeta" style="display:none">
+      <div class="atr-ctrl">
+        <span class="sub">Del</span>
+        <input id="cplDesde" class="inp" type="date" onchange="cargarCplMeta()" style="width:auto">
+        <span class="sub">al</span>
+        <input id="cplHasta" class="inp" type="date" onchange="cargarCplMeta()" style="width:auto">
+        <span class="atr-niveles">
+          <button class="atr-niv act" data-cplcanal="todos" onclick="setCanalCpl('todos')">Todos</button>
+          <button class="atr-niv" data-cplcanal="b2c" onclick="setCanalCpl('b2c')">B2C</button>
+          <button class="atr-niv" data-cplcanal="b2b" onclick="setCanalCpl('b2b')">B2B</button>
+        </span>
+        <button class="btn sec" onclick="cplExpandirTodo(true)">⊞ Expandir</button>
+        <button class="btn sec" onclick="cplExpandirTodo(false)">⊟ Contraer</button>
+        <button class="btn sec" onclick="cargarCplMeta(true)" title="Ignorar caché y volver a pedir a Meta">⟳ Actualizar de Meta</button>
+        <span id="cplStatus" class="sub" style="margin-left:auto"></span>
+      </div>
+      <div id="cplCards"></div>
+      <div id="cplCont"><div class="vacio">Elige un rango de fechas para ver el costo por lead.</div></div>
     </div>
   </section>
 
@@ -518,7 +566,8 @@
     <div class="barra">
       <h2>B2B · Originación de crédito empresarial</h2>
       <span class="sub">Solicitudes B2B</span>
-      <button class="btn pri soloAltaB2B oculto" style="margin-left:auto" onclick="abrirAltaB2B()">+ Nueva solicitud</button>
+      <button class="btn sec soloAltaB2B oculto" style="margin-left:auto" onclick="abrirConfigSLA()" title="Definir días/horas por etapa">⏱ Tiempos por etapa</button>
+      <button class="btn pri soloAltaB2B oculto" onclick="abrirAltaB2B()">+ Nueva solicitud</button>
       <button class="btn sec" onclick="b2bRefrescar()">⟳ Actualizar</button>
     </div>
     <div id="b2bPanelSol">
@@ -552,8 +601,9 @@
         </div>
         <div class="vista-toggle b2b-view-toggle">
           <button id="b2bViewKanban" class="vt-btn act" onclick="b2bVista('kanban')">▦ Kanban</button>
-          <button id="b2bViewTabla" class="vt-btn" onclick="b2bVista('tabla')">☰ Lista</button>
+          <button id="b2bViewTabla" class="vt-btn soloJefeB2B oculto" onclick="b2bVista('tabla')">☰ Lista</button>
         </div>
+        <button class="btn sec soloAdminB2B oculto" onclick="descargarB2BCsv()" title="Descargar todas las solicitudes B2B como CSV">⬇ Descargar CSV</button>
       </div>
       <div id="b2bTablero"><div class="vacio">Cargando…</div></div>
       <div id="b2bTablaWrap" class="oculto">
@@ -614,7 +664,7 @@
           <div id="fbAcciones" class="fb-acciones"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-start">
-          <button class="btn fb-btn-gestion" onclick="abrirModalGestion(FICHA.etapaKanban)" title="Registra el contacto y define la próxima acción (obligatorio)">📝 Registrar gestión</button>
+          <button class="btn fb-btn-gestion" onclick="abrirModalGestion(FICHA.etapaKanban)" title="Registra el contacto y define la próxima acción">📝 Registrar gestión</button>
           <button id="fbTimeline" class="fb-flag fb-info" onclick="toggleTimelineB2B()" title="Trazabilidad: gestiones y cambios guardados">ⓘ</button>
           <button id="fbDescartar" class="fb-flag" onclick="abrirRedFlagB2B()" title="Marcar bandera roja (descartar con motivo)">🚩</button>
           <button onclick="cerrarFichaB2B()" title="Cerrar" class="fb-cerrar">Cerrar</button>
@@ -881,10 +931,14 @@
     </div>
     <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
       <div class="atr-niveles">
-        <button class="atr-niv act" data-tv="leads" onclick="setVistaTend('leads')">Leads</button>
-        <button class="atr-niv" data-tv="costo" onclick="setVistaTend('costo')">Gasto y CPL</button>
+        <button class="atr-niv act" data-tv="serie" onclick="setVistaTend('serie')">Leads/día</button>
         <button class="atr-niv" data-tv="embudo" onclick="setVistaTend('embudo')">Embudo</button>
         <button class="atr-niv" data-tv="cuadrante" onclick="setVistaTend('cuadrante')">Cuadrante</button>
+        <span class="atr-niveles" id="tendCanalBtns" style="margin-left:10px">
+          <button class="atr-niv act" data-tcanal="todos" onclick="setCanalTend('todos')">Todos</button>
+          <button class="atr-niv" data-tcanal="b2c" onclick="setCanalTend('b2c')">B2C</button>
+          <button class="atr-niv" data-tcanal="b2b" onclick="setCanalTend('b2b')">B2B</button>
+        </span>
       </div>
       <select id="tendMetricaX" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
         <option value="costo">X: Costo total</option>
@@ -912,7 +966,7 @@
       <input id="tendCorteY" class="inp" type="number" min="0" placeholder="Corte Y" style="width:90px" onchange="renderTendencias()">
     </div>
     <div id="tendLegend" style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:6px;font-size:12px;color:var(--muted)"></div>
-    <div style="position:relative;height:340px"><canvas id="tendChart"></canvas>
+    <div id="tendEmbudoCont" style="display:none"></div><div id="tendChartWrap" style="position:relative;height:340px"><canvas id="tendChart"></canvas>
       <div id="tendCard" style="display:none;position:absolute;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.14);padding:10px 12px;max-width:240px;font-size:12px"></div>
     </div>
     <div id="tendMsg" class="sub" style="margin-top:8px"></div>

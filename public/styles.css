@@ -2194,3 +2194,103 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .fbs-chip { font-size:9px !important; padding:1px 5px !important; }
 .fbs-caret { flex:0 0 auto; }
 .fbs-linea { flex:0 1 14px !important; min-width:6px !important; width:auto !important; margin:0 !important; align-self:center; }
+
+/* ===== v1.274: grid 30 días, leyenda abajo, SLA config, stepper con fondo gris ===== */
+/* Grid de 30 días: celdas más compactas para que quepan */
+.g35-grid-30 { overflow-x:auto; }
+.g35-grid-30 .g35-dia { min-width:20px; }
+.g35-grid-30 .g35-celda { width:16px; height:16px; }
+.g35-grid-30 .g35-lbl { font-size:8.5px; }
+.g35-grid-30 .g35-lbl i { font-size:7.5px; }
+.g35-leyenda-abajo { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:6px 0 10px; font-size:11px; color:#6B7A8D; }
+.g35-leyenda-abajo i { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:3px; }
+
+/* Stepper con fondo gris bajito para separarlo de los cuadraditos de abajo */
+.fb-stepper { background:#F4F6FA !important; border-color:#E2E8F1 !important; }
+
+/* Modal de tiempos por etapa (SLA) */
+.sla-body { display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+.sla-fila { display:grid; grid-template-columns:1.6fr 1fr 1fr; gap:10px; align-items:center; }
+.sla-fila.sla-head { font-size:11px; font-weight:700; color:#8A97A6; text-transform:uppercase; letter-spacing:.3px; }
+.sla-fila.sla-head span:not(.sla-et) { text-align:center; }
+.sla-et { font-size:13px; font-weight:600; color:#1B2A41; }
+.sla-in { display:inline-flex; align-items:center; gap:5px; justify-content:center; }
+.sla-in input { width:60px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; text-align:center; font-size:13px; }
+.sla-in i { font-size:11px; color:#8A97A6; font-style:normal; }
+
+/* ===== v1.283: Costo por Lead (Meta) ===== */
+.cpl-cards { display:flex; gap:10px; margin:10px 0; flex-wrap:wrap; }
+.cpl-card { background:#F7F9FC; border:1px solid var(--line); border-radius:12px; padding:12px 16px; min-width:140px; }
+.cpl-card-hl { background:#EAF1FF; border-color:#B9D2FF; }
+.cpl-k { font-size:11px; color:#6B7A8D; text-transform:uppercase; letter-spacing:.3px; }
+.cpl-v { font-size:20px; font-weight:800; color:#1B2A41; margin-top:2px; }
+.cpl-tabla td, .cpl-tabla th { padding:8px 10px; font-size:13px; }
+.cpl-singasto { opacity:.6; }
+.cpl-badge { font-size:10px; font-weight:800; padding:2px 8px; border-radius:6px; background:#EEF2F7; color:#6B7A8D; }
+.cpl-badge.cpl-b2b { background:#E7F0FF; color:#0B5FFF; }
+.cpl-badge.cpl-b2c { background:#E7F6EF; color:#1D9E75; }
+
+/* ===== v1.292: panel unificado CPL con imágenes ===== */
+.cpl-thumb { display:inline-block; width:34px; height:34px; border-radius:6px; background:#F1F5F9; vertical-align:middle; overflow:hidden; text-align:center; line-height:34px; margin-right:6px; }
+.cpl-thumb img { width:100%; height:100%; object-fit:cover; }
+.inv-nivel-c td { background:#F7F9FC; font-size:13px; }
+.inv-nivel-j td { background:#FBFCFE; font-size:12.5px; }
+.inv-nivel-a td { font-size:12.5px; }
+
+/* ===== v1.293: embudo con CPL por etapa ===== */
+.emb-head, .emb-fila { display:grid; grid-template-columns: 130px 1fr 70px 100px; gap:10px; align-items:center; }
+.emb-bloque { margin:14px 0 20px; }
+.emb-tit { font-weight:800; font-size:14px; color:#1B2A41; margin-bottom:8px; }
+.emb-fila { margin:4px 0; }
+.emb-lbl { font-size:12.5px; font-weight:600; color:#44546A; }
+.emb-barwrap { background:#F1F5F9; border-radius:8px; overflow:hidden; height:26px; }
+.emb-bar { height:100%; border-radius:8px; color:#fff; font-size:12px; font-weight:800; display:flex; align-items:center; padding-left:8px; min-width:26px; }
+.emb-pct { text-align:right; font-size:12px; color:#6B7A8D; }
+.emb-cpl { text-align:right; font-size:12.5px; font-weight:700; color:#1B2A41; }
+
+/* v1.322: comentario de reunión a todo el ancho del modal */
+.reu-com-franja { width:100%; }
+.reu-com-franja .reu-txt, #fbReuComentario { width:100% !important; box-sizing:border-box; min-height:120px; display:block; }
+
+/* v1.322: modal de descarte (bandera roja) compacto y legible */
+.rf-card { width:420px !important; max-width:94vw; padding:14px 16px !important; }
+.rf-body { padding:8px 2px !important; gap:5px !important; }
+.rf-sub { font-size:12px; color:#5A6B80; margin-bottom:6px; }
+.rf-opt { display:flex !important; align-items:center; gap:8px; font-size:13px !important; color:#1B2A41 !important; padding:7px 10px; border:1px solid #DDE5EF; border-radius:8px; cursor:pointer; background:#fff; line-height:1.3; }
+.rf-opt:hover { background:#F5F9FF; border-color:#9FC1FF; }
+.rf-opt input[type=radio] { flex:0 0 auto; width:16px; height:16px; margin:0; accent-color:#C0392B; }
+.rf-lbl { font-size:12.5px; font-weight:700; color:#334155; margin-top:8px; }
+.rf-txt { width:100%; min-height:64px; box-sizing:border-box; }
+.rf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+
+/* ===== Dashboard Comité B2C ===== */
+.com-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:14px 0; }
+.com-card { background:#fff; border:1px solid #E4EAF2; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(20,40,80,.05); }
+.com-card-v { font-size:26px; font-weight:800; color:#0F2E5A; line-height:1.1; }
+.com-card-l { font-size:12.5px; color:#5A6B80; margin-top:4px; font-weight:600; }
+.com-card-s { font-size:11px; color:#94A3B8; margin-top:2px; }
+.com-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+@media (max-width:900px){ .com-grid { grid-template-columns:1fr; } }
+.com-panel { background:#fff; border:1px solid #E4EAF2; border-radius:12px; padding:16px; }
+.com-panel-tit { font-weight:700; color:#1B2A41; margin-bottom:12px; font-size:14px; }
+.com-bar-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.com-bar-lbl { flex:0 0 90px; font-size:12px; color:#334155; text-align:right; }
+.com-bar-lbl-w { flex:0 0 180px; text-align:left; line-height:1.2; }
+.com-bar-track { flex:1; height:20px; background:#F1F5FB; border-radius:6px; overflow:hidden; }
+.com-bar-fill { height:100%; background:linear-gradient(90deg,#2563EB,#3B82F6); border-radius:6px; }
+.com-bar-fill-r { background:linear-gradient(90deg,#DC2626,#EF4444); }
+.com-bar-val { flex:0 0 auto; font-size:12.5px; font-weight:700; color:#0F2E5A; min-width:54px; }
+.com-bar-val small { color:#94A3B8; font-weight:500; }
+.com-line { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #F1F5F9; font-size:13px; }
+.com-line span { flex:1; color:#334155; }
+.com-line b { color:#0F2E5A; }
+.com-line small { color:#94A3B8; flex:0 0 auto; }
+.com-tabla { width:100%; border-collapse:collapse; font-size:12.5px; }
+.com-tabla th { text-align:center; padding:6px 4px; color:#5A6B80; border-bottom:2px solid #E4EAF2; font-weight:600; }
+.com-tabla th:first-child { text-align:left; }
+.com-tabla td { text-align:center; padding:7px 4px; border-bottom:1px solid #F1F5F9; }
+.com-tabla td:first-child { text-align:left; font-weight:600; color:#1B2A41; }
+.com-ia { background:linear-gradient(135deg,#EEF4FF,#F5F9FF); border:1px solid #C7DBFF; border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+.com-ia-head { font-weight:700; color:#1E40AF; margin-bottom:8px; }
+.com-ia-body { font-size:13.5px; line-height:1.6; color:#1B2A41; }
+.com-ia-load { color:#5A6B80; font-style:italic; }
