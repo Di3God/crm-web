@@ -4341,41 +4341,46 @@ let B2B_KANBAN_CARDS = [];
 let B2B_KANBAN_META = { puedeGestionar: false };
 // Scorecards de resumen arriba del tablero. Icono a la derecha del número, mismo tamaño.
 // Los que aplican filtran el tablero (con observación, SLA vencido, calientes, business case).
-let B2B_SC_FILTRO = null; // criterio activo: 'obs' | 'vencido' | 'caliente' | 'bc' | null
-async function cargarScorecardsB2B() {
+let B2B_SC_FILTRO = null; // 'critica' | 'vencido' | 'singestion' | 'obs' | 'bc' | null
+// Los scorecards se calculan de las MISMAS cards del tablero (coherente con el motor de prioridad).
+function cargarScorecardsB2B() {
   const cont = $('b2bScorecards'); if (!cont) return;
-  try {
-    const r = await api('/api/b2b/resumen');
-    const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
-    const cards = [
-      { ic: '📋', val: r.activos, lbl: 'En tablero', cls: '', f: null },
-      { ic: '💰', val: soles(r.potencial), lbl: 'Potencial estimado', cls: 'sc-azul', f: null },
-      { ic: '⚠️', val: r.conObs, lbl: 'Con observación', cls: r.conObs ? 'sc-amar' : '', f: 'obs' },
-      { ic: '⏰', val: r.vencidos, lbl: 'SLA vencido', cls: r.vencidos ? 'sc-rojo' : '', f: 'vencido' },
-      { ic: '🔥', val: r.calientes, lbl: 'Calientes', cls: r.calientes ? 'sc-rojo' : '', f: 'caliente' },
-      { ic: '📁', val: r.expediente, lbl: 'En business case', cls: 'sc-verde', f: 'bc' }
-    ];
-    cont.innerHTML = cards.map(c => {
-      const clic = c.f ? ' sc-clic' + (B2B_SC_FILTRO === c.f ? ' sc-on' : '') : '';
-      const onclick = c.f ? ' onclick="b2bScFiltro(\'' + c.f + '\')"' : '';
-      return '<div class="sc-card ' + c.cls + clic + '"' + onclick + '>' +
-        '<div class="sc-row"><span class="sc-val">' + c.val + '</span><span class="sc-ic">' + c.ic + '</span></div>' +
-        '<div class="sc-lbl">' + c.lbl + '</div></div>';
-    }).join('');
-    cont.classList.remove('oculto');
-  } catch (e) { cont.classList.add('oculto'); }
+  const cards = B2B_KANBAN_CARDS || [];
+  const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
+  const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
+  const pot = activos.reduce((a, c) => a + (Number(c.montoEfectivo) || 0), 0);
+  const nCrit = activos.filter(c => c.nivelPrioridad === 'critica').length;
+  const nVenc = activos.filter(c => c.sla && c.sla.vencido).length;
+  const nSin = activos.filter(c => (c.diasSinGestion || 0) >= 5).length;
+  const nObs = activos.filter(c => c.observaciones && c.observaciones.length).length;
+  const nBc = activos.filter(c => c.etapaKanban === 'Business case').length;
+  const defs = [
+    { ic: '📋', val: activos.length, lbl: 'En tablero', cls: 'sc-neutro', f: null },
+    { ic: '💰', val: soles(pot), lbl: 'Pipeline', cls: 'sc-azul', f: null },
+    { ic: '🔴', val: nCrit, lbl: 'Críticos', cls: nCrit ? 'sc-rojo' : 'sc-neutro', f: 'critica' },
+    { ic: '⏰', val: nVenc, lbl: 'SLA vencido', cls: nVenc ? 'sc-naranja' : 'sc-neutro', f: 'vencido' },
+    { ic: '🔥', val: nSin, lbl: 'Sin gestión +5d', cls: nSin ? 'sc-naranja' : 'sc-neutro', f: 'singestion' },
+    { ic: '📁', val: nBc, lbl: 'Business case', cls: 'sc-verde', f: 'bc' }
+  ];
+  cont.innerHTML = defs.map(c => {
+    const clic = c.f ? ' sc-clic' + (B2B_SC_FILTRO === c.f ? ' sc-on' : '') : '';
+    const onclick = c.f ? ' onclick="b2bScFiltro(\'' + c.f + '\')"' : '';
+    return '<div class="sc-card ' + c.cls + clic + '"' + onclick + '>' +
+      '<div class="sc-row"><span class="sc-val">' + c.val + '</span><span class="sc-ic">' + c.ic + '</span></div>' +
+      '<div class="sc-lbl">' + c.lbl + '</div>' + (c.f && B2B_SC_FILTRO === c.f ? '<div class="sc-activo">✓ filtrando</div>' : '') + '</div>';
+  }).join('');
+  cont.classList.remove('oculto');
 }
 // Aplica/limpia el filtro de scorecard sobre el tablero (toggle).
 function b2bScFiltro(f) {
   B2B_SC_FILTRO = (B2B_SC_FILTRO === f) ? null : f;
-  if (B2B_VISTA !== 'kanban') b2bVista('kanban');
-  cargarScorecardsB2B(); // refresca el resaltado
+  if (B2B_VISTA !== 'kanban') { b2bVista('kanban'); return; }
+  cargarScorecardsB2B();
   renderKanbanFiltrado();
 }
 
 async function cargarKanbanB2B() {
   const cont = $('b2bTablero'); if (!cont) return;
-  cargarScorecardsB2B();
   cargarComandoB2B();
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   try {
@@ -4384,6 +4389,8 @@ async function cargarKanbanB2B() {
     B2B_KANBAN_META.puedeGestionar = d.puedeGestionar;
     B2B_KANBAN_MONTOS = d.montos || {};
     poblarFiltrosKanbanB2B(B2B_KANBAN_CARDS);
+    cargarScorecardsB2B();   // ahora sí, con las cards ya cargadas
+    cargarGamificacionB2B(); // barra de meta diaria
     renderKanbanFiltrado();
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar el kanban: ' + (e.message || '') + '</div>';
@@ -4418,9 +4425,10 @@ function renderKanbanFiltrado() {
     if (tHasta && !(ti && ti <= tHasta)) return false;
     if (fPersona && c.responsableActual !== fPersona) return false;
     if (fEtapa && c.etapaKanban !== fEtapa) return false;
-    if (B2B_SC_FILTRO === 'obs' && !(c.observaciones && c.observaciones.length)) return false;
+    if (B2B_SC_FILTRO === 'critica' && c.nivelPrioridad !== 'critica') return false;
     if (B2B_SC_FILTRO === 'vencido' && !(c.sla && c.sla.vencido)) return false;
-    if (B2B_SC_FILTRO === 'caliente' && !(c.puntaje && c.puntaje.prob >= 60)) return false;
+    if (B2B_SC_FILTRO === 'singestion' && !((c.diasSinGestion || 0) >= 5)) return false;
+    if (B2B_SC_FILTRO === 'obs' && !(c.observaciones && c.observaciones.length)) return false;
     if (B2B_SC_FILTRO === 'bc' && c.etapaKanban !== 'Business case') return false;
     return true;
   });
@@ -4486,12 +4494,21 @@ function b2bKanbanCard(c) {
   const oxColor = ox > 66 ? '#16A34A' : ox > 40 ? '#F59E0B' : ox > 20 ? '#F97316' : '#DC2626';
   const oxHtml = '<div class="kb-ox" title="Oxígeno del lead: ' + ox + '%' + (c.diasSinGestion != null ? ' · ' + c.diasSinGestion + 'd sin gestión' : '') + '"><div class="kb-ox-fill" style="width:' + ox + '%;background:' + oxColor + '"></div></div>';
   const rescate = (c.diasSinGestion != null && c.diasSinGestion >= 5) ? '<span class="kb-rescate">🔥 ' + c.diasSinGestion + 'd sin gestión</span>' : '';
+  // Alertas dentro de la tarjeta (sutiles, sin popup)
+  let alertas = '';
+  if (c.sla && c.sla.estado === 'porvencer' && !c.sla.vencido) {
+    alertas += '<span class="kb-alerta kb-alerta-warn">⚠ SLA vence pronto</span>';
+  }
+  if (c.ultimaGestionFechaProx) {
+    const fpa = new Date(c.ultimaGestionFechaProx);
+    if (!isNaN(fpa) && fpa.getTime() < Date.now()) alertas += '<span class="kb-alerta kb-alerta-venc">📌 Acción vencida</span>';
+  }
   return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" data-score="' + (c.priorityScore || 0) + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
     '<div class="kb-top"><b class="kb-nombre">' + nombre + '</b></div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) : '—') + (c.telefono ? ' · ' + c.telefono : '') + '</div>' +
     (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + (ubic && ubic !== '—' ? '<span class="kb-ubic-inline">📍 ' + ubic + '</span>' : '') + '</div>' : '') +
-    obsHtml + rescate +
+    obsHtml + rescate + alertas +
     slaHtml +
     oxHtml +
     '</div>';
@@ -8624,3 +8641,21 @@ function renderComandoB2B(d) {
     '<button class="cmd-start" onclick="b2bVista(\'cola\')">⚡ Comenzar mi jornada →</button>';
 }
 function cmdToggle() { CMD_COLAPSADO = !CMD_COLAPSADO; cargarComandoB2B(); }
+
+// ===== GAMIFICACIÓN B2B: barra de meta diaria =====
+async function cargarGamificacionB2B() {
+  const cont = $('b2bGami'); if (!cont) return;
+  const esFuncionario = YO && (YO.rol === 'funcionario_b2b' || YO.rol === 'asistente_creditos');
+  if (!esFuncionario) { cont.classList.add('oculto'); return; }
+  try {
+    const g = await api('/api/b2b/gamificacion');
+    const color = g.cumplida ? '#16A34A' : g.pct >= 60 ? '#2563EB' : g.pct >= 30 ? '#F59E0B' : '#DC2626';
+    const msg = g.cumplida
+      ? '🎉 ¡Meta del día cumplida! ' + g.hechas + '/' + g.meta + ' leads trabajados'
+      : 'Llevas <b>' + g.hechas + '</b> de <b>' + g.meta + '</b> leads · te faltan <b>' + g.faltan + '</b>';
+    cont.innerHTML =
+      '<div class="gami-top"><span class="gami-lbl">🎯 Meta del día</span><span class="gami-msg">' + msg + '</span><span class="gami-pct">' + g.pct + '%</span></div>' +
+      '<div class="gami-track"><div class="gami-fill" style="width:' + g.pct + '%;background:' + color + '"></div></div>';
+    cont.classList.remove('oculto');
+  } catch (e) { cont.classList.add('oculto'); }
+}

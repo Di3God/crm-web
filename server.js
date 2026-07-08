@@ -5347,6 +5347,28 @@ function sellarFechaEtapa(f, col) {
   return nueva;
 }
 
+// GAMIFICACIÓN B2B: progreso de gestiones del día vs meta (barra de productividad).
+// GET /api/b2b/gamificacion  (meta configurable en app_config 'b2b_meta_gestiones_dia', default 10)
+app.get('/api/b2b/gamificacion', soloB2B, (req, res) => {
+  try {
+    const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
+    const nombre = esJefe ? (req.query.asesor || null) : req.user.nombre;
+    let meta = 10;
+    try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_meta_gestiones_dia'").get(); if (r && +r.valor > 0) meta = +r.valor; } catch (e) {}
+    const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const ini = new Date(new Date(hoyP + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+    const fin = new Date(new Date(hoyP + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+    // Gestiones y leads distintos trabajados hoy
+    const gest = nombre
+      ? db.prepare("SELECT COUNT(*) n, COUNT(DISTINCT codigoSolicitud) leads FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=?").get(ini, fin, nombre)
+      : db.prepare("SELECT COUNT(*) n, COUNT(DISTINCT codigoSolicitud) leads FROM b2b_gestiones WHERE fecha>=? AND fecha<?").get(ini, fin);
+    const hechas = gest.leads || 0; // contamos leads trabajados (no gestiones repetidas)
+    const pct = meta > 0 ? Math.min(100, Math.round((hechas / meta) * 100)) : 0;
+    const faltan = Math.max(0, meta - hechas);
+    res.json({ asesor: nombre, meta, hechas, gestiones: gest.n || 0, pct, faltan, cumplida: hechas >= meta });
+  } catch (e) { console.error('[b2b/gami]', e.message); res.status(500).json({ error: e.message }); }
+});
+
 // CENTRO DE COMANDO B2B: resumen de la jornada del asesor (tareas críticas, carga, progreso).
 // GET /api/b2b/comando?asesor=
 app.get('/api/b2b/comando', soloB2B, (req, res) => {
@@ -7047,7 +7069,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.335 (FIX prioridad por monto: normalizacion de log10 (aplanaba 100k vs 1M) cambiada a raiz cuadrada + desempate explicito por monto en Kanban, Cola y Comando -ahora S/1M va antes que S/100k cuando lo demas empata-. UI mas limpia: Mi Cola y Centro de Comando ahora muestran cada lead en UNA sola fila horizontal a todo el ancho, con el MONTO resaltado a la derecha; panel de comando con azul mas suave para no chocar con los scorecards. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.336 (Kanban 3 en 1: (1) DASHBOARD SUPERIOR CLICABLE - scorecards recalculados con el motor (En tablero/Pipeline/Criticos/SLA vencido/Sin gestion +5d/Business case), ahora SI filtran el tablero al hacer clic y se ven mejor; (2) GAMIFICACION - barra de meta diaria para funcionarios (leads trabajados vs meta configurable en app_config b2b_meta_gestiones_dia, default 10, con -te faltan N-); (3) ALERTAS EN TARJETA - avisos sutiles sin popup: SLA vence pronto y Accion vencida. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
