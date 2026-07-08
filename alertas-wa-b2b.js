@@ -84,19 +84,23 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     const fin = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
     const gest = db.prepare('SELECT codigoSolicitud, responsable FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin);
     const av = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
+    // Trabajo de expediente (armar crédito/garantía) — es trabajo real aunque no sea gestión formal.
+    const trabajo = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_credito_guardar_sujeto','b2b_credito_agregar_sujeto','b2b_garantia_guardar_inmueble','b2b_garantia_agregar_inmueble','b2b_guardar_filtro','b2b_guardar_garantia','b2b_credito_link')").all(ini, fin);
     const nuevos = db.prepare('SELECT codigo, responsableActual FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').all(ini, fin);
-    const des = db.prepare("SELECT DISTINCT objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
-    // Por asesor
+    const des = db.prepare("SELECT DISTINCT objetivo, nombre FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
+    // Por asesor: empresas trabajadas (únicas, cualquier tipo de trabajo) + avances + gestiones
     const A = {};
     const reg = r => { const k = r || 'Sin asignar'; A[k] = A[k] || { empresas: new Set(), gestiones: 0, avances: 0 }; return A[k]; };
     gest.forEach(g => { const o = reg(g.responsable); o.empresas.add(g.codigoSolicitud); o.gestiones++; });
     av.forEach(a => { const o = reg(a.nombre); o.empresas.add(a.objetivo); o.avances++; });
-    // Nuevos sin tocar por asesor
-    const tocados = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...des.map(d => d.objetivo)]);
+    trabajo.forEach(t => { const o = reg(t.nombre); o.empresas.add(t.objetivo); }); // suma la empresa como trabajada (no infla gestiones)
+    des.forEach(d => { if (d.nombre) reg(d.nombre).empresas.add(d.objetivo); });
+    // Nuevos sin tocar por asesor (tocado = cualquier trabajo)
+    const tocados = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...trabajo.map(t => t.objetivo), ...des.map(d => d.objetivo)]);
     const sinTocarPorResp = {};
     nuevos.forEach(n => { if (!tocados.has(n.codigo)) { const k = n.responsableActual || 'Sin asignar'; sinTocarPorResp[k] = (sinTocarPorResp[k] || 0) + 1; } });
     // Totales
-    const totalEmpresas = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...des.map(d => d.objetivo)]).size;
+    const totalEmpresas = tocados.size;
     const abordadosNuevos = nuevos.filter(n => tocados.has(n.codigo)).length;
     return {
       totalEmpresas, totalGestiones: gest.length, totalAvances: av.length,
@@ -107,13 +111,15 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
 
   function lineasGestionAsesor(act) {
     const L = ['', 'Gestión por asesor:'];
-    const nombres = Object.keys(act.porAsesor);
+    // Incluir también asesores que solo tienen 'sin tocar' (aparecen aunque no hayan trabajado)
+    const nombres = Array.from(new Set([...Object.keys(act.porAsesor), ...Object.keys(act.sinTocarPorResp)])).filter(n => n !== 'Sin asignar');
     if (!nombres.length) { L.push('• Sin actividad registrada'); return L; }
-    nombres.sort((x, y) => act.porAsesor[y].empresas.size - act.porAsesor[x].empresas.size).forEach(r => {
-      const o = act.porAsesor[r];
+    nombres.sort((x, y) => ((act.porAsesor[y] || {}).empresas || new Set()).size - ((act.porAsesor[x] || {}).empresas || new Set()).size).forEach(r => {
+      const o = act.porAsesor[r] || { empresas: new Set(), gestiones: 0, avances: 0 };
       const sinTocar = act.sinTocarPorResp[r] || 0;
-      let linea = '• ' + primerNom(r) + ': ' + o.empresas.size + ' empresas · ' + o.gestiones + ' gestiones';
-      if (act.incluirAvances) linea += ' · ' + o.avances + ' avance' + (o.avances === 1 ? '' : 's');
+      const nEmp = o.empresas.size;
+      // 3 números: empresas trabajadas · avances · gestiones
+      let linea = '• ' + primerNom(r) + ': ' + nEmp + ' empresa' + (nEmp === 1 ? '' : 's') + ' · ' + o.avances + ' avance' + (o.avances === 1 ? '' : 's') + ' · ' + o.gestiones + ' gestion' + (o.gestiones === 1 ? '' : 'es');
       linea += ' · ' + sinTocar + ' sin tocar ' + (sinTocar > 0 ? '⚠' : '✓');
       L.push(linea);
     });

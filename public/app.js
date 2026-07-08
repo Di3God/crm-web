@@ -5549,6 +5549,16 @@ function exigirGestionAntesDeGuardar() {
   abrirModalGestion(FICHA.etapaKanban || 'Filtro credito');
   return false;
 }
+// Opción B: tras un avance automático de expediente, exige registrar la gestión de la etapa de origen.
+function pedirGestionTrasAvance(etapaOrigen) {
+  try {
+    setTimeout(() => {
+      abrirModalGestion(etapaOrigen || FICHA.etapaKanban || 'Filtro credito');
+      const banner = document.getElementById('gmAvanceBanner');
+      if (banner) banner.style.display = '';
+    }, 350); // deja que la ficha se re-renderice tras el avance
+  } catch (e) {}
+}
 function abrirModalGestion(col) {
   GESTION_COL = col;
   const acciones = (FICHA.accionesPorEtapa && FICHA.accionesPorEtapa[col]) || FICHA.accionesEtapa || [];
@@ -5562,6 +5572,7 @@ function abrirModalGestion(col) {
     '<div class="gm-card gm-card-ancha">' +
     '<div class="gm-head"><b>Registrar gestión</b> <span class="sub">· ' + etLabel + '</span>' +
     '<button class="gm-x" onclick="cerrarModalGestion()">✕</button></div>' +
+    '<div id="gmAvanceBanner" class="gm-avance-banner" style="display:none">✅ El expediente avanzó de etapa. Registra qué trabajaste para dejar constancia del avance.</div>' +
     '<div class="gm-2col">' +
     // Paso 1: Gestión realizada
     '<div class="gm-col gm-col-1"><div class="gm-col-tit"><span class="gm-num gm-num-1">1</span> Gestión realizada</div>' +
@@ -7137,7 +7148,7 @@ async function guardarGarantia(modo) {
     actualizarConsolidadoGarantiaVivo();
     limpiarDirty('garantia');
     // Guardar completo con Verde/Amarillo: el backend ya avanzó a Reunión; refrescar ficha para reflejarlo.
-    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); }
+    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); pedirGestionTrasAvance('Filtro garantia'); }
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
@@ -7151,7 +7162,7 @@ async function guardarFinanzas(modo) {
     FICHA.filtros.finanzas = Object.assign({}, FICHA.filtros.finanzas, { checklist: valores, semaforo: r.semaforo, puntaje: r.puntaje, motivos: r.motivos });
     setPanelPill('finanzas', r.semaforo);
     limpiarDirty('finanzas');
-    if (r.avanzo) { await abrirFichaB2B(FICHA.solicitud.codigo); }
+    if (r.avanzo) { await abrirFichaB2B(FICHA.solicitud.codigo); pedirGestionTrasAvance('Filtro finanzas'); }
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
@@ -7306,7 +7317,7 @@ async function guardarCredito(modo) {
     actualizarConsolidadoVivo();
     limpiarDirty('credito');
     // Guardar completo con Verde/Amarillo: el backend ya avanzó a Garantía; refrescar ficha.
-    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); }
+    if (modo !== 'avance' && (cons === 'Verde' || cons === 'Amarillo')) { await abrirFichaB2B(FICHA.solicitud.codigo); pedirGestionTrasAvance('Filtro credito'); }
     if (typeof cargarKanbanB2B === 'function' && B2B_VISTA === 'kanban') cargarKanbanB2B();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }

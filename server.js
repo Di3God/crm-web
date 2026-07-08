@@ -7250,7 +7250,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.345 (FIX endpoint /api/b2b/auditoria que daba error 500 -consultaba columna codigo inexistente, la tabla usa objetivo-. Agregado endpoint temporal /api/b2b/diag-gestiones para diagnosticar el conteo de gestiones por asesor de hoy -crudo desde b2b_gestiones, agrupado por responsable-. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.346 (Reporte WhatsApp B2B ahora refleja el TRABAJO REAL: -empresas trabajadas- cuenta empresas unicas con cualquier actividad (gestion formal O trabajo de expediente: sujetos, filtros, garantia, link), no solo gestiones. Por asesor muestra 3 numeros: empresas trabajadas + avances + gestiones. Resuelve que Bony apareciera con 1 gestion cuando en realidad trabajo 65+ acciones de expediente. Opcion B: al avanzar un expediente de etapa (credito->garantia, garantia->reunion, reunion->finanzas) salta automaticamente el modal de gestion con banner para dejar constancia. Server + frontend + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
