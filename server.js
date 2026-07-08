@@ -4377,7 +4377,7 @@ function priorityScoreB2B(sol, montoMax) {
   // --- Sub-scores 0..1 ---
   // Monto: normalizado contra el mayor monto del pipeline (log para no aplastar a los medianos)
   const monto = Number(sol.montoSolicitado || 0) || 0;
-  const sMonto = montoMax > 0 ? Math.log10(1 + monto) / Math.log10(1 + montoMax) : 0;
+  const sMonto = montoMax > 0 ? Math.sqrt(monto) / Math.sqrt(montoMax) : 0; // raíz: mantiene la jerarquía (1M > 100k) sin que los grandes aplasten
   // Temperatura: Verde=1, Amarillo=0.6, Rojo=0.15, sin dato=0.4
   const sem = semGlobalB2B(sol);
   const sTemp = sem === 'Verde' ? 1 : sem === 'Amarillo' ? 0.6 : sem === 'Rojo' ? 0.15 : 0.4;
@@ -5382,7 +5382,7 @@ app.get('/api/b2b/comando', soloB2B, (req, res) => {
 
     // Tareas críticas HOY: SLA vencido, próxima acción vencida, o nivel crítica. Top por score.
     const criticas = scored.filter(l => l.slaVencido || l.proxVencida || l.nivel === 'critica')
-      .sort((a, b) => b.score - a.score).slice(0, 6);
+      .sort((a, b) => (b.score - a.score) || (b.monto - a.monto)).slice(0, 6);
 
     // Progreso del día: gestiones hechas hoy por el asesor
     const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
@@ -5440,7 +5440,7 @@ app.get('/api/b2b/cola', soloB2B, (req, res) => {
         score: ps.score, nivel: ps.nivel, oxigeno: ps.oxigeno, diasSinGestion: ps.diasSinGestion,
         slaVencido: !!(ps.sla && ps.sla.vencido), accion, fechaAccion
       };
-    }).sort((a, b) => b.score - a.score);
+    }).sort((a, b) => (b.score - a.score) || (b.monto - a.monto));
     res.json({ total: cola.length, asesor: (!esJefe ? req.user.nombre : (asesor || null)), cola });
   } catch (e) { console.error('[b2b/cola]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
@@ -5474,7 +5474,7 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
       priorityScore: ps.score, nivelPrioridad: ps.nivel, oxigeno: ps.oxigeno, diasSinGestion: ps.diasSinGestion };
   });
   // Ordenar por Priority Score DESC (mayor prioridad arriba) dentro de todo el set; el front agrupa por columna.
-  cards.sort((a, b) => (b.priorityScore || 0) - (a.priorityScore || 0));
+  cards.sort((a, b) => ((b.priorityScore || 0) - (a.priorityScore || 0)) || ((b.montoEfectivo || 0) - (a.montoEfectivo || 0)));
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
   const conteos = {};
@@ -7047,7 +7047,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.334 (CENTRO DE COMANDO B2B - Comenzar mi jornada: panel de aterrizaje para funcionarios al abrir el Kanban con saludo, cartera y gestionados hoy, 4 stats (criticos/SLA vencido/accion vencida/pipeline), lista Empieza por aqui con las 6 tareas criticas priorizadas (SLA o accion vencida o nivel critico) y boton Comenzar mi jornada que abre Mi Cola. Colapsable. Endpoint /api/b2b/comando reutiliza el motor de priorizacion. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.335 (FIX prioridad por monto: normalizacion de log10 (aplanaba 100k vs 1M) cambiada a raiz cuadrada + desempate explicito por monto en Kanban, Cola y Comando -ahora S/1M va antes que S/100k cuando lo demas empata-. UI mas limpia: Mi Cola y Centro de Comando ahora muestran cada lead en UNA sola fila horizontal a todo el ancho, con el MONTO resaltado a la derecha; panel de comando con azul mas suave para no chocar con los scorecards. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

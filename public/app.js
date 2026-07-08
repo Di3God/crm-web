@@ -4322,17 +4322,16 @@ function renderColaB2B(d) {
   const filas = cola.map((l, i) => {
     const ox = l.oxigeno != null ? l.oxigeno : 100;
     const oxColor = ox > 66 ? '#16A34A' : ox > 40 ? '#F59E0B' : ox > 20 ? '#F97316' : '#DC2626';
-    const fp = l.fechaAccion ? new Date(l.fechaAccion) : null;
-    const fpTxt = fp && !isNaN(fp) ? fp.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
-    const vencida = fp && !isNaN(fp) && fp.getTime() < Date.now();
     return '<div class="cola-item cola-n-' + l.nivel + '" onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
-      '<div class="cola-rank">' + (i + 1) + '</div>' +
-      '<div class="cola-main">' +
-        '<div class="cola-emp">' + (nivelIco[l.nivel] || '') + ' <b>' + l.empresa + '</b>' + (l.slaVencido ? ' <span class="cola-venc">SLA vencido</span>' : '') + '</div>' +
-        '<div class="cola-meta">' + (etLbl[l.etapa] || l.etapa) + ' · ' + soles(l.monto) + (l.telefono ? ' · ' + l.telefono : '') + (l.diasSinGestion != null ? ' · ' + l.diasSinGestion + 'd sin gestión' : '') + '</div>' +
-        '<div class="cola-accion">📌 ' + l.accion + (fpTxt ? ' · <span class="' + (vencida ? "cola-fp-venc" : "cola-fp") + '\">' + fpTxt + '</span>' : '') + '</div>' +
-      '</div>' +
-      '<div class="cola-ox" title="Oxígeno ' + ox + '%"><div class="cola-ox-fill" style="height:' + ox + '%;background:' + oxColor + '"></div></div>' +
+      '<span class="cola-rank">' + (i + 1) + '</span>' +
+      '<span class="cola-dot">' + (nivelIco[l.nivel] || '') + '</span>' +
+      '<span class="cola-emp">' + l.empresa + '</span>' +
+      '<span class="cola-etapa">' + (etLbl[l.etapa] || l.etapa) + '</span>' +
+      '<span class="cola-accion">📌 ' + l.accion + '</span>' +
+      (l.diasSinGestion ? '<span class="cola-dias">' + l.diasSinGestion + 'd</span>' : '') +
+      (l.slaVencido ? '<span class="cola-venc">SLA vencido</span>' : '') +
+      '<span class="cola-monto">' + soles(l.monto) + '</span>' +
+      '<span class="cola-ox" title="Oxígeno ' + ox + '%"><span class="cola-ox-fill" style="width:' + ox + '%;background:' + oxColor + '"></span></span>' +
     '</div>';
   }).join('');
   cont.innerHTML = header + '<div class="cola-list">' + filas + '</div>';
@@ -8601,9 +8600,11 @@ function renderComandoB2B(d) {
   const nivelIco = { critica: '🔴', alta: '🟠', media: '🟡', baja: '⚪' };
   const tareas = crit.length ? crit.map(l =>
     '<div class="cmd-task" onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
-      '<div class="cmd-task-l">' + (nivelIco[l.nivel] || '') + ' <b>' + l.empresa + '</b>' +
-      (l.slaVencido ? ' <span class="cmd-tag">SLA vencido</span>' : (l.proxVencida ? ' <span class="cmd-tag">acción vencida</span>' : '')) + '</div>' +
-      '<div class="cmd-task-a">📌 ' + l.accion + ' · ' + (l.etapa) + ' · ' + soles(l.monto) + '</div>' +
+      '<span class="cmd-task-dot">' + (nivelIco[l.nivel] || '') + '</span>' +
+      '<span class="cmd-task-emp">' + l.empresa + '</span>' +
+      '<span class="cmd-task-acc">📌 ' + l.accion + ' · ' + l.etapa + '</span>' +
+      (l.slaVencido ? '<span class="cmd-tag">SLA vencido</span>' : (l.proxVencida ? '<span class="cmd-tag">acción vencida</span>' : '')) +
+      '<span class="cmd-task-monto">' + soles(l.monto) + '</span>' +
     '</div>').join('') : '<div class="cmd-vacio">🎉 No tienes tareas críticas pendientes. ¡Buen trabajo!</div>';
 
   cont.innerHTML =

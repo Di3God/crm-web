@@ -2373,30 +2373,30 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .bd-det-card.bd-det-des { border-left:3px solid #DC2626; background:#FFF9F9; }
 .bd-det-res { font-size:12px; color:#334155; margin:2px 0; }
 
-/* ===== Cola Inteligente B2B (v1.333) ===== */
-.cola-head { display:flex; align-items:baseline; gap:12px; margin:6px 0 14px; }
+/* ===== Cola Inteligente B2B (v1.335): una fila por lead, ancho completo ===== */
+.cola-head { display:flex; align-items:baseline; gap:12px; margin:6px 0 12px; }
 .cola-head-t { font-size:16px; font-weight:800; color:#0F2E5A; }
 .cola-head-n { font-size:12.5px; color:#8A97A8; }
-.cola-list { display:flex; flex-direction:column; gap:8px; max-width:820px; }
-.cola-item { display:flex; align-items:stretch; gap:12px; background:#fff; border:1px solid #E7ECF3; border-radius:12px; padding:12px 14px; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
-.cola-item:hover { border-color:#B9D2FF; box-shadow:0 3px 12px rgba(30,64,175,.08); }
-.cola-n-critica { border-left:4px solid #DC2626; }
-.cola-n-alta { border-left:4px solid #F97316; }
-.cola-n-media { border-left:4px solid #F59E0B; }
-.cola-n-baja { border-left:4px solid #CBD5E1; }
-.cola-rank { flex:0 0 26px; font-size:15px; font-weight:800; color:#B6C2D2; display:flex; align-items:center; justify-content:center; }
-.cola-main { flex:1; min-width:0; }
-.cola-emp { font-size:14px; color:#16233A; margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cola-venc { font-size:10.5px; font-weight:700; color:#fff; background:#DC2626; border-radius:5px; padding:1px 6px; margin-left:4px; }
-.cola-meta { font-size:11.5px; color:#8A97A8; margin-bottom:5px; }
-.cola-accion { font-size:12.5px; color:#1E40AF; font-weight:600; }
-.cola-fp { color:#16A34A; font-weight:700; }
-.cola-fp-venc { color:#DC2626; font-weight:700; }
-.cola-ox { flex:0 0 5px; background:#EEF2F7; border-radius:3px; overflow:hidden; display:flex; align-items:flex-end; }
-.cola-ox-fill { width:100%; border-radius:3px; }
+.cola-list { display:flex; flex-direction:column; gap:5px; }
+.cola-item { display:flex; align-items:center; gap:12px; background:#fff; border:1px solid #E7ECF3; border-radius:9px; padding:9px 14px; cursor:pointer; transition:border-color .12s, box-shadow .12s; }
+.cola-item:hover { border-color:#B9D2FF; box-shadow:0 2px 8px rgba(30,64,175,.07); }
+.cola-n-critica { border-left:3px solid #DC2626; }
+.cola-n-alta { border-left:3px solid #F97316; }
+.cola-n-media { border-left:3px solid #F59E0B; }
+.cola-n-baja { border-left:3px solid #CBD5E1; }
+.cola-rank { flex:0 0 22px; font-size:13px; font-weight:800; color:#B6C2D2; text-align:center; }
+.cola-dot { flex:0 0 auto; font-size:11px; }
+.cola-emp { flex:0 0 240px; font-size:13px; font-weight:700; color:#16233A; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cola-etapa { flex:0 0 110px; font-size:11.5px; color:#5A6B80; }
+.cola-accion { flex:1 1 auto; font-size:12px; color:#1E40AF; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.cola-dias { flex:0 0 auto; font-size:10.5px; color:#94a3b8; }
+.cola-venc { flex:0 0 auto; font-size:10px; font-weight:700; color:#fff; background:#DC2626; border-radius:5px; padding:2px 7px; white-space:nowrap; }
+.cola-monto { flex:0 0 auto; font-size:14px; font-weight:800; color:#0F2E5A; min-width:120px; text-align:right; }
+.cola-ox { flex:0 0 44px; height:5px; background:#EEF2F7; border-radius:3px; overflow:hidden; }
+.cola-ox-fill { display:block; height:100%; border-radius:3px; }
 
 /* ===== Centro de Comando B2B (v1.334) ===== */
-.cmd-panel { background:linear-gradient(135deg,#0F2E5A,#1E40AF); border-radius:16px; padding:18px 20px; margin-bottom:16px; color:#fff; box-shadow:0 8px 24px rgba(15,46,90,.18); }
+.cmd-panel { background:linear-gradient(135deg,#1B3B6F,#274B8A); border-radius:16px; padding:18px 20px; margin-bottom:16px; color:#fff; box-shadow:0 8px 24px rgba(15,46,90,.18); }
 .cmd-head { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:14px; }
 .cmd-hi { font-size:19px; font-weight:800; }
 .cmd-sub { font-size:13px; color:#C7D6F0; margin-top:2px; }
@@ -2410,11 +2410,13 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .cmd-stat-l { font-size:11px; color:#D5E1F5; }
 .cmd-tit { font-size:13px; font-weight:700; color:#C7D6F0; margin-bottom:8px; }
 .cmd-tasks { display:flex; flex-direction:column; gap:7px; margin-bottom:16px; }
-.cmd-task { background:rgba(255,255,255,.95); border-radius:10px; padding:9px 12px; cursor:pointer; transition:transform .12s; }
+.cmd-task { display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.96); border-radius:9px; padding:9px 14px; cursor:pointer; transition:transform .12s; }
 .cmd-task:hover { transform:translateX(3px); }
-.cmd-task-l { font-size:13px; color:#16233A; }
-.cmd-tag { font-size:10px; font-weight:700; color:#fff; background:#DC2626; border-radius:5px; padding:1px 6px; margin-left:4px; }
-.cmd-task-a { font-size:11.5px; color:#5A6B80; margin-top:2px; }
+.cmd-task-dot { flex:0 0 auto; font-size:11px; }
+.cmd-task-emp { flex:0 0 250px; font-size:13px; font-weight:700; color:#16233A; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cmd-task-acc { flex:1 1 auto; font-size:11.5px; color:#5A6B80; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.cmd-tag { flex:0 0 auto; font-size:10px; font-weight:700; color:#fff; background:#DC2626; border-radius:5px; padding:2px 7px; }
+.cmd-task-monto { flex:0 0 auto; font-size:14px; font-weight:800; color:#0F2E5A; min-width:120px; text-align:right; }
 .cmd-vacio { background:rgba(255,255,255,.12); border-radius:10px; padding:14px; text-align:center; font-size:13.5px; }
 .cmd-start { width:100%; background:#fff; color:#1E40AF; border:none; border-radius:10px; padding:12px; font-size:14px; font-weight:800; cursor:pointer; transition:background .15s; }
 .cmd-start:hover { background:#EFF4FF; }
