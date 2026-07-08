@@ -6465,13 +6465,13 @@ app.post('/api/marketing/reporte/enviar', async (req, res) => {
 
 app.get('/api/b2b/alertas-wa/preview', soloB2B, (req, res) => {
   if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
-  const corte = req.query.corte === '6pm' ? '6pm' : '9am';
+  const corte = ['6pm', '1pm', '9am'].includes(req.query.corte) ? req.query.corte : '9am';
   res.json({ corte, jidConfigurado: !!process.env.WA_GRUPO_B2B_JID, texto: alertasWAB2B.generarCorte(corte) || '(sin contenido: no hay solicitudes activas)' });
 });
 app.post('/api/b2b/alertas-wa/enviar', soloB2B, async (req, res) => {
   if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
   if (!process.env.WA_GRUPO_B2B_JID) return res.status(422).json({ error: 'Configura WA_GRUPO_B2B_JID en Railway primero' });
-  const corte = (req.body && req.body.corte) === '6pm' ? '6pm' : '9am';
+  const corte = (req.body && ['6pm', '1pm', '9am'].includes(req.body.corte)) ? req.body.corte : '9am';
   const ok = await alertasWAB2B.enviarCorteAhora(corte);
   auditar(req, 'b2b_wa_corte_manual', null, corte);
   res.json({ ok, corte });
@@ -7235,7 +7235,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.343 (FIX reporte B2B del dia para ejecutivos: 1) los AVANCES de etapa por auto-avance (cuando se completan sujetos de credito o garantia y el lead salta de etapa) ahora SI se auditan (b2b_avanzar_etapa) y se cuentan en el reporte -antes no quedaba rastro-. 2) Nueva seccion -Avances de etapa del dia- que desglosa cuantos leads pasaron de una etapa a otra (Credito->Garantia, etc.) contando el avance en la etapa de ORIGEN, con el detalle de empresas. 3) El resumen incluye avancesTotales. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.344 (Mensajes WhatsApp B2B redisenados a formato ejecutivo corto y sobrio, 3 cortes: 9am Arranque (pipeline, nuevas/reuniones/SLA, embudo por etapa con empresas+monto, carga por asesor), 1pm Media jornada y 6pm Cierre (empresas trabajadas+gestiones+avances, nuevas abordadas, embudo por etapa, gestion por asesor con sin-tocar y check/warning; 6pm incluye avances y pendientes). Se agrego el corte de la 1pm (scheduler 09:00/13:00/18:00 Peru). Endpoints preview/enviar aceptan los 3 cortes. Usa 'empresas' en vez de 'leads'. Server + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -54,63 +54,117 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     return out.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
   }
 
-  // ---------- Corte 9am: Plan del día ----------
+  // ===== Helpers de reporte =====
+  const COLS_B2B = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+  const LBL_COL = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case' };
+  const fmtM = n => 'S/ ' + (Math.round((Number(n) || 0) / 100000) / 10).toLocaleString('es-PE') + 'M';
+
+  // Embudo por etapa (empresas + monto) a partir del material vivo.
+  function embudoPorEtapa(cards) {
+    const m = {}; COLS_B2B.forEach(c => m[c] = { n: 0, monto: 0 });
+    cards.forEach(c => { if (m[c.col]) { m[c.col].n++; m[c.col].monto += c.monto || 0; } });
+    const L = ['', 'Por etapa:'];
+    COLS_B2B.forEach(c => { if (m[c].n) L.push('• ' + LBL_COL[c] + ': ' + m[c].n + ' · ' + fmtM(m[c].monto)); });
+    return L;
+  }
+
+  // Carga por asesor (empresas + monto) — para el 9am.
+  function cargaPorAsesor(cards) {
+    const a = {};
+    cards.forEach(c => { const r = c.resp || 'Sin asignar'; a[r] = a[r] || { n: 0, monto: 0 }; a[r].n++; a[r].monto += c.monto || 0; });
+    const L = ['', 'Carga por asesor:'];
+    Object.keys(a).sort((x, y) => a[y].n - a[x].n).forEach(r => L.push('• ' + primerNom(r) + ': ' + a[r].n + ' empresas · ' + fmtM(a[r].monto)));
+    return L;
+  }
+
+  // Actividad del día por asesor (empresas trabajadas, gestiones, avances, sin tocar) — 1pm y 6pm.
+  function actividadDia(incluirAvances) {
+    const hoy = hoyPeru();
+    const ini = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+    const fin = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+    const gest = db.prepare('SELECT codigoSolicitud, responsable FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin);
+    const av = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
+    const nuevos = db.prepare('SELECT codigo, responsableActual FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').all(ini, fin);
+    const des = db.prepare("SELECT DISTINCT objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
+    // Por asesor
+    const A = {};
+    const reg = r => { const k = r || 'Sin asignar'; A[k] = A[k] || { empresas: new Set(), gestiones: 0, avances: 0 }; return A[k]; };
+    gest.forEach(g => { const o = reg(g.responsable); o.empresas.add(g.codigoSolicitud); o.gestiones++; });
+    av.forEach(a => { const o = reg(a.nombre); o.empresas.add(a.objetivo); o.avances++; });
+    // Nuevos sin tocar por asesor
+    const tocados = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...des.map(d => d.objetivo)]);
+    const sinTocarPorResp = {};
+    nuevos.forEach(n => { if (!tocados.has(n.codigo)) { const k = n.responsableActual || 'Sin asignar'; sinTocarPorResp[k] = (sinTocarPorResp[k] || 0) + 1; } });
+    // Totales
+    const totalEmpresas = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...des.map(d => d.objetivo)]).size;
+    const abordadosNuevos = nuevos.filter(n => tocados.has(n.codigo)).length;
+    return {
+      totalEmpresas, totalGestiones: gest.length, totalAvances: av.length,
+      nuevos: nuevos.length, abordadosNuevos, desestimados: des.length,
+      porAsesor: A, sinTocarPorResp, incluirAvances
+    };
+  }
+
+  function lineasGestionAsesor(act) {
+    const L = ['', 'Gestión por asesor:'];
+    const nombres = Object.keys(act.porAsesor);
+    if (!nombres.length) { L.push('• Sin actividad registrada'); return L; }
+    nombres.sort((x, y) => act.porAsesor[y].empresas.size - act.porAsesor[x].empresas.size).forEach(r => {
+      const o = act.porAsesor[r];
+      const sinTocar = act.sinTocarPorResp[r] || 0;
+      let linea = '• ' + primerNom(r) + ': ' + o.empresas.size + ' empresas · ' + o.gestiones + ' gestiones';
+      if (act.incluirAvances) linea += ' · ' + o.avances + ' avance' + (o.avances === 1 ? '' : 's');
+      linea += ' · ' + sinTocar + ' sin tocar ' + (sinTocar > 0 ? '⚠' : '✓');
+      L.push(linea);
+    });
+    return L;
+  }
+
+  // ---------- Corte 9am: Arranque del día ----------
   function plan9am() {
     const cards = materialB2B();
     if (!cards.length) return null;
-    const L = ['🌅 *B2B · Plan del día* (' + selloHora() + ')'];
+    const totalM = cards.reduce((a, c) => a + (c.monto || 0), 0);
+    const nuevas = cards.filter(c => c.col === 'Solicitud').length;
+    const reus = reunionesHoy().length;
+    const vencidos = cards.filter(c => c.sla && c.sla.vencido).length;
+    const L = ['*B2B · Arranque ' + selloHora() + '*'];
+    L.push('', 'Pipeline: ' + cards.length + ' empresas · ' + fmtM(totalM));
+    L.push('Nuevas por trabajar: ' + nuevas + ' · Reuniones hoy: ' + reus + ' · SLA vencido: ' + vencidos);
+    embudoPorEtapa(cards).forEach(l => L.push(l));
+    cargaPorAsesor(cards).forEach(l => L.push(l));
+    return L.join('\n');
+  }
 
-    const nuevos = cards.filter(c => c.col === 'Solicitud');
-    if (nuevos.length) {
-      L.push('', '🆕 *Nuevas por trabajar (' + nuevos.length + ')*');
-      nuevos.slice(0, 6).forEach(c => L.push('• ' + nombreCorto(c.f) + (c.monto ? ' · ' + fmtS(c.monto) : '') + (c.resp ? ' → ' + primerNom(c.resp) : ' → *sin asignar*')));
-      if (nuevos.length > 6) L.push('  …y ' + (nuevos.length - 6) + ' más');
-    }
-
-    const reus = reunionesHoy();
-    if (reus.length) {
-      L.push('', '🤝 *Reuniones HOY (' + reus.length + ')*');
-      reus.forEach(r => L.push('• ' + (r.hora ? r.hora + ' · ' : '') + r.nombre + (r.modalidad ? ' · ' + r.modalidad : '') + (r.resp ? ' → ' + primerNom(r.resp) : '')));
-    }
-
-    const vencidos = cards.filter(c => c.sla && c.sla.vencido).sort((a, b) => (b.sla.dias || 0) - (a.sla.dias || 0));
-    if (vencidos.length) {
-      L.push('', '🔥 *SLA vencido (' + vencidos.length + ')* — prioridad');
-      vencidos.slice(0, 8).forEach(c => L.push('• ' + nombreCorto(c.f) + ' · ' + c.col + ' · ' + (c.sla.dias != null ? c.sla.dias + 'd' : 'vencido') + (c.resp ? ' → ' + primerNom(c.resp) : '')));
-      if (vencidos.length > 8) L.push('  …y ' + (vencidos.length - 8) + ' más');
-    }
-
-    const porEtapa = {};
-    cards.forEach(c => { porEtapa[c.col] = porEtapa[c.col] || { n: 0, m: 0 }; porEtapa[c.col].n++; porEtapa[c.col].m += c.monto || 0; });
-    L.push('', '📊 *Tablero* · ' + cards.length + ' activas · ' + fmtS(cards.reduce((a, c) => a + (c.monto || 0), 0)) + ' en juego');
-    Object.keys(porEtapa).forEach(k => L.push('• ' + k + ': ' + porEtapa[k].n + ' (' + fmtS(porEtapa[k].m) + ')'));
+  // ---------- Corte 1pm: Media jornada ----------
+  function plan1pm() {
+    const cards = materialB2B();
+    if (!cards.length) return null;
+    const act = actividadDia(false);
+    const vencidos = cards.filter(c => c.sla && c.sla.vencido).length;
+    const pct = act.nuevos ? Math.round((act.abordadosNuevos / act.nuevos) * 100) : 0;
+    const L = ['*B2B · Media jornada ' + selloHora() + '*'];
+    L.push('', 'Empresas trabajadas hoy: ' + act.totalEmpresas + ' · ' + act.totalGestiones + ' gestiones · ' + act.totalAvances + ' avances');
+    L.push('Nuevas: ' + act.nuevos + ' → ' + act.abordadosNuevos + ' abordadas (' + pct + '%)');
+    embudoPorEtapa(cards).forEach(l => L.push(l));
+    lineasGestionAsesor(act).forEach(l => L.push(l));
+    L.push('', 'SLA vencido pendiente: ' + vencidos);
     return L.join('\n');
   }
 
   // ---------- Corte 6pm: Cierre del día ----------
   function plan6pm() {
-    const hoy = hoyPeru();
-    const eventos = db.prepare("SELECT accion, nombre, objetivo FROM auditoria WHERE accion LIKE 'b2b\\_%' ESCAPE '\\' AND substr(fecha,1,10)=?").all(hoy);
     const cards = materialB2B();
-    const L = ['🌆 *B2B · Cierre del día* (' + selloHora() + ')'];
-
-    if (eventos.length) {
-      const porPersona = {};
-      eventos.forEach(e => { const p = primerNom(e.nombre || '?'); porPersona[p] = (porPersona[p] || 0) + 1; });
-      const codigos = new Set(eventos.map(e => e.objetivo).filter(Boolean));
-      L.push('', '✅ *Actividad de hoy*: ' + eventos.length + ' acciones guardadas en ' + codigos.size + ' solicitudes');
-      Object.keys(porPersona).sort((a, b) => porPersona[b] - porPersona[a]).forEach(p => L.push('• ' + p + ': ' + porPersona[p]));
-    } else {
-      L.push('', '✅ *Actividad de hoy*: sin acciones guardadas 😴');
-    }
-
-    const vencidos = cards.filter(c => c.sla && c.sla.vencido);
-    const nuevos = cards.filter(c => c.col === 'Solicitud');
-    L.push('', '⏳ *Queda pendiente para mañana*');
-    L.push('• Nuevas sin avanzar: ' + nuevos.length);
-    L.push('• SLA vencidos: ' + vencidos.length);
-    const conObs = cards.filter(c => c.obs.length);
-    if (conObs.length) L.push('• Con observaciones por levantar: ' + conObs.length);
+    const act = actividadDia(true);
+    const vencidos = cards.filter(c => c.sla && c.sla.vencido).length;
+    const nuevasSinTocar = Object.values(act.sinTocarPorResp).reduce((a, b) => a + b, 0);
+    const pct = act.nuevos ? Math.round((act.abordadosNuevos / act.nuevos) * 100) : 0;
+    const L = ['*B2B · Cierre ' + selloHora() + '*'];
+    L.push('', 'Empresas trabajadas hoy: ' + act.totalEmpresas + ' · ' + act.totalGestiones + ' gestiones · ' + act.totalAvances + ' avances');
+    L.push('Nuevas: ' + act.nuevos + ' → ' + act.abordadosNuevos + ' abordadas (' + pct + '%) · Desestimadas: ' + act.desestimados);
+    embudoPorEtapa(cards).forEach(l => L.push(l));
+    lineasGestionAsesor(act).forEach(l => L.push(l));
+    L.push('', 'Pendiente mañana: ' + nuevasSinTocar + ' nueva' + (nuevasSinTocar === 1 ? '' : 's') + ' sin tocar · ' + vencidos + ' SLA vencido');
     return L.join('\n');
   }
 
@@ -132,7 +186,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     } catch (e) { console.error('[WA-B2B] alerta nueva solicitud:', e.message); }
   }
 
-  function generarCorte(corte) { return corte === '6pm' ? plan6pm() : plan9am(); }
+  function generarCorte(corte) { return corte === '6pm' ? plan6pm() : corte === '1pm' ? plan1pm() : plan9am(); }
 
   async function enviarCorteAhora(corte) {
     const txt = generarCorte(corte);
@@ -144,7 +198,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   }
 
   // Scheduler: 9am y 6pm hora Perú, un envío por corte y por día.
-  const CORTES = { '09:00': '9am', '18:00': '6pm' };
+  const CORTES = { '09:00': '9am', '13:00': '1pm', '18:00': '6pm' };
   function iniciarCortes() {
     setInterval(async () => {
       try {
