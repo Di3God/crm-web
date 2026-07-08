@@ -4377,6 +4377,7 @@ function b2bScFiltro(f) {
 async function cargarKanbanB2B() {
   const cont = $('b2bTablero'); if (!cont) return;
   cargarScorecardsB2B();
+  cargarComandoB2B();
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   try {
     const d = await api('/api/b2b/kanban');
@@ -8568,3 +8569,57 @@ function horaCorta(iso) {
   const d = new Date(new Date(iso).getTime() - 5 * 3600000);
   return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
 }
+
+// ===== CENTRO DE COMANDO B2B ("Comenzar mi jornada") =====
+let CMD_COLAPSADO = false;
+async function cargarComandoB2B() {
+  const cont = $('b2bComando'); if (!cont) return;
+  // Solo tiene sentido para funcionarios (su jornada). Jefes lo ven si eligen un asesor, pero por defecto oculto.
+  const esFuncionario = YO && (YO.rol === 'funcionario_b2b' || YO.rol === 'asistente_creditos');
+  if (!esFuncionario) { cont.classList.add('oculto'); return; }
+  try {
+    const d = await api('/api/b2b/comando');
+    renderComandoB2B(d);
+    cont.classList.remove('oculto');
+  } catch (e) { cont.classList.add('oculto'); }
+}
+
+function renderComandoB2B(d) {
+  const cont = $('b2bComando');
+  const R = d.resumen || {};
+  const crit = d.criticas || [];
+  const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
+  const hora = new Date(Date.now() - 5 * 3600000).getUTCHours();
+  const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const nom = YO && YO.nombre ? primerNombre(YO.nombre) : '';
+
+  if (CMD_COLAPSADO) {
+    cont.innerHTML = '<div class="cmd-collapsed" onclick="cmdToggle()">⚡ Centro de comando · ' + R.criticas + ' críticos · ' + R.gestionadosHoy + ' gestionados hoy <span class="cmd-exp">▼ abrir</span></div>';
+    return;
+  }
+
+  const nivelIco = { critica: '🔴', alta: '🟠', media: '🟡', baja: '⚪' };
+  const tareas = crit.length ? crit.map(l =>
+    '<div class="cmd-task" onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
+      '<div class="cmd-task-l">' + (nivelIco[l.nivel] || '') + ' <b>' + l.empresa + '</b>' +
+      (l.slaVencido ? ' <span class="cmd-tag">SLA vencido</span>' : (l.proxVencida ? ' <span class="cmd-tag">acción vencida</span>' : '')) + '</div>' +
+      '<div class="cmd-task-a">📌 ' + l.accion + ' · ' + (l.etapa) + ' · ' + soles(l.monto) + '</div>' +
+    '</div>').join('') : '<div class="cmd-vacio">🎉 No tienes tareas críticas pendientes. ¡Buen trabajo!</div>';
+
+  cont.innerHTML =
+    '<div class="cmd-head">' +
+      '<div><div class="cmd-hi">' + saludo + ', ' + nom + '</div>' +
+      '<div class="cmd-sub">Tienes <b>' + R.totalCartera + '</b> leads en cartera · <b>' + R.gestionadosHoy + '</b> gestionados hoy</div></div>' +
+      '<button class="cmd-x" onclick="cmdToggle()" title="Colapsar">✕</button>' +
+    '</div>' +
+    '<div class="cmd-stats">' +
+      '<div class="cmd-stat cmd-stat-r"><span class="cmd-stat-v">' + R.criticas + '</span><span class="cmd-stat-l">🔴 Críticos</span></div>' +
+      '<div class="cmd-stat"><span class="cmd-stat-v">' + R.slaVencidos + '</span><span class="cmd-stat-l">⏰ SLA vencido</span></div>' +
+      '<div class="cmd-stat"><span class="cmd-stat-v">' + R.accionesVencidas + '</span><span class="cmd-stat-l">📌 Acción vencida</span></div>' +
+      '<div class="cmd-stat"><span class="cmd-stat-v">' + soles(R.pipeline) + '</span><span class="cmd-stat-l">💰 Pipeline</span></div>' +
+    '</div>' +
+    '<div class="cmd-tit">🎯 Empieza por aquí</div>' +
+    '<div class="cmd-tasks">' + tareas + '</div>' +
+    '<button class="cmd-start" onclick="b2bVista(\'cola\')">⚡ Comenzar mi jornada →</button>';
+}
+function cmdToggle() { CMD_COLAPSADO = !CMD_COLAPSADO; cargarComandoB2B(); }

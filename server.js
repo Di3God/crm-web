@@ -5347,6 +5347,63 @@ function sellarFechaEtapa(f, col) {
   return nueva;
 }
 
+// CENTRO DE COMANDO B2B: resumen de la jornada del asesor (tareas críticas, carga, progreso).
+// GET /api/b2b/comando?asesor=
+app.get('/api/b2b/comando', soloB2B, (req, res) => {
+  try {
+    const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
+    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    filas = filtrarPorAlcanceB2B(req.user, filas);
+    const asesor = (req.query.asesor || '').trim();
+    const nombreAsesor = !esJefe ? req.user.nombre : (asesor || null);
+    if (!esJefe) filas = filas.filter(f => f.responsableActual === req.user.nombre);
+    else if (asesor) filas = filas.filter(f => f.responsableActual === asesor);
+
+    const montoMax = Math.max(1, ...filas.map(f => Number(f.montoSolicitado || 0) || montoRangoFijo(f.montoRango) || 0));
+    const ultProx = {};
+    if (filas.length) {
+      const ph = filas.map(() => '?').join(',');
+      db.prepare("SELECT codigoSolicitud, proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
+        .forEach(g => { ultProx[g.codigoSolicitud] = { prox: g.proximaAccion, fechaProx: g.fechaProxAccion }; });
+    }
+    const scored = filas.map(f => {
+      const col = etapaKanbanB2B(f);
+      const fechaEtapa = sellarFechaEtapa(f, col);
+      const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
+      const ps = priorityScoreB2B({ ...f, montoSolicitado: montoEfectivo, fechaEtapa }, montoMax);
+      const up = ultProx[f.codigo];
+      const accion = (up && up.prox) ? up.prox : (ps.sla && ps.sla.accion ? ps.sla.accion : 'Contactar y gestionar');
+      const fechaAccion = (up && up.fechaProx) ? up.fechaProx : null;
+      const proxVencida = fechaAccion ? (new Date(fechaAccion).getTime() < Date.now()) : false;
+      return { codigo: f.codigo, empresa: f.razonSocial || f.nombreComercial || f.contacto || f.codigo, telefono: f.telefono || '',
+        etapa: col, monto: montoEfectivo, score: ps.score, nivel: ps.nivel, oxigeno: ps.oxigeno,
+        diasSinGestion: ps.diasSinGestion, slaVencido: !!(ps.sla && ps.sla.vencido), accion, fechaAccion, proxVencida };
+    });
+
+    // Tareas críticas HOY: SLA vencido, próxima acción vencida, o nivel crítica. Top por score.
+    const criticas = scored.filter(l => l.slaVencido || l.proxVencida || l.nivel === 'critica')
+      .sort((a, b) => b.score - a.score).slice(0, 6);
+
+    // Progreso del día: gestiones hechas hoy por el asesor
+    const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const iniD = new Date(new Date(hoyP + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+    const finD = new Date(new Date(hoyP + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+    const gestHoy = nombreAsesor
+      ? db.prepare("SELECT COUNT(DISTINCT codigoSolicitud) n FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=?").get(iniD, finD, nombreAsesor).n
+      : db.prepare("SELECT COUNT(DISTINCT codigoSolicitud) n FROM b2b_gestiones WHERE fecha>=? AND fecha<?").get(iniD, finD).n;
+
+    const resumen = {
+      totalCartera: scored.length,
+      criticas: scored.filter(l => l.nivel === 'critica').length,
+      slaVencidos: scored.filter(l => l.slaVencido).length,
+      accionesVencidas: scored.filter(l => l.proxVencida).length,
+      pipeline: scored.reduce((a, l) => a + (l.monto || 0), 0),
+      gestionadosHoy: gestHoy
+    };
+    res.json({ asesor: nombreAsesor, resumen, criticas });
+  } catch (e) { console.error('[b2b/comando]', e.stack || e.message); res.status(500).json({ error: e.message }); }
+});
+
 // COLA INTELIGENTE B2B: leads ordenados por Priority Score con la "siguiente mejor acción".
 // GET /api/b2b/cola?asesor=  (funcionario ve los suyos; admin/jefe puede pasar ?asesor= o ve todos)
 app.get('/api/b2b/cola', soloB2B, (req, res) => {
@@ -6990,7 +7047,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.333 (COLA INTELIGENTE B2B - Fase 2: nueva vista Mi Cola (boton junto a Kanban/Lista) que lista TODOS los leads del asesor ordenados por Priority Score, con ranking, nivel (borde de color), oxigeno vertical, y la SIGUIENTE MEJOR ACCION (proxima accion registrada o la accion sugerida por el SLA) con su fecha (roja si vencida). Funcionario ve los suyos; jefe/admin puede filtrar por asesor. Endpoint /api/b2b/cola reutiliza el motor de priorizacion. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.334 (CENTRO DE COMANDO B2B - Comenzar mi jornada: panel de aterrizaje para funcionarios al abrir el Kanban con saludo, cartera y gestionados hoy, 4 stats (criticos/SLA vencido/accion vencida/pipeline), lista Empieza por aqui con las 6 tareas criticas priorizadas (SLA o accion vencida o nivel critico) y boton Comenzar mi jornada que abre Mi Cola. Colapsable. Endpoint /api/b2b/comando reutiliza el motor de priorizacion. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
