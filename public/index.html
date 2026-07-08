@@ -639,18 +639,18 @@
       <select id="bdAsesor" class="bd-mini" onchange="cargarB2BDia()"><option value="">Todos</option></select>
       <button class="btn sec bd-mini-btn" onclick="cargarB2BDia()">⟳</button>
     </div>
-    <div id="bdCards" class="com-cards"></div>
-    <div class="com-panel" style="margin-bottom:14px">
-      <div class="com-panel-tit">🆕 Leads que llegaron en el día <span class="bd-sub">¿los abordaron?</span></div>
-      <div id="bdNuevos"></div>
-    </div>
-    <div class="com-panel" style="margin-bottom:14px">
-      <div class="com-panel-tit">📞 Leads trabajados en el día <span class="bd-sub">qué se hizo con cada uno</span></div>
-      <div id="bdTrabajados"></div>
+    <div id="bdKpis" class="bd-kpis"></div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">Actividad del día por lead</div>
+      <div id="bdActividad"></div>
     </div>
     <div class="com-grid">
-      <div class="com-panel"><div class="com-panel-tit">Embudo de gestión del día <span class="bd-sub">clic en una etapa para ver las empresas</span></div><div id="bdEmbudo"></div><div id="bdEmbudoDet" class="bd-emb-det"></div></div>
-      <div class="com-panel"><div class="com-panel-tit">🗑 Desestimados del día</div><div id="bdDesest"></div></div>
+      <div class="com-panel bd-panel"><div class="com-panel-tit">Embudo de gestión del día <span class="bd-sub">clic para ver detalle</span></div><div id="bdEmbudo"></div></div>
+      <div class="com-panel bd-panel"><div class="com-panel-tit" id="bdDetTit">Detalle de etapa</div><div id="bdEmbudoDet"><div class="vacio">Haz clic en una etapa del embudo.</div></div></div>
+    </div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">Comparativo por asesor <span class="bd-sub">para coaching</span></div>
+      <div id="bdAsesores"></div>
     </div>
   </section>
   <section id="v-b2b-audit" class="vista">

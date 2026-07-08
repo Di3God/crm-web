@@ -2347,3 +2347,28 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .bd-chip { display:inline-block; font-size:11.5px; background:#F1F5FB; border:1px solid #E4EAF2; border-radius:6px; padding:3px 8px; margin:2px 3px 2px 0; }
 .bd-des { border-left:3px solid #DC2626; background:#FFF7F7; border-radius:8px; padding:8px 10px; margin-bottom:8px; }
 .bd-des-mot { font-size:12px; color:#7F1D1D; margin:2px 0; }
+
+/* ===== Gestión B2B del día v3 (v1.332): denso, homogéneo, legible ===== */
+.bd-kpis { display:flex; gap:10px; margin:12px 0; flex-wrap:wrap; }
+.bd-kpi { flex:1; min-width:130px; background:#fff; border:1px solid #E4EAF2; border-radius:10px; padding:10px 14px; display:flex; align-items:baseline; gap:8px; }
+.bd-kpi-v { font-size:20px; font-weight:800; color:#0F2E5A; }
+.bd-kpi-l { font-size:11.5px; color:#5A6B80; }
+.bd-panel { margin-bottom:14px; padding:14px 16px !important; }
+.bd-panel .com-panel-tit { margin-bottom:10px; }
+/* Tabla densa con header legible (gris claro + texto oscuro) */
+.bd-tabla { width:100%; border-collapse:collapse; font-size:12.5px; }
+.bd-tabla thead th { background:#F4F7FB !important; color:#334155 !important; font-weight:700; font-size:11.5px; text-transform:none; padding:7px 8px; border-bottom:1px solid #E4EAF2; text-align:center; }
+.bd-tabla td { padding:7px 8px; border-bottom:1px solid #F1F5F9; text-align:center; vertical-align:middle; }
+.bd-fila { cursor:pointer; }
+.bd-fila:hover { background:#F8FBFF; }
+.bd-exp td { background:#FAFBFD; text-align:left !important; padding:8px 14px; }
+.bd-nuevo-tag { color:#2563EB; background:#EEF4FF; border-radius:5px; padding:1px 6px; font-size:10px; }
+.bd-b { display:inline-block; font-size:11px; font-weight:700; border-radius:6px; padding:2px 8px; white-space:nowrap; }
+.bd-b-rojo { color:#B91C1C; background:#FEF2F2; }
+.bd-b-verde { color:#166534; background:#F0FDF4; }
+.bd-b-azul { color:#1E40AF; background:#EFF6FF; }
+.bd-b-gris { color:#475569; background:#F1F5F9; }
+.bd-motivo { font-size:11.5px; color:#7F1D1D; }
+.bd-det-card { border:1px solid #E4EAF2; border-radius:8px; padding:8px 10px; margin-bottom:7px; background:#fff; }
+.bd-det-card.bd-det-des { border-left:3px solid #DC2626; background:#FFF9F9; }
+.bd-det-res { font-size:12px; color:#334155; margin:2px 0; }

@@ -5448,72 +5448,87 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   const sols = {};
   db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(x => { sols[x.codigo] = x; });
 
-  // Gestiones DEL DÍA (filtro asesor)
-  const gest = (asesorFiltro
-    ? db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=? ORDER BY fecha ASC').all(ini, fin, asesorFiltro)
-    : db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin));
-
-  // Avances del día (auditoría)
+  // Fuentes del día
+  const gest = db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin);
+  const desRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
   const avRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND (accion IN ('b2b_kanban_mover','b2b_kanban_forzar') OR (accion IN ('b2b_guardar_filtro','b2b_reunion_guardar') AND detalle LIKE '%avanz%'))").all(ini, fin);
-  const avancesPorCod = {};
-  avRaw.forEach(a => { if (!asesorFiltro || a.nombre === asesorFiltro) (avancesPorCod[a.objetivo] = avancesPorCod[a.objetivo] || []).push(a.detalle || ''); });
+  const nuevos = db.prepare('SELECT * FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').all(ini, fin);
 
-  // Desestimados DEL DÍA (auditoría b2b_descartar) + su motivo
-  const desRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin)
-    .filter(a => !asesorFiltro || a.nombre === asesorFiltro);
-  const desestimadosDia = desRaw.map(a => { const x = sols[a.objetivo] || {}; return { codigo: a.objetivo, empresa: x.razonSocial || x.contacto || a.objetivo, motivo: a.detalle || x.motivoDescarte || 'Sin motivo', responsable: a.nombre || '', hora: a.fecha }; });
-
-  // 1) LEADS TRABAJADOS HOY: agrupados por lead, con la secuencia de lo que se hizo
-  const porLead = {};
+  // ===== ACTIVIDAD UNIFICADA POR LEAD (nuevos + gestionados + desestimados) =====
+  const A = {}; // codigo -> registro
+  const reg = (cod) => {
+    if (!A[cod]) {
+      const x = sols[cod] || {};
+      A[cod] = { codigo: cod, empresa: x.razonSocial || x.contacto || cod, telefono: x.telefono || '',
+        etapa: etapaKanbanB2B(x), responsable: x.responsableActual || 'Sin asignar',
+        esNuevo: false, horaLlegada: null, minPrimerToque: null,
+        acciones: [], avances: [], desestimado: false, motivoDescarte: null };
+    }
+    return A[cod];
+  };
+  nuevos.forEach(x => { const r = reg(x.codigo); r.esNuevo = true; r.horaLlegada = x.fechaIngreso; });
   gest.forEach(g => {
-    const x = sols[g.codigoSolicitud] || {};
-    const o = (porLead[g.codigoSolicitud] = porLead[g.codigoSolicitud] || {
-      codigo: g.codigoSolicitud, empresa: x.razonSocial || x.contacto || g.codigoSolicitud,
-      telefono: x.telefono || '', etapaActual: etapaKanbanB2B(x), responsables: new Set(), acciones: []
-    });
-    o.responsables.add(g.responsable || '');
-    o.acciones.push({ hora: g.fecha, etapa: g.etapa || '', resultado: g.resultado || '', proxima: g.proximaAccion || '', fechaProx: g.fechaProxAccion || '' });
+    const r = reg(g.codigoSolicitud);
+    if (g.responsable) r.responsable = g.responsable; // quien lo trabajó hoy manda
+    r.acciones.push({ hora: g.fecha, resultado: g.resultado || '', proxima: g.proximaAccion || '', fechaProx: g.fechaProxAccion || '', responsable: g.responsable || '' });
   });
-  const leadsTrabajados = Object.values(porLead).map(o => ({
-    codigo: o.codigo, empresa: o.empresa, telefono: o.telefono, etapaActual: o.etapaActual,
-    responsable: [...o.responsables].filter(Boolean).join(', '), nGestiones: o.acciones.length,
-    acciones: o.acciones, avances: avancesPorCod[o.codigo] || []
-  })).sort((a, b) => b.nGestiones - a.nGestiones);
-
-  // 2) LEADS NUEVOS DEL DÍA: llegaron hoy — ¿fueron abordados?
-  const nuevos = db.prepare("SELECT * FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?" + (asesorFiltro ? " AND responsableActual=?" : "")).all(...(asesorFiltro ? [ini, fin, asesorFiltro] : [ini, fin]));
-  const leadsNuevos = nuevos.map(x => {
-    const g1 = db.prepare('SELECT fecha FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha ASC LIMIT 1').get(x.codigo);
-    const min1er = g1 ? Math.max(0, Math.round((new Date(g1.fecha) - new Date(x.fechaIngreso)) / 60000)) : null;
-    return { codigo: x.codigo, empresa: x.razonSocial || x.contacto || x.codigo, telefono: x.telefono || '',
-      horaLlegada: x.fechaIngreso, responsable: x.responsableActual || 'Sin asignar',
-      abordado: !!g1, minPrimerToque: min1er, etapaActual: etapaKanbanB2B(x) };
-  }).sort((a, b) => (a.abordado === b.abordado) ? 0 : (a.abordado ? 1 : -1)); // sin abordar primero
-
-  // 3) EMBUDO DEL DÍA: leads únicos gestionados hoy, por etapa (con lista de empresas para drill-down)
-  const embMap = {};
-  COLUMNAS_KANBAN_B2B.forEach(c => embMap[c] = {});
-  const embDes = {};
-  Object.values(porLead).forEach(o => {
-    const et = o.etapaActual === 'Desestimado' ? null : o.etapaActual;
-    if (et && embMap[et]) embMap[et][o.codigo] = o.empresa;
+  avRaw.forEach(a => { if (A[a.objetivo] || sols[a.objetivo]) { const r = reg(a.objetivo); r.avances.push(a.detalle || ''); if (a.nombre) r.responsable = r.responsable === 'Sin asignar' ? a.nombre : r.responsable; } });
+  desRaw.forEach(a => { const r = reg(a.objetivo); r.desestimado = true; r.motivoDescarte = a.detalle || (sols[a.objetivo] || {}).motivoDescarte || 'Sin motivo'; if (a.nombre) r.responsable = a.nombre; r.acciones.push({ hora: a.fecha, resultado: '🗑 Desestimado', proxima: '', fechaProx: '', responsable: a.nombre || '', esDescarte: true, motivo: r.motivoDescarte }); });
+  // Primer toque para nuevos
+  Object.values(A).forEach(r => {
+    if (r.esNuevo && r.horaLlegada) {
+      const g1 = db.prepare('SELECT fecha FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha ASC LIMIT 1').get(r.codigo);
+      const t1 = g1 ? g1.fecha : (r.desestimado ? (r.acciones.find(a => a.esDescarte) || {}).hora : null);
+      if (t1) r.minPrimerToque = Math.max(0, Math.round((new Date(t1) - new Date(r.horaLlegada)) / 60000));
+    }
+    // Estado del día (prioridad: desestimado > avanzó > gestionado > sin tocar)
+    r.estadoDia = r.desestimado ? 'desestimado' : (r.avances.length ? 'avanzo' : (r.acciones.length ? 'gestionado' : 'sin_tocar'));
+    const ult = r.acciones[r.acciones.length - 1] || {};
+    r.ultimaAccion = ult.resultado || '';
+    r.proximoPaso = ult.proxima ? (ult.proxima + (ult.fechaProx ? ' · ' + String(ult.fechaProx).slice(0, 10) : '')) : '';
+    r.nGestiones = r.acciones.length;
   });
-  desestimadosDia.forEach(d => { embDes[d.codigo] = d.empresa; });
-  const embudoDia = COLUMNAS_KANBAN_B2B.map(c => ({ etapa: c, n: Object.keys(embMap[c]).length, empresas: Object.values(embMap[c]) }));
-  embudoDia.push({ etapa: 'Desestimados', n: Object.keys(embDes).length, empresas: Object.values(embDes), esDesestimado: true });
+  let actividad = Object.values(A);
+  if (asesorFiltro) actividad = actividad.filter(r => r.responsable === asesorFiltro);
+  // Orden: sin tocar primero, luego desestimados/avances/gestionados por hora reciente
+  const ordEst = { sin_tocar: 0, avanzo: 1, gestionado: 2, desestimado: 3 };
+  actividad.sort((a, b) => (ordEst[a.estadoDia] - ordEst[b.estadoDia]) || (b.nGestiones - a.nGestiones));
 
-  res.json({
-    fecha, asesores, asesorFiltro,
-    resumen: {
-      nuevosHoy: leadsNuevos.length,
-      nuevosAbordados: leadsNuevos.filter(l => l.abordado).length,
-      leadsTrabajados: leadsTrabajados.length,
-      totalGestiones: gest.length,
-      avancesEtapa: Object.keys(avancesPorCod).length,
-      desestimadosHoy: desestimadosDia.length
-    },
-    leadsNuevos, leadsTrabajados, embudoDia, desestimadosDia
+  // ===== EMBUDO DEL DÍA con detalle por etapa =====
+  const embMap = {}; COLUMNAS_KANBAN_B2B.forEach(c => embMap[c] = []);
+  const embDes = [];
+  actividad.filter(r => r.estadoDia !== 'sin_tocar').forEach(r => {
+    const item = { empresa: r.empresa, responsable: r.responsable, hora: (r.acciones[r.acciones.length - 1] || {}).hora || null, resultado: r.ultimaAccion, proximoPaso: r.proximoPaso, motivo: r.motivoDescarte };
+    if (r.desestimado) embDes.push(item);
+    else if (embMap[r.etapa]) embMap[r.etapa].push(item);
   });
+  const embudoDia = COLUMNAS_KANBAN_B2B.map(c => ({ etapa: c, n: embMap[c].length, items: embMap[c] }));
+  embudoDia.push({ etapa: 'Desestimados', n: embDes.length, items: embDes, esDesestimado: true });
+
+  // ===== COMPARATIVO POR ASESOR (coaching) =====
+  const porAsesor = asesores.map(a => {
+    const acts = Object.values(A).filter(r => r.responsable === a);
+    const asignadosHoy = acts.filter(r => r.esNuevo).length;
+    const sinTocar = acts.filter(r => r.esNuevo && r.estadoDia === 'sin_tocar').length;
+    const tocados = acts.filter(r => r.estadoDia !== 'sin_tocar').length;
+    const desest = acts.filter(r => r.desestimado).length;
+    const gestos = acts.reduce((n, r) => n + r.nGestiones, 0);
+    return { asesor: a, asignadosHoy, sinTocar, tocados, gestiones: gestos, desestimados: desest,
+      pctAbordaje: asignadosHoy ? Math.round(((asignadosHoy - sinTocar) / asignadosHoy) * 100) : null };
+  }).filter(x => x.asignadosHoy || x.tocados);
+
+  // ===== KPIs (desestimados CUENTAN como trabajados) =====
+  const nuevosAct = actividad.filter(r => r.esNuevo);
+  const resumen = {
+    llegaronHoy: nuevosAct.length,
+    abordados: nuevosAct.filter(r => r.estadoDia !== 'sin_tocar').length,
+    trabajados: actividad.filter(r => r.estadoDia !== 'sin_tocar').length,
+    gestiones: actividad.reduce((n, r) => n + r.nGestiones, 0),
+    avanzaron: actividad.filter(r => r.avances.length).length,
+    desestimados: actividad.filter(r => r.desestimado).length
+  };
+
+  res.json({ fecha, asesores, asesorFiltro, resumen, actividad, embudoDia, porAsesor });
   } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -6934,7 +6949,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.331 (Gestion B2B del dia REDISENADO a leads concretos: filtros compactos en linea (fecha+asesor SI filtran todo); seccion Leads que llegaron hoy con quien los aborda y en cuantos minutos (sin tocar = fila roja arriba); Leads trabajados hoy expandibles con la secuencia de acciones del dia (hora, resultado, proxima accion, si avanzo); embudo DEL DIA por etapa CLICABLE que muestra las empresas gestionadas; desestimados del dia con motivo. Se elimino lo agregado sin valor. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.332 (Gestion B2B del dia v3, disenno de supervision: strip de 5 mini-KPIs; TABLA UNICA Actividad del dia por lead (nuevos+gestionados+desestimados fusionados, desestimados CUENTAN como trabajados) con estado del dia (Sin tocar arriba en rojo / Gestionado / Avanzo / Desestimado), ultima accion, proximo paso y fila expandible con la secuencia; embudo del dia con drill-down en CARDS de detalle (empresa, motivo/resultado, hora, responsable); COMPARATIVO POR ASESOR para coaching (asignados, sin tocar, tocados, gestiones, desestimados, % abordaje); headers gris claro legibles, todo compacto y homogeneo. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

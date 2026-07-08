@@ -8464,59 +8464,65 @@ function renderB2BDia(d) {
     selA.innerHTML = '<option value="">Todos</option>' + d.asesores.map(a => '<option value="' + a + '"' + (a === actual ? ' selected' : '') + '>' + primerNombre(a) + '</option>').join('');
   }
   const R = d.resumen || {};
-  $('bdCards').innerHTML = [
-    ['Llegaron hoy', R.nuevosHoy, R.nuevosAbordados + ' abordados'],
-    ['Leads trabajados', R.leadsTrabajados, R.totalGestiones + ' gestiones'],
-    ['Avanzaron de etapa', R.avancesEtapa, ''],
-    ['Desestimados hoy', R.desestimadosHoy, '']
-  ].map(c => '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div>' + (c[2] ? '<div class="com-card-s">' + c[2] + '</div>' : '') + '</div>').join('');
+  const pctAb = R.llegaronHoy ? Math.round((R.abordados / R.llegaronHoy) * 100) : null;
+  $('bdKpis').innerHTML = [
+    ['Llegaron', R.llegaronHoy, ''],
+    ['Abordados', R.abordados + (pctAb != null ? ' (' + pctAb + '%)' : ''), ''],
+    ['Trabajados', R.trabajados, R.gestiones + ' gestiones'],
+    ['Avanzaron', R.avanzaron, ''],
+    ['Desestimados', R.desestimados, '']
+  ].map(k => '<div class="bd-kpi"><span class="bd-kpi-v">' + k[1] + '</span><span class="bd-kpi-l">' + k[0] + (k[2] ? ' · ' + k[2] : '') + '</span></div>').join('');
 
-  // 1) Leads nuevos del día: ¿abordados o no? (sin abordar primero, en rojo)
-  const nu = d.leadsNuevos || [];
-  $('bdNuevos').innerHTML = nu.length ? '<table class="com-tabla com-tabla-l"><thead><tr><th style="text-align:left">Empresa</th><th>Llegó</th><th>Responsable</th><th>¿Abordado?</th></tr></thead><tbody>' +
-    nu.map(l => '<tr' + (!l.abordado ? ' class="bd-row-alerta"' : '') + '><td style="text-align:left"><b>' + l.empresa + '</b>' + (l.telefono ? ' <small style="color:#94a3b8">' + l.telefono + '</small>' : '') + '</td>' +
-      '<td>' + horaCorta(l.horaLlegada) + '</td><td>' + primerNombre(l.responsable) + '</td>' +
-      '<td>' + (l.abordado ? '<span class="bd-ok">✓ a los ' + (l.minPrimerToque < 60 ? l.minPrimerToque + ' min' : Math.round(l.minPrimerToque / 60) + ' h') + '</span>' : '<span class="bd-alerta">✗ Sin tocar</span>') + '</td></tr>').join('') + '</tbody></table>'
-    : '<div class="vacio">No llegaron leads nuevos en la fecha.</div>';
+  // Tabla única de actividad (expandible)
+  const acts = d.actividad || [];
+  window._BD_ACT = acts;
+  const badge = e => e === 'sin_tocar' ? '<span class="bd-b bd-b-rojo">🆕 Sin tocar</span>'
+    : e === 'avanzo' ? '<span class="bd-b bd-b-verde">↗ Avanzó</span>'
+    : e === 'desestimado' ? '<span class="bd-b bd-b-gris">🗑 Desestimado</span>'
+    : '<span class="bd-b bd-b-azul">✓ Gestionado</span>';
+  $('bdActividad').innerHTML = acts.length ? '<table class="bd-tabla"><thead><tr><th style="text-align:left">Empresa</th><th>Etapa</th><th>Responsable</th><th>Estado del día</th><th style="text-align:left">Última acción</th><th style="text-align:left">Próximo paso</th></tr></thead><tbody>' +
+    acts.map((r, i) =>
+      '<tr class="bd-fila' + (r.estadoDia === 'sin_tocar' ? ' bd-row-alerta' : '') + '" onclick="bdToggle(' + i + ')">' +
+      '<td style="text-align:left"><b>' + r.empresa + '</b>' + (r.esNuevo ? ' <small class="bd-nuevo-tag">nuevo ' + horaCorta(r.horaLlegada) + '</small>' : '') + '</td>' +
+      '<td>' + (r.etapa === 'Desestimado' ? '—' : r.etapa) + '</td>' +
+      '<td>' + primerNombre(r.responsable) + '</td>' +
+      '<td>' + badge(r.estadoDia) + (r.esNuevo && r.minPrimerToque != null ? ' <small style="color:#94a3b8">' + (r.minPrimerToque < 60 ? r.minPrimerToque + 'min' : Math.round(r.minPrimerToque / 60) + 'h') + '</small>' : '') + '</td>' +
+      '<td style="text-align:left">' + (r.motivoDescarte ? '<span class="bd-motivo">' + r.motivoDescarte + '</span>' : (r.ultimaAccion || '—')) + '</td>' +
+      '<td style="text-align:left">' + (r.proximoPaso || '—') + '</td></tr>' +
+      '<tr class="bd-exp oculto" id="bdExp' + i + '"><td colspan="6">' +
+        (r.acciones.length ? r.acciones.map(a => '<div class="bd-accion"><span class="bd-accion-h">' + horaCorta(a.hora) + '</span> <b>' + a.resultado + '</b>' + (a.motivo ? ' — ' + a.motivo : '') + (a.proxima ? ' → ' + a.proxima : '') + (a.responsable ? ' <small style="color:#94a3b8">· ' + primerNombre(a.responsable) + '</small>' : '') + '</div>').join('') : '<div class="bd-accion" style="color:#94a3b8">Sin gestiones registradas.</div>') +
+        (r.avances.length ? r.avances.map(v => '<div class="bd-accion bd-accion-av">↗ ' + v + '</div>').join('') : '') +
+      '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">Sin actividad en la fecha' + (d.asesorFiltro ? ' para ' + primerNombre(d.asesorFiltro) : '') + '.</div>';
 
-  // 2) Leads trabajados: qué se hizo con cada uno (expandible)
-  const tr = d.leadsTrabajados || [];
-  $('bdTrabajados').innerHTML = tr.length ? tr.map((l, i) =>
-    '<div class="bd-lead" onclick="bdToggle(' + i + ')">' +
-      '<div class="bd-lead-head"><b>' + l.empresa + '</b><span class="bd-lead-etapa">' + l.etapaActual + '</span>' +
-      '<span class="bd-lead-n">' + l.nGestiones + ' gestión' + (l.nGestiones > 1 ? 'es' : '') + '</span>' +
-      (l.avances.length ? '<span class="bd-lead-avanzo">↗ avanzó</span>' : '') +
-      '<span class="bd-lead-resp">' + primerNombre(l.responsable) + '</span></div>' +
-      '<div class="bd-lead-body oculto" id="bdLead' + i + '">' +
-        l.acciones.map(a => '<div class="bd-accion"><span class="bd-accion-h">' + horaCorta(a.hora) + '</span> ' +
-          (a.resultado ? '<b>' + a.resultado + '</b>' : '') + (a.proxima ? ' → ' + a.proxima : '') +
-          (a.fechaProx ? ' <small style="color:#94a3b8">📅 ' + String(a.fechaProx).slice(0, 10) + '</small>' : '') + '</div>').join('') +
-        (l.avances.length ? l.avances.map(v => '<div class="bd-accion bd-accion-av">↗ ' + v + '</div>').join('') : '') +
-      '</div></div>').join('')
-    : '<div class="vacio">Nadie gestionó leads en la fecha' + (d.asesorFiltro ? ' (asesor: ' + d.asesorFiltro + ')' : '') + '.</div>';
-
-  // 3) Embudo del DÍA (leads gestionados hoy por etapa), clicable
+  // Embudo del día
   window._BD_EMB = d.embudoDia || [];
   const emb = window._BD_EMB;
   const maxE = Math.max(1, ...emb.map(e => e.n));
   const etLbl = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Desestimados': 'Desestimados' };
   $('bdEmbudo').innerHTML = emb.map((e, i) =>
-    '<div class="com-bar-row bd-emb-row" onclick="bdEmbDetalle(' + i + ')" title="Ver empresas">' +
+    '<div class="com-bar-row bd-emb-row" onclick="bdEmbDetalle(' + i + ')">' +
     '<span class="com-bar-lbl">' + (etLbl[e.etapa] || e.etapa) + '</span>' +
     '<div class="com-bar-track"><div class="com-bar-fill' + (e.esDesestimado ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((e.n / maxE) * 100) + '%"></div></div>' +
     '<span class="com-bar-val">' + e.n + '</span></div>').join('');
-  $('bdEmbudoDet').innerHTML = '';
+  $('bdEmbudoDet').innerHTML = '<div class="vacio">Haz clic en una etapa del embudo.</div>';
+  if ($('bdDetTit')) $('bdDetTit').textContent = 'Detalle de etapa';
 
-  // 4) Desestimados del día con motivo
-  const de = d.desestimadosDia || [];
-  $('bdDesest').innerHTML = de.length ? de.map(x =>
-    '<div class="bd-des"><b>' + x.empresa + '</b><div class="bd-des-mot">' + x.motivo + '</div><small style="color:#94a3b8">' + horaCorta(x.hora) + ' · ' + primerNombre(x.responsable) + '</small></div>').join('')
-    : '<div class="vacio">Sin desestimados en la fecha.</div>';
+  // Comparativo por asesor
+  const pa = d.porAsesor || [];
+  $('bdAsesores').innerHTML = pa.length ? '<table class="bd-tabla"><thead><tr><th style="text-align:left">Asesor</th><th>Asignados hoy</th><th>Sin tocar</th><th>Tocados</th><th>Gestiones</th><th>Desestimados</th><th>% Abordaje</th></tr></thead><tbody>' +
+    pa.map(x => '<tr' + (x.sinTocar > 0 ? ' class="bd-row-alerta"' : '') + '><td style="text-align:left"><b>' + primerNombre(x.asesor) + '</b></td><td>' + x.asignadosHoy + '</td><td>' + (x.sinTocar ? '<b style="color:#DC2626">' + x.sinTocar + '</b>' : '0') + '</td><td>' + x.tocados + '</td><td>' + x.gestiones + '</td><td>' + x.desestimados + '</td><td>' + (x.pctAbordaje != null ? x.pctAbordaje + '%' : '—') + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">Sin actividad de asesores en la fecha.</div>';
 }
-function bdToggle(i) { const el = $('bdLead' + i); if (el) el.classList.toggle('oculto'); }
+function bdToggle(i) { const el = $('bdExp' + i); if (el) el.classList.toggle('oculto'); }
 function bdEmbDetalle(i) {
   const e = (window._BD_EMB || [])[i]; if (!e) return;
-  $('bdEmbudoDet').innerHTML = e.n ? '<div class="bd-emb-tit">' + e.etapa + ' · ' + e.n + ' gestionados:</div>' + e.empresas.map(x => '<span class="bd-chip">' + x + '</span>').join('') : '<div class="vacio">Sin leads gestionados en esta etapa hoy.</div>';
+  if ($('bdDetTit')) $('bdDetTit').textContent = 'Detalle · ' + e.etapa + ' (' + e.n + ')';
+  $('bdEmbudoDet').innerHTML = e.n ? e.items.map(x =>
+    '<div class="bd-det-card' + (e.esDesestimado ? ' bd-det-des' : '') + '"><b>' + x.empresa + '</b>' +
+    (x.motivo ? '<div class="bd-motivo">' + x.motivo + '</div>' : (x.resultado ? '<div class="bd-det-res">' + x.resultado + (x.proximoPaso ? ' → ' + x.proximoPaso : '') + '</div>' : '')) +
+    '<small style="color:#94a3b8">' + (x.hora ? horaCorta(x.hora) + ' · ' : '') + primerNombre(x.responsable) + '</small></div>').join('')
+    : '<div class="vacio">Sin leads gestionados en esta etapa.</div>';
 }
 function horaCorta(iso) {
   if (!iso) return '';
