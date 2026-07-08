@@ -8458,65 +8458,66 @@ async function cargarB2BDia() {
 }
 
 function renderB2BDia(d) {
-  // Poblar selector de asesores conservando la selección
   const selA = $('bdAsesor');
   if (selA && d.asesores && selA.options.length <= 1) {
     const actual = d.asesorFiltro || '';
-    selA.innerHTML = '<option value="">Todos los asesores</option>' + d.asesores.map(a => '<option value="' + a + '"' + (a === actual ? ' selected' : '') + '>' + a + '</option>').join('');
+    selA.innerHTML = '<option value="">Todos</option>' + d.asesores.map(a => '<option value="' + a + '"' + (a === actual ? ' selected' : '') + '>' + primerNombre(a) + '</option>').join('');
   }
   const R = d.resumen || {};
-  // Cards
   $('bdCards').innerHTML = [
-    ['Solicitudes tocadas', R.solicitudesTocadas],
-    ['Gestiones registradas', R.totalGestiones],
-    ['Avances de etapa', R.avancesEtapa]
-  ].map(c => '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div></div>').join('');
+    ['Llegaron hoy', R.nuevosHoy, R.nuevosAbordados + ' abordados'],
+    ['Leads trabajados', R.leadsTrabajados, R.totalGestiones + ' gestiones'],
+    ['Avanzaron de etapa', R.avancesEtapa, ''],
+    ['Desestimados hoy', R.desestimadosHoy, '']
+  ].map(c => '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div>' + (c[2] ? '<div class="com-card-s">' + c[2] + '</div>' : '') + '</div>').join('');
 
-  // Por responsable
-  const rr = d.resumenResp || [];
-  $('bdResp').innerHTML = rr.length ? '<table class="com-tabla"><thead><tr><th>Responsable</th><th>Gestiones</th><th>Solicitudes</th></tr></thead><tbody>' +
-    rr.map(r => '<tr><td>' + primerNombre(r.responsable) + '</td><td>' + r.gestiones + '</td><td>' + r.solicitudes + '</td></tr>').join('') + '</tbody></table>'
-    : '<div class="vacio">Sin gestiones en la fecha.</div>';
+  // 1) Leads nuevos del día: ¿abordados o no? (sin abordar primero, en rojo)
+  const nu = d.leadsNuevos || [];
+  $('bdNuevos').innerHTML = nu.length ? '<table class="com-tabla com-tabla-l"><thead><tr><th style="text-align:left">Empresa</th><th>Llegó</th><th>Responsable</th><th>¿Abordado?</th></tr></thead><tbody>' +
+    nu.map(l => '<tr' + (!l.abordado ? ' class="bd-row-alerta"' : '') + '><td style="text-align:left"><b>' + l.empresa + '</b>' + (l.telefono ? ' <small style="color:#94a3b8">' + l.telefono + '</small>' : '') + '</td>' +
+      '<td>' + horaCorta(l.horaLlegada) + '</td><td>' + primerNombre(l.responsable) + '</td>' +
+      '<td>' + (l.abordado ? '<span class="bd-ok">✓ a los ' + (l.minPrimerToque < 60 ? l.minPrimerToque + ' min' : Math.round(l.minPrimerToque / 60) + ' h') + '</span>' : '<span class="bd-alerta">✗ Sin tocar</span>') + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="vacio">No llegaron leads nuevos en la fecha.</div>';
 
-  // Resultados
-  const res = d.resultados || [];
-  const maxR = Math.max(1, ...res.map(x => x.n));
-  $('bdResultados').innerHTML = res.length ? res.map(x =>
-    '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.resultado + '</span>' +
-    '<div class="com-bar-track"><div class="com-bar-fill" style="width:' + Math.round((x.n / maxR) * 100) + '%"></div></div>' +
-    '<span class="com-bar-val">' + x.n + '</span></div>').join('') : '<div class="vacio">Sin resultados.</div>';
+  // 2) Leads trabajados: qué se hizo con cada uno (expandible)
+  const tr = d.leadsTrabajados || [];
+  $('bdTrabajados').innerHTML = tr.length ? tr.map((l, i) =>
+    '<div class="bd-lead" onclick="bdToggle(' + i + ')">' +
+      '<div class="bd-lead-head"><b>' + l.empresa + '</b><span class="bd-lead-etapa">' + l.etapaActual + '</span>' +
+      '<span class="bd-lead-n">' + l.nGestiones + ' gestión' + (l.nGestiones > 1 ? 'es' : '') + '</span>' +
+      (l.avances.length ? '<span class="bd-lead-avanzo">↗ avanzó</span>' : '') +
+      '<span class="bd-lead-resp">' + primerNombre(l.responsable) + '</span></div>' +
+      '<div class="bd-lead-body oculto" id="bdLead' + i + '">' +
+        l.acciones.map(a => '<div class="bd-accion"><span class="bd-accion-h">' + horaCorta(a.hora) + '</span> ' +
+          (a.resultado ? '<b>' + a.resultado + '</b>' : '') + (a.proxima ? ' → ' + a.proxima : '') +
+          (a.fechaProx ? ' <small style="color:#94a3b8">📅 ' + String(a.fechaProx).slice(0, 10) + '</small>' : '') + '</div>').join('') +
+        (l.avances.length ? l.avances.map(v => '<div class="bd-accion bd-accion-av">↗ ' + v + '</div>').join('') : '') +
+      '</div></div>').join('')
+    : '<div class="vacio">Nadie gestionó leads en la fecha' + (d.asesorFiltro ? ' (asesor: ' + d.asesorFiltro + ')' : '') + '.</div>';
 
-  // Avances de etapa
-  const av = d.avances || [];
-  $('bdAvances').innerHTML = av.length ? '<table class="com-tabla"><thead><tr><th>Empresa</th><th>Movimiento</th><th>Responsable</th><th>Hora</th></tr></thead><tbody>' +
-    av.map(a => '<tr><td>' + a.empresa + '</td><td style="text-align:left">' + (a.detalle || '') + '</td><td>' + primerNombre(a.responsable) + '</td><td>' + horaCorta(a.hora) + '</td></tr>').join('') + '</tbody></table>'
-    : '<div class="vacio">Sin avances de etapa en la fecha.</div>';
-
-  // Detalle de gestiones
-  const g = d.gestiones || [];
-  $('bdGestiones').innerHTML = g.length ? '<table class="com-tabla com-tabla-l"><thead><tr><th>Hora</th><th>Empresa</th><th>Etapa</th><th>Resultado</th><th>Próxima acción</th><th>Responsable</th></tr></thead><tbody>' +
-    g.map(x => '<tr><td>' + horaCorta(x.hora) + '</td><td style="text-align:left">' + x.empresa + (x.telefono ? '<br><small style="color:#94a3b8">' + x.telefono + '</small>' : '') + '</td><td>' + (x.etapa || '') + '</td><td>' + (x.resultado || '') + '</td><td style="text-align:left">' + (x.proximaAccion || '') + (x.fechaProxAccion ? '<br><small style="color:#94a3b8">📅 ' + (x.fechaProxAccion || '').slice(0, 10) + '</small>' : '') + '</td><td>' + primerNombre(x.responsable) + '</td></tr>').join('') + '</tbody></table>'
-    : '<div class="vacio">Sin gestiones registradas en la fecha.</div>';
-
-  // Embudo del pipeline (con fila de desestimados) + TOTAL
-  const emb = (d.embudo && d.embudo.filas) || [];
-  const totalEmb = (d.embudo && d.embudo.total) || 0;
-  const maxE = Math.max(1, ...emb.map(e => e.alcanzaron));
-  if ($('bdEmbudoTotal')) $('bdEmbudoTotal').textContent = totalEmb + ' solicitudes en total';
+  // 3) Embudo del DÍA (leads gestionados hoy por etapa), clicable
+  window._BD_EMB = d.embudoDia || [];
+  const emb = window._BD_EMB;
+  const maxE = Math.max(1, ...emb.map(e => e.n));
   const etLbl = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Desestimados': 'Desestimados' };
-  $('bdEmbudo').innerHTML = emb.map(e =>
-    '<div class="com-bar-row"><span class="com-bar-lbl">' + (etLbl[e.etapa] || e.etapa) + '</span>' +
-    '<div class="com-bar-track"><div class="com-bar-fill' + (e.esDesestimado ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((e.alcanzaron / maxE) * 100) + '%"></div></div>' +
-    '<span class="com-bar-val">' + e.alcanzaron + ' <small>(' + e.pct + '%)</small></span></div>').join('');
+  $('bdEmbudo').innerHTML = emb.map((e, i) =>
+    '<div class="com-bar-row bd-emb-row" onclick="bdEmbDetalle(' + i + ')" title="Ver empresas">' +
+    '<span class="com-bar-lbl">' + (etLbl[e.etapa] || e.etapa) + '</span>' +
+    '<div class="com-bar-track"><div class="com-bar-fill' + (e.esDesestimado ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((e.n / maxE) * 100) + '%"></div></div>' +
+    '<span class="com-bar-val">' + e.n + '</span></div>').join('');
+  $('bdEmbudoDet').innerHTML = '';
 
-  // Desestimados por motivo / etapa / campaña
-  const da = d.desestimadosAnalisis || {};
-  const barras = (arr, rojo) => { if (!arr || !arr.length) return '<div class="vacio">Sin desestimados.</div>'; const mx = Math.max(1, ...arr.map(x => x.n)); return arr.map(x => '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.k + '</span><div class="com-bar-track"><div class="com-bar-fill' + (rojo ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((x.n / mx) * 100) + '%"></div></div><span class="com-bar-val">' + x.n + '</span></div>').join(''); };
-  if ($('bdDesMotivo')) $('bdDesMotivo').innerHTML = barras(da.porMotivo, true);
-  if ($('bdDesEtapa')) $('bdDesEtapa').innerHTML = barras(da.porEtapa, true);
-  if ($('bdDesCampana')) $('bdDesCampana').innerHTML = barras(da.porCampana, false);
+  // 4) Desestimados del día con motivo
+  const de = d.desestimadosDia || [];
+  $('bdDesest').innerHTML = de.length ? de.map(x =>
+    '<div class="bd-des"><b>' + x.empresa + '</b><div class="bd-des-mot">' + x.motivo + '</div><small style="color:#94a3b8">' + horaCorta(x.hora) + ' · ' + primerNombre(x.responsable) + '</small></div>').join('')
+    : '<div class="vacio">Sin desestimados en la fecha.</div>';
 }
-
+function bdToggle(i) { const el = $('bdLead' + i); if (el) el.classList.toggle('oculto'); }
+function bdEmbDetalle(i) {
+  const e = (window._BD_EMB || [])[i]; if (!e) return;
+  $('bdEmbudoDet').innerHTML = e.n ? '<div class="bd-emb-tit">' + e.etapa + ' · ' + e.n + ' gestionados:</div>' + e.empresas.map(x => '<span class="bd-chip">' + x + '</span>').join('') : '<div class="vacio">Sin leads gestionados en esta etapa hoy.</div>';
+}
 function horaCorta(iso) {
   if (!iso) return '';
   const d = new Date(new Date(iso).getTime() - 5 * 3600000);

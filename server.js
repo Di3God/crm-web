@@ -5441,60 +5441,78 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha) ? req.query.fecha : hoyP;
   const asesorFiltro = (req.query.asesor || '').trim();
-  // Rango del día en hora Perú (00:00→24:00) convertido a ISO UTC (+5h)
   const ini = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
   const fin = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
-  // Lista de asesores activos B2B para el selector.
   const asesores = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos','jefe_creditos','jefe_b2b') ORDER BY nombre").all().map(u => u.nombre);
 
-  // Datos de solicitudes (para nombre/etapa)
   const sols = {};
-  db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(s => { sols[s.codigo] = s; });
+  db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(x => { sols[x.codigo] = x; });
 
-  // 1) Gestiones del día (filtradas por asesor si se pidió)
+  // Gestiones DEL DÍA (filtro asesor)
   const gest = (asesorFiltro
-    ? db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=? ORDER BY fecha DESC').all(ini, fin, asesorFiltro)
-    : db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha DESC').all(ini, fin));
-  const gestiones = gest.map(g => {
-    const s = sols[g.codigoSolicitud] || {};
-    return {
-      codigo: g.codigoSolicitud, empresa: s.razonSocial || '—', contacto: s.contacto || '', telefono: s.telefono || '',
-      etapa: g.etapa || s.estado || '', canal: g.canal || '', resultado: g.resultado || '',
-      proximaAccion: g.proximaAccion || '', fechaProxAccion: g.fechaProxAccion || '',
-      responsable: g.responsable || '', hora: g.fecha
-    };
-  });
+    ? db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=? ORDER BY fecha ASC').all(ini, fin, asesorFiltro)
+    : db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin));
 
-  // 2) Solicitudes tocadas (únicas) hoy
-  const tocadas = new Set(gest.map(g => g.codigoSolicitud));
+  // Avances del día (auditoría)
+  const avRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND (accion IN ('b2b_kanban_mover','b2b_kanban_forzar') OR (accion IN ('b2b_guardar_filtro','b2b_reunion_guardar') AND detalle LIKE '%avanz%'))").all(ini, fin);
+  const avancesPorCod = {};
+  avRaw.forEach(a => { if (!asesorFiltro || a.nombre === asesorFiltro) (avancesPorCod[a.objetivo] = avancesPorCod[a.objetivo] || []).push(a.detalle || ''); });
 
-  // 3) Avances de etapa hoy (de auditoría: b2b_kanban_mover / b2b_kanban_forzar / avances por consolidado)
-  const avancesRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_guardar_filtro','b2b_reunion_guardar') ORDER BY fecha DESC").all(ini, fin);
-  const avances = avancesRaw.filter(a => a.accion === 'b2b_kanban_mover' || a.accion === 'b2b_kanban_forzar' || (a.detalle && /avanz/i.test(a.detalle))).map(a => {
-    const s = sols[a.objetivo] || {};
-    return { codigo: a.objetivo, empresa: s.razonSocial || '—', detalle: a.detalle || '', responsable: a.nombre || '', hora: a.fecha };
-  });
+  // Desestimados DEL DÍA (auditoría b2b_descartar) + su motivo
+  const desRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin)
+    .filter(a => !asesorFiltro || a.nombre === asesorFiltro);
+  const desestimadosDia = desRaw.map(a => { const x = sols[a.objetivo] || {}; return { codigo: a.objetivo, empresa: x.razonSocial || x.contacto || a.objetivo, motivo: a.detalle || x.motivoDescarte || 'Sin motivo', responsable: a.nombre || '', hora: a.fecha }; });
 
-  // 4) Resumen por responsable
-  const porResp = {};
+  // 1) LEADS TRABAJADOS HOY: agrupados por lead, con la secuencia de lo que se hizo
+  const porLead = {};
   gest.forEach(g => {
-    const r = g.responsable || 'Sin asignar';
-    const o = (porResp[r] = porResp[r] || { responsable: r, gestiones: 0, solicitudes: new Set() });
-    o.gestiones++; o.solicitudes.add(g.codigoSolicitud);
+    const x = sols[g.codigoSolicitud] || {};
+    const o = (porLead[g.codigoSolicitud] = porLead[g.codigoSolicitud] || {
+      codigo: g.codigoSolicitud, empresa: x.razonSocial || x.contacto || g.codigoSolicitud,
+      telefono: x.telefono || '', etapaActual: etapaKanbanB2B(x), responsables: new Set(), acciones: []
+    });
+    o.responsables.add(g.responsable || '');
+    o.acciones.push({ hora: g.fecha, etapa: g.etapa || '', resultado: g.resultado || '', proxima: g.proximaAccion || '', fechaProx: g.fechaProxAccion || '' });
   });
-  const resumenResp = Object.values(porResp).map(o => ({ responsable: o.responsable, gestiones: o.gestiones, solicitudes: o.solicitudes.size })).sort((a, b) => b.gestiones - a.gestiones);
+  const leadsTrabajados = Object.values(porLead).map(o => ({
+    codigo: o.codigo, empresa: o.empresa, telefono: o.telefono, etapaActual: o.etapaActual,
+    responsable: [...o.responsables].filter(Boolean).join(', '), nGestiones: o.acciones.length,
+    acciones: o.acciones, avances: avancesPorCod[o.codigo] || []
+  })).sort((a, b) => b.nGestiones - a.nGestiones);
 
-  // 5) Desglose de resultados de gestión
-  const porResultado = {};
-  gest.forEach(g => { const r = g.resultado || 'Sin resultado'; porResultado[r] = (porResultado[r] || 0) + 1; });
-  const resultados = Object.entries(porResultado).map(([resultado, n]) => ({ resultado, n })).sort((a, b) => b.n - a.n);
+  // 2) LEADS NUEVOS DEL DÍA: llegaron hoy — ¿fueron abordados?
+  const nuevos = db.prepare("SELECT * FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?" + (asesorFiltro ? " AND responsableActual=?" : "")).all(...(asesorFiltro ? [ini, fin, asesorFiltro] : [ini, fin]));
+  const leadsNuevos = nuevos.map(x => {
+    const g1 = db.prepare('SELECT fecha FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha ASC LIMIT 1').get(x.codigo);
+    const min1er = g1 ? Math.max(0, Math.round((new Date(g1.fecha) - new Date(x.fechaIngreso)) / 60000)) : null;
+    return { codigo: x.codigo, empresa: x.razonSocial || x.contacto || x.codigo, telefono: x.telefono || '',
+      horaLlegada: x.fechaIngreso, responsable: x.responsableActual || 'Sin asignar',
+      abordado: !!g1, minPrimerToque: min1er, etapaActual: etapaKanbanB2B(x) };
+  }).sort((a, b) => (a.abordado === b.abordado) ? 0 : (a.abordado ? 1 : -1)); // sin abordar primero
+
+  // 3) EMBUDO DEL DÍA: leads únicos gestionados hoy, por etapa (con lista de empresas para drill-down)
+  const embMap = {};
+  COLUMNAS_KANBAN_B2B.forEach(c => embMap[c] = {});
+  const embDes = {};
+  Object.values(porLead).forEach(o => {
+    const et = o.etapaActual === 'Desestimado' ? null : o.etapaActual;
+    if (et && embMap[et]) embMap[et][o.codigo] = o.empresa;
+  });
+  desestimadosDia.forEach(d => { embDes[d.codigo] = d.empresa; });
+  const embudoDia = COLUMNAS_KANBAN_B2B.map(c => ({ etapa: c, n: Object.keys(embMap[c]).length, empresas: Object.values(embMap[c]) }));
+  embudoDia.push({ etapa: 'Desestimados', n: Object.keys(embDes).length, empresas: Object.values(embDes), esDesestimado: true });
 
   res.json({
-    fecha,
-    resumen: { solicitudesTocadas: tocadas.size, totalGestiones: gest.length, avancesEtapa: avances.length },
-    asesores, asesorFiltro,
-    resumenResp, resultados, gestiones, avances,
-    embudo: calcularEmbudoB2B(asesorFiltro), desestimadosAnalisis: analizarDesestimadosB2B(asesorFiltro)
+    fecha, asesores, asesorFiltro,
+    resumen: {
+      nuevosHoy: leadsNuevos.length,
+      nuevosAbordados: leadsNuevos.filter(l => l.abordado).length,
+      leadsTrabajados: leadsTrabajados.length,
+      totalGestiones: gest.length,
+      avancesEtapa: Object.keys(avancesPorCod).length,
+      desestimadosHoy: desestimadosDia.length
+    },
+    leadsNuevos, leadsTrabajados, embudoDia, desestimadosDia
   });
   } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
@@ -6916,7 +6934,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.330 (BAJA de Brillith Vasquez del CRM: usuario desactivado (activo=0, sin autoasignar), sus solicitudes B2B liberadas a Sin asignar; desaparece de filtros/selectores/autoasignacion. Panel Gestion B2B del dia: filtro por ASESOR (selector), embudo con TOTAL de solicitudes, embudo y desestimados respetan el filtro de asesor. Server: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.331 (Gestion B2B del dia REDISENADO a leads concretos: filtros compactos en linea (fecha+asesor SI filtran todo); seccion Leads que llegaron hoy con quien los aborda y en cuantos minutos (sin tocar = fila roja arriba); Leads trabajados hoy expandibles con la secuencia de acciones del dia (hora, resultado, proxima accion, si avanzo); embudo DEL DIA por etapa CLICABLE que muestra las empresas gestionadas; desestimados del dia con motivo. Se elimino lo agregado sin valor. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

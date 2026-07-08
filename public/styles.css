@@ -2319,3 +2319,31 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 /* ocultar dots de etapa y chips de probabilidad si quedara algún residuo */
 .kb-foot, .kb-prob-chip, .kb-dots { display:none !important; }
 .kb-ubic-inline { font-size:10.5px; color:#94a3b8; margin-left:8px; font-weight:400; }
+
+/* ===== Gestión B2B del día v2 (v1.331) ===== */
+.bd-barra { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.bd-barra h2 { margin-right:auto; }
+.bd-mini { width:auto !important; min-width:130px; max-width:180px; padding:6px 10px; font-size:13px; }
+.bd-mini-btn { padding:6px 12px; }
+.bd-sub { font-weight:400; color:#94a3b8; font-size:12px; }
+.bd-row-alerta { background:#FEF2F2; }
+.bd-ok { color:#16A34A; font-weight:600; font-size:12px; }
+.bd-alerta { color:#DC2626; font-weight:700; font-size:12px; }
+.bd-lead { border:1px solid #EDF1F7; border-radius:10px; padding:10px 12px; margin-bottom:8px; cursor:pointer; background:#fff; }
+.bd-lead:hover { border-color:#C7DBFF; }
+.bd-lead-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px; }
+.bd-lead-etapa { font-size:11px; color:#3B5BDB; background:#EEF2FF; border-radius:6px; padding:2px 8px; }
+.bd-lead-n { font-size:11.5px; color:#5A6B80; }
+.bd-lead-avanzo { font-size:11px; color:#16A34A; font-weight:700; }
+.bd-lead-resp { margin-left:auto; font-size:11.5px; color:#94a3b8; }
+.bd-lead-body { margin-top:8px; border-top:1px dashed #E4EAF2; padding-top:8px; }
+.bd-accion { font-size:12.5px; color:#334155; padding:3px 0; }
+.bd-accion-h { color:#94a3b8; font-size:11px; margin-right:6px; }
+.bd-accion-av { color:#16A34A; }
+.bd-emb-row { cursor:pointer; border-radius:6px; }
+.bd-emb-row:hover { background:#F5F9FF; }
+.bd-emb-det { margin-top:10px; }
+.bd-emb-tit { font-size:12px; font-weight:700; color:#334155; margin-bottom:6px; }
+.bd-chip { display:inline-block; font-size:11.5px; background:#F1F5FB; border:1px solid #E4EAF2; border-radius:6px; padding:3px 8px; margin:2px 3px 2px 0; }
+.bd-des { border-left:3px solid #DC2626; background:#FFF7F7; border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+.bd-des-mot { font-size:12px; color:#7F1D1D; margin:2px 0; }
