@@ -7069,7 +7069,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.338 (Filtro Kanban por persona: comparacion normalizada (trim+lower) para que filtre bien. Modal Registrar gestion: quita -etapa N-, Canal=Llamada por defecto, Resultado=Contactado por defecto, Proxima accion=primera opcion por defecto, campo Especifica solo aparece si eliges Otra, comentario a todo el ancho, modal mas ancho (1080px). Contactabilidad de la ficha: 30 dias completos comprimidos SIN barra de scroll. MODO NOCHE: boton a la izquierda del logo, tema oscuro cuadrado en todo el CRM. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.340 (FIX scorecards superiores del Kanban: ahora se recalculan segun el filtro de persona/fecha/etapa (antes mostraban siempre el total de 102 y el pipeline completo ignorando el filtro). Al elegir un asesor, los cards de arriba -En tablero/Pipeline/Criticos/SLA vencido/Sin gestion- reflejan solo sus leads. Los cards NO se ponen en cero al clicar un scorecard como filtro. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

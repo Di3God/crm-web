@@ -4343,9 +4343,9 @@ let B2B_KANBAN_META = { puedeGestionar: false };
 // Los que aplican filtran el tablero (con observación, SLA vencido, calientes, business case).
 let B2B_SC_FILTRO = null; // 'critica' | 'vencido' | 'singestion' | 'obs' | 'bc' | null
 // Los scorecards se calculan de las MISMAS cards del tablero (coherente con el motor de prioridad).
-function cargarScorecardsB2B() {
+function cargarScorecardsB2B(cardsFiltradas) {
   const cont = $('b2bScorecards'); if (!cont) return;
-  const cards = B2B_KANBAN_CARDS || [];
+  const cards = cardsFiltradas || B2B_KANBAN_CARDS || [];
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
   const pot = activos.reduce((a, c) => a + (Number(c.montoEfectivo) || 0), 0);
@@ -4401,10 +4401,17 @@ let B2B_KANBAN_MONTOS = {};
 // Llena las opciones de los filtros (persona) manteniendo la selección actual.
 function poblarFiltrosKanbanB2B(cards) {
   const selP = $('b2bkfPersona'); if (!selP) return;
-  const prev = selP.value;
+  const prev = selP.value; // preservar la selección actual (por value = nombre completo)
   const personas = Array.from(new Set(cards.map(c => c.responsableActual).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  selP.innerHTML = '<option value="">Toda persona</option>' +
-    personas.map(p => '<option value="' + p.replace(/"/g, '&quot;') + '"' + (p === prev ? ' selected' : '') + '>' + primerNombre(p) + '</option>').join('');
+  // Solo reconstruir si cambió el conjunto de personas (evita resetear/desincronizar la selección en cada refresco).
+  const firmaNueva = personas.join('|');
+  if (selP.dataset.firma !== firmaNueva) {
+    selP.innerHTML = '<option value="">Toda persona</option>' +
+      personas.map(p => '<option value="' + p.replace(/"/g, '&quot;') + '">' + primerNombre(p) + '</option>').join('');
+    selP.dataset.firma = firmaNueva;
+  }
+  // Restaurar la selección previa si sigue existiendo (por value exacto).
+  if (prev && personas.includes(prev)) selP.value = prev;
   const selE = $('b2bkfEtapa');
   if (selE && selE.options.length <= 1) {
     selE.innerHTML = '<option value="">Toda etapa</option>' + B2B_KANBAN_COLS.map(c => '<option value="' + c.id + '">' + c.label + '</option>').join('');
@@ -4436,6 +4443,16 @@ function renderKanbanFiltrado() {
   });
   try {
     renderKanbanB2B(filtradas, {}, B2B_KANBAN_META.puedeGestionar);
+    // Scorecards: reflejan persona/fecha/etapa (NO el filtro de scorecard, para no ponerlos en cero al clicar uno).
+    const paraSc = B2B_KANBAN_CARDS.filter(c => {
+      const ti = c.fechaIngreso ? new Date(c.fechaIngreso).getTime() : 0;
+      if (tDesde && !(ti && ti >= tDesde)) return false;
+      if (tHasta && !(ti && ti <= tHasta)) return false;
+      if (fPersonaN && norm(c.responsableActual) !== fPersonaN) return false;
+      if (fEtapa && c.etapaKanban !== fEtapa) return false;
+      return true;
+    });
+    cargarScorecardsB2B(paraSc);
     // Contador visible: confirma que el filtro actuó.
     const info = $('b2bkfInfo');
     if (info) {
