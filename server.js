@@ -2481,9 +2481,24 @@ app.get('/api/auditoria', soloAdmin, (req, res) => {
 
 // Auditoría B2B independiente: solo eventos del módulo B2B (accion empieza con 'b2b_' o código B2B-).
 // Visible para admin y jefe B2B (Dante).
+// DIAGNÓSTICO TEMPORAL: gestiones B2B de hoy crudas (para verificar conteo por asesor)
+app.get('/api/b2b/diag-gestiones', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_b2b', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'No autorizado' });
+  try {
+    const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const ini = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+    const fin = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+    const gest = db.prepare('SELECT codigoSolicitud, responsable, etapa, resultado, fecha FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha').all(ini, fin);
+    const porResp = {};
+    gest.forEach(g => { const r = g.responsable || '(vacío)'; porResp[r] = porResp[r] || { gestiones: 0, empresas: new Set() }; porResp[r].gestiones++; porResp[r].empresas.add(g.codigoSolicitud); });
+    const resumen = Object.entries(porResp).map(([resp, o]) => ({ responsable: resp, gestiones: o.gestiones, empresas: o.empresas.size }));
+    res.json({ hoy, totalGestiones: gest.length, porResponsable: resumen, detalle: gest });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/b2b/auditoria', soloB2B, (req, res) => {
   if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'No autorizado' });
-  let filas = db.prepare("SELECT * FROM auditoria WHERE accion LIKE 'b2b\\_%' ESCAPE '\\' OR codigo LIKE 'B2B-%' ORDER BY fecha DESC LIMIT 1000").all();
+  let filas = db.prepare("SELECT * FROM auditoria WHERE accion LIKE 'b2b\\_%' ESCAPE '\\' OR objetivo LIKE 'B2B-%' ORDER BY fecha DESC LIMIT 1000").all();
   if (req.query.accion) filas = filas.filter(f => f.accion === req.query.accion);
   res.json(filas);
 });
@@ -7235,7 +7250,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.344 (Mensajes WhatsApp B2B redisenados a formato ejecutivo corto y sobrio, 3 cortes: 9am Arranque (pipeline, nuevas/reuniones/SLA, embudo por etapa con empresas+monto, carga por asesor), 1pm Media jornada y 6pm Cierre (empresas trabajadas+gestiones+avances, nuevas abordadas, embudo por etapa, gestion por asesor con sin-tocar y check/warning; 6pm incluye avances y pendientes). Se agrego el corte de la 1pm (scheduler 09:00/13:00/18:00 Peru). Endpoints preview/enviar aceptan los 3 cortes. Usa 'empresas' en vez de 'leads'. Server + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.345 (FIX endpoint /api/b2b/auditoria que daba error 500 -consultaba columna codigo inexistente, la tabla usa objetivo-. Agregado endpoint temporal /api/b2b/diag-gestiones para diagnosticar el conteo de gestiones por asesor de hoy -crudo desde b2b_gestiones, agrupado por responsable-. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
