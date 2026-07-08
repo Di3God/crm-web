@@ -7069,7 +7069,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.336 (Kanban 3 en 1: (1) DASHBOARD SUPERIOR CLICABLE - scorecards recalculados con el motor (En tablero/Pipeline/Criticos/SLA vencido/Sin gestion +5d/Business case), ahora SI filtran el tablero al hacer clic y se ven mejor; (2) GAMIFICACION - barra de meta diaria para funcionarios (leads trabajados vs meta configurable en app_config b2b_meta_gestiones_dia, default 10, con -te faltan N-); (3) ALERTAS EN TARJETA - avisos sutiles sin popup: SLA vence pronto y Accion vencida. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.337 (Pulido UI B2B: filtros del Kanban blindados con contador -Mostrando X de Y- para ver que el filtro actuo; header de columna solo muestra el TOTAL (promedio plomo eliminado); modal Registrar gestion B2B redisenado al estilo B2C (labels arriba en mayusculas, inputs anchos, paneles azul/verde, atajos en grid); Trazabilidad B2B redisenada como timeline B2C (cards con punto de color, comentario en cursiva, proxima accion en chip azul, modal 640px); en la ficha la ETAPA ACTUAL del stepper se resalta en azul fuerte con texto blanco para ubicarse al abrir; contactabilidad de la ficha ahora es ventana de 15 dias SIN barra de desplazamiento (si el lead lleva mas dias, la ventana se corre mostrando los ultimos). Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

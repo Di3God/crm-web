@@ -2455,3 +2455,51 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .kb-alerta { display:inline-block; font-size:10px; font-weight:700; border-radius:5px; padding:2px 7px; margin:4px 4px 0 0; }
 .kb-alerta-warn { color:#B45309; background:#FEF3C7; }
 .kb-alerta-venc { color:#B91C1C; background:#FEF2F2; }
+
+/* ===== v1.337: pulido UI B2B ===== */
+/* Contador de filtro */
+.b2bkf-info { font-size:11.5px; font-weight:700; color:#1E40AF; background:#EFF4FF; border-radius:6px; padding:3px 9px; }
+
+/* Modal Registrar gestión B2B — estilo B2C: labels arriba, inputs anchos */
+.gm-card-ancha { width:920px !important; max-width:96vw; }
+.gm-2col { gap:16px !important; }
+.gm-col { padding:16px 18px !important; border-radius:14px !important; }
+.gm-col-1 { border:1.5px solid #B9D2FF !important; background:#FBFDFF !important; }
+.gm-col-2 { border:1.5px solid #A7E3C4 !important; background:#F7FDF9 !important; }
+.gm-col-tit { font-size:14px; font-weight:800; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.gm-col-1 .gm-col-tit { color:#0B5FFF; }
+.gm-col-2 .gm-col-tit { color:#158452; }
+.gm-num { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; color:#fff; font-size:12px; font-weight:800; }
+.gm-num-1 { background:#0B5FFF; }
+.gm-num-2 { background:#1D9E75; }
+.gm-row { display:block !important; margin-bottom:12px !important; }
+.gm-row label { display:block; min-width:0 !important; font-size:10.5px !important; font-weight:800; color:#5A6B80 !important; text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
+.gm-row .mtr-in { width:100% !important; box-sizing:border-box; padding:9px 11px; border-radius:9px; font-size:13px; }
+.gm-ta { min-height:84px !important; resize:vertical; }
+.gm-atajos { display:grid !important; grid-template-columns:repeat(4,1fr); gap:7px; }
+.gm-atajo { padding:7px 4px !important; border-radius:9px !important; font-size:11.5px !important; text-align:center; }
+
+/* Trazabilidad B2B — estilo B2C: timeline con cards */
+.tl-card { width:640px !important; max-width:95vw; padding:16px 18px !important; }
+.tl-head { margin-bottom:12px; }
+.tl-list { display:flex; flex-direction:column; gap:8px; max-height:62vh; overflow-y:auto; padding-left:16px; border-left:2px solid #E7ECF3; }
+.tl-item { position:relative; background:#fff; border:1px solid #E7ECF3; border-radius:10px; padding:10px 14px; }
+.tl-item-cambio { background:#FAFBFD; }
+.tl-dot { position:absolute; left:-23px; top:14px; width:11px; height:11px; border-radius:50%; background:#2563EB; border:2px solid #fff; box-shadow:0 0 0 1.5px #2563EB; }
+.tl-dot-cambio { background:#94A3B8; box-shadow:0 0 0 1.5px #94A3B8; }
+.tl-top b { font-size:13px; color:#16233A; }
+.tl-top .sub { font-size:11px; color:#94A3B8; }
+.tl-res { font-size:12.5px; color:#334155; margin-top:3px; }
+.tl-com { font-size:12px; color:#5A6B80; font-style:italic; margin-top:3px; border-left:2px solid #DDE4EC; padding-left:8px; }
+.tl-prox { font-size:12px; color:#1E40AF; background:#F0F6FF; border-radius:7px; padding:5px 9px; margin-top:6px; display:inline-block; }
+
+/* Stepper ficha: la ETAPA ACTUAL bien visible */
+.fbs-etapa-hoy { background:#1E40AF !important; opacity:1 !important; }
+.fbs-etapa-hoy .fbs-txt { color:#fff !important; font-weight:800; }
+.fbs-etapa-hoy .fbs-dot { background:#fff !important; color:#1E40AF !important; box-shadow:none; }
+.fbs-etapa-hoy .fbs-chip { filter:brightness(1.15); }
+.fbs-etapa-hoy .fbs-caret { color:#C7D6F0; }
+
+/* Contactabilidad B2B sin scroll (15 días caben) */
+#fbContactabilidad .g35-scroll, #fbContactabilidad .g35-wrap { overflow-x:visible !important; }
+#fbContactabilidad .g35-flechas, #fbContactabilidad .g35-nav { display:none !important; }

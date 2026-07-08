@@ -4432,7 +4432,15 @@ function renderKanbanFiltrado() {
     if (B2B_SC_FILTRO === 'bc' && c.etapaKanban !== 'Business case') return false;
     return true;
   });
-  renderKanbanB2B(filtradas, {}, B2B_KANBAN_META.puedeGestionar);
+  try {
+    renderKanbanB2B(filtradas, {}, B2B_KANBAN_META.puedeGestionar);
+    // Contador visible: confirma que el filtro actuó.
+    const info = $('b2bkfInfo');
+    if (info) {
+      const hayFiltro = fDesde || fHasta || fPersona || fEtapa || B2B_SC_FILTRO;
+      info.textContent = hayFiltro ? ('Mostrando ' + filtradas.length + ' de ' + B2B_KANBAN_CARDS.length) : '';
+    }
+  } catch (e) { console.error('[kanban filtro]', e); }
 }
 
 function b2bKanbanCard(c) {
@@ -4541,7 +4549,7 @@ function renderKanbanB2B(cards, conteos, puedeGestionar) {
     const critHtml = criticos ? '<span class="kb-col-crit" title="Leads críticos en esta etapa">🔴 ' + criticos + '</span>' : '';
     return '<div class="kb-col" data-col="' + col.id + '" ondragover="b2bDragOver(event)" ondragleave="b2bDragLeave(event)" ondrop="b2bDrop(event)">' +
       '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span>' + critHtml + '</div>' +
-      '<div class="kb-colpot" title="Monto acumulado · promedio">' + fmtS(montoCol) + (items.length ? ' <small style="color:#94a3b8">~' + fmtS(Math.round(promMonto)) + '</small>' : '') + '</div>' +
+      '<div class="kb-colpot" title="Monto acumulado en esta etapa">' + fmtS(montoCol) + '</div>' +
       (col.hint ? '<div class="kb-colhint">' + col.hint + '</div>' : '') +
       '<div class="kb-colbody">' + (items.length ? items.map(b2bKanbanCard).join('') : '<div class="kb-vacio">—</div>') + '</div>' +
       '</div>';
@@ -5089,7 +5097,11 @@ function stepperFichaB2B() {
     const bloqueado = idxDesb > idxCol;
     const esActual = FICHA_ETAPA_OPEN === p.tipo;
     const esFuturo = idxDesb > idxCol;
+    // Etapa donde ESTÁ la solicitud hoy (resaltado fuerte para ubicarse al abrir la tarjeta).
+    const pasosDeCol = PASOS.filter(x => ORDEN_COL.indexOf(x.colDesbloqueo) === idxCol);
+    const esEtapaHoy = pasosDeCol.length ? (p.tipo === pasosDeCol[pasosDeCol.length - 1].tipo) : false;
     let cls = 'fbs-paso';
+    if (esEtapaHoy) cls += ' fbs-etapa-hoy';
     if (esActual) cls += ' fbs-actual';
     else if (!bloqueado) cls += ' fbs-open-able';
     if (bloqueado) cls += ' fbs-bloq';
@@ -5414,12 +5426,15 @@ function contactabilidadB2B() {
   const OFF = -5 * 3600000;
   const dia = iso => Math.floor((new Date(iso).getTime() + OFF) / 86400000);
   const hora = iso => new Date(new Date(iso).getTime() + OFF).getUTCHours();
-  const d0 = dia(s.fechaIngreso), hoy = dia(new Date().toISOString());
-  const DIAS_B2B = 30; // cadencia B2B: 30 días
+  let d0 = dia(s.fechaIngreso); const hoy = dia(new Date().toISOString());
+  const DIAS_B2B = 15; // ventana visible sin scroll; si el lead lleva más de 15 días, se corre la ventana
+  const transc = hoy - d0;
+  const offsetIni = transc >= DIAS_B2B ? (transc - DIAS_B2B + 3) : 0; // deja 2 días de futuro a la derecha
+  d0 = d0 + offsetIni;
   const dias = [];
   for (let i = 0; i < DIAS_B2B; i++) {
     const dAbs = new Date((d0 + i) * 86400000 - OFF);
-    dias.push({ etiqueta: 'D' + (i + 1), dm: String(dAbs.getUTCDate()).padStart(2, '0') + '/' + String(dAbs.getUTCMonth() + 1).padStart(2, '0'),
+    dias.push({ etiqueta: 'D' + (offsetIni + i + 1), dm: String(dAbs.getUTCDate()).padStart(2, '0') + '/' + String(dAbs.getUTCMonth() + 1).padStart(2, '0'),
       etapa: null, franjas: [{ estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }, { estado: d0 + i > hoy ? 'futuro' : 'vacio' }] });
   }
   (FICHA._gestiones || []).forEach(g => {
