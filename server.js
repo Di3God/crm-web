@@ -7069,7 +7069,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.337 (Pulido UI B2B: filtros del Kanban blindados con contador -Mostrando X de Y- para ver que el filtro actuo; header de columna solo muestra el TOTAL (promedio plomo eliminado); modal Registrar gestion B2B redisenado al estilo B2C (labels arriba en mayusculas, inputs anchos, paneles azul/verde, atajos en grid); Trazabilidad B2B redisenada como timeline B2C (cards con punto de color, comentario en cursiva, proxima accion en chip azul, modal 640px); en la ficha la ETAPA ACTUAL del stepper se resalta en azul fuerte con texto blanco para ubicarse al abrir; contactabilidad de la ficha ahora es ventana de 15 dias SIN barra de desplazamiento (si el lead lleva mas dias, la ventana se corre mostrando los ultimos). Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.338 (Filtro Kanban por persona: comparacion normalizada (trim+lower) para que filtre bien. Modal Registrar gestion: quita -etapa N-, Canal=Llamada por defecto, Resultado=Contactado por defecto, Proxima accion=primera opcion por defecto, campo Especifica solo aparece si eliges Otra, comentario a todo el ancho, modal mas ancho (1080px). Contactabilidad de la ficha: 30 dias completos comprimidos SIN barra de scroll. MODO NOCHE: boton a la izquierda del logo, tema oscuro cuadrado en todo el CRM. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

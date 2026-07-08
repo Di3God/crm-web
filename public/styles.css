@@ -2461,7 +2461,7 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .b2bkf-info { font-size:11.5px; font-weight:700; color:#1E40AF; background:#EFF4FF; border-radius:6px; padding:3px 9px; }
 
 /* Modal Registrar gestión B2B — estilo B2C: labels arriba, inputs anchos */
-.gm-card-ancha { width:920px !important; max-width:96vw; }
+.gm-card-ancha { width:1080px !important; max-width:97vw; }
 .gm-2col { gap:16px !important; }
 .gm-col { padding:16px 18px !important; border-radius:14px !important; }
 .gm-col-1 { border:1.5px solid #B9D2FF !important; background:#FBFDFF !important; }
@@ -2503,3 +2503,54 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 /* Contactabilidad B2B sin scroll (15 días caben) */
 #fbContactabilidad .g35-scroll, #fbContactabilidad .g35-wrap { overflow-x:visible !important; }
 #fbContactabilidad .g35-flechas, #fbContactabilidad .g35-nav { display:none !important; }
+
+/* v1.338: contactabilidad 30 días comprimida sin scroll */
+#fbContactabilidad .g35-dias, #fbContactabilidad .g35-grid { display:flex !important; gap:2px !important; overflow-x:visible !important; }
+#fbContactabilidad .g35-dia { flex:1 1 0 !important; min-width:0 !important; }
+#fbContactabilidad .g35-celda { width:100% !important; min-width:0 !important; }
+#fbContactabilidad .g35-daylbl, #fbContactabilidad .g35-dm { font-size:8px !important; }
+#fbContactabilidad .g35-scroll { overflow:visible !important; }
+
+/* ===== MODO NOCHE (v1.338) ===== */
+.night-toggle { background:transparent; border:1px solid rgba(255,255,255,.25); color:inherit; width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:15px; margin-right:10px; transition:background .15s; }
+.night-toggle:hover { background:rgba(120,140,180,.15); }
+
+body.night { background:#0F1620; color:#D8E0EC; }
+body.night .topbar { background:#151E2B; border-bottom:1px solid #263243; }
+body.night .top-logo { color:#E8EEF6; }
+body.night .vista, body.night .barra { background:transparent; }
+/* Tarjetas, paneles y superficies */
+body.night .kb-col, body.night .kb-card, body.night .com-panel, body.night .bd-panel, body.night .sc-card,
+body.night .cola-item, body.night .gami-bar, body.night .b2b-chips, body.night .tl-item, body.night .card,
+body.night .panel, body.night .gm-card, body.night .tl-card, body.night .fb-panel, body.night .fb-stepper,
+body.night .g35-wrap, body.night table, body.night .mtr-in, body.night select, body.night input, body.night textarea {
+  background:#1A2534 !important; color:#D8E0EC !important; border-color:#2A3849 !important;
+}
+body.night .kb-board { background:transparent; }
+body.night .kb-colhead { background:#22303F !important; color:#E8EEF6 !important; }
+body.night .kb-nombre, body.night .kb-monto, body.night .sc-val, body.night .com-card-v, body.night .cola-emp,
+body.night .cola-monto, body.night h1, body.night h2, body.night h3, body.night b, body.night .fbs-txt { color:#EAF1FA !important; }
+body.night .kb-sub, body.night .sc-lbl, body.night .com-card-l, body.night .cola-meta, body.night .sub, body.night small, body.night label { color:#9DB0C6 !important; }
+/* Inputs y selects legibles */
+body.night input::placeholder, body.night textarea::placeholder { color:#6B7C93 !important; }
+body.night .mtr-in, body.night select, body.night input, body.night textarea { border:1px solid #33465C !important; }
+/* Scorecards de color: mantener acentos pero sobre oscuro */
+body.night .sc-rojo { background:#2A1A1E !important; border-color:#5B2B2B !important; }
+body.night .sc-naranja { background:#2A2318 !important; border-color:#5B472B !important; }
+body.night .sc-verde { background:#182A20 !important; border-color:#2B5B3E !important; }
+body.night .sc-azul .sc-val { color:#7FB0FF !important; }
+/* Modales y overlays */
+body.night .gm-back, body.night .tl-back, body.night .fb-modal-back, body.night .modal-back { background:rgba(0,0,0,.6) !important; }
+body.night .gm-col-1 { background:#182233 !important; border-color:#2E3A56 !important; }
+body.night .gm-col-2 { background:#16241C !important; border-color:#2B5B3E !important; }
+body.night .gm-atajo { background:#22303F !important; color:#9FC0FF !important; }
+body.night .gm-atajo:hover { background:#3B5BDB !important; color:#fff !important; }
+/* Kanban columnas header azul se mantiene */
+body.night .kb-colpot { color:#9DB0C6 !important; }
+body.night .cmd-panel { background:linear-gradient(135deg,#16243B,#1E3358) !important; }
+/* Timeline */
+body.night .tl-list { border-left-color:#2A3849 !important; }
+body.night .tl-com { color:#9DB0C6 !important; border-left-color:#33465C !important; }
+body.night .tl-prox { background:#16243B !important; color:#9FC0FF !important; }
+/* Botones */
+body.night .btn.sec { background:#22303F !important; color:#D8E0EC !important; border-color:#33465C !important; }

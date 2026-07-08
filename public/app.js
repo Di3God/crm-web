@@ -4419,11 +4419,13 @@ function renderKanbanFiltrado() {
   const fEtapa = ($('b2bkfEtapa') && $('b2bkfEtapa').value) || '';
   const tDesde = fDesde ? new Date(fDesde + 'T00:00:00').getTime() : 0;
   const tHasta = fHasta ? new Date(fHasta + 'T23:59:59').getTime() : 0;
+  const norm = v => String(v == null ? '' : v).trim().toLowerCase();
+  const fPersonaN = norm(fPersona);
   const filtradas = B2B_KANBAN_CARDS.filter(c => {
     const ti = c.fechaIngreso ? new Date(c.fechaIngreso).getTime() : 0;
     if (tDesde && !(ti && ti >= tDesde)) return false;
     if (tHasta && !(ti && ti <= tHasta)) return false;
-    if (fPersona && c.responsableActual !== fPersona) return false;
+    if (fPersonaN && norm(c.responsableActual) !== fPersonaN) return false;
     if (fEtapa && c.etapaKanban !== fEtapa) return false;
     if (B2B_SC_FILTRO === 'critica' && c.nivelPrioridad !== 'critica') return false;
     if (B2B_SC_FILTRO === 'vencido' && !(c.sla && c.sla.vencido)) return false;
@@ -5426,11 +5428,9 @@ function contactabilidadB2B() {
   const OFF = -5 * 3600000;
   const dia = iso => Math.floor((new Date(iso).getTime() + OFF) / 86400000);
   const hora = iso => new Date(new Date(iso).getTime() + OFF).getUTCHours();
-  let d0 = dia(s.fechaIngreso); const hoy = dia(new Date().toISOString());
-  const DIAS_B2B = 15; // ventana visible sin scroll; si el lead lleva más de 15 días, se corre la ventana
-  const transc = hoy - d0;
-  const offsetIni = transc >= DIAS_B2B ? (transc - DIAS_B2B + 3) : 0; // deja 2 días de futuro a la derecha
-  d0 = d0 + offsetIni;
+  const d0 = dia(s.fechaIngreso), hoy = dia(new Date().toISOString());
+  const DIAS_B2B = 30; // 30 días completos, comprimidos para caber sin scroll
+  const offsetIni = 0;
   const dias = [];
   for (let i = 0; i < DIAS_B2B; i++) {
     const dAbs = new Date((d0 + i) * 86400000 - OFF);
@@ -5543,17 +5543,17 @@ function abrirModalGestion(col) {
     .map(a => '<button type="button" class="gm-atajo" onclick="gmAtajo(' + a[1] + ',' + (a[2] == null ? 'null' : a[2]) + ')">' + a[0] + '</button>').join('');
   const html = '<div class="gm-back" onclick="if(event.target===this)cerrarModalGestion()">' +
     '<div class="gm-card gm-card-ancha">' +
-    '<div class="gm-head"><b>Registrar gestión</b> <span class="sub">· etapa ' + etLabel + '</span>' +
+    '<div class="gm-head"><b>Registrar gestión</b> <span class="sub">· ' + etLabel + '</span>' +
     '<button class="gm-x" onclick="cerrarModalGestion()">✕</button></div>' +
     '<div class="gm-2col">' +
     // Paso 1: Gestión realizada
     '<div class="gm-col gm-col-1"><div class="gm-col-tit"><span class="gm-num gm-num-1">1</span> Gestión realizada</div>' +
-    '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
-    '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in"><option value="">— elige —</option>' + resultados.map(r => '<option>' + r + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map((c, i) => '<option' + (i === 0 ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in">' + resultados.map((r, i) => '<option' + (i === 0 ? ' selected' : '') + '>' + r + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea></div></div>' +
     // Paso 2: Próximo paso
     '<div class="gm-col gm-col-2"><div class="gm-col-tit"><span class="gm-num gm-num-2">2</span> Próximo paso</div>' +
-    '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in"><option value="">— elige —</option>' + acciones.map(a => '<option>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
+    '<div class="gm-row"><label>Próxima acción</label><select id="gmProxAccion" class="mtr-in">' + acciones.map((a, i) => '<option' + (i === 0 ? ' selected' : '') + '>' + a + '</option>').join('') + '<option value="__otro">Otra…</option></select></div>' +
     '<div class="gm-row" id="gmOtroWrap" style="display:none"><label>Especifica</label><input id="gmProxOtro" class="mtr-in" placeholder="Describe la próxima acción"></div>' +
     '<div class="gm-row"><label>Fecha y hora</label><input id="gmProxFecha" type="datetime-local" class="mtr-in" value="' + manana + '"></div>' +
     '<div class="gm-row"><label>Atajos rápidos</label><div class="gm-atajos">' + atajos + '</div></div></div>' +
@@ -8673,4 +8673,13 @@ async function cargarGamificacionB2B() {
       '<div class="gami-track"><div class="gami-fill" style="width:' + g.pct + '%;background:' + color + '"></div></div>';
     cont.classList.remove('oculto');
   } catch (e) { cont.classList.add('oculto'); }
+}
+
+// ===== MODO NOCHE =====
+let NIGHT_ON = false;
+function toggleNight() {
+  NIGHT_ON = !NIGHT_ON;
+  document.body.classList.toggle('night', NIGHT_ON);
+  const b = document.getElementById('nightToggle');
+  if (b) b.textContent = NIGHT_ON ? '☀️' : '🌙';
 }
