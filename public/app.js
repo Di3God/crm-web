@@ -8450,13 +8450,20 @@ async function cargarB2BDia() {
   const hoy = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   if ($('bdFecha') && !$('bdFecha').value) $('bdFecha').value = hoy;
   const fecha = $('bdFecha') ? $('bdFecha').value : hoy;
+  const asesor = $('bdAsesor') ? $('bdAsesor').value : '';
   try {
-    const d = await api('/api/b2b/dia?fecha=' + fecha);
+    const d = await api('/api/b2b/dia?fecha=' + fecha + (asesor ? '&asesor=' + encodeURIComponent(asesor) : ''));
     renderB2BDia(d);
   } catch (e) { if ($('bdCards')) $('bdCards').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>'; }
 }
 
 function renderB2BDia(d) {
+  // Poblar selector de asesores conservando la selección
+  const selA = $('bdAsesor');
+  if (selA && d.asesores && selA.options.length <= 1) {
+    const actual = d.asesorFiltro || '';
+    selA.innerHTML = '<option value="">Todos los asesores</option>' + d.asesores.map(a => '<option value="' + a + '"' + (a === actual ? ' selected' : '') + '>' + a + '</option>').join('');
+  }
   const R = d.resumen || {};
   // Cards
   $('bdCards').innerHTML = [
@@ -8491,9 +8498,11 @@ function renderB2BDia(d) {
     g.map(x => '<tr><td>' + horaCorta(x.hora) + '</td><td style="text-align:left">' + x.empresa + (x.telefono ? '<br><small style="color:#94a3b8">' + x.telefono + '</small>' : '') + '</td><td>' + (x.etapa || '') + '</td><td>' + (x.resultado || '') + '</td><td style="text-align:left">' + (x.proximaAccion || '') + (x.fechaProxAccion ? '<br><small style="color:#94a3b8">📅 ' + (x.fechaProxAccion || '').slice(0, 10) + '</small>' : '') + '</td><td>' + primerNombre(x.responsable) + '</td></tr>').join('') + '</tbody></table>'
     : '<div class="vacio">Sin gestiones registradas en la fecha.</div>';
 
-  // Embudo del pipeline (con fila de desestimados)
+  // Embudo del pipeline (con fila de desestimados) + TOTAL
   const emb = (d.embudo && d.embudo.filas) || [];
+  const totalEmb = (d.embudo && d.embudo.total) || 0;
   const maxE = Math.max(1, ...emb.map(e => e.alcanzaron));
+  if ($('bdEmbudoTotal')) $('bdEmbudoTotal').textContent = totalEmb + ' solicitudes en total';
   const etLbl = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Desestimados': 'Desestimados' };
   $('bdEmbudo').innerHTML = emb.map(e =>
     '<div class="com-bar-row"><span class="com-bar-lbl">' + (etLbl[e.etapa] || e.etapa) + '</span>' +

@@ -285,13 +285,15 @@ try {
 crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
 crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
 crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
-crearUsuario('bvasquez@tasatop.com', 'Brillith Vasquez', 'funcionario_b2b', '12345678');
+// Brillith Vásquez ya no trabaja en TasaTop: baja definitiva (no se recrea, se desactiva y se libera su carga).
+try {
+  db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='bvasquez@tasatop.com'").run();
+  // Liberar solicitudes B2B a su cargo → 'Sin asignar' para que jefatura las redistribuya.
+  db.prepare("UPDATE b2b_solicitudes SET responsableActual=NULL WHERE responsableActual LIKE 'Brill%'").run();
+  db.prepare("UPDATE b2b_solicitudes SET funcionario=NULL WHERE funcionario LIKE 'Brill%'").run();
+  db.prepare("UPDATE b2b_solicitudes SET asistente=NULL WHERE asistente LIKE 'Brill%'").run();
+} catch (e) {}
 // Migración idempotente (v1.258): corrige el nombre en bases ya desplegadas (el correo no cambia).
-try { db.prepare("UPDATE usuarios SET nombre='Brillith Vasquez' WHERE usuario='bvasquez@tasatop.com' AND nombre<>'Brillith Vasquez'").run(); } catch (e) {}
-// v1.262: el nombre viejo 'Brillite' seguía apareciendo en el filtro de personas (venía de las solicitudes).
-try { db.prepare("UPDATE b2b_solicitudes SET responsableActual='Brillith Vasquez' WHERE responsableActual LIKE 'Brillite%'").run(); } catch (e) {}
-try { db.prepare("UPDATE b2b_solicitudes SET asistente='Brillith Vasquez' WHERE asistente LIKE 'Brillite%'").run(); } catch (e) {}
-try { db.prepare("UPDATE b2b_gestiones SET responsable='Brillith Vasquez' WHERE responsable LIKE 'Brillite%'").run(); } catch (e) {}
 // v1.262: Carmen ya no trabaja -> sus leads B2B quedan "Sin asignar" (desaparece del filtro de personas).
 try { db.prepare("UPDATE b2b_solicitudes SET responsableActual=NULL WHERE responsableActual='Carmen Martinez'").run(); } catch (e) {}
 crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
@@ -5438,16 +5440,21 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   try {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha) ? req.query.fecha : hoyP;
+  const asesorFiltro = (req.query.asesor || '').trim();
   // Rango del día en hora Perú (00:00→24:00) convertido a ISO UTC (+5h)
   const ini = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
   const fin = new Date(new Date(fecha + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+  // Lista de asesores activos B2B para el selector.
+  const asesores = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos','jefe_creditos','jefe_b2b') ORDER BY nombre").all().map(u => u.nombre);
 
   // Datos de solicitudes (para nombre/etapa)
   const sols = {};
   db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(s => { sols[s.codigo] = s; });
 
-  // 1) Gestiones del día
-  const gest = db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha DESC').all(ini, fin);
+  // 1) Gestiones del día (filtradas por asesor si se pidió)
+  const gest = (asesorFiltro
+    ? db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? AND responsable=? ORDER BY fecha DESC').all(ini, fin, asesorFiltro)
+    : db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha DESC').all(ini, fin));
   const gestiones = gest.map(g => {
     const s = sols[g.codigoSolicitud] || {};
     return {
@@ -5485,16 +5492,19 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   res.json({
     fecha,
     resumen: { solicitudesTocadas: tocadas.size, totalGestiones: gest.length, avancesEtapa: avances.length },
+    asesores, asesorFiltro,
     resumenResp, resultados, gestiones, avances,
-    embudo: calcularEmbudoB2B(), desestimadosAnalisis: analizarDesestimadosB2B()
+    embudo: calcularEmbudoB2B(asesorFiltro), desestimadosAnalisis: analizarDesestimadosB2B(asesorFiltro)
   });
   } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Embudo B2B: cuántas solicitudes hay/pasaron por cada etapa + fila de desestimados. (foto acumulada)
-function calcularEmbudoB2B() {
-  const activas = db.prepare("SELECT codigo, estado, montoSolicitado, montoRango FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
-  const desest = db.prepare("SELECT COUNT(*) n FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").get().n;
+function calcularEmbudoB2B(asesor) {
+  const wA = asesor ? " AND responsableActual=?" : "";
+  const argsA = asesor ? [asesor] : [];
+  const activas = db.prepare("SELECT codigo, estado, montoSolicitado, montoRango FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'" + wA).all(...argsA);
+  const desest = db.prepare("SELECT COUNT(*) n FROM b2b_solicitudes WHERE (COALESCE(archivado,0)=1 OR estado='No elegible')" + wA).get(...argsA).n;
   const etapas = COLUMNAS_KANBAN_B2B;
   const ordEt = {}; etapas.forEach((e, i) => ordEt[e] = i);
   const enEtapa = {}; etapas.forEach(e => enEtapa[e] = 0);
@@ -5512,8 +5522,10 @@ function calcularEmbudoB2B() {
 }
 
 // Análisis de desestimados: por motivo y por etapa donde se cayeron.
-function analizarDesestimadosB2B() {
-  const filas = db.prepare("SELECT codigo, estado, motivoDescarte, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, campana FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").all();
+function analizarDesestimadosB2B(asesor) {
+  const wA = asesor ? " AND responsableActual=?" : "";
+  const argsA = asesor ? [asesor] : [];
+  const filas = db.prepare("SELECT codigo, estado, motivoDescarte, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, campana FROM b2b_solicitudes WHERE (COALESCE(archivado,0)=1 OR estado='No elegible')" + wA).all(...argsA);
   const porMotivo = {}, porEtapa = {}, porCampana = {};
   filas.forEach(f => {
     const mot = f.motivoDescarte || 'Sin motivo registrado';
@@ -6904,7 +6916,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.329 (Panel Gestion B2B del dia ampliado: ahora incluye el EMBUDO del pipeline (con fila de Desestimados) y ANALISIS DE DESESTIMADOS por motivo, por etapa de caida (SUNAT/Credito/Garantia/Finanzas) y por campana de origen. Asi se ve toda la gestion + los desestimados y sus causas en un solo espacio. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.330 (BAJA de Brillith Vasquez del CRM: usuario desactivado (activo=0, sin autoasignar), sus solicitudes B2B liberadas a Sin asignar; desaparece de filtros/selectores/autoasignacion. Panel Gestion B2B del dia: filtro por ASESOR (selector), embudo con TOTAL de solicitudes, embudo y desestimados respetan el filtro de asesor. Server: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
