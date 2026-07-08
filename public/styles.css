@@ -2305,3 +2305,17 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .kb-ox-fill { height:100%; border-radius:3px; transition:width .3s; }
 .kb-rescate { display:inline-block; font-size:10.5px; font-weight:700; color:#B91C1C; background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px; padding:2px 7px; margin:4px 0; }
 .kb-col-crit { font-size:11px; font-weight:700; color:#DC2626; margin-left:6px; }
+
+/* ===== Tarjeta B2B minimalista (v1.328) ===== */
+.kb-card { padding:11px 12px !important; border-left:none !important; }
+.kb-nombre { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-overflow:ellipsis; line-height:1.25; font-size:13.5px; max-height:2.5em; }
+.kb-card .kb-ticket { display:none; }           /* etiqueta Alto/Medio/Bajo fuera: el oxígeno ya prioriza */
+.kb-sub { font-size:11.5px; color:#8A97A8; margin-top:3px; }
+.kb-monto-row { margin-top:6px; }
+.kb-monto { font-size:14px; font-weight:700; color:#0F2E5A; }
+.kb-sla { margin-top:7px; font-size:11.5px; }
+.kb-ox { height:4px; margin-top:9px; }
+.kb-rescate { font-size:10px; padding:1px 6px; margin-top:5px; }
+/* ocultar dots de etapa y chips de probabilidad si quedara algún residuo */
+.kb-foot, .kb-prob-chip, .kb-dots { display:none !important; }
+.kb-ubic-inline { font-size:10.5px; color:#94a3b8; margin-left:8px; font-weight:400; }

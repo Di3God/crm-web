@@ -4442,26 +4442,19 @@ function b2bKanbanCard(c) {
     else cuando = '<span class="kb-sla-quedan">⏳ Quedan ' + fmtHorasRestantes(sla.horasRestantes) + '</span>';
     slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
   }
-  // Nivel de prioridad → clase de borde + badge
-  const nivel = c.nivelPrioridad || 'media';
-  const nivelIco = { critica: '🔴', alta: '🟠', media: '🟡', baja: '⚪' }[nivel] || '🟡';
-  const nivelBadge = '<span class="kb-nivel kb-nivel-' + nivel + '" title="Prioridad ' + nivel + ' · score ' + (c.priorityScore != null ? c.priorityScore : '—') + '">' + nivelIco + '</span>';
-  // Oxígeno: barra degradada 0-100
+  // Oxígeno = única señal de prioridad (barra degradada verde→rojo según SLA + días sin gestión)
   const ox = c.oxigeno != null ? c.oxigeno : 100;
   const oxColor = ox > 66 ? '#16A34A' : ox > 40 ? '#F59E0B' : ox > 20 ? '#F97316' : '#DC2626';
   const oxHtml = '<div class="kb-ox" title="Oxígeno del lead: ' + ox + '%' + (c.diasSinGestion != null ? ' · ' + c.diasSinGestion + 'd sin gestión' : '') + '"><div class="kb-ox-fill" style="width:' + ox + '%;background:' + oxColor + '"></div></div>';
-  const rescate = (c.diasSinGestion != null && c.diasSinGestion >= 5 && nivel !== 'baja') ? '<span class="kb-rescate">🔥 Rescatar · ' + c.diasSinGestion + 'd</span>' : '';
-  const primeraHtml = '';
-  return '<div class="kb-card kb-nivel-b-' + nivel + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" data-score="' + (c.priorityScore || 0) + '" ' +
+  const rescate = (c.diasSinGestion != null && c.diasSinGestion >= 5) ? '<span class="kb-rescate">🔥 ' + c.diasSinGestion + 'd sin gestión</span>' : '';
+  return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" data-score="' + (c.priorityScore || 0) + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
-    '<div class="kb-top">' + nivelBadge + '<b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket kb-ticket-' + (c.ticket || '').toLowerCase() + '">' + c.ticket + '</span>' : '') + '</div>' +
+    '<div class="kb-top"><b class="kb-nombre">' + nombre + '</b></div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) : '—') + (c.telefono ? ' · ' + c.telefono : '') + '</div>' +
-    ubicHtml +
-    (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + probChip + '</div>' : (probChip ? '<div class="kb-monto-row">' + probChip + '</div>' : '')) +
-    obsHtml + rescate + primeraHtml +
+    (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + (ubic && ubic !== '—' ? '<span class="kb-ubic-inline">📍 ' + ubic + '</span>' : '') + '</div>' : '') +
+    obsHtml + rescate +
     slaHtml +
     oxHtml +
-    '<div class="kb-foot">' + dots + '</div>' +
     '</div>';
 }
 // Texto de las etiquetas de observación del kanban (RUC unificado a "Validar RUC").

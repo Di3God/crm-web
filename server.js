@@ -6862,7 +6862,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.327 (PRIORITY SCORE B2B - Fase 1: motor de priorizacion (pesos Monto 35 / Temperatura 28 / SLA 22 / SinGestion 15, configurables en app_config); el Kanban ordena por score DESC (mayor prioridad arriba, no cronologico); tarjetas con nivel critica/alta/media/baja (borde de color + badge), barra de OXIGENO del lead (verde->rojo segun SLA+dias sin gestion), badge RESCATAR para leads >=5 dias sin gestion; headers de columna con criticos y monto promedio. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.328 (Tarjeta B2B minimalista: se elimina el % de probabilidad, los dots de etapa (S C G R F), el badge de nivel, el borde de color y la etiqueta Alto/Medio/Bajo; el nombre se trunca a 2 lineas; UNICA senal de prioridad = barra de oxigeno (verde->rojo); se conserva contacto+telefono, monto, ubicacion discreta y proxima accion con vencimiento. El orden por Priority Score se mantiene. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
