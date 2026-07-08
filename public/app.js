@@ -8182,7 +8182,11 @@ async function cargarEmbudoCpl() {
   const desde = $('tendDesde').value || '', hasta = $('tendHasta').value || '';
   cont.innerHTML = '<div class="vacio">Cargando…</div>';
   let d;
-  try { d = await api('/api/marketing/embudo-cpl' + ((desde || hasta) ? ('?desde=' + desde + '&hasta=' + hasta) : '')); }
+  const incHist = $('tendHistorico') && $('tendHistorico').checked;
+  const qs = [];
+  if (desde || hasta) { qs.push('desde=' + desde, 'hasta=' + hasta); }
+  if (incHist) qs.push('historico=1');
+  try { d = await api('/api/marketing/embudo-cpl' + (qs.length ? '?' + qs.join('&') : '')); }
   catch (e) { cont.innerHTML = '<div class="vacio">' + e.message + '</div>'; return; }
   const fmtU = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const bloque = (titulo, gasto, filas, color) => {
@@ -8599,6 +8603,21 @@ function renderB2BDia(d) {
   $('bdEmbudoDet').innerHTML = '<div class="vacio">Haz clic en una etapa del embudo.</div>';
   if ($('bdDetTit')) $('bdDetTit').textContent = 'Detalle de etapa';
 
+  // Avances de etapa del día (por transición origen → destino)
+  const avT = d.avancesPorTransicion || [];
+  const avD = d.avancesDetalle || [];
+  if ($('bdAvances')) {
+    if (!avT.length) { $('bdAvances').innerHTML = '<div class="vacio">No hubo avances de etapa en la fecha.</div>'; }
+    else {
+      const maxA = Math.max(1, ...avT.map(x => x.n));
+      $('bdAvances').innerHTML = avT.map(x =>
+        '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.transicion + '</span>' +
+        '<div class="com-bar-track"><div class="com-bar-fill com-bar-fill-verde" style="width:' + Math.round((x.n / maxA) * 100) + '%"></div></div>' +
+        '<span class="com-bar-val">' + x.n + '</span></div>').join('') +
+        '<div class="bd-av-detalle">' + avD.map(a => '<span class="bd-av-chip">' + a.empresa + ' <small>(' + a.transicion + ')</small></span>').join('') + '</div>';
+    }
+  }
+
   // Comparativo por asesor
   const pa = d.porAsesor || [];
   $('bdAsesores').innerHTML = pa.length ? '<table class="bd-tabla"><thead><tr><th style="text-align:left">Asesor</th><th>Asignados hoy</th><th>Sin tocar</th><th>Tocados</th><th>Gestiones</th><th>Desestimados</th><th>% Abordaje</th></tr></thead><tbody>' +
@@ -8702,4 +8721,43 @@ function toggleNight() {
   document.body.classList.toggle('night', NIGHT_ON);
   const b = document.getElementById('nightToggle');
   if (b) b.textContent = NIGHT_ON ? '☀️' : '🌙';
+}
+
+// ===== IMPORTADOR DE LEADS HISTÓRICOS =====
+function abrirImportHistorico() { const f = $('histFile'); if (f) { f.value = ''; f.click(); } }
+
+async function procesarArchivoHistorico(input) {
+  const file = input.files && input.files[0]; if (!file) return;
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!rows.length) { alert('El archivo está vacío.'); return; }
+    // Detectar encabezados (fila 0). Mapear por nombre flexible.
+    const head = rows[0].map(h => String(h).trim().toLowerCase());
+    const col = (...names) => { for (const n of names) { const i = head.findIndex(h => h.includes(n)); if (i >= 0) return i; } return -1; };
+    const ix = {
+      nombre: col('nombre'), telefono: col('numero', 'teléfono', 'telefono', 'celular'), email: col('correo', 'email'),
+      dia: col('dia creacion', 'día creacion', 'dia creación', 'fecha'), mes: col('mes creacion', 'mes creación', 'mes'),
+      campana: col('campaña', 'campana'), conjunto: col('conjunto'), anuncio: col('anuncio'),
+      ultimoEstado: col('ultimo estado', 'último estado', 'estado'), asesor: col('asesor'), monto: col('monto'), canal: col('canal')
+    };
+    if (ix.telefono < 0 || ix.campana < 0) { alert('No se encontraron las columnas mínimas (número y campaña). Revisa los encabezados.'); return; }
+    const filas = rows.slice(1).filter(r => r.some(c => String(c).trim())).map(r => ({
+      nombre: ix.nombre >= 0 ? r[ix.nombre] : '', telefono: ix.telefono >= 0 ? r[ix.telefono] : '',
+      email: ix.email >= 0 ? r[ix.email] : '', dia: ix.dia >= 0 ? r[ix.dia] : '',
+      campana: ix.campana >= 0 ? r[ix.campana] : '', conjunto: ix.conjunto >= 0 ? r[ix.conjunto] : '',
+      anuncio: ix.anuncio >= 0 ? r[ix.anuncio] : '', ultimoEstado: ix.ultimoEstado >= 0 ? r[ix.ultimoEstado] : '',
+      asesor: ix.asesor >= 0 ? r[ix.asesor] : '', monto: ix.monto >= 0 ? r[ix.monto] : '', canal: ix.canal >= 0 ? r[ix.canal] : 'B2C'
+    }));
+    const reemplazar = confirm('¿Reemplazar TODOS los históricos existentes?\n\nAceptar = borra los anteriores y carga estos.\nCancelar = agrega estos a los que ya hay.');
+    const r = await api('/api/marketing/historico/importar', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filas, filtrarRuido: true, reemplazar })
+    });
+    alert('✅ Importación completa:\n\n' + r.insertados + ' leads cargados\n' + r.ruidoDescartado + ' descartados (test/duplicados/internos)\n' + r.duplicados + ' duplicados omitidos\n' + (r.sinFecha ? r.sinFecha + ' sin fecha válida\n' : '') + '\nTotal en base: ' + r.totalEnBase);
+    if ($('tendHistorico')) $('tendHistorico').checked = true;
+    cargarTendencias();
+  } catch (e) { alert('Error al procesar el archivo: ' + e.message); }
 }

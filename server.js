@@ -623,6 +623,21 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
 })();
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
+// Leads históricos de campañas anteriores (CRM viejo). Separados del pipeline operativo;
+// solo alimentan el análisis de marketing (embudo + CPL por campaña).
+db.exec(`CREATE TABLE IF NOT EXISTS leads_historicos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT, telefono TEXT, email TEXT,
+  fechaCreacion TEXT,          -- ISO YYYY-MM-DD (día Perú)
+  campana TEXT, conjunto TEXT, anuncio TEXT,
+  ultimoEstado TEXT,           -- estado original del CRM viejo
+  etapa TEXT,                  -- mapeado: Por contactar | Agendado | Reunión | Cerrado
+  asesor TEXT, monto REAL,
+  canal TEXT,                  -- B2C | B2B
+  cargadoEn TEXT
+);`);
+db.exec("CREATE INDEX IF NOT EXISTS idx_lh_fecha ON leads_historicos(fechaCreacion);");
+db.exec("CREATE INDEX IF NOT EXISTS idx_lh_campana ON leads_historicos(campana);");
 
 const app = express();
 // Compresión gzip: app.js/styles/html viajan ~80% más livianos (clave en Railway).
@@ -4425,6 +4440,11 @@ function autoAvanzarB2B(codigo, etapaActualKanban, sem, responsable) {
   const ok = estadosPrevios[etapaActualKanban] && estadosPrevios[etapaActualKanban].includes(s && s.estado);
   if (!ok) return false;
   db.prepare('UPDATE b2b_solicitudes SET estado=?, fechaEtapa=? WHERE codigo=?').run(estadoDestino, new Date().toISOString(), codigo);
+  // Deja rastro del avance en la auditoría para que los reportes lo cuenten (sin importar por qué flujo se disparó).
+  try {
+    db.prepare('INSERT INTO auditoria (fecha,usuario,nombre,accion,objetivo,detalle) VALUES (?,?,?,?,?,?)')
+      .run(new Date().toISOString(), '(auto)', responsable || '(auto)', 'b2b_avanzar_etapa', codigo, etapaActualKanban + ' → ' + siguiente);
+  } catch (e) {}
   return true;
 }
 
@@ -5572,7 +5592,9 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   // Fuentes del día
   const gest = db.prepare('SELECT * FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin);
   const desRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
-  const avRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND (accion IN ('b2b_kanban_mover','b2b_kanban_forzar') OR (accion IN ('b2b_guardar_filtro','b2b_reunion_guardar') AND detalle LIKE '%avanz%'))").all(ini, fin);
+  const avRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND (accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa') OR (accion IN ('b2b_guardar_filtro','b2b_reunion_guardar') AND detalle LIKE '%avanz%'))").all(ini, fin);
+  // Trabajo del día que NO es gestión formal ni descarte, pero SÍ es trabajo sobre el lead (filtros, sujetos, garantía, link).
+  const trabajoRaw = db.prepare("SELECT * FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_credito_guardar_sujeto','b2b_garantia_guardar_inmueble','b2b_guardar_filtro','b2b_guardar_garantia','b2b_credito_link','b2b_credito_agregar_sujeto','b2b_garantia_agregar_inmueble') ORDER BY fecha ASC").all(ini, fin);
   const nuevos = db.prepare('SELECT * FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').all(ini, fin);
 
   // ===== ACTIVIDAD UNIFICADA POR LEAD (nuevos + gestionados + desestimados) =====
@@ -5594,6 +5616,15 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
     r.acciones.push({ hora: g.fecha, resultado: g.resultado || '', proxima: g.proximaAccion || '', fechaProx: g.fechaProxAccion || '', responsable: g.responsable || '' });
   });
   avRaw.forEach(a => { if (A[a.objetivo] || sols[a.objetivo]) { const r = reg(a.objetivo); r.avances.push(a.detalle || ''); if (a.nombre) r.responsable = r.responsable === 'Sin asignar' ? a.nombre : r.responsable; } });
+  // Marca leads trabajados vía filtros/sujetos (aunque no haya gestión formal registrada).
+  const etiquetaTrabajo = { b2b_credito_guardar_sujeto: 'Trabajó sujeto de crédito', b2b_garantia_guardar_inmueble: 'Trabajó garantía', b2b_guardar_filtro: 'Guardó filtro', b2b_guardar_garantia: 'Guardó garantía', b2b_credito_link: 'Actualizó link de crédito', b2b_credito_agregar_sujeto: 'Agregó sujeto de crédito', b2b_garantia_agregar_inmueble: 'Agregó inmueble' };
+  trabajoRaw.forEach(a => {
+    if (!sols[a.objetivo]) return;
+    const r = reg(a.objetivo);
+    if (a.nombre) r.responsable = (r.responsable === 'Sin asignar') ? a.nombre : r.responsable;
+    r.trabajoExtra = (r.trabajoExtra || 0) + 1;
+    r.acciones.push({ hora: a.fecha, resultado: etiquetaTrabajo[a.accion] || 'Trabajó el lead', proxima: '', fechaProx: '', responsable: a.nombre || '', esTrabajo: true });
+  });
   desRaw.forEach(a => { const r = reg(a.objetivo); r.desestimado = true; r.motivoDescarte = a.detalle || (sols[a.objetivo] || {}).motivoDescarte || 'Sin motivo'; if (a.nombre) r.responsable = a.nombre; r.acciones.push({ hora: a.fecha, resultado: '🗑 Desestimado', proxima: '', fechaProx: '', responsable: a.nombre || '', esDescarte: true, motivo: r.motivoDescarte }); });
   // Primer toque para nuevos
   Object.values(A).forEach(r => {
@@ -5626,6 +5657,24 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   const embudoDia = COLUMNAS_KANBAN_B2B.map(c => ({ etapa: c, n: embMap[c].length, items: embMap[c] }));
   embudoDia.push({ etapa: 'Desestimados', n: embDes.length, items: embDes, esDesestimado: true });
 
+  // ===== AVANCES DEL DÍA por transición (origen → destino), para el reporte ejecutivo =====
+  // Se leen directo de la auditoría: cuenta cada avance en la etapa DESDE donde salió, no donde está ahora el lead.
+  const LBL_ET = { 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Solicitud': 'Solicitud/SUNAT' };
+  const avPorTransicion = {};
+  const avancesDetalle = [];
+  avRaw.forEach(a => {
+    if (asesorFiltro && a.nombre !== asesorFiltro) return;
+    const det = String(a.detalle || '');
+    const m = det.match(/(.+?)\s*(?:→|->)\s*(.+)/);
+    let origen = '', destino = '';
+    if (m) { origen = m[1].trim(); destino = m[2].trim(); }
+    const key = (LBL_ET[origen] || origen || '?') + ' → ' + (LBL_ET[destino] || destino || '?');
+    avPorTransicion[key] = (avPorTransicion[key] || 0) + 1;
+    const sol = sols[a.objetivo] || {};
+    avancesDetalle.push({ codigo: a.objetivo, empresa: sol.razonSocial || sol.contacto || a.objetivo, transicion: key, responsable: a.nombre || '', hora: a.fecha });
+  });
+  const avancesPorTransicion = Object.entries(avPorTransicion).map(([transicion, n]) => ({ transicion, n })).sort((a, b) => b.n - a.n);
+
   // ===== COMPARATIVO POR ASESOR (coaching) =====
   const porAsesor = asesores.map(a => {
     const acts = Object.values(A).filter(r => r.responsable === a);
@@ -5646,10 +5695,11 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
     trabajados: actividad.filter(r => r.estadoDia !== 'sin_tocar').length,
     gestiones: actividad.reduce((n, r) => n + r.nGestiones, 0),
     avanzaron: actividad.filter(r => r.avances.length).length,
+    avancesTotales: avancesDetalle.length,
     desestimados: actividad.filter(r => r.desestimado).length
   };
 
-  res.json({ fecha, asesores, asesorFiltro, resumen, actividad, embudoDia, porAsesor });
+  res.json({ fecha, asesores, asesorFiltro, resumen, actividad, embudoDia, porAsesor, avancesPorTransicion, avancesDetalle });
   } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -6049,6 +6099,92 @@ app.get('/api/marketing/serie', (req, res) => {
 });
 
 // Embudo con CPL por etapa (B2C pipeline comercial + B2B pipeline kanban), filtrable por canal y fechas.
+// ===== LEADS HISTÓRICOS: importación y consulta =====
+// Mapea el "último estado" del CRM viejo a la etapa del embudo histórico.
+function mapearEtapaHistorica(estado) {
+  const e = String(estado || '').trim().toLowerCase();
+  if (!e) return 'Por contactar';
+  if (e.includes('concret') || e.includes('cerrad') || e.includes('ganad')) return 'Cerrado';
+  if (e.includes('reuni')) return 'Reunión';
+  if (e.includes('agend')) return 'Agendado';
+  if (e.includes('calific')) return 'Agendado'; // calificado va antes de agendar; lo colocamos en la base media
+  return 'Por contactar';
+}
+// Detecta filas de prueba/ruido para excluirlas.
+function esRuidoHistorico(f) {
+  const tel = String(f.telefono || '').replace(/\D/g, '');
+  const email = String(f.email || '').toLowerCase();
+  const nombre = String(f.nombre || '').trim().toLowerCase();
+  if (!tel || tel.length < 8) return true;
+  if (/^(9)\1{7,}$/.test(tel) || tel === '999999999' || tel === '987987987') return true;
+  if (email.includes('@tasatop.com')) return true;
+  if (/test|prueba|ejemplo/.test(email) || /test|prueba|^dddf$|^rrrr$|^were$|^diegod$/.test(nombre)) return true;
+  if (email.includes('diegocubas102')) return true;
+  return false;
+}
+
+// POST /api/marketing/historico/importar  { filas:[{nombre,telefono,email,dia,mes,campana,conjunto,anuncio,ultimoEstado,asesor,monto,canal}], filtrarRuido, reemplazar }
+app.post('/api/marketing/historico/importar', soloAdminOJefa, (req, res) => {
+  try {
+    const filas = Array.isArray(req.body.filas) ? req.body.filas : [];
+    if (!filas.length) return res.status(400).json({ error: 'No se recibieron filas' });
+    const filtrarRuido = req.body.filtrarRuido !== false;
+    if (req.body.reemplazar) db.prepare('DELETE FROM leads_historicos').run();
+    const norm9 = t => { let d = String(t || '').replace(/\D/g, ''); if (d.length === 11 && d.startsWith('51')) d = d.slice(2); if (d.length > 9) d = d.slice(-9); return d; };
+    // Fecha: acepta "31/5/2026" o ISO. Devuelve YYYY-MM-DD.
+    const parseFecha = (dia) => {
+      const sIn = String(dia || '').trim();
+      let m = sIn.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+      if (/^\d{4}-\d{2}-\d{2}/.test(sIn)) return sIn.slice(0, 10);
+      return null;
+    };
+    const ins = db.prepare(`INSERT INTO leads_historicos (nombre,telefono,email,fechaCreacion,campana,conjunto,anuncio,ultimoEstado,etapa,asesor,monto,canal,cargadoEn)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    let insertados = 0, ruido = 0, dup = 0, sinFecha = 0;
+    const vistos = new Set();
+    const ahora = new Date().toISOString();
+    db.exec('BEGIN');
+    for (const f of filas) {
+      if (filtrarRuido && esRuidoHistorico(f)) { ruido++; continue; }
+      const fecha = parseFecha(f.dia || f.fechaCreacion);
+      if (!fecha) { sinFecha++; continue; }
+      const tel = norm9(f.telefono);
+      // Dedup por teléfono + fecha + campaña (evita el mismo lead repetido del CRM viejo)
+      const clave = tel + '|' + fecha + '|' + (f.campana || '');
+      if (vistos.has(clave)) { dup++; continue; }
+      vistos.add(clave);
+      const canal = /b2b/i.test(String(f.canal || '')) ? 'B2B' : 'B2C';
+      ins.run(String(f.nombre || '').trim() || null, tel || null, String(f.email || '').trim() || null, fecha,
+        String(f.campana || '').trim() || null, String(f.conjunto || '').trim() || null, String(f.anuncio || '').trim() || null,
+        String(f.ultimoEstado || '').trim() || null, mapearEtapaHistorica(f.ultimoEstado),
+        String(f.asesor || '').trim() || null, (f.monto != null && f.monto !== '') ? Number(String(f.monto).replace(/[^\d.]/g, '')) || null : null,
+        canal, ahora);
+      insertados++;
+    }
+    db.exec('COMMIT');
+    const total = db.prepare('SELECT COUNT(*) n FROM leads_historicos').get().n;
+    res.json({ ok: true, insertados, ruidoDescartado: ruido, duplicados: dup, sinFecha, totalEnBase: total });
+  } catch (e) { try { db.exec('ROLLBACK'); } catch (_) {} console.error('[hist import]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/marketing/historico/resumen  → conteo por etapa, canal, rango de fechas
+app.get('/api/marketing/historico/resumen', soloAdminOJefa, (req, res) => {
+  try {
+    const total = db.prepare('SELECT COUNT(*) n FROM leads_historicos').get().n;
+    const porEtapa = db.prepare('SELECT etapa, COUNT(*) n FROM leads_historicos GROUP BY etapa').all();
+    const porCanal = db.prepare('SELECT canal, COUNT(*) n FROM leads_historicos GROUP BY canal').all();
+    const rango = db.prepare('SELECT MIN(fechaCreacion) desde, MAX(fechaCreacion) hasta FROM leads_historicos').get();
+    res.json({ total, porEtapa, porCanal, rango });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/marketing/historico  → limpia toda la base histórica (admin)
+app.delete('/api/marketing/historico', soloAdmin, (req, res) => {
+  try { db.prepare('DELETE FROM leads_historicos').run(); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/marketing/embudo-cpl', async (req, res) => {
   const u = usuarioDeSesion(req);
   if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
@@ -6099,7 +6235,36 @@ app.get('/api/marketing/embudo-cpl', async (req, res) => {
     for (let i = 0; i <= ix; i++) cnt[i]++;
   });
   const b2b = ORDEN_B2B.map((e, i) => fila(e, cnt[i], cnt[0], gastoB2B));
-  res.json({ desde, hasta, gastoB2C, gastoB2B, organicosFuera: orgFuera, b2c, b2b });
+
+  // ===== HISTÓRICOS: si se piden, se suman al embudo (leads que llegaron en su momento y quedaron en su etapa) =====
+  let historico = null;
+  if (req.query.historico === '1') {
+    const hist = db.prepare('SELECT canal, etapa, campana FROM leads_historicos WHERE fechaCreacion>=? AND fechaCreacion<=?').all(desde, hasta);
+    // Orden de etapas del embudo histórico: acumulado (quien llegó a Cerrado pasó por todas)
+    const ORD_HIST = ['Por contactar', 'Agendado', 'Reunión', 'Cerrado'];
+    const idxHist = et => { const i = ORD_HIST.indexOf(et); return i < 0 ? 0 : i; };
+    const acum = (canal) => {
+      const filas = hist.filter(h => h.canal === canal);
+      const c = [0, 0, 0, 0];
+      filas.forEach(h => { const ix = idxHist(h.etapa); for (let i = 0; i <= ix; i++) c[i]++; });
+      return { total: filas.length, porEtapa: c };
+    };
+    const hB2C = acum('B2C'), hB2B = acum('B2B');
+    // Sumar al embudo vivo: B2C tiene 7 etapas, histórico 4 → mapeo: PorContactar→Leads, Agendado→Agendados(idx3), Reunión→Reunión(idx4), Cerrado→Cierre(idx6)
+    // Para simplicidad y claridad, devolvemos el histórico por separado Y sumado en los puntos comparables.
+    const sumar = (arr, idxDestino, valor) => { if (arr[idxDestino]) { arr[idxDestino].n += valor; } };
+    // B2C: Leads(0)+=total, Agendados(3)+=etapa Agendado acum, Reunión(4)+=Reunión acum, Cierre(6)+=Cerrado
+    sumar(b2c, 0, hB2C.porEtapa[0]); sumar(b2c, 3, hB2C.porEtapa[1]); sumar(b2c, 4, hB2C.porEtapa[2]); sumar(b2c, 6, hB2C.porEtapa[3]);
+    // recalcular pct y cpl de b2c tras sumar
+    const baseB2C = b2c[0].n;
+    b2c.forEach(f => { f.pct = baseB2C ? Math.round((f.n / baseB2C) * 100) : 0; f.cpl = f.n ? Math.round((gastoB2C / f.n) * 100) / 100 : null; });
+    // B2B: Solicitud(0)+=total, ReunionComercial(3)+=Reunión, BusinessCase(5)+=Cerrado
+    sumar(b2b, 0, hB2B.porEtapa[0]); sumar(b2b, 3, hB2B.porEtapa[2]); sumar(b2b, 5, hB2B.porEtapa[3]);
+    const baseB2B = b2b[0].n;
+    b2b.forEach(f => { f.pct = baseB2B ? Math.round((f.n / baseB2B) * 100) : 0; f.cpl = f.n ? Math.round((gastoB2B / f.n) * 100) / 100 : null; });
+    historico = { b2c: hB2C, b2b: hB2B, incluido: true };
+  }
+  res.json({ desde, hasta, gastoB2C, gastoB2B, organicosFuera: orgFuera, b2c, b2b, historico });
 });
 
 // Corrige el histórico de leads con conjunto/anuncio INVERTIDOS (bug de mapeo en el escenario Make
@@ -7070,7 +7235,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.341 (1. Nuevo usuario B2C Henry Guerrero (hguerrero) rol gestora. 2. El filtro por persona del Kanban B2B ahora es solo para jefes/admin: Luis y demas operadores ya no lo ven y solo aparecen sus leads. 3. FIX: al Guardar link en Filtro credito se sincroniza el DOM antes de re-renderizar, ya no se borra lo completado en el representante legal ni avanza como incompleto. 4. La proxima accion + fecha ya se muestra en las tarjetas del Kanban. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.343 (FIX reporte B2B del dia para ejecutivos: 1) los AVANCES de etapa por auto-avance (cuando se completan sujetos de credito o garantia y el lead salta de etapa) ahora SI se auditan (b2b_avanzar_etapa) y se cuentan en el reporte -antes no quedaba rastro-. 2) Nueva seccion -Avances de etapa del dia- que desglosa cuantos leads pasaron de una etapa a otra (Credito->Garantia, etc.) contando el avance en la etapa de ORIGEN, con el detalle de empresas. 3) El resumen incluye avancesTotales. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

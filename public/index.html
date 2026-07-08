@@ -655,6 +655,10 @@
       <div class="com-panel bd-panel"><div class="com-panel-tit" id="bdDetTit">Detalle de etapa</div><div id="bdEmbudoDet"><div class="vacio">Haz clic en una etapa del embudo.</div></div></div>
     </div>
     <div class="com-panel bd-panel">
+      <div class="com-panel-tit">↗ Avances de etapa del día <span class="bd-sub">cuántos leads pasaron de una etapa a otra</span></div>
+      <div id="bdAvances"></div>
+    </div>
+    <div class="com-panel bd-panel">
       <div class="com-panel-tit">Comparativo por asesor <span class="bd-sub">para coaching</span></div>
       <div id="bdAsesores"></div>
     </div>
@@ -984,6 +988,9 @@
       <button class="btn sec" onclick="limpiarFechasTend()">Todo</button>
       <select id="tendCampana" class="inp" style="min-width:150px" onchange="tendCampanaCambio()"><option value="">Todas las campañas</option></select>
       <select id="tendConjunto" class="inp" style="min-width:150px" onchange="cargarTendencias()"><option value="">Todos los conjuntos</option></select>
+      <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Suma los leads históricos de campañas anteriores al embudo"><input type="checkbox" id="tendHistorico" onchange="cargarTendencias()" style="width:auto"> 📦 Incluir históricos</label>
+      <button class="btn sec soloAdminMkt oculto" onclick="abrirImportHistorico()" title="Cargar leads de campañas anteriores">⬆ Cargar históricos</button>
+      <input type="file" id="histFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="procesarArchivoHistorico(this)">
     </div>
     <div id="tendEjes" class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:6px;display:none">
       <span class="sub">Ejes (vacío = automático):</span>

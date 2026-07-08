@@ -2554,3 +2554,9 @@ body.night .tl-com { color:#9DB0C6 !important; border-left-color:#33465C !import
 body.night .tl-prox { background:#16243B !important; color:#9FC0FF !important; }
 /* Botones */
 body.night .btn.sec { background:#22303F !important; color:#D8E0EC !important; border-color:#33465C !important; }
+
+/* v1.343: avances por transición */
+.com-bar-fill-verde { background:linear-gradient(90deg,#16A34A,#22C55E) !important; }
+.bd-av-detalle { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
+.bd-av-chip { font-size:11.5px; background:#F0FDF4; border:1px solid #BBF7D0; border-radius:6px; padding:3px 8px; color:#166534; }
+.bd-av-chip small { color:#94a3b8; }
