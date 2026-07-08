@@ -7256,6 +7256,9 @@ async function editarMontoB2B() {
 async function guardarLinkCredito() {
   const el = $('fbCredLink'); if (!el) return;
   const link = el.value.trim();
+  // Sincroniza lo escrito en el DOM (sujetos, representante legal, etc.) a FICHA ANTES de re-render,
+  // para no perder lo completado al guardar el link.
+  sincronizarFichaDOM();
   try {
     const r = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/credito/link', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link })

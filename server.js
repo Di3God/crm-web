@@ -252,6 +252,7 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
 // Alta idempotente de GP nuevas (no recrea ni pisa las existentes).
 crearUsuario('dbarreto@tasatop.com', 'Dora Barreto', 'gestora', '12345678');
 crearUsuario('cpovis@tasatop.com', 'Cristian Povis', 'gestora', '12345678');
+crearUsuario('hguerrero@tasatop.com', 'Henry Guerrero', 'gestora', '0708henrybilletera!');
 
 // Columna para el interruptor de auto-asignacion (1 = recibe leads automaticos).
 try { db.exec('ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1'); } catch (e) { /* ya existe */ }
@@ -7069,7 +7070,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.340 (FIX scorecards superiores del Kanban: ahora se recalculan segun el filtro de persona/fecha/etapa (antes mostraban siempre el total de 102 y el pipeline completo ignorando el filtro). Al elegir un asesor, los cards de arriba -En tablero/Pipeline/Criticos/SLA vencido/Sin gestion- reflejan solo sus leads. Los cards NO se ponen en cero al clicar un scorecard como filtro. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.341 (1. Nuevo usuario B2C Henry Guerrero (hguerrero) rol gestora. 2. El filtro por persona del Kanban B2B ahora es solo para jefes/admin: Luis y demas operadores ya no lo ven y solo aparecen sus leads. 3. FIX: al Guardar link en Filtro credito se sincroniza el DOM antes de re-renderizar, ya no se borra lo completado en el representante legal ni avanza como incompleto. 4. La proxima accion + fecha ya se muestra en las tarjetas del Kanban. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
