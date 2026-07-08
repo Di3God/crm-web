@@ -8490,6 +8490,22 @@ function renderB2BDia(d) {
   $('bdGestiones').innerHTML = g.length ? '<table class="com-tabla com-tabla-l"><thead><tr><th>Hora</th><th>Empresa</th><th>Etapa</th><th>Resultado</th><th>Próxima acción</th><th>Responsable</th></tr></thead><tbody>' +
     g.map(x => '<tr><td>' + horaCorta(x.hora) + '</td><td style="text-align:left">' + x.empresa + (x.telefono ? '<br><small style="color:#94a3b8">' + x.telefono + '</small>' : '') + '</td><td>' + (x.etapa || '') + '</td><td>' + (x.resultado || '') + '</td><td style="text-align:left">' + (x.proximaAccion || '') + (x.fechaProxAccion ? '<br><small style="color:#94a3b8">📅 ' + (x.fechaProxAccion || '').slice(0, 10) + '</small>' : '') + '</td><td>' + primerNombre(x.responsable) + '</td></tr>').join('') + '</tbody></table>'
     : '<div class="vacio">Sin gestiones registradas en la fecha.</div>';
+
+  // Embudo del pipeline (con fila de desestimados)
+  const emb = (d.embudo && d.embudo.filas) || [];
+  const maxE = Math.max(1, ...emb.map(e => e.alcanzaron));
+  const etLbl = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Desestimados': 'Desestimados' };
+  $('bdEmbudo').innerHTML = emb.map(e =>
+    '<div class="com-bar-row"><span class="com-bar-lbl">' + (etLbl[e.etapa] || e.etapa) + '</span>' +
+    '<div class="com-bar-track"><div class="com-bar-fill' + (e.esDesestimado ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((e.alcanzaron / maxE) * 100) + '%"></div></div>' +
+    '<span class="com-bar-val">' + e.alcanzaron + ' <small>(' + e.pct + '%)</small></span></div>').join('');
+
+  // Desestimados por motivo / etapa / campaña
+  const da = d.desestimadosAnalisis || {};
+  const barras = (arr, rojo) => { if (!arr || !arr.length) return '<div class="vacio">Sin desestimados.</div>'; const mx = Math.max(1, ...arr.map(x => x.n)); return arr.map(x => '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.k + '</span><div class="com-bar-track"><div class="com-bar-fill' + (rojo ? ' com-bar-fill-r' : '') + '" style="width:' + Math.round((x.n / mx) * 100) + '%"></div></div><span class="com-bar-val">' + x.n + '</span></div>').join(''); };
+  if ($('bdDesMotivo')) $('bdDesMotivo').innerHTML = barras(da.porMotivo, true);
+  if ($('bdDesEtapa')) $('bdDesEtapa').innerHTML = barras(da.porEtapa, true);
+  if ($('bdDesCampana')) $('bdDesCampana').innerHTML = barras(da.porCampana, false);
 }
 
 function horaCorta(iso) {

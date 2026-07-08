@@ -5485,10 +5485,52 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
   res.json({
     fecha,
     resumen: { solicitudesTocadas: tocadas.size, totalGestiones: gest.length, avancesEtapa: avances.length },
-    resumenResp, resultados, gestiones, avances
+    resumenResp, resultados, gestiones, avances,
+    embudo: calcularEmbudoB2B(), desestimadosAnalisis: analizarDesestimadosB2B()
   });
   } catch (e) { console.error('[b2b/dia]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
+
+// Embudo B2B: cuántas solicitudes hay/pasaron por cada etapa + fila de desestimados. (foto acumulada)
+function calcularEmbudoB2B() {
+  const activas = db.prepare("SELECT codigo, estado, montoSolicitado, montoRango FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+  const desest = db.prepare("SELECT COUNT(*) n FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").get().n;
+  const etapas = COLUMNAS_KANBAN_B2B;
+  const ordEt = {}; etapas.forEach((e, i) => ordEt[e] = i);
+  const enEtapa = {}; etapas.forEach(e => enEtapa[e] = 0);
+  const alcanzaron = {}; etapas.forEach(e => alcanzaron[e] = 0);
+  activas.forEach(s => {
+    const col = etapaKanbanB2B(s);
+    if (enEtapa[col] != null) enEtapa[col]++;
+    const idx = ordEt[col] != null ? ordEt[col] : 0;
+    etapas.forEach((e, i) => { if (idx >= i) alcanzaron[e]++; });
+  });
+  const total = activas.length + desest;
+  const filas = etapas.map(e => ({ etapa: e, enEtapa: enEtapa[e], alcanzaron: alcanzaron[e], pct: total ? Math.round((alcanzaron[e] / total) * 100) : 0 }));
+  filas.push({ etapa: 'Desestimados', enEtapa: desest, alcanzaron: desest, pct: total ? Math.round((desest / total) * 100) : 0, esDesestimado: true });
+  return { total, filas };
+}
+
+// Análisis de desestimados: por motivo y por etapa donde se cayeron.
+function analizarDesestimadosB2B() {
+  const filas = db.prepare("SELECT codigo, estado, motivoDescarte, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, campana FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").all();
+  const porMotivo = {}, porEtapa = {}, porCampana = {};
+  filas.forEach(f => {
+    const mot = f.motivoDescarte || 'Sin motivo registrado';
+    porMotivo[mot] = (porMotivo[mot] || 0) + 1;
+    // Etapa donde se cayó: la más avanzada con semáforo Rojo, o SUNAT si falló ahí
+    let etapa = 'Solicitud/SUNAT';
+    if (f.resultadoFinanzas === 'Rojo') etapa = 'Finanzas';
+    else if (f.resultadoGarantia === 'Rojo') etapa = 'Garantía';
+    else if (f.resultadoCredito === 'Rojo') etapa = 'Crédito';
+    else if (f.sunatEstado && f.sunatEstado !== 'ok') etapa = 'SUNAT (RUC)';
+    porEtapa[etapa] = (porEtapa[etapa] || 0) + 1;
+    const cam = f.campana || '(sin campaña)';
+    porCampana[cam] = (porCampana[cam] || 0) + 1;
+  });
+  const arr = o => Object.entries(o).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n);
+  return { total: filas.length, porMotivo: arr(porMotivo), porEtapa: arr(porEtapa), porCampana: arr(porCampana).slice(0, 8) };
+}
 
 // RESET del tablero a etapa inicial (nada gestionado aún):
 //  - RUC validado por SUNAT (sunatEstado='ok')  → 'Filtro credito' (columna crédito).
@@ -6862,7 +6904,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.328 (Tarjeta B2B minimalista: se elimina el % de probabilidad, los dots de etapa (S C G R F), el badge de nivel, el borde de color y la etiqueta Alto/Medio/Bajo; el nombre se trunca a 2 lineas; UNICA senal de prioridad = barra de oxigeno (verde->rojo); se conserva contacto+telefono, monto, ubicacion discreta y proxima accion con vencimiento. El orden por Priority Score se mantiene. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.329 (Panel Gestion B2B del dia ampliado: ahora incluye el EMBUDO del pipeline (con fila de Desestimados) y ANALISIS DE DESESTIMADOS por motivo, por etapa de caida (SUNAT/Credito/Garantia/Finanzas) y por campana de origen. Asi se ve toda la gestion + los desestimados y sus causas en un solo espacio. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
