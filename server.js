@@ -1326,7 +1326,7 @@ const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolida
 const iaReportes = require('./ia-reportes.js');
 // Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
 const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
-alertasWAB2B.iniciarCortes();
+// alertasWAB2B.iniciarCortes(); // DESACTIVADO temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos. Los 3 cortes se pueden enviar manualmente con /api/b2b/alertas-wa/enviar o reactivar aquí.
 // Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
 const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
 // Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
@@ -7250,7 +7250,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.346 (Reporte WhatsApp B2B ahora refleja el TRABAJO REAL: -empresas trabajadas- cuenta empresas unicas con cualquier actividad (gestion formal O trabajo de expediente: sujetos, filtros, garantia, link), no solo gestiones. Por asesor muestra 3 numeros: empresas trabajadas + avances + gestiones. Resuelve que Bony apareciera con 1 gestion cuando en realidad trabajo 65+ acciones de expediente. Opcion B: al avanzar un expediente de etapa (credito->garantia, garantia->reunion, reunion->finanzas) salta automaticamente el modal de gestion con banner para dejar constancia. Server + frontend + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.347 (1. Cortes automaticos de WhatsApp B2B DESACTIVADOS temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos que ingresan. Los 3 cortes siguen disponibles manualmente por /api/b2b/alertas-wa/enviar. 2. El reporte por asesor ahora SOLO incluye asesores operativos (funcionario_b2b y asistente_creditos): se excluyen admins/jefes como Diego y Julio que hicieron gestiones de prueba. Server + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

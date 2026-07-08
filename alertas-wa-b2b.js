@@ -78,8 +78,16 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   }
 
   // Actividad del día por asesor (empresas trabajadas, gestiones, avances, sin tocar) — 1pm y 6pm.
+  // Asesores B2B operativos (excluye admins/jefes que puedan haber hecho pruebas).
+  function asesoresOperativos() {
+    try {
+      return new Set(db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos')").all().map(u => u.nombre));
+    } catch (e) { return null; }
+  }
+
   function actividadDia(incluirAvances) {
     const hoy = hoyPeru();
+    const OPER = asesoresOperativos(); // si null, no filtra
     const ini = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
     const fin = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
     const gest = db.prepare('SELECT codigoSolicitud, responsable FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin);
@@ -91,14 +99,20 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     // Por asesor: empresas trabajadas (únicas, cualquier tipo de trabajo) + avances + gestiones
     const A = {};
     const reg = r => { const k = r || 'Sin asignar'; A[k] = A[k] || { empresas: new Set(), gestiones: 0, avances: 0 }; return A[k]; };
-    gest.forEach(g => { const o = reg(g.responsable); o.empresas.add(g.codigoSolicitud); o.gestiones++; });
-    av.forEach(a => { const o = reg(a.nombre); o.empresas.add(a.objetivo); o.avances++; });
-    trabajo.forEach(t => { const o = reg(t.nombre); o.empresas.add(t.objetivo); }); // suma la empresa como trabajada (no infla gestiones)
-    des.forEach(d => { if (d.nombre) reg(d.nombre).empresas.add(d.objetivo); });
+    const esOper = n => !OPER || OPER.has(n); // solo asesores operativos
+    gest.forEach(g => { if (!esOper(g.responsable)) return; const o = reg(g.responsable); o.empresas.add(g.codigoSolicitud); o.gestiones++; });
+    av.forEach(a => { if (!esOper(a.nombre)) return; const o = reg(a.nombre); o.empresas.add(a.objetivo); o.avances++; });
+    trabajo.forEach(t => { if (!esOper(t.nombre)) return; const o = reg(t.nombre); o.empresas.add(t.objetivo); });
+    des.forEach(d => { if (d.nombre && esOper(d.nombre)) reg(d.nombre).empresas.add(d.objetivo); });
     // Nuevos sin tocar por asesor (tocado = cualquier trabajo)
-    const tocados = new Set([...gest.map(g => g.codigoSolicitud), ...av.map(a => a.objetivo), ...trabajo.map(t => t.objetivo), ...des.map(d => d.objetivo)]);
+    const tocados = new Set([
+      ...gest.filter(g => esOper(g.responsable)).map(g => g.codigoSolicitud),
+      ...av.filter(a => esOper(a.nombre)).map(a => a.objetivo),
+      ...trabajo.filter(t => esOper(t.nombre)).map(t => t.objetivo),
+      ...des.filter(d => esOper(d.nombre)).map(d => d.objetivo)
+    ]);
     const sinTocarPorResp = {};
-    nuevos.forEach(n => { if (!tocados.has(n.codigo)) { const k = n.responsableActual || 'Sin asignar'; sinTocarPorResp[k] = (sinTocarPorResp[k] || 0) + 1; } });
+    nuevos.forEach(n => { if (!tocados.has(n.codigo)) { const k = n.responsableActual || 'Sin asignar'; if (!OPER || OPER.has(k)) sinTocarPorResp[k] = (sinTocarPorResp[k] || 0) + 1; } });
     // Totales
     const totalEmpresas = tocados.size;
     const abordadosNuevos = nuevos.filter(n => tocados.has(n.codigo)).length;
