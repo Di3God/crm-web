@@ -5347,6 +5347,47 @@ function sellarFechaEtapa(f, col) {
   return nueva;
 }
 
+// COLA INTELIGENTE B2B: leads ordenados por Priority Score con la "siguiente mejor acción".
+// GET /api/b2b/cola?asesor=  (funcionario ve los suyos; admin/jefe puede pasar ?asesor= o ve todos)
+app.get('/api/b2b/cola', soloB2B, (req, res) => {
+  try {
+    const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
+    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    filas = filtrarPorAlcanceB2B(req.user, filas);
+    // Filtro por asesor: funcionario siempre a lo suyo; jefe puede elegir uno.
+    const asesor = (req.query.asesor || '').trim();
+    if (!esJefe) filas = filas.filter(f => f.responsableActual === req.user.nombre);
+    else if (asesor) filas = filas.filter(f => f.responsableActual === asesor);
+
+    const montoMax = Math.max(1, ...filas.map(f => Number(f.montoSolicitado || 0) || montoRangoFijo(f.montoRango) || 0));
+    // Última "próxima acción" por solicitud (para la siguiente mejor acción)
+    const ultProx = {};
+    if (filas.length) {
+      const ph = filas.map(() => '?').join(',');
+      db.prepare("SELECT codigoSolicitud, proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
+        .forEach(g => { ultProx[g.codigoSolicitud] = { prox: g.proximaAccion, fechaProx: g.fechaProxAccion }; });
+    }
+    const cola = filas.map(f => {
+      const col = etapaKanbanB2B(f);
+      const fechaEtapa = sellarFechaEtapa(f, col);
+      const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
+      const ps = priorityScoreB2B({ ...f, montoSolicitado: montoEfectivo, fechaEtapa }, montoMax);
+      const up = ultProx[f.codigo];
+      // Siguiente mejor acción: la próxima acción registrada, o la acción sugerida por el SLA de la etapa.
+      const accion = (up && up.prox) ? up.prox : (ps.sla && ps.sla.accion ? ps.sla.accion : 'Contactar y gestionar');
+      const fechaAccion = (up && up.fechaProx) ? up.fechaProx : null;
+      return {
+        codigo: f.codigo, empresa: f.razonSocial || f.nombreComercial || f.contacto || f.codigo,
+        contacto: f.contacto || '', telefono: f.telefono || '', etapa: col, monto: montoEfectivo,
+        responsable: f.responsableActual || 'Sin asignar',
+        score: ps.score, nivel: ps.nivel, oxigeno: ps.oxigeno, diasSinGestion: ps.diasSinGestion,
+        slaVencido: !!(ps.sla && ps.sla.vencido), accion, fechaAccion
+      };
+    }).sort((a, b) => b.score - a.score);
+    res.json({ total: cola.length, asesor: (!esJefe ? req.user.nombre : (asesor || null)), cola });
+  } catch (e) { console.error('[b2b/cola]', e.stack || e.message); res.status(500).json({ error: e.message }); }
+});
+
 // Datos del tablero. ?desestimados=1 devuelve la bandeja de desestimados (filtro, no columna).
 app.get('/api/b2b/kanban', soloB2B, (req, res) => {
   const soloDesest = req.query.desestimados === '1';
@@ -6949,7 +6990,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.332 (Gestion B2B del dia v3, disenno de supervision: strip de 5 mini-KPIs; TABLA UNICA Actividad del dia por lead (nuevos+gestionados+desestimados fusionados, desestimados CUENTAN como trabajados) con estado del dia (Sin tocar arriba en rojo / Gestionado / Avanzo / Desestimado), ultima accion, proximo paso y fila expandible con la secuencia; embudo del dia con drill-down en CARDS de detalle (empresa, motivo/resultado, hora, responsable); COMPARATIVO POR ASESOR para coaching (asignados, sin tocar, tocados, gestiones, desestimados, % abordaje); headers gris claro legibles, todo compacto y homogeneo. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.333 (COLA INTELIGENTE B2B - Fase 2: nueva vista Mi Cola (boton junto a Kanban/Lista) que lista TODOS los leads del asesor ordenados por Priority Score, con ranking, nivel (borde de color), oxigeno vertical, y la SIGUIENTE MEJOR ACCION (proxima accion registrada o la accion sugerida por el SLA) con su fecha (roja si vencida). Funcionario ve los suyos; jefe/admin puede filtrar por asesor. Endpoint /api/b2b/cola reutiliza el motor de priorizacion. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

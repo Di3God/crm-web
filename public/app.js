@@ -4292,11 +4292,50 @@ function b2bVista(v) {
   B2B_VISTA = v;
   $('b2bViewKanban').classList.toggle('act', v === 'kanban');
   $('b2bViewTabla').classList.toggle('act', v === 'tabla');
+  if ($('b2bViewCola')) $('b2bViewCola').classList.toggle('act', v === 'cola');
   $('b2bTablero').classList.toggle('oculto', v !== 'kanban');
   $('b2bTablaWrap').classList.toggle('oculto', v !== 'tabla');
+  if ($('b2bColaWrap')) $('b2bColaWrap').classList.toggle('oculto', v !== 'cola');
   if ($('b2bKanbanFiltros')) $('b2bKanbanFiltros').classList.toggle('oculto', v !== 'kanban');
   if ($('b2bTablaFiltros')) $('b2bTablaFiltros').classList.toggle('oculto', v !== 'tabla');
-  if (v === 'kanban') cargarKanbanB2B(); else cargarB2B();
+  if (v === 'kanban') cargarKanbanB2B(); else if (v === 'cola') cargarColaB2B(); else cargarB2B();
+}
+
+// ===== COLA INTELIGENTE B2B =====
+async function cargarColaB2B() {
+  const cont = $('b2bCola'); if (!cont) return;
+  cont.innerHTML = '<div class="vacio">Cargando cola…</div>';
+  try {
+    const d = await api('/api/b2b/cola');
+    renderColaB2B(d);
+  } catch (e) { cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>'; }
+}
+
+function renderColaB2B(d) {
+  const cont = $('b2bCola');
+  const cola = d.cola || [];
+  if (!cola.length) { cont.innerHTML = '<div class="vacio">No tienes leads en tu cola.</div>'; return; }
+  const nivelIco = { critica: '🔴', alta: '🟠', media: '🟡', baja: '⚪' };
+  const soles = n => 'S/ ' + Number(n || 0).toLocaleString('es-PE');
+  const etLbl = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case' };
+  const header = '<div class="cola-head"><span class="cola-head-t">⚡ Mi Cola Inteligente</span><span class="cola-head-n">' + cola.length + ' leads · ordenados por prioridad</span></div>';
+  const filas = cola.map((l, i) => {
+    const ox = l.oxigeno != null ? l.oxigeno : 100;
+    const oxColor = ox > 66 ? '#16A34A' : ox > 40 ? '#F59E0B' : ox > 20 ? '#F97316' : '#DC2626';
+    const fp = l.fechaAccion ? new Date(l.fechaAccion) : null;
+    const fpTxt = fp && !isNaN(fp) ? fp.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+    const vencida = fp && !isNaN(fp) && fp.getTime() < Date.now();
+    return '<div class="cola-item cola-n-' + l.nivel + '" onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
+      '<div class="cola-rank">' + (i + 1) + '</div>' +
+      '<div class="cola-main">' +
+        '<div class="cola-emp">' + (nivelIco[l.nivel] || '') + ' <b>' + l.empresa + '</b>' + (l.slaVencido ? ' <span class="cola-venc">SLA vencido</span>' : '') + '</div>' +
+        '<div class="cola-meta">' + (etLbl[l.etapa] || l.etapa) + ' · ' + soles(l.monto) + (l.telefono ? ' · ' + l.telefono : '') + (l.diasSinGestion != null ? ' · ' + l.diasSinGestion + 'd sin gestión' : '') + '</div>' +
+        '<div class="cola-accion">📌 ' + l.accion + (fpTxt ? ' · <span class="' + (vencida ? "cola-fp-venc" : "cola-fp") + '\">' + fpTxt + '</span>' : '') + '</div>' +
+      '</div>' +
+      '<div class="cola-ox" title="Oxígeno ' + ox + '%"><div class="cola-ox-fill" style="height:' + ox + '%;background:' + oxColor + '"></div></div>' +
+    '</div>';
+  }).join('');
+  cont.innerHTML = header + '<div class="cola-list">' + filas + '</div>';
 }
 
 let B2B_KANBAN_CARDS = [];

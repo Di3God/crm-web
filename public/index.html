@@ -601,12 +601,14 @@
           <input type="text" id="b2bQ" placeholder="Buscar empresa, RUC o contacto" oninput="b2bBuscarDebounce()">
         </div>
         <div class="vista-toggle b2b-view-toggle">
+          <button id="b2bViewCola" class="vt-btn" onclick="b2bVista('cola')">⚡ Mi Cola</button>
           <button id="b2bViewKanban" class="vt-btn act" onclick="b2bVista('kanban')">▦ Kanban</button>
           <button id="b2bViewTabla" class="vt-btn soloJefeB2B oculto" onclick="b2bVista('tabla')">☰ Lista</button>
         </div>
         <button class="btn sec soloAdminB2B oculto" onclick="descargarB2BCsv()" title="Descargar todas las solicitudes B2B como CSV">⬇ Descargar CSV</button>
       </div>
       <div id="b2bTablero"><div class="vacio">Cargando…</div></div>
+      <div id="b2bColaWrap" class="oculto"><div id="b2bCola"></div></div>
       <div id="b2bTablaWrap" class="oculto">
         <div id="b2bResumen" class="b2b-chips"></div>
         <div id="b2bCont"><div class="vacio">Cargando…</div></div>
