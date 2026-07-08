@@ -4442,15 +4442,25 @@ function b2bKanbanCard(c) {
     else cuando = '<span class="kb-sla-quedan">⏳ Quedan ' + fmtHorasRestantes(sla.horasRestantes) + '</span>';
     slaHtml = '<div class="kb-sla">📌 ' + sla.accion + ' · ' + cuando + '</div>';
   }
-  const primeraHtml = ''; // eliminado: la próxima acción del modal de gestión se muestra en slaHtml
-  return '<div class="kb-card' + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" ' +
+  // Nivel de prioridad → clase de borde + badge
+  const nivel = c.nivelPrioridad || 'media';
+  const nivelIco = { critica: '🔴', alta: '🟠', media: '🟡', baja: '⚪' }[nivel] || '🟡';
+  const nivelBadge = '<span class="kb-nivel kb-nivel-' + nivel + '" title="Prioridad ' + nivel + ' · score ' + (c.priorityScore != null ? c.priorityScore : '—') + '">' + nivelIco + '</span>';
+  // Oxígeno: barra degradada 0-100
+  const ox = c.oxigeno != null ? c.oxigeno : 100;
+  const oxColor = ox > 66 ? '#16A34A' : ox > 40 ? '#F59E0B' : ox > 20 ? '#F97316' : '#DC2626';
+  const oxHtml = '<div class="kb-ox" title="Oxígeno del lead: ' + ox + '%' + (c.diasSinGestion != null ? ' · ' + c.diasSinGestion + 'd sin gestión' : '') + '"><div class="kb-ox-fill" style="width:' + ox + '%;background:' + oxColor + '"></div></div>';
+  const rescate = (c.diasSinGestion != null && c.diasSinGestion >= 5 && nivel !== 'baja') ? '<span class="kb-rescate">🔥 Rescatar · ' + c.diasSinGestion + 'd</span>' : '';
+  const primeraHtml = '';
+  return '<div class="kb-card kb-nivel-b-' + nivel + (sla.estado === 'vencido' ? ' kb-card-venc' : '') + (semActual ? ' kb-card-' + semActual.toLowerCase() : '') + '" draggable="true" data-cod="' + c.codigo + '" data-col="' + c.etapaKanban + '" data-score="' + (c.priorityScore || 0) + '" ' +
     'ondragstart="b2bDragStart(event)" ondragend="b2bDragEnd(event)" onclick="abrirFichaB2B(\'' + c.codigo + '\')">' +
-    '<div class="kb-top"><b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket kb-ticket-' + (c.ticket || '').toLowerCase() + '">' + c.ticket + '</span>' : '') + '</div>' +
+    '<div class="kb-top">' + nivelBadge + '<b>' + nombre + '</b>' + (c.ticket ? '<span class="kb-ticket kb-ticket-' + (c.ticket || '').toLowerCase() + '">' + c.ticket + '</span>' : '') + '</div>' +
     '<div class="kb-sub">' + (c.contacto ? primerNombre(c.contacto) : '—') + (c.telefono ? ' · ' + c.telefono : '') + '</div>' +
     ubicHtml +
     (monto ? '<div class="kb-monto-row"><span class="kb-monto">' + monto + '</span>' + probChip + '</div>' : (probChip ? '<div class="kb-monto-row">' + probChip + '</div>' : '')) +
-    obsHtml + primeraHtml +
+    obsHtml + rescate + primeraHtml +
     slaHtml +
+    oxHtml +
     '<div class="kb-foot">' + dots + '</div>' +
     '</div>';
 }
@@ -4477,9 +4487,12 @@ function renderKanbanB2B(cards, conteos, puedeGestionar) {
   const html = '<div class="kb-board">' + B2B_KANBAN_COLS.map(col => {
     const items = porCol[col.id] || [];
     const montoCol = items.reduce((a, c) => a + (Number(c.montoEfectivo) || 0), 0);
+    const criticos = items.filter(c => c.nivelPrioridad === 'critica').length;
+    const promMonto = items.length ? montoCol / items.length : 0;
+    const critHtml = criticos ? '<span class="kb-col-crit" title="Leads críticos en esta etapa">🔴 ' + criticos + '</span>' : '';
     return '<div class="kb-col" data-col="' + col.id + '" ondragover="b2bDragOver(event)" ondragleave="b2bDragLeave(event)" ondrop="b2bDrop(event)">' +
-      '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span></div>' +
-      '<div class="kb-colpot" title="Monto potencial acumulado en esta etapa">' + fmtS(montoCol) + '</div>' +
+      '<div class="kb-colhead"><span>' + col.label + '</span><span class="kb-count">' + items.length + '</span>' + critHtml + '</div>' +
+      '<div class="kb-colpot" title="Monto acumulado · promedio">' + fmtS(montoCol) + (items.length ? ' <small style="color:#94a3b8">~' + fmtS(Math.round(promMonto)) + '</small>' : '') + '</div>' +
       (col.hint ? '<div class="kb-colhint">' + col.hint + '</div>' : '') +
       '<div class="kb-colbody">' + (items.length ? items.map(b2bKanbanCard).join('') : '<div class="kb-vacio">—</div>') + '</div>' +
       '</div>';

@@ -2294,3 +2294,14 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .com-ia-head { font-weight:700; color:#1E40AF; margin-bottom:8px; }
 .com-ia-body { font-size:13.5px; line-height:1.6; color:#1B2A41; }
 .com-ia-load { color:#5A6B80; font-style:italic; }
+
+/* ===== Priority Score B2B: niveles, oxígeno, rescate ===== */
+.kb-nivel { font-size:11px; margin-right:5px; flex:0 0 auto; }
+.kb-nivel-b-critica { border-left:4px solid #DC2626 !important; }
+.kb-nivel-b-alta { border-left:4px solid #F97316 !important; }
+.kb-nivel-b-media { border-left:4px solid #F59E0B !important; }
+.kb-nivel-b-baja { border-left:4px solid #CBD5E1 !important; }
+.kb-ox { height:5px; background:#EEF2F7; border-radius:3px; overflow:hidden; margin-top:8px; }
+.kb-ox-fill { height:100%; border-radius:3px; transition:width .3s; }
+.kb-rescate { display:inline-block; font-size:10.5px; font-weight:700; color:#B91C1C; background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px; padding:2px 7px; margin:4px 0; }
+.kb-col-crit { font-size:11px; font-weight:700; color:#DC2626; margin-left:6px; }

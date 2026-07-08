@@ -4347,6 +4347,68 @@ const SEC_ETAPAS_B2B = ['Filtro credito', 'Filtro garantia', 'Reunion comercial'
 const AVANZA_SEM = sem => sem === 'Verde' || sem === 'Amarillo'; // Rojo NO avanza
 // Mínimo de sujetos de crédito según tipo de RUC (20 → empresa + rep. legal = 2; 10 → 1).
 function minSujetosCredito(ruc) { return String(ruc || '').trim().startsWith('20') ? 2 : 1; }
+// ===== PRIORITY SCORE B2B (motor de priorización) =====
+// Pesos configurables (suman 100). Orden del negocio: Monto > Temperatura > SLA > Días sin gestión.
+const PScoreDefault = { monto: 35, temperatura: 28, sla: 22, sinGestion: 15 };
+function getPScorePesos() {
+  try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_pscore_pesos'").get(); if (r && r.valor) return Object.assign({}, PScoreDefault, JSON.parse(r.valor)); } catch (e) {}
+  return PScoreDefault;
+}
+// Semáforo consolidado de la solicitud (el peor de los evaluados; refleja probabilidad/temperatura).
+function semGlobalB2B(sol) {
+  const vals = [sol.resultadoCredito, sol.resultadoGarantia, sol.resultadoFinanzas].filter(Boolean);
+  if (!vals.length) return null;
+  if (vals.includes('Rojo')) return 'Rojo';
+  if (vals.includes('Amarillo')) return 'Amarillo';
+  return 'Verde';
+}
+// Última gestión (para días sin contacto).
+function ultimaGestionB2B(codigo) {
+  const g = db.prepare('SELECT fecha FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC LIMIT 1').get(codigo);
+  return g ? g.fecha : null;
+}
+// Calcula el Priority Score (0-100), nivel (critica/alta/media/baja) y oxígeno (0-100) de una solicitud.
+function priorityScoreB2B(sol, montoMax) {
+  const W = getPScorePesos();
+  const col = etapaKanbanB2B(sol);
+  const sla = slaEtapaB2B(col, sol.fechaEtapa);
+  // --- Sub-scores 0..1 ---
+  // Monto: normalizado contra el mayor monto del pipeline (log para no aplastar a los medianos)
+  const monto = Number(sol.montoSolicitado || 0) || 0;
+  const sMonto = montoMax > 0 ? Math.log10(1 + monto) / Math.log10(1 + montoMax) : 0;
+  // Temperatura: Verde=1, Amarillo=0.6, Rojo=0.15, sin dato=0.4
+  const sem = semGlobalB2B(sol);
+  const sTemp = sem === 'Verde' ? 1 : sem === 'Amarillo' ? 0.6 : sem === 'Rojo' ? 0.15 : 0.4;
+  // SLA: vencido=1 (máxima urgencia), porvencer escala en el último 25%, ok escala con % consumido
+  let sSla = 0;
+  if (sla && sla.horas) {
+    if (sla.vencido) sSla = 1;
+    else sSla = Math.min(1, (sla.usadas || 0) / sla.horas);
+  }
+  // Días sin gestión: 0 días=0, 7+ días=1
+  const ug = ultimaGestionB2B(sol.codigo);
+  const base = ug || sol.fechaEtapa || sol.fechaIngreso;
+  const diasSin = base ? Math.floor((Date.now() - new Date(base).getTime()) / 86400000) : 7;
+  const sSin = Math.min(1, diasSin / 7);
+  // --- Score ponderado 0..100 ---
+  const score = Math.round(W.monto * sMonto + W.temperatura * sTemp + W.sla * sSla + W.sinGestion * sSin);
+  // --- Nivel ---
+  let nivel = 'baja';
+  const esperando = ['Nuevo'].includes(sol.estado) && !ug; // esperando SUNAT/primer toque
+  if (sla && sla.vencido) nivel = 'critica';
+  else if (score >= 70) nivel = 'critica';
+  else if (score >= 50) nivel = 'alta';
+  else if (score >= 30) nivel = 'media';
+  else nivel = esperando ? 'baja' : 'media';
+  // --- Oxígeno (100 = fresco, 0 = deteriorado): combina SLA restante y días sin gestión ---
+  let oxSla = 100; if (sla && sla.horas) oxSla = Math.max(0, Math.round((1 - Math.min(1, (sla.usadas || 0) / sla.horas)) * 100));
+  const oxSin = Math.max(0, Math.round((1 - sSin) * 100));
+  const oxigeno = Math.round(oxSla * 0.6 + oxSin * 0.4);
+  // --- Días para resurfacing ---
+  return { score, nivel, oxigeno, diasSinGestion: diasSin, sla, semGlobal: sem, montoNum: monto,
+    detalle: { sMonto: +sMonto.toFixed(2), sTemp, sSla: +sSla.toFixed(2), sSin: +sSin.toFixed(2) } };
+}
+
 // Avanza la solicitud a la siguiente etapa si el semáforo lo permite y aún no pasó de ahí.
 function autoAvanzarB2B(codigo, etapaActualKanban, sem, responsable) {
   if (!AVANZA_SEM(sem)) return false;
@@ -5296,6 +5358,8 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
     db.prepare("SELECT codigoSolicitud, etapa, proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud IN (" + ph + ") ORDER BY fecha ASC").all(...filas.map(f => f.codigo))
       .forEach(g => { ultGestEtapa[g.codigoSolicitud + '|' + (g.etapa || '')] = { prox: g.proximaAccion, fechaProx: g.fechaProxAccion || null }; ultGestEtapa['#' + g.codigoSolicitud] = true; });
   }
+  // Monto máximo del pipeline (para normalizar el sub-score de monto).
+  const montoMax = Math.max(1, ...filas.map(f => Number(f.montoSolicitado || 0) || montoRangoFijo(f.montoRango) || 0));
   const cards = filas.map(f => {
     const col = etapaKanbanB2B(f);
     const fechaEtapa = sellarFechaEtapa(f, col);
@@ -5303,9 +5367,14 @@ app.get('/api/b2b/kanban', soloB2B, (req, res) => {
     const montoEfectivo = f.montoSolicitado != null ? Number(f.montoSolicitado) : montoRangoFijo(f.montoRango);
     const ug = ultGestEtapa[f.codigo + '|' + col] || null;
     const tieneGestion = !!ultGestEtapa['#' + f.codigo];
+    // Priority Score usando el monto efectivo (rango si no hay explícito).
+    const ps = priorityScoreB2B({ ...f, montoSolicitado: montoEfectivo, fechaEtapa }, montoMax);
     return { ...f, etapaKanban: col, semaforos: semc, puntaje: puntajeB2B(f, semc), sla: slaEtapaB2B(col, fechaEtapa), observaciones: observacionesB2B(f), montoEfectivo,
-      ultimaGestionEtapa: ug ? ug.prox : null, ultimaGestionFechaProx: ug ? ug.fechaProx : null, tieneGestion };
+      ultimaGestionEtapa: ug ? ug.prox : null, ultimaGestionFechaProx: ug ? ug.fechaProx : null, tieneGestion,
+      priorityScore: ps.score, nivelPrioridad: ps.nivel, oxigeno: ps.oxigeno, diasSinGestion: ps.diasSinGestion };
   });
+  // Ordenar por Priority Score DESC (mayor prioridad arriba) dentro de todo el set; el front agrupa por columna.
+  cards.sort((a, b) => (b.priorityScore || 0) - (a.priorityScore || 0));
   const activos = cards.filter(c => c.etapaKanban !== 'Desestimado');
   const desest = cards.filter(c => c.etapaKanban === 'Desestimado');
   const conteos = {};
@@ -6793,7 +6862,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.326 (Fix panel Gestion B2B del dia: el endpoint /api/b2b/dia daba Error de servidor generico; ahora esta blindado con try/catch que expone el mensaje real en el JSON, y usa SELECT * tolerante a columnas para evitar fallos por esquema de BD. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.327 (PRIORITY SCORE B2B - Fase 1: motor de priorizacion (pesos Monto 35 / Temperatura 28 / SLA 22 / SinGestion 15, configurables en app_config); el Kanban ordena por score DESC (mayor prioridad arriba, no cronologico); tarjetas con nivel critica/alta/media/baja (borde de color + badge), barra de OXIGENO del lead (verde->rojo segun SLA+dias sin gestion), badge RESCATAR para leads >=5 dias sin gestion; headers de columna con criticos y monto promedio. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
