@@ -7526,8 +7526,16 @@ function canalDeFila(f) {
   if (/b2c/i.test(f.campana || '')) return 'b2c';
   return 'todos'; // orgánico/sin clasificar: visible siempre
 }
+// Detecta si una campaña es de WhatsApp/interacción (mensajes), por el nombre.
+function esCampanaWhatsapp(nombre) {
+  const n = String(nombre || '').toLowerCase();
+  return n.includes('interaccion') || n.includes('mensajes-whatsapp') || n.includes('wtsp') || (n.includes('whatsapp') && !n.includes('formulario') && !n.includes('landing'));
+}
 function filasCplFiltradas() {
-  const filas = (CPL_DATA && CPL_DATA.filas) || [];
+  let filas = (CPL_DATA && CPL_DATA.filas) || [];
+  // Toggle: ocultar campañas de WhatsApp/interacción (por defecto ocultas).
+  const ocultarWA = !($('cplVerWA') && $('cplVerWA').checked);
+  if (ocultarWA) filas = filas.filter(f => !esCampanaWhatsapp(f.campana));
   if (CPL_CANAL === 'todos') return filas;
   return filas.filter(f => { const c = canalDeFila(f); return c === CPL_CANAL || c === 'todos'; });
 }

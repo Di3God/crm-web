@@ -7294,7 +7294,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.349 (Leads historicos ahora se integran en la vista Costo x Lead / Inversion (era la vista intuitiva donde el usuario los buscaba, pero solo miraba leads vivos por eso salia 0). Nuevo toggle -Historicos- en esa pestana: suma los leads historicos por campana/conjunto/anuncio con su embudo (Agendado/Reunion/Cierre acumulado) y los cruza con el gasto de Meta -> CPL por campana historica. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.350 (Costo x Lead: toggle -Ver WhatsApp- (por defecto OCULTAS) para esconder las campanas de interaccion/mensajes-whatsapp que tienen gasto pero no generan leads de formulario y ensuciaban la vista. Al ocultarlas su gasto tambien sale del total, para que Gasto vivo y CPL reflejen solo formulario+landing. Las de TikTok se quedan junto a las de formulario. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
