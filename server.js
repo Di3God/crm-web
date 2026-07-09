@@ -5834,6 +5834,16 @@ app.get('/api/meta/cpl', async (req, res) => {
   const mapLeads = {};
   leadsB2C.forEach(r => { const k = norm(r.c); (mapLeads[k] = mapLeads[k] || { b2c: 0, b2b: 0, nombre: r.c }).b2c += r.n; });
   leadsB2B.forEach(r => { const k = norm(r.c); (mapLeads[k] = mapLeads[k] || { b2c: 0, b2b: 0, nombre: r.c }).b2b += r.n; });
+  // Leads históricos (campañas anteriores) — se suman cuando ?historico=1.
+  let histPorCampana = [];
+  if (req.query.historico === '1') {
+    histPorCampana = db.prepare("SELECT COALESCE(campana,'(sin campaña)') AS c, canal, COUNT(*) AS n FROM leads_historicos WHERE fechaCreacion >= ? AND fechaCreacion <= ? GROUP BY c, canal").all(desde, hasta);
+    histPorCampana.forEach(r => {
+      const k = norm(r.c);
+      const o = (mapLeads[k] = mapLeads[k] || { b2c: 0, b2b: 0, nombre: r.c });
+      if (/b2b/i.test(r.canal || '')) o.b2b += r.n; else o.b2c += r.n;
+    });
+  }
 
   const esB2B = nom => /b2b/i.test(nom);
   const esB2C = nom => /b2c/i.test(nom);
@@ -5965,7 +5975,7 @@ app.get('/api/meta/cruce', async (req, res) => {
 
 // ===== PANEL UNIFICADO: gasto vivo de Meta + leads brutos + embudo de gestión, por campaña/conjunto/anuncio =====
 // Estructura compatible con la tabla jerárquica de Inversión, pero con gasto en TIEMPO REAL (USD) e imagen del anuncio.
-async function calcularInversionMeta(desde, hasta, force) {
+async function calcularInversionMeta(desde, hasta, force, incluirHistorico) {
   const meta = await metaInsights.insightsAd(desde, hasta, force);
   const imgs = await metaInsights.adImages(force);
   const norm = x => String(x || '').trim().toLowerCase();
@@ -6035,6 +6045,23 @@ async function calcularInversionMeta(desde, hasta, force) {
     if (cons.etapa === 'Cerrado ganado') fRel.cierre++;
   });
   if (!fRel.leadsCRM) delete filas[Object.keys(filas).find(k => filas[k] === fRel)];
+
+  // 5) LEADS HISTÓRICOS (campañas anteriores) — se suman por campaña/conjunto/anuncio con su embudo.
+  // Mapeo de etapa histórica → columnas del embudo (acumulado): Agendado→agendado, Reunión→reunion, Cerrado→cierre.
+  if (incluirHistorico) {
+    db.prepare("SELECT COALESCE(campana,'') c, COALESCE(conjunto,'') j, COALESCE(anuncio,'') a, etapa, COUNT(*) n FROM leads_historicos WHERE fechaCreacion>=? AND fechaCreacion<=? GROUP BY c,j,a,etapa").all(desde, hasta)
+      .forEach(r => {
+        const f = fila(r.c, r.j, r.a);
+        f.leadsCRM += r.n;
+        f.esHistorico = true;
+        // Acumulado: quien llegó a una etapa pasó por las anteriores.
+        const et = r.etapa || 'Por contactar';
+        if (et === 'Agendado' || et === 'Reunión' || et === 'Cerrado') { f.tocados += r.n; f.contactado += r.n; f.calificado += r.n; f.agendado += r.n; }
+        if (et === 'Reunión' || et === 'Cerrado') f.reunion += r.n;
+        if (et === 'Cerrado') f.cierre += r.n;
+      });
+  }
+
   const arr = Object.values(filas);
   // Leads sin atribución = tráfico orgánico/directo (llegaron a la landing sin UTM): se etiquetan
   // y se EXCLUYEN del CPL pagado, porque no tienen gasto de pauta atribuible.
@@ -6063,7 +6090,7 @@ app.get('/api/marketing/inversion-meta', async (req, res) => {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : hoyP;
   const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoyP;
-  try { res.json(await calcularInversionMeta(desde, hasta, req.query.force === '1')); }
+  try { res.json(await calcularInversionMeta(desde, hasta, req.query.force === '1', req.query.historico === '1')); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 
@@ -7267,7 +7294,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.348 (FIX importador de leads historicos: las fechas venian como timestamp/serial de Excel y el parser las rechazaba (2480 sin fecha valida). Ahora (1) el front lee el Excel con cellDates:true + raw:false para que las fechas salgan legibles, y (2) el parser del server acepta ISO, timestamp, dd/mm/yyyy, dd-mm-yyyy, serial de Excel y formatos de Date. Frontend + server: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.349 (Leads historicos ahora se integran en la vista Costo x Lead / Inversion (era la vista intuitiva donde el usuario los buscaba, pero solo miraba leads vivos por eso salia 0). Nuevo toggle -Historicos- en esa pestana: suma los leads historicos por campana/conjunto/anuncio con su embudo (Agendado/Reunion/Cierre acumulado) y los cruza con el gasto de Meta -> CPL por campana historica. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

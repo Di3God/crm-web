@@ -7508,7 +7508,8 @@ async function cargarCplMeta(force) {
   if (!desde || !hasta) { cont.innerHTML = '<div class="vacio">Elige un rango de fechas.</div>'; cards.innerHTML = ''; return; }
   cont.innerHTML = '<div class="vacio">Consultando a Meta…</div>';
   if (status) status.textContent = '';
-  try { CPL_DATA = await api('/api/marketing/inversion-meta?desde=' + desde + '&hasta=' + hasta + (force ? '&force=1' : '')); }
+  const incHist = $('cplHistorico') && $('cplHistorico').checked;
+  try { CPL_DATA = await api('/api/marketing/inversion-meta?desde=' + desde + '&hasta=' + hasta + (force ? '&force=1' : '') + (incHist ? '&historico=1' : '')); }
   catch (e) { cont.innerHTML = '<div class="vacio" style="color:#C0392B">' + (e.message || 'Error') + '</div>'; cards.innerHTML = ''; return; }
   if (status) status.textContent = (CPL_DATA.cacheHit ? '🗄 caché · ' : '🔄 en vivo · ') + 'act. ' + new Date(CPL_DATA.actualizado).toLocaleString('es-PE');
   renderCplPanel();

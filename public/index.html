@@ -402,6 +402,7 @@
         <button class="btn sec" onclick="cplExpandirTodo(true)">⊞ Expandir</button>
         <button class="btn sec" onclick="cplExpandirTodo(false)">⊟ Contraer</button>
         <button class="btn sec" onclick="cargarCplMeta(true)" title="Ignorar caché y volver a pedir a Meta">⟳ Actualizar de Meta</button>
+        <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Suma los leads históricos de campañas anteriores"><input type="checkbox" id="cplHistorico" onchange="cargarCplMeta()" style="width:auto"> 📦 Históricos</label>
         <span id="cplStatus" class="sub" style="margin-left:auto"></span>
       </div>
       <div id="cplCards"></div>
