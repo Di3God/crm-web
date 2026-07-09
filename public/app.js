@@ -8101,143 +8101,173 @@ async function correrRecuperar(soloPreview) {
 
 // ===================== MODAL TENDENCIAS (gráficos) =====================
 let TEND_DATA = null, TEND_VISTA = 'leads', TEND_CHART = null;
+let TEND_CANAL = 'b2c', TEND_AGRUP = 'mes', TEND_SPLIT = false, TEND_SERIES = null;
 
 function abrirTendencias() {
   $('ovTend').classList.add('act');
-  // hereda el filtro de fechas de Inversión si lo hay
   if ($('tendDesde') && $('invDesde')) $('tendDesde').value = $('invDesde').value || '';
   if ($('tendHasta') && $('invHasta')) $('tendHasta').value = $('invHasta').value || '';
-  cargarTendencias();
-  setVistaTend('serie');
+  setVistaTend('leads');
 }
 
-function limpiarFechasTend() {
-  $('tendDesde').value = ''; $('tendHasta').value = '';
-  cargarTendencias();
-  if (TEND_VISTA === 'serie') cargarSerieLeads(); else if (TEND_VISTA === 'embudo') cargarEmbudoCpl();
-}
+function limpiarFechasTend() { $('tendDesde').value = ''; $('tendHasta').value = ''; cargarVistaTend(); }
 
 function setVistaTend(v) {
   TEND_VISTA = v;
   document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
-  const wrap = $('tendChartWrap'), emb = $('tendEmbudoCont');
-  if (v === 'serie' || v === 'embudo') {
-    if (wrap) wrap.style.display = v === 'serie' ? '' : 'none';
-    if (emb) emb.style.display = v === 'embudo' ? '' : 'none';
-    if ($('tendMetricaY')) $('tendMetricaY').style.display = 'none';
-    if ($('tendMetricaX')) $('tendMetricaX').style.display = 'none';
-    if ($('tendEjes')) $('tendEjes').style.display = 'none';
-    if ($('tendLegend')) $('tendLegend').innerHTML = '';
-    if ($('tendCard')) $('tendCard').style.display = 'none';
-    if (v === 'serie') cargarSerieLeads(); else cargarEmbudoCpl();
-    return;
-  }
-  if (wrap) wrap.style.display = '';
-  if (emb) emb.style.display = 'none';
-  document.querySelectorAll('[data-tv]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tv') === v));
-  if ($('tendMetricaY')) $('tendMetricaY').style.display = (v === 'cuadrante') ? '' : 'none';
-  if ($('tendMetricaX')) $('tendMetricaX').style.display = (v === 'cuadrante') ? '' : 'none';
-  if ($('tendEjes')) $('tendEjes').style.display = (v === 'cuadrante') ? '' : 'none';
+  const esCuad = v === 'cuadrante';
+  if ($('tendGrid')) $('tendGrid').style.display = esCuad ? 'none' : '';
+  if ($('tendKpi')) $('tendKpi').style.display = esCuad ? 'none' : '';
+  if ($('tendChartWrap')) $('tendChartWrap').style.display = esCuad ? '' : 'none';
+  if ($('tendCuadCtrl')) $('tendCuadCtrl').style.display = esCuad ? '' : 'none';
+  if ($('tendAgrupBtns')) $('tendAgrupBtns').style.display = (v === 'leads') ? '' : 'none'; // Performance es mensual fija
+  if ($('tendSplitBtn')) $('tendSplitBtn').style.display = esCuad ? 'none' : '';
+  if ($('tendLegend')) $('tendLegend').innerHTML = '';
   if ($('tendCard')) $('tendCard').style.display = 'none';
-  renderTendencias();
+  cargarVistaTend();
 }
 
-function tendCampanaCambio() {
-  // refiltra el selector de conjuntos según la campaña elegida, luego recarga
-  poblarConjuntosTend();
-  cargarTendencias();
-}
-
-function poblarCamposTend() {
-  if (!TEND_DATA) return;
-  const selC = $('tendCampana'), prevC = selC.value;
-  selC.innerHTML = '<option value="">Todas las campañas</option>';
-  (TEND_DATA.campanas || []).forEach(c => selC.add(new Option(c, c)));
-  selC.value = prevC || '';
-  poblarConjuntosTend();
-}
-
-function poblarConjuntosTend() {
-  if (!TEND_DATA) return;
-  const selJ = $('tendConjunto'), prevJ = selJ.value, camp = $('tendCampana').value;
-  selJ.innerHTML = '<option value="">Todos los conjuntos</option>';
-  (TEND_DATA.conjuntos || []).filter(x => !camp || x.campana === camp).forEach(x => selJ.add(new Option(x.conjunto, x.conjunto)));
-  selJ.value = prevJ || '';
-}
-
-let SERIE_CHART = null, TEND_CANAL = 'todos';
 function setCanalTend(c) {
   TEND_CANAL = c;
   document.querySelectorAll('[data-tcanal]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tcanal') === c));
-  if (TEND_VISTA === 'serie') cargarSerieLeads();
-  else if (TEND_VISTA === 'embudo') cargarEmbudoCpl();
+  cargarVistaTend();
 }
-async function cargarSerieLeads() {
-  const desde = $('tendDesde').value || '', hasta = $('tendHasta').value || '';
+function setAgrupTend(a) {
+  TEND_AGRUP = a;
+  document.querySelectorAll('[data-tagrup]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tagrup') === a));
+  cargarVistaTend();
+}
+function toggleSplitTend() {
+  TEND_SPLIT = !TEND_SPLIT;
+  const b = $('tendSplitBtn'); if (b) b.classList.toggle('act', TEND_SPLIT);
+  cargarVistaTend();
+}
+
+function cargarVistaTend() {
+  if (TEND_VISTA === 'cuadrante') { cargarTendencias(); return; }
+  cargarTendSeries();
+}
+
+async function cargarTendSeries() {
   $('tendMsg').textContent = 'Cargando…';
-  let d;
-  try { d = await api('/api/marketing/serie' + ((desde || hasta) ? ('?desde=' + desde + '&hasta=' + hasta) : '')); }
-  catch (e) { $('tendMsg').textContent = 'Serie: ' + e.message; return; }
+  const qs = ['canal=' + TEND_CANAL, 'agrupar=' + (TEND_VISTA === 'perf' ? 'mes' : TEND_AGRUP)];
+  if ($('tendDesde').value) qs.push('desde=' + $('tendDesde').value);
+  if ($('tendHasta').value) qs.push('hasta=' + $('tendHasta').value);
+  if (TEND_SPLIT) qs.push('split=1');
+  // Históricos: manda el toggle de la hoja principal de Costo x Lead.
+  if ($('cplHistorico') && $('cplHistorico').checked) qs.push('historico=1');
+  try { TEND_SERIES = await api('/api/marketing/tend-series?' + qs.join('&')); }
+  catch (e) { $('tendMsg').textContent = 'No se pudo cargar: ' + e.message; return; }
   $('tendMsg').textContent = '';
-  const ctx = document.getElementById('tendChart');
-  if (!ctx || typeof Chart === 'undefined') return;
-  const prev = Chart.getChart(ctx); if (prev) prev.destroy();
-  SERIE_CHART = null; if (typeof TEND_CHART !== 'undefined') TEND_CHART = null;
-  const c = TEND_CANAL;
-  const leads = d.dias.map(x => c === 'b2c' ? x.b2c : c === 'b2b' ? x.b2b : (x.b2c + x.b2b));
-  const org = d.dias.map(x => c === 'b2c' ? (x.b2cOrg || 0) : c === 'b2b' ? (x.b2bOrg || 0) : ((x.b2cOrg || 0) + (x.b2bOrg || 0)));
-  const cpl = d.dias.map(x => c === 'b2c' ? x.cplB2C : c === 'b2b' ? x.cplB2B : x.cplTotal);
-  const dsets = [{ type: 'bar', label: 'Leads pagados', data: leads, backgroundColor: c === 'b2b' ? 'rgba(11,95,255,.55)' : c === 'b2c' ? 'rgba(29,158,117,.55)' : 'rgba(99,102,241,.55)', yAxisID: 'y', order: 2, stack: 's' },
-    { type: 'bar', label: '🌱 Orgánicos', data: org, backgroundColor: 'rgba(148,163,184,.45)', yAxisID: 'y', order: 2, stack: 's' }];
-  if (cpl.some(v => v != null)) dsets.push({ type: 'line', label: 'CPL ($)', data: cpl, borderColor: '#EF9F27', backgroundColor: '#EF9F27', tension: .3, yAxisID: 'y2', spanGaps: true, order: 1 });
-  SERIE_CHART = new Chart(ctx, {
-    data: { labels: d.dias.map(x => x.fecha.slice(5)), datasets: dsets },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } },
-      scales: { y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
-        y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } }
-  });
+  if (TEND_VISTA === 'leads') renderLeadsTend(); else renderPerfTend();
 }
-async function cargarEmbudoCpl() {
-  const cont = $('tendEmbudoCont'); if (!cont) return;
-  const desde = $('tendDesde').value || '', hasta = $('tendHasta').value || '';
-  cont.innerHTML = '<div class="vacio">Cargando…</div>';
-  let d;
-  const incHist = $('tendHistorico') && $('tendHistorico').checked;
-  const qs = [];
-  if (desde || hasta) { qs.push('desde=' + desde, 'hasta=' + hasta); }
-  if (incHist) qs.push('historico=1');
-  try { d = await api('/api/marketing/embudo-cpl' + (qs.length ? '?' + qs.join('&') : '')); }
-  catch (e) { cont.innerHTML = '<div class="vacio">' + e.message + '</div>'; return; }
-  const fmtU = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const bloque = (titulo, gasto, filas, color) => {
-    const maxN = filas.length ? filas[0].n || 1 : 1;
-    return '<div class="emb-bloque"><div class="emb-tit">' + titulo + ' <span class="sub">· gasto ' + fmtU(gasto) + '</span></div>' +
-      filas.map(f => '<div class="emb-fila"><div class="emb-lbl">' + f.etapa + '</div>' +
-        '<div class="emb-barwrap"><div class="emb-bar" style="width:' + Math.max(3, Math.round((f.n / maxN) * 100)) + '%;background:' + color + '">' + f.n + '</div></div>' +
-        '<div class="emb-pct">' + f.pct + '%</div><div class="emb-cpl">' + fmtU(f.cpl) + '</div></div>').join('') + '</div>';
+
+function destruirChartTend(id) { const el = document.getElementById(id); if (el) { const p = Chart.getChart(el); if (p) p.destroy(); } }
+const fmtU2 = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const lblPeriodo = p => TEND_AGRUP === 'mes' || TEND_VISTA === 'perf' ? p : (p.length === 7 ? p : p.slice(5));
+
+// ===== Vista LEADS: barras (leads + orgánicos) + línea CPL, con KPI de CPL promedio =====
+function renderLeadsTend() {
+  const S = TEND_SERIES && TEND_SERIES.series; if (!S) return;
+  const colBar = TEND_CANAL === 'b2b' ? 'rgba(11,95,255,.6)' : 'rgba(29,158,117,.6)';
+  const pintar = (canvasId, serie) => {
+    destruirChartTend(canvasId);
+    const ctx = document.getElementById(canvasId); if (!ctx || typeof Chart === 'undefined') return;
+    const per = serie.periodos || [];
+    const dsets = [
+      { type: 'bar', label: 'Leads', data: per.map(x => x.leads), backgroundColor: colBar, yAxisID: 'y', order: 2, stack: 's' },
+      { type: 'bar', label: '🌱 Orgánicos', data: per.map(x => x.organicos), backgroundColor: 'rgba(148,163,184,.45)', yAxisID: 'y', order: 2, stack: 's' }
+    ];
+    if (per.some(x => x.cpl != null)) dsets.push({ type: 'line', label: 'CPL ($)', data: per.map(x => x.cpl), borderColor: '#EF9F27', backgroundColor: '#EF9F27', tension: .3, yAxisID: 'y2', spanGaps: true, order: 1 });
+    new Chart(ctx, { data: { labels: per.map(x => lblPeriodo(x.p)), datasets: dsets },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } },
+        scales: { y: { beginAtZero: true, stacked: true, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
+          x: { stacked: true },
+          y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } } });
   };
-  let html = (d.organicosFuera ? '<div class="sub" style="margin:4px 0 8px">🌱 ' + d.organicosFuera + ' leads orgánicos fuera del cálculo (sin gasto atribuible)</div>' : '') + '<div class="emb-head"><span></span><span></span><span class="sub" style="text-align:right">% del total</span><span class="sub" style="text-align:right">CPL etapa</span></div>';
-  if (TEND_CANAL !== 'b2b') html += bloque('👥 B2C', d.gastoB2C, d.b2c, '#1D9E75');
-  if (TEND_CANAL !== 'b2c') html += bloque('🏢 B2B', d.gastoB2B, d.b2b, '#0B5FFF');
-  cont.innerHTML = html;
+  if (TEND_SPLIT && S.formulario && S.landing) {
+    $('tendPanelB').classList.remove('oculto');
+    $('tendTitA').textContent = '📋 Formulario'; $('tendTitB').textContent = '🖥 Landing';
+    pintar('tendChartA', S.formulario); pintar('tendChartB', S.landing);
+    kpiCplPromedio([{ lbl: 'Formulario', v: S.formulario.cplPromedio }, { lbl: 'Landing', v: S.landing.cplPromedio }]);
+  } else {
+    $('tendPanelB').classList.add('oculto'); destruirChartTend('tendChartB');
+    $('tendTitA').textContent = '';
+    pintar('tendChartA', S.total);
+    kpiCplPromedio([{ lbl: 'CPL promedio del periodo', v: S.total.cplPromedio }]);
+  }
 }
+
+// KPI horizontal: CPL promedio (una barra por serie; con split se comparan entre sí)
+function kpiCplPromedio(items) {
+  const cont = $('tendKpi'); if (!cont) return;
+  const max = Math.max(1, ...items.map(i => i.v || 0));
+  cont.innerHTML = '<div class="tend-kpi">' + items.map(i =>
+    '<div class="tend-kpi-row"><span class="tend-kpi-lbl">' + i.lbl + '</span>' +
+    '<div class="tend-kpi-track"><div class="tend-kpi-fill" style="width:' + (i.v ? Math.max(4, Math.round((i.v / max) * 100)) : 0) + '%"></div></div>' +
+    '<span class="tend-kpi-val">' + fmtU2(i.v) + '</span></div>').join('') + '</div>';
+}
+
+// ===== Vista PERFORMANCE: barras mensuales por etapa con costo por etapa =====
+const pluginCostoBarras = {
+  id: 'costoBarras',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    chart.data.datasets.forEach((ds, di) => {
+      const meta = chart.getDatasetMeta(di); if (meta.hidden) return;
+      meta.data.forEach((bar, i) => {
+        const costo = ds.costos && ds.costos[i];
+        if (costo == null) return;
+        ctx.save(); ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
+        ctx.fillText('$' + Number(costo).toLocaleString('en-US', { maximumFractionDigits: 0 }), bar.x, bar.y - 4);
+        ctx.restore();
+      });
+    });
+  }
+};
+
+function renderPerfTend() {
+  const S = TEND_SERIES && TEND_SERIES.series; if (!S) return;
+  const esB2B = TEND_CANAL === 'b2b';
+  const pintar = (canvasId, serie) => {
+    destruirChartTend(canvasId);
+    const ctx = document.getElementById(canvasId); if (!ctx || typeof Chart === 'undefined') return;
+    const per = serie.periodos || [];
+    const dsets = [
+      { label: 'Leads', data: per.map(x => x.leads + x.organicos), backgroundColor: 'rgba(99,102,241,.6)', costos: per.map(x => x.cpl) }
+    ];
+    if (!esB2B) dsets.push({ label: 'Agendados', data: per.map(x => x.agendados), backgroundColor: 'rgba(239,159,39,.7)', costos: per.map(x => x.costoAgendado) });
+    dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.7)', costos: per.map(x => x.costoReunion) });
+    dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.7)', costos: per.map(x => x.costoCierre) });
+    new Chart(ctx, { type: 'bar', data: { labels: per.map(x => x.p), datasets: dsets },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top' }, tooltip: { callbacks: { afterLabel: (c) => { const co = c.dataset.costos && c.dataset.costos[c.dataIndex]; return co != null ? 'Costo por unidad: ' + fmtU2(co) : ''; } } } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+      plugins: [pluginCostoBarras] });
+  };
+  if (TEND_SPLIT && S.formulario && S.landing) {
+    $('tendPanelB').classList.remove('oculto');
+    $('tendTitA').textContent = '📋 Formulario'; $('tendTitB').textContent = '🖥 Landing';
+    pintar('tendChartA', S.formulario); pintar('tendChartB', S.landing);
+  } else {
+    $('tendPanelB').classList.add('oculto'); destruirChartTend('tendChartB');
+    $('tendTitA').textContent = '';
+    pintar('tendChartA', S.total);
+  }
+  kpiCplPromedio([]); if ($('tendKpi')) $('tendKpi').innerHTML = '';
+}
+
+// ===== Cuadrante (usa el endpoint tendencias por anuncio) =====
 async function cargarTendencias() {
   $('tendMsg').textContent = 'Cargando…';
   const qs = [];
   if ($('tendDesde').value) qs.push('desde=' + $('tendDesde').value);
   if ($('tendHasta').value) qs.push('hasta=' + $('tendHasta').value);
-  if ($('tendCampana').value) qs.push('campana=' + encodeURIComponent($('tendCampana').value));
-  if ($('tendConjunto').value) qs.push('conjunto=' + encodeURIComponent($('tendConjunto').value));
   try {
     TEND_DATA = await api('/api/marketing/tendencias' + (qs.length ? '?' + qs.join('&') : ''));
-    poblarCamposTend();
     $('tendMsg').textContent = '';
-    if (TEND_VISTA === 'serie') { cargarSerieLeads(); }
-    else if (TEND_VISTA === 'embudo') { cargarEmbudoCpl(); }
-    else renderTendencias();
-  } catch (e) {
-    $('tendMsg').textContent = 'No se pudo cargar: ' + e.message;
-  }
+    renderTendencias();
+  } catch (e) { $('tendMsg').textContent = 'No se pudo cargar: ' + e.message; }
 }
 
 function tendLeyenda(items) {
@@ -8247,7 +8277,7 @@ function tendLeyenda(items) {
 }
 
 function renderTendencias() {
-  if (TEND_VISTA === 'serie' || TEND_VISTA === 'embudo') return; // esas vistas tienen su propio render
+  if (TEND_VISTA !== 'cuadrante') return; // Leads y Performance tienen su propio render
   if (!TEND_DATA) return;
   const dias = TEND_DATA.dias || [];
   const ctx = $('tendChart');
@@ -8324,6 +8354,8 @@ function renderCuadrante(ctx) {
   const esCPL = metricaX === 'cpl';
   const valX = a => esCPL ? (a.leadsCRM ? Math.round((a.costo / a.leadsCRM) * 100) / 100 : null) : (a.costo || 0);
   let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a.leadsCRM || 0) > 0 || (a[metricaY] || 0) > 0);
+  // Respeta el mundo activo (B2C/B2B) por el nombre de la campaña.
+  ans = ans.filter(a => TEND_CANAL === 'b2b' ? /b2b/i.test(a.campana || '') : /b2c/i.test(a.campana || ''));
   let excluidos = 0;
   if (esCPL) { const total = ans.length; ans = ans.filter(a => a.leadsCRM > 0); excluidos = total - ans.length; }
   if (!ans.length) { $('tendMsg').textContent = 'No hay anuncios con datos para esta métrica.'; return; }
@@ -8777,7 +8809,7 @@ async function procesarArchivoHistorico(input) {
       body: JSON.stringify({ filas, filtrarRuido: true, reemplazar })
     });
     alert('✅ Importación completa:\n\n' + r.insertados + ' leads cargados\n' + r.ruidoDescartado + ' descartados (test/duplicados/internos)\n' + r.duplicados + ' duplicados omitidos\n' + (r.sinFecha ? r.sinFecha + ' sin fecha válida\n' : '') + '\nTotal en base: ' + r.totalEnBase);
-    if ($('tendHistorico')) $('tendHistorico').checked = true;
-    cargarTendencias();
+    if ($('cplHistorico')) $('cplHistorico').checked = true;
+    cargarCplMeta();
   } catch (e) { alert('Error al procesar el archivo: ' + e.message); }
 }

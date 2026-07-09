@@ -404,6 +404,8 @@
         <button class="btn sec" onclick="cargarCplMeta(true)" title="Ignorar caché y volver a pedir a Meta">⟳ Actualizar de Meta</button>
         <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Suma los leads históricos de campañas anteriores"><input type="checkbox" id="cplHistorico" onchange="cargarCplMeta()" style="width:auto"> 📦 Históricos</label>
         <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Mostrar campañas de WhatsApp/interacción (por defecto ocultas: tienen gasto pero no generan leads de formulario)"><input type="checkbox" id="cplVerWA" onchange="renderCplPanel()" style="width:auto"> 💬 Ver WhatsApp</label>
+        <button class="btn sec soloAdminMkt oculto" onclick="abrirImportHistorico()" title="Cargar leads de campañas anteriores">⬆ Cargar históricos</button>
+        <input type="file" id="histFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="procesarArchivoHistorico(this)">
         <span id="cplStatus" class="sub" style="margin-left:auto"></span>
       </div>
       <div id="cplCards"></div>
@@ -958,52 +960,57 @@
 
 <!-- ===== MODAL: NUEVO LEAD ===== -->
 <div class="overlay" id="ovTend">
-  <div class="modal" style="max-width:780px">
+  <div class="modal" style="max-width:1240px;width:94vw">
     <div class="mg-head">
       <div style="flex:1"><h3>📈 Tendencias de marketing</h3></div>
       <button class="mg-x" title="Cerrar" onclick="cerrar('ovTend')">✕</button>
     </div>
-    <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
+    <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px;gap:10px">
       <div class="atr-niveles">
-        <button class="atr-niv act" data-tv="serie" onclick="setVistaTend('serie')">Leads/día</button>
-        <button class="atr-niv" data-tv="embudo" onclick="setVistaTend('embudo')">Embudo</button>
+        <button class="atr-niv act" data-tv="leads" onclick="setVistaTend('leads')">Leads</button>
+        <button class="atr-niv" data-tv="perf" onclick="setVistaTend('perf')">Performance</button>
         <button class="atr-niv" data-tv="cuadrante" onclick="setVistaTend('cuadrante')">Cuadrante</button>
-        <span class="atr-niveles" id="tendCanalBtns" style="margin-left:10px">
-          <button class="atr-niv act" data-tcanal="todos" onclick="setCanalTend('todos')">Todos</button>
-          <button class="atr-niv" data-tcanal="b2c" onclick="setCanalTend('b2c')">B2C</button>
-          <button class="atr-niv" data-tcanal="b2b" onclick="setCanalTend('b2b')">B2B</button>
-        </span>
       </div>
-      <select id="tendMetricaX" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
-        <option value="costo">X: Costo total</option>
+      <span class="atr-niveles" id="tendCanalBtns">
+        <button class="atr-niv act" data-tcanal="b2c" onclick="setCanalTend('b2c')">👥 B2C</button>
+        <button class="atr-niv" data-tcanal="b2b" onclick="setCanalTend('b2b')">🏢 B2B</button>
+      </span>
+      <span class="atr-niveles" id="tendAgrupBtns">
+        <button class="atr-niv act" data-tagrup="mes" onclick="setAgrupTend('mes')">Mes</button>
+        <button class="atr-niv" data-tagrup="semana" onclick="setAgrupTend('semana')">Semana</button>
+        <button class="atr-niv" data-tagrup="dia" onclick="setAgrupTend('dia')">Día</button>
+      </span>
+      <button class="btn sec" id="tendSplitBtn" onclick="toggleSplitTend()" title="Separa el análisis en 2 gráficos: campañas de formulario vs landing">⊞ Formulario vs Landing</button>
+      <span class="sub" style="margin-left:auto">Del</span><input id="tendDesde" class="inp" type="date" style="width:auto" onchange="cargarVistaTend()">
+      <span class="sub">al</span><input id="tendHasta" class="inp" type="date" style="width:auto" onchange="cargarVistaTend()">
+      <button class="btn sec" onclick="limpiarFechasTend()">Todo</button>
+    </div>
+    <div id="tendCuadCtrl" class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:6px;display:none">
+      <select id="tendMetricaX" class="inp" style="width:auto" onchange="renderTendencias()">
         <option value="cpl">X: Costo por lead</option>
+        <option value="costo">X: Costo total</option>
       </select>
-      <select id="tendMetricaY" class="inp" style="width:auto;display:none" onchange="renderTendencias()">
+      <select id="tendMetricaY" class="inp" style="width:auto" onchange="renderTendencias()">
         <option value="agendado">Y: Agendados</option>
-        <option value="leadsCRM">Y: Leads CRM</option>
+        <option value="reunion">Y: Reuniones</option>
         <option value="cierre">Y: Cierres</option>
       </select>
+      <span id="tendEjes" style="display:flex;gap:6px;align-items:center">
+        <span class="sub">Ejes (vacío = auto):</span>
+        <input id="tendMaxX" class="inp" type="number" min="0" placeholder="Máx X" style="width:90px" onchange="renderTendencias()">
+        <input id="tendMaxY" class="inp" type="number" min="0" placeholder="Máx Y" style="width:90px" onchange="renderTendencias()">
+        <span class="sub">Cortes:</span>
+        <input id="tendCorteX" class="inp" type="number" min="0" placeholder="Corte X" style="width:90px" onchange="renderTendencias()">
+        <input id="tendCorteY" class="inp" type="number" min="0" placeholder="Corte Y" style="width:90px" onchange="renderTendencias()">
+      </span>
     </div>
-    <div class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:8px">
-      <span class="sub">Del</span><input id="tendDesde" class="inp" type="date" style="width:auto" onchange="cargarTendencias()">
-      <span class="sub">al</span><input id="tendHasta" class="inp" type="date" style="width:auto" onchange="cargarTendencias()">
-      <button class="btn sec" onclick="limpiarFechasTend()">Todo</button>
-      <select id="tendCampana" class="inp" style="min-width:150px" onchange="tendCampanaCambio()"><option value="">Todas las campañas</option></select>
-      <select id="tendConjunto" class="inp" style="min-width:150px" onchange="cargarTendencias()"><option value="">Todos los conjuntos</option></select>
-      <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Suma los leads históricos de campañas anteriores al embudo"><input type="checkbox" id="tendHistorico" onchange="cargarTendencias()" style="width:auto"> 📦 Incluir históricos</label>
-      <button class="btn sec soloAdminMkt oculto" onclick="abrirImportHistorico()" title="Cargar leads de campañas anteriores">⬆ Cargar históricos</button>
-      <input type="file" id="histFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="procesarArchivoHistorico(this)">
+    <div id="tendKpi"></div>
+    <div id="tendGrid" class="tend-grid">
+      <div class="tend-panel"><div class="tend-panel-tit" id="tendTitA"></div><div class="tend-canvas-wrap"><canvas id="tendChartA"></canvas></div></div>
+      <div class="tend-panel oculto" id="tendPanelB"><div class="tend-panel-tit" id="tendTitB"></div><div class="tend-canvas-wrap"><canvas id="tendChartB"></canvas></div></div>
     </div>
-    <div id="tendEjes" class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:6px;display:none">
-      <span class="sub">Ejes (vacío = automático):</span>
-      <input id="tendMaxX" class="inp" type="number" min="0" placeholder="Máx X" style="width:90px" onchange="renderTendencias()">
-      <input id="tendMaxY" class="inp" type="number" min="0" placeholder="Máx Y" style="width:90px" onchange="renderTendencias()">
-      <span class="sub">Cortes:</span>
-      <input id="tendCorteX" class="inp" type="number" min="0" placeholder="Corte X" style="width:90px" onchange="renderTendencias()">
-      <input id="tendCorteY" class="inp" type="number" min="0" placeholder="Corte Y" style="width:90px" onchange="renderTendencias()">
-    </div>
-    <div id="tendLegend" style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:6px;font-size:12px;color:var(--muted)"></div>
-    <div id="tendEmbudoCont" style="display:none"></div><div id="tendChartWrap" style="position:relative;height:340px"><canvas id="tendChart"></canvas>
+    <div id="tendLegend" style="display:flex;flex-wrap:wrap;gap:14px;margin:6px 0;font-size:12px;color:var(--muted)"></div>
+    <div id="tendChartWrap" style="position:relative;height:420px;display:none"><canvas id="tendChart"></canvas>
       <div id="tendCard" style="display:none;position:absolute;z-index:5;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.14);padding:10px 12px;max-width:240px;font-size:12px"></div>
     </div>
     <div id="tendMsg" class="sub" style="margin-top:8px"></div>

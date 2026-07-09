@@ -6095,6 +6095,111 @@ app.get('/api/marketing/inversion-meta', async (req, res) => {
 });
 
 // Serie diaria de leads por canal (para Tendencias): ingresos BRUTOS por webhook, horario Perú.
+// ===== TENDENCIAS v2: series por período (mes/semana/día) con leads, embudo, gasto y CPL =====
+// GET /api/marketing/tend-series?desde&hasta&agrupar=mes|semana|dia&canal=b2c|b2b&historico=1&split=1
+// Devuelve series.total y, si split=1, series.formulario y series.landing (2 gráficos separados).
+app.get('/api/marketing/tend-series', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  try {
+    const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : new Date(Date.now() - 5 * 3600000 - 180 * 86400000).toISOString().slice(0, 10);
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : hoyP;
+    const agrupar = ['mes', 'semana', 'dia'].includes(req.query.agrupar) ? req.query.agrupar : 'mes';
+    const canal = req.query.canal === 'b2b' ? 'b2b' : 'b2c';
+    const split = req.query.split === '1';
+    const incHist = req.query.historico === '1';
+
+    const EXC = "('descartado','error','error_validacion','no_normaliza','sin_datos','sin_nombre','incompleto')";
+    const iniIso = new Date(new Date(desde + 'T00:00:00.000Z').getTime() + 5 * 3600000).toISOString();
+    const finIso = new Date(new Date(hasta + 'T23:59:59.999Z').getTime() + 5 * 3600000).toISOString();
+    const diaPeru = iso => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+    const periodoDe = f => {
+      if (agrupar === 'mes') return f.slice(0, 7);
+      if (agrupar === 'semana') { const d = new Date(f + 'T12:00:00Z'); const dow = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - dow); return d.toISOString().slice(0, 10); }
+      return f;
+    };
+    const esWA = n => { const x = String(n || '').toLowerCase(); return x.includes('interaccion') || x.includes('mensajes-whatsapp') || x.includes('wtsp'); };
+    const matchTipo = (camp, tipo) => { if (!tipo) return !esWA(camp); const c = String(camp || '').toLowerCase(); return c.includes(tipo); };
+    const esCanal = camp => canal === 'b2b' ? /b2b/i.test(camp || '') : /b2c/i.test(camp || '');
+
+    // Gasto diario por campaña (Meta) — una sola llamada, se reparte por tipo.
+    let gastoFilas = [];
+    try { if (metaInsights.configurado()) { const gd = await metaInsights.insightsDaily(desde, hasta, false); gastoFilas = gd.filas || []; } } catch (e) {}
+
+    // Serie base por tipo ('' = todas menos whatsapp)
+    function serieDe(tipo) {
+      const per = {};
+      const P = f => { const k = periodoDe(f); return per[k] = per[k] || { p: k, leads: 0, organicos: 0, gasto: 0, agendados: 0, reuniones: 0, cierres: 0 }; };
+      // 1) Leads del período (ingresos vivos)
+      if (canal === 'b2c') {
+        db.prepare("SELECT fechaRecepcion f, COALESCE(campana,'') c FROM marketing_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<=?").all(iniIso, finIso)
+          .forEach(r => { const dp = diaPeru(r.f); if (!r.c) { if (!tipo) P(dp).organicos++; return; } if (!esCanal(r.c) || !matchTipo(r.c, tipo)) return; P(dp).leads++; });
+      } else {
+        db.prepare("SELECT i.fechaRecepcion f, COALESCE(NULLIF(i.utmCampaign,''),(SELECT s.campana FROM b2b_solicitudes s WHERE s.codigo=i.codigoSolicitud),'') c FROM b2b_ingresos i WHERE i.estado NOT IN " + EXC + " AND i.fechaRecepcion>=? AND i.fechaRecepcion<=?").all(iniIso, finIso)
+          .forEach(r => { const dp = diaPeru(r.f); if (!r.c) { if (!tipo) P(dp).organicos++; return; } if (!matchTipo(r.c, tipo)) return; P(dp).leads++; });
+      }
+      // 2) Embudo vivo (etapas alcanzadas por los leads del período, contadas en su período de llegada)
+      if (canal === 'b2c') {
+        const gPorCod = {};
+        db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+        db.prepare("SELECT * FROM leads WHERE origenCreacion IN ('make','relead') AND COALESCE(esDuplicadoActivo,0)=0 AND fechaCarga>=? AND fechaCarga<=?").all(iniIso, finIso).forEach(l => {
+          if (!matchTipo(l.campana, tipo) || (tipo && !l.campana)) return;
+          if (l.campana && !esCanal(l.campana)) return;
+          const dp = diaPeru(l.fechaCarga); const o = P(dp);
+          const cons = leadConsolidado(l, gPorCod[l.codigo] || []);
+          const ord = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+          if (ord >= 3) o.agendados++;
+          if (ord >= 4) o.reuniones++;
+          if (cons.etapa === 'Cerrado ganado') o.cierres++;
+        });
+      } else {
+        const SECB = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+        db.prepare('SELECT * FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<=?').all(iniIso, finIso).forEach(sol => {
+          if (tipo && !matchTipo(sol.campana, tipo)) return;
+          const col = etapaKanbanB2B(sol); const ix = SECB.indexOf(col);
+          const dp = diaPeru(sol.fechaIngreso); const o = P(dp);
+          if (ix >= 3) o.reuniones++;
+          if (ix >= 5) o.cierres++;
+        });
+      }
+      // 3) Históricos (llegaron en su momento y quedaron en su etapa)
+      if (incHist) {
+        db.prepare("SELECT fechaCreacion f, COALESCE(campana,'') c, etapa FROM leads_historicos WHERE fechaCreacion>=? AND fechaCreacion<=? AND canal=?").all(desde, hasta, canal.toUpperCase()).forEach(h => {
+          if (!h.c) { if (!tipo) P(h.f).organicos++; return; }
+          if (!matchTipo(h.c, tipo)) return;
+          const o = P(h.f); o.leads++;
+          if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.agendados++;
+          if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.reuniones++;
+          if (h.etapa === 'Cerrado') o.cierres++;
+        });
+      }
+      // 4) Gasto por período (campañas del canal + tipo; excluye whatsapp)
+      gastoFilas.forEach(g => {
+        if (!esCanal(g.campana) || !matchTipo(g.campana, tipo)) return;
+        if (g.fecha < desde || g.fecha > hasta) return;
+        P(g.fecha).gasto += g.spend || 0;
+      });
+      // 5) Cerrar: ordenar, calcular CPL y costos por etapa
+      const arr = Object.values(per).sort((a, b) => a.p.localeCompare(b.p));
+      const r2 = n => Math.round(n * 100) / 100;
+      let gT = 0, lT = 0;
+      arr.forEach(o => {
+        o.gasto = r2(o.gasto); gT += o.gasto; lT += o.leads;
+        o.cpl = o.leads ? r2(o.gasto / o.leads) : null;
+        o.costoAgendado = o.agendados ? r2(o.gasto / o.agendados) : null;
+        o.costoReunion = o.reuniones ? r2(o.gasto / o.reuniones) : null;
+        o.costoCierre = o.cierres ? r2(o.gasto / o.cierres) : null;
+      });
+      return { periodos: arr, gastoTotal: r2(gT), leadsTotal: lT, cplPromedio: lT ? r2(gT / lT) : null };
+    }
+
+    const out = { desde, hasta, agrupar, canal, series: { total: serieDe('') } };
+    if (split) { out.series.formulario = serieDe('formulario'); out.series.landing = serieDe('landing'); }
+    res.json(out);
+  } catch (e) { console.error('[tend-series]', e.stack || e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/marketing/serie', (req, res) => {
   const u = usuarioDeSesion(req);
   if (!u || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(u.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
@@ -7294,7 +7399,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.350 (Costo x Lead: toggle -Ver WhatsApp- (por defecto OCULTAS) para esconder las campanas de interaccion/mensajes-whatsapp que tienen gasto pero no generan leads de formulario y ensuciaban la vista. Al ocultarlas su gasto tambien sale del total, para que Gasto vivo y CPL reflejen solo formulario+landing. Las de TikTok se quedan junto a las de formulario. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.351 (TENDENCIAS v2 rediseñado: modal ancho 1240px con 2 mundos B2C/B2B como filtro general. Vista LEADS: grafico mixto barras (leads + organicos gris sobrio) + linea CPL, agrupable por Mes/Semana/Dia, con KPI horizontal de CPL promedio del periodo; boton Formulario vs Landing que abre el analisis en 2 graficos separados. Vista PERFORMANCE: barras mensuales de Leads/Agendados/Reuniones/Cierres con el costo por etapa impreso sobre cada barra (gasto del mes / conteo de la etapa). Vista CUADRANTE: X=CPL (default) o costo, Y=Agendados/Reuniones/Cierres, filtrado por el mundo activo. Embudo eliminado. Filtros de campana/conjunto eliminados. Historicos: usa el toggle de la hoja principal de Costo x Lead; el boton Cargar historicos se movio a esa hoja. Nuevo endpoint /api/marketing/tend-series. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

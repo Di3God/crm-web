@@ -2564,3 +2564,20 @@ body.night .btn.sec { background:#22303F !important; color:#D8E0EC !important; b
 /* v1.346: banner de avance en modal de gestión */
 .gm-avance-banner { background:#ECFDF5; border:1px solid #A7F3D0; color:#065F46; border-radius:9px; padding:10px 14px; font-size:12.5px; font-weight:600; margin-bottom:14px; }
 body.night .gm-avance-banner { background:#16241C; border-color:#2B5B3E; color:#6EE7B7; }
+
+/* ===== Tendencias v2 (v1.351) ===== */
+.tend-grid { display:grid; grid-template-columns:1fr; gap:14px; }
+.tend-grid:has(#tendPanelB:not(.oculto)) { grid-template-columns:1fr 1fr; }
+.tend-panel { background:#fff; border:1px solid #E7ECF3; border-radius:12px; padding:12px 14px; }
+.tend-panel-tit { font-size:13px; font-weight:800; color:#0F2E5A; margin-bottom:6px; }
+.tend-panel-tit:empty { display:none; }
+.tend-canvas-wrap { position:relative; height:380px; }
+.tend-grid:has(#tendPanelB:not(.oculto)) .tend-canvas-wrap { height:330px; }
+.tend-kpi { background:#F8FAFD; border:1px solid #E7ECF3; border-radius:10px; padding:10px 14px; margin-bottom:12px; display:flex; flex-direction:column; gap:7px; }
+.tend-kpi-row { display:flex; align-items:center; gap:12px; }
+.tend-kpi-lbl { flex:0 0 220px; font-size:12px; font-weight:700; color:#334155; }
+.tend-kpi-track { flex:1; height:14px; background:#EEF2F7; border-radius:7px; overflow:hidden; }
+.tend-kpi-fill { height:100%; border-radius:7px; background:linear-gradient(90deg,#EF9F27,#F6BE5B); }
+.tend-kpi-val { flex:0 0 90px; text-align:right; font-size:14px; font-weight:800; color:#B45309; }
+#tendSplitBtn.act { background:#1E40AF; color:#fff; border-color:#1E40AF; }
+body.night .tend-panel, body.night .tend-kpi { background:#1A2534 !important; border-color:#2A3849 !important; }
