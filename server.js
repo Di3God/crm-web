@@ -7487,7 +7487,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.355 (PIPELINE B2B HISTORICO en Tendencias: el importador ahora mapea el ultimo estado B2B a las 6 etapas del kanban (Solicitud/Credito/Garantia/Reunion/Finanzas/Business case) y detecta el canal por el nombre de campana si no viene columna. Al elegir B2B en el modal: LEADS igual que B2C (leads+CPL+promedio); PERFORMANCE muestra las 6 etapas acumuladas con costo por etapa; CUADRANTE con Y = Garantia/Reunion comercial/Finanzas/Business case (selector dinamico por canal), contando solicitudes vivas por anuncio (etapa kanban, anuncio desde b2b_ingresos) + historicos B2B, con gasto del API de Meta. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.356 (FIX importador de historicos: ahora BUSCA la hoja correcta entre todas las pestanas del Excel (la que tenga encabezados numero+campana) en vez de asumir la primera -el Excel B2B tenia hojas auxiliares primero (Hoja2/Hoja1/Hoja3) y los datos en la pestana B2B, por eso decia -no se encontraron las columnas minimas-. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

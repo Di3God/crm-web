@@ -8872,11 +8872,19 @@ async function procesarArchivoHistorico(input) {
   try {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-    if (!rows.length) { alert('El archivo está vacío.'); return; }
-    // Detectar encabezados (fila 0). Mapear por nombre flexible.
-    const head = rows[0].map(h => String(h).trim().toLowerCase());
+    // Buscar la HOJA correcta: la que tenga los encabezados esperados (numero + campaña).
+    // Así funciona aunque el Excel tenga hojas auxiliares primero.
+    let ws = null, rows = null, head = null;
+    for (const nombre of wb.SheetNames) {
+      const w = wb.Sheets[nombre];
+      const r = XLSX.utils.sheet_to_json(w, { header: 1, defval: '', raw: false });
+      if (!r.length) continue;
+      const h = r[0].map(x => String(x).trim().toLowerCase());
+      const tieneTel = h.some(x => x.includes('numero') || x.includes('teléfono') || x.includes('telefono'));
+      const tieneCamp = h.some(x => x.includes('campaña') || x.includes('campana'));
+      if (tieneTel && tieneCamp) { ws = w; rows = r; head = h; break; }
+    }
+    if (!rows) { alert('No encontré una hoja con las columnas mínimas (número y campaña) en ninguna pestaña del archivo. Revisa los encabezados.'); return; }
     const col = (...names) => { for (const n of names) { const i = head.findIndex(h => h.includes(n)); if (i >= 0) return i; } return -1; };
     const ix = {
       nombre: col('nombre'), telefono: col('numero', 'teléfono', 'telefono', 'celular'), email: col('correo', 'email'),
