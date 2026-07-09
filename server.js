@@ -483,6 +483,10 @@ try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN conjunto TEXT"); } catch (e) 
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN creditoLinkDrive TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN creditoComentario TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN creditoComentarioMeta TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN garantiaComentario TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN garantiaComentarioMeta TEXT"); } catch (e) { }
 // v1.223: bitácora de gestiones B2B (trazabilidad con próxima acción obligatoria).
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS b2b_gestiones (
@@ -4521,6 +4525,7 @@ const CRITERIOS_B2B = {
   credito: [
     { clave: 'sbs', etiqueta: 'Clasificación SBS', tipo: 'select', opciones: [
       { v: 'normal', label: 'Normal', color: 'Verde' },
+      { v: 'sd', label: 'S/D (Sin deuda)', color: 'Verde' },
       { v: 'cpp', label: 'CPP', color: 'Amarillo' },
       { v: 'deficiente', label: 'Deficiente', color: 'Rojo' },
       { v: 'dudoso', label: 'Dudoso', color: 'Rojo' },
@@ -5234,6 +5239,21 @@ app.put('/api/b2b/solicitudes/:codigo/filtro/:tipo', soloB2B, (req, res) => {
   }
   auditar(req, 'b2b_guardar_filtro', s.codigo, tipo + (semaforo ? ' · ' + semaforo : '') + (avanzo ? ' → avanzó' : ''));
   res.json({ ok: true, semaforo, puntaje, motivos: motivos ? JSON.parse(motivos) : null, ratios, avanzo });
+});
+
+// Guarda un comentario simple de crédito o garantía, con autor y fecha.
+app.post('/api/b2b/solicitudes/:codigo/comentario', soloB2B, (req, res) => {
+  const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
+  const b = req.body || {};
+  const tipo = b.tipo === 'garantia' ? 'garantia' : 'credito';
+  const texto = String(b.texto || '').trim().slice(0, 4000);
+  const meta = JSON.stringify({ por: req.user.nombre, en: new Date().toISOString() });
+  const colT = tipo === 'garantia' ? 'garantiaComentario' : 'creditoComentario';
+  const colM = tipo === 'garantia' ? 'garantiaComentarioMeta' : 'creditoComentarioMeta';
+  db.prepare('UPDATE b2b_solicitudes SET ' + colT + '=?, ' + colM + '=? WHERE codigo=?').run(texto || null, texto ? meta : null, s.codigo);
+  auditar(req, 'b2b_comentario_' + tipo, s.codigo, texto ? texto.slice(0, 60) : '(vacío)');
+  res.json({ ok: true, meta: texto ? JSON.parse(meta) : null });
 });
 
 // Guarda un documento como LINK de Drive (persiste al redeploy; no usa el filesystem efímero).
@@ -7487,7 +7507,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.356 (FIX importador de historicos: ahora BUSCA la hoja correcta entre todas las pestanas del Excel (la que tenga encabezados numero+campana) en vez de asumir la primera -el Excel B2B tenia hojas auxiliares primero (Hoja2/Hoja1/Hoja3) y los datos en la pestana B2B, por eso decia -no se encontraron las columnas minimas-. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.357 (Ajustes ficha B2B: (1) opcion S/D -Sin deuda- en Clasificacion SBS del filtro credito, trata como Normal en Verde; (2) FIX el semaforo por dia en la Contactabilidad se borraba al avanzar: ahora la etapa por dia se reconstruye con los avances de etapa de la auditoria y se rellena hacia adelante, manteniendo los colores de dias pasados aunque el avance haya sido por expediente sin gestion formal; (3) campo Comentarios (texto simple con autor y fecha) debajo del link de Drive en credito y al final de garantia -nuevo endpoint POST comentario-; (4) Trazabilidad rediseñada como -Historial del lead-: solo gestiones formales (resultado/canal/proxima accion/hora) + cambios de etapa, ocultando el detalle tecnico (guardo sujeto/filtro/link/monto). Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

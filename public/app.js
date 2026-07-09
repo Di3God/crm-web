@@ -5409,7 +5409,7 @@ function renderFichaB2B() {
   const _av = $('fbAvisoDirty'); if (_av) _av.remove();
   (FICHA.creditoSujetos || []).forEach(su => { delete su._nuevo; });
   renderContactabilidadB2B(); // grid inmediato con lo que haya en memoria
-  cargarGestionesB2B(s.codigo).then(renderContactabilidadB2B); // y refresco con gestiones frescas
+  Promise.all([cargarGestionesB2B(s.codigo), cargarAvancesEtapaB2B(s.codigo)]).then(renderContactabilidadB2B); // refresco con gestiones y avances de etapa
   aplicarBloqueoPaneles();
 }
 // Deshabilita inputs de los paneles en modo 'lectura' o 'bloqueado' (deja editable solo el monto).
@@ -5462,8 +5462,23 @@ function contactabilidadB2B() {
     if (cel.estado !== 'contacto') cel.estado = esIntento ? (cel.estado === 'contacto' ? 'contacto' : 'intento') : 'contacto';
     dias[ix].etapa = g.etapa || dias[ix].etapa; // última etapa registrada ese día
   });
+  // Reconstruir la etapa POR DÍA con los avances de etapa (auditoría), no solo con gestiones:
+  // así los colores de días pasados se mantienen aunque el avance haya sido por expediente (sin gestión formal).
+  const avances = (FICHA._avancesEtapa || [])
+    .map(a => ({ ix: dia(a.fecha) - d0, etapa: a.etapa }))
+    .filter(a => a.ix >= 0 && a.ix < DIAS_B2B && a.etapa)
+    .sort((x, y) => x.ix - y.ix);
+  // Marca la etapa en el día del avance
+  avances.forEach(a => { dias[a.ix].etapa = a.etapa; });
+  // Rellena hacia adelante: cada día hereda la última etapa conocida (hasta hoy)
+  let ultima = null;
   const ixHoy = hoy - d0;
-  if (ixHoy >= 0 && ixHoy < DIAS_B2B && !dias[ixHoy].etapa) dias[ixHoy].etapa = FICHA.etapaKanban;
+  for (let i = 0; i < DIAS_B2B; i++) {
+    if (dias[i].etapa) ultima = dias[i].etapa;
+    else if (ultima && i <= ixHoy) dias[i].etapa = ultima;
+  }
+  // Asegura que hoy refleje la etapa actual del kanban
+  if (ixHoy >= 0 && ixHoy < DIAS_B2B) dias[ixHoy].etapa = FICHA.etapaKanban || dias[ixHoy].etapa;
   return { dias };
 }
 function renderContactabilidadB2B() {
@@ -5621,6 +5636,20 @@ async function guardarModalGestion() {
   } catch (e) { if (msg) msg.textContent = e.message || 'No se pudo registrar.'; }
 }
 // Carga las gestiones para el TIMELINE (panel "ⓘ").
+// Carga los avances de etapa (de la auditoría) para reconstruir la etapa por día en la contactabilidad.
+async function cargarAvancesEtapaB2B(codigo) {
+  try {
+    const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/trazabilidad');
+    const ACC = ['b2b_avanzar_etapa', 'b2b_kanban_mover', 'b2b_kanban_forzar'];
+    // El detalle es "Origen → Destino (…)". Tomamos el DESTINO como la etapa alcanzada ese día.
+    FICHA._avancesEtapa = (d.eventos || []).filter(e => ACC.includes(e.accion)).map(e => {
+      const m = String(e.detalle || '').split('→');
+      let etapa = m.length > 1 ? m[1].trim() : '';
+      etapa = etapa.replace(/\s*\(.*$/, '').trim(); // quita "(credito Verde)"
+      return { fecha: e.fecha, etapa };
+    }).filter(a => a.etapa);
+  } catch (e) { FICHA._avancesEtapa = []; }
+}
 async function cargarGestionesB2B(codigo) {
   try {
     const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(codigo) + '/gestiones');
@@ -5636,6 +5665,13 @@ const TRAZA_ACCION_TXT = {
   b2b_garantia_agregar_inmueble: '🏠 Agregó inmueble', b2b_archivar_solicitud: '🗄 Archivo',
   b2b_limpiar_gestiones: '🗑 Limpió gestiones', b2b_descartar_duplicado: '🔁 Duplicado'
 };
+// Traduce el detalle de un cambio de etapa a etiquetas legibles del embudo.
+function trDetalleEtapa(det) {
+  const LBL = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión comercial', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business case', 'Amarillo/nurture': 'Nurture', 'No elegible': 'No elegible' };
+  let d = String(det || '');
+  Object.keys(LBL).forEach(k => { d = d.replace(new RegExp(k, 'g'), LBL[k]); });
+  return d.replace(/\s*\([^)]*\)\s*$/, '').trim(); // quita paréntesis técnicos como "(credito Verde)"
+}
 async function toggleTimelineB2B() {
   let h = $('tlHost');
   if (h) { h.remove(); return; }
@@ -5649,10 +5685,12 @@ async function toggleTimelineB2B() {
     linea: (x.canal || '') + (x.resultado ? ' · ' + x.resultado : ''),
     comentario: x.comentario || '', prox: x.proximaAccion || '', fechaProx: x.fechaProxAccion || null
   }));
-  traza.forEach(t => items.push({
+  // Solo cambios de ETAPA (avances). Se ocultan los técnicos (guardó sujeto/filtro/link/monto) para que la trazabilidad sea legible como historial.
+  const ACCIONES_ETAPA = ['b2b_avanzar_etapa', 'b2b_kanban_mover', 'b2b_kanban_forzar', 'b2b_descartar', 'b2b_descartar_duplicado', 'b2b_reactivar', 'b2b_reasignar'];
+  traza.filter(t => ACCIONES_ETAPA.includes(t.accion)).forEach(t => items.push({
     fecha: t.fecha, tipo: 'cambio',
-    titulo: TRAZA_ACCION_TXT[t.accion] || ('💾 ' + String(t.accion || '').replace(/^b2b_/, '').replace(/_/g, ' ')),
-    quien: primerNombre(t.nombre || t.usuario || ''), linea: t.detalle || '', comentario: '', prox: '', fechaProx: null
+    titulo: t.accion === 'b2b_avanzar_etapa' || t.accion === 'b2b_kanban_mover' || t.accion === 'b2b_kanban_forzar' ? '↗ Cambio de etapa' : (TRAZA_ACCION_TXT[t.accion] || '💾 Cambio'),
+    quien: primerNombre(t.nombre || t.usuario || ''), linea: trDetalleEtapa(t.detalle || ''), comentario: '', prox: '', fechaProx: null
   }));
   items.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
   const filas = items.length ? items.map(x => {
@@ -5669,7 +5707,7 @@ async function toggleTimelineB2B() {
   const puedeLimpiar = puedeReasignarB2B();
   const footer = (puedeLimpiar && (FICHA._gestiones || []).length) ? '<div class="tl-foot"><button class="btn sec tl-limpiar" onclick="limpiarHistorialB2B()">🗑 Limpiar historial</button></div>' : '';
   const html = '<div class="tl-back" onclick="if(event.target===this)toggleTimelineB2B()">' +
-    '<div class="tl-card"><div class="tl-head"><b>Trazabilidad</b> <span class="sub" style="font-weight:400">gestiones + cambios guardados</span><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
+    '<div class="tl-card"><div class="tl-head"><b>Historial del lead</b> <span class="sub" style="font-weight:400">gestiones y cambios de etapa</span><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
     '<div class="tl-list">' + filas + '</div>' + footer + '</div></div>';
   const host = document.createElement('div'); host.id = 'tlHost'; host.innerHTML = html;
   document.body.appendChild(host);
@@ -6465,11 +6503,39 @@ function panelCredito(semGuardado, modo) {
     (linkVal ? '<a class="btn-sunat" href="' + linkVal + '" target="_blank" rel="noopener">🔗 Abrir</a>' : '') +
     '</div>' +
     '<div class="sub" style="font-size:11px;margin-top:4px">Pega la carpeta de Drive donde el equipo sube reportes de central, DJ, sustentos, etc.</div>';
+  html += comentarioB2BHtml('credito');
   html += '</div>';
   setTimeout(() => actualizarPillCredito(), 0);
   return fbPanelWrap('credito', '📋', '2 · Filtro crédito', estadoHtml, true, html, false, modo, 'Filtro credito');
 }
 
+// Campo de comentario simple (crédito/garantía) con registro de autor y fecha.
+function comentarioB2BHtml(tipo) {
+  const sol = FICHA.solicitud || {};
+  const texto = (tipo === 'garantia' ? sol.garantiaComentario : sol.creditoComentario) || '';
+  let metaTxt = '';
+  try {
+    const m = JSON.parse((tipo === 'garantia' ? sol.garantiaComentarioMeta : sol.creditoComentarioMeta) || 'null');
+    if (m && m.por) { const f = new Date(m.en); metaTxt = 'Últ. edición: ' + m.por + ' · ' + f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }); }
+  } catch (e) {}
+  return '<div class="fb-sec" style="margin-top:12px">Comentarios</div>' +
+    '<textarea id="fbCom_' + tipo + '" class="mtr-in" rows="3" style="width:100%;resize:vertical" placeholder="Anota observaciones del filtro de ' + tipo + '…">' + (texto ? texto.replace(/</g, '&lt;') : '') + '</textarea>' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-top:4px">' +
+    '<button class="btn-sunat" onclick="guardarComentarioB2B(\'' + tipo + '\')">Guardar comentario</button>' +
+    '<span class="sub" id="fbComMeta_' + tipo + '" style="font-size:10.5px">' + metaTxt + '</span></div>';
+}
+async function guardarComentarioB2B(tipo) {
+  const ta = $('fbCom_' + tipo); if (!ta) return;
+  try {
+    const r = await api('/api/b2b/solicitudes/' + FICHA.solicitud.codigo + '/comentario', { method: 'POST', body: { tipo, texto: ta.value } });
+    if (FICHA.solicitud) {
+      if (tipo === 'garantia') { FICHA.solicitud.garantiaComentario = ta.value; FICHA.solicitud.garantiaComentarioMeta = r.meta ? JSON.stringify(r.meta) : null; }
+      else { FICHA.solicitud.creditoComentario = ta.value; FICHA.solicitud.creditoComentarioMeta = r.meta ? JSON.stringify(r.meta) : null; }
+    }
+    const mEl = $('fbComMeta_' + tipo);
+    if (mEl && r.meta) { const f = new Date(r.meta.en); mEl.textContent = '✓ Guardado · ' + r.meta.por + ' · ' + f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }); mEl.style.color = '#1D9E75'; }
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
 function sujetoCard(su, editable) {
   let valores = {};
   try { valores = typeof su.checklist === 'string' ? JSON.parse(su.checklist || '{}') : (su.checklist || {}); } catch (e) { valores = {}; }
@@ -6612,6 +6678,7 @@ function panelGarantia(desbloqueada, sem, modo) {
   html += '<span id="fbGarConsolidado" class="oculto"></span>';
   html += inms.map(inmuebleCard).join('') || '<div class="sub" style="margin-bottom:8px">Aún no agregas inmuebles.</div>';
   html += '<button class="btn-sunat" onclick="agregarInmueble()">＋ Agregar inmueble</button>';
+  html += comentarioB2BHtml('garantia');
   html += '</div>';
   return fbPanelWrap('garantia', '🏠', '3 · Filtro garantía', estadoHtml, true, html, false, modo, 'Filtro garantia');
 }
