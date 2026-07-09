@@ -8741,9 +8741,9 @@ async function procesarArchivoHistorico(input) {
   const file = input.files && input.files[0]; if (!file) return;
   try {
     const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
     if (!rows.length) { alert('El archivo está vacío.'); return; }
     // Detectar encabezados (fila 0). Mapear por nombre flexible.
     const head = rows[0].map(h => String(h).trim().toLowerCase());

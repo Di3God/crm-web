@@ -6148,10 +6148,27 @@ app.post('/api/marketing/historico/importar', soloAdminOJefa, (req, res) => {
     const norm9 = t => { let d = String(t || '').replace(/\D/g, ''); if (d.length === 11 && d.startsWith('51')) d = d.slice(2); if (d.length > 9) d = d.slice(-9); return d; };
     // Fecha: acepta "31/5/2026" o ISO. Devuelve YYYY-MM-DD.
     const parseFecha = (dia) => {
-      const sIn = String(dia || '').trim();
-      let m = sIn.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+      if (dia == null || dia === '') return null;
+      const sIn = String(dia).trim();
+      // ISO o timestamp ISO (2026-02-25 o 2026-02-25 02:50:30 o 2026-02-25T...)
       if (/^\d{4}-\d{2}-\d{2}/.test(sIn)) return sIn.slice(0, 10);
+      // dd/mm/yyyy o d/m/yyyy
+      let m = sIn.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+      // dd-mm-yyyy
+      m = sIn.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+      if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+      // Número serial de Excel (días desde 1899-12-30)
+      if (/^\d+(\.\d+)?$/.test(sIn)) {
+        const serial = parseFloat(sIn);
+        if (serial > 30000 && serial < 60000) {
+          const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+          if (!isNaN(d)) return d.toISOString().slice(0, 10);
+        }
+      }
+      // Último recurso: que Date lo intente parsear (cubre formatos de toString de JS)
+      const d = new Date(sIn);
+      if (!isNaN(d)) return d.toISOString().slice(0, 10);
       return null;
     };
     const ins = db.prepare(`INSERT INTO leads_historicos (nombre,telefono,email,fechaCreacion,campana,conjunto,anuncio,ultimoEstado,etapa,asesor,monto,canal,cargadoEn)
@@ -7250,7 +7267,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.347 (1. Cortes automaticos de WhatsApp B2B DESACTIVADOS temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos que ingresan. Los 3 cortes siguen disponibles manualmente por /api/b2b/alertas-wa/enviar. 2. El reporte por asesor ahora SOLO incluye asesores operativos (funcionario_b2b y asistente_creditos): se excluyen admins/jefes como Diego y Julio que hicieron gestiones de prueba. Server + alertas-wa-b2b: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.348 (FIX importador de leads historicos: las fechas venian como timestamp/serial de Excel y el parser las rechazaba (2480 sin fecha valida). Ahora (1) el front lee el Excel con cellDates:true + raw:false para que las fechas salgan legibles, y (2) el parser del server acepta ISO, timestamp, dd/mm/yyyy, dd-mm-yyyy, serial de Excel y formatos de Date. Frontend + server: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
