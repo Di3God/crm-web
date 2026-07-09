@@ -1265,7 +1265,12 @@ function procesarSolicitudB2B(norm, opts = {}) {
   const codigo = generarCodigoB2B();
   const ahora = (opts.fechaIngreso || new Date().toISOString()); // reproceso conserva la fecha original de llegada
   const ticket = norm.monto != null ? ticketDeMonto(norm.monto) : null;
-  const op = opts.sinAutoasignar ? null : elegirOperadorB2BRoundRobin();
+  // FOCO DEL MES (v1.359): tickets >= 300k. Los nuevos del tramo 50k–299k (etiqueta 100k) quedan
+  // SIN ASIGNAR y SIN alerta de WhatsApp; se abordarán después. Poner 0 para desactivar la regla.
+  const B2B_MIN_MONTO_AUTOASIGNAR = 300000;
+  const montoEfectivo = norm.monto != null ? Number(norm.monto) : montoRangoFijo(norm.montoRango);
+  const bajoFoco = B2B_MIN_MONTO_AUTOASIGNAR > 0 && montoEfectivo != null && montoEfectivo < B2B_MIN_MONTO_AUTOASIGNAR;
+  const op = (opts.sinAutoasignar || bajoFoco) ? null : elegirOperadorB2BRoundRobin();
   db.prepare(`INSERT INTO b2b_solicitudes
     (codigo, ruc, razonSocial, contacto, telefono, email, fuente, montoSolicitado, montoRango, ticket,
      tieneInmueble, tipoInmueble, areaInmueble, registradoSunarp, departamentoInmueble,
@@ -1276,7 +1281,16 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.registradoSunarp, norm.departamentoInmueble,
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
       'Nuevo', op, op, ahora);
-  enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
+  if (bajoFoco) {
+    // Ticket bajo el foco del mes: SUNAT sí (deja el expediente listo), alerta de WhatsApp NO.
+    enriquecerSunatAsync(codigo);
+    try {
+      db.prepare('INSERT INTO auditoria (fecha, usuario, nombre, accion, objetivo, detalle) VALUES (?,?,?,?,?,?)')
+        .run(new Date().toISOString(), '(auto)', '(auto)', 'b2b_sin_asignar_foco', codigo, 'Monto ' + montoEfectivo + ' < 300k: sin asignar y sin alerta WA (foco del mes)');
+    } catch (e) { }
+  } else {
+    enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
+  }
   try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
@@ -6750,6 +6764,21 @@ app.post('/api/b2b/alertas-wa/enviar', soloB2B, async (req, res) => {
   res.json({ ok, corte });
 });
 
+// Envía un MENSAJE LIBRE al grupo B2B (para motivar, avisos puntuales, etc.).
+// POST /api/b2b/wa/mensaje  { texto }
+app.post('/api/b2b/wa/mensaje', soloB2B, async (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (!process.env.WA_GRUPO_B2B_JID) return res.status(422).json({ error: 'Configura WA_GRUPO_B2B_JID en Railway primero' });
+  const texto = String((req.body && req.body.texto) || '').trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto del mensaje' });
+  if (texto.length > 2000) return res.status(400).json({ error: 'Mensaje demasiado largo (máx 2000 caracteres)' });
+  try {
+    const ok = await enviarAlertaWA(texto, process.env.WA_GRUPO_B2B_JID);
+    auditar(req, 'b2b_wa_mensaje_libre', null, texto.slice(0, 80));
+    res.json({ ok: !!ok });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -7508,7 +7537,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.358 (FIXES ficha B2B: (1) S/D -Sin deuda- agregado donde correspondia: el gate -Clasificacion actual- del filtro credito (resultado ok, mismo tratamiento que Normal) -antes se agrego solo en la capa 2 y no se veia-; (2) celdas de Contactabilidad ya no colapsan a rayitas invisibles: min-width 8px, altura fija, borde sutil y gris mas visible; (3) modal Registrar gestion: el texto de selects se cortaba por height fija 30px + padding 9px -> altura auto min 40px; modal ampliado a 1100px con columnas y comentario usando todo el ancho. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.360 (Nuevo endpoint POST /api/b2b/wa/mensaje {texto} para enviar un mensaje LIBRE al grupo B2B (motivar al equipo, avisos puntuales). Solo admin/jefe B2B, max 2000 caracteres, deja rastro en auditoria (b2b_wa_mensaje_libre). Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
