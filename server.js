@@ -4682,8 +4682,9 @@ const FILTROS_B2B = {
     titulo: 'Filtro Crédito (por sujeto)',
     gates: [
       // ---- KILLERS (matan el sujeto) ----
-      { clave: 'clasActual', etiqueta: 'Clasificación actual', tip: 'Clasificación SBS vigente del sujeto. Dudoso o Pérdida = KO seco (mata al sujeto y contagia el filtro).', tipo: 'select', opciones: [
+      { clave: 'clasActual', etiqueta: 'Clasificación actual', tip: 'Clasificación SBS vigente del sujeto. Dudoso o Pérdida = KO seco (mata al sujeto y contagia el filtro). S/D = sin deuda (mismo tratamiento que Normal).', tipo: 'select', opciones: [
         { v: 'normal', label: 'Normal', resultado: 'ok' },
+        { v: 'sd', label: 'S/D (Sin deuda)', resultado: 'ok' },
         { v: 'cpp', label: 'CPP', resultado: 'ok' },
         { v: 'deficiente', label: 'Deficiente', resultado: 'ok' },
         { v: 'dudoso', label: 'Dudoso', resultado: 'ko', motivo: 'Clasificación actual Dudoso' },
@@ -7507,7 +7508,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.357 (Ajustes ficha B2B: (1) opcion S/D -Sin deuda- en Clasificacion SBS del filtro credito, trata como Normal en Verde; (2) FIX el semaforo por dia en la Contactabilidad se borraba al avanzar: ahora la etapa por dia se reconstruye con los avances de etapa de la auditoria y se rellena hacia adelante, manteniendo los colores de dias pasados aunque el avance haya sido por expediente sin gestion formal; (3) campo Comentarios (texto simple con autor y fecha) debajo del link de Drive en credito y al final de garantia -nuevo endpoint POST comentario-; (4) Trazabilidad rediseñada como -Historial del lead-: solo gestiones formales (resultado/canal/proxima accion/hora) + cambios de etapa, ocultando el detalle tecnico (guardo sujeto/filtro/link/monto). Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.358 (FIXES ficha B2B: (1) S/D -Sin deuda- agregado donde correspondia: el gate -Clasificacion actual- del filtro credito (resultado ok, mismo tratamiento que Normal) -antes se agrego solo en la capa 2 y no se veia-; (2) celdas de Contactabilidad ya no colapsan a rayitas invisibles: min-width 8px, altura fija, borde sutil y gris mas visible; (3) modal Registrar gestion: el texto de selects se cortaba por height fija 30px + padding 9px -> altura auto min 40px; modal ampliado a 1100px con columnas y comentario usando todo el ancho. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

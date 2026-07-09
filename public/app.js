@@ -5485,7 +5485,7 @@ function renderContactabilidadB2B() {
   const host = $('fbContactabilidad'); if (!host) return;
   const cb = contactabilidadB2B();
   if (!cb) { host.innerHTML = ''; return; }
-  const COL = { contacto: '#1D9E75', intento: '#EF9F27', vacio: '#E9EEF4', futuro: '#FFFFFF' };
+  const COL = { contacto: '#1D9E75', intento: '#EF9F27', vacio: '#DDE5EF', futuro: '#FFFFFF' };
   const cols = cb.dias.map(d => {
     const celdas = d.franjas.map((f, i) => {
       const tip = d.dm + ' · ' + (i === 0 ? 'Mañana (<12h)' : i === 1 ? 'Tarde (12-16h)' : 'Noche (>16h)') + ' · ' +

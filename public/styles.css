@@ -2589,3 +2589,19 @@ body.night .tend-panel, body.night .tend-kpi { background:#1A2534 !important; bo
 #tendEjes .inp { height:36px; box-sizing:border-box; }
 #ovTend .atr-ctrl { align-items:center; }
 #ovTend .atr-niveles { display:flex; align-items:center; }
+
+/* ===== v1.358: fixes ficha B2B ===== */
+/* 1) Modal Registrar gestión: el texto de selects/inputs se cortaba (height fija 30px + padding 9px) */
+.gm-row .mtr-in { height:auto !important; min-height:40px; line-height:1.3; max-width:none !important; }
+.gm-row select.mtr-in { appearance:auto; }
+.gm-row textarea.mtr-in { min-height:110px; }
+/* Modal de gestión más ancho: las 2 columnas usan bien el espacio y el comentario llena su bloque */
+.gm-card-ancha { max-width:1100px !important; width:min(1100px, 96vw) !important; }
+.gm-2col { gap:16px; }
+.gm-col { padding:16px 18px; }
+/* 2) Contactabilidad B2B: las celdas colapsaban a rayitas (min-width:0). Ahora siempre visibles. */
+#fbContactabilidad .g35-celda { min-width:8px !important; height:13px !important; border-radius:3px !important; }
+#fbContactabilidad .g35-vacio { border:1px solid #CBD6E4; box-sizing:border-box; }
+#fbContactabilidad .g35-futuro { border:1px dashed #C9D4E0; box-sizing:border-box; }
+#fbContactabilidad .g35-etapa { min-width:8px !important; height:9px !important; border-radius:3px !important; width:100%; }
+body.night #fbContactabilidad .g35-vacio { border-color:#33465C; }
