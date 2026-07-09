@@ -8167,8 +8167,49 @@ const fmtU2 = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', 
 const lblPeriodo = p => TEND_AGRUP === 'mes' || TEND_VISTA === 'perf' ? p : (p.length === 7 ? p : p.slice(5));
 
 // ===== Vista LEADS: barras (leads + orgánicos) + línea CPL, con KPI de CPL promedio =====
+// Plugin: etiquetas de datos (total sobre la pila, CPL sobre cada punto) + línea horizontal del CPL promedio.
+const pluginLeadsLabels = {
+  id: 'leadsLabels',
+  afterDatasetsDraw(chart, args, opts) {
+    const { ctx } = chart; const dsets = chart.data.datasets;
+    // Total (leads + orgánicos) sobre la pila
+    const metaTop = chart.getDatasetMeta(1), metaBase = chart.getDatasetMeta(0);
+    const leads = (dsets[0] && dsets[0].data) || [], orgs = (dsets[1] && dsets[1].data) || [];
+    (metaTop && metaTop.data.length ? metaTop.data : (metaBase ? metaBase.data : [])).forEach((bar, i) => {
+      const total = (leads[i] || 0) + (orgs[i] || 0); if (!total) return;
+      const yBase = metaBase && metaBase.data[i] ? metaBase.data[i].y : bar.y;
+      const y = Math.min(bar.y, yBase);
+      ctx.save(); ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
+      ctx.fillText(total, bar.x, y - 4); ctx.restore();
+    });
+    // Valor CPL sobre cada punto de la línea
+    const li = dsets.findIndex(d => d.type === 'line');
+    if (li >= 0) {
+      const meta = chart.getDatasetMeta(li);
+      meta.data.forEach((pt, i) => {
+        const v = dsets[li].data[i]; if (v == null) return;
+        ctx.save(); ctx.font = 'bold 9px system-ui'; ctx.fillStyle = '#B45309'; ctx.textAlign = 'center';
+        ctx.fillText('$' + v, pt.x, pt.y - 8); ctx.restore();
+      });
+    }
+    // Línea horizontal del CPL PROMEDIO del periodo, con el valor en el extremo
+    const prom = opts && opts.prom;
+    if (prom != null && chart.scales.y2) {
+      const y = chart.scales.y2.getPixelForValue(prom);
+      const { left, right, top, bottom } = chart.chartArea;
+      if (y >= top && y <= bottom) {
+        ctx.save(); ctx.strokeStyle = '#B45309'; ctx.setLineDash([7, 5]); ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.font = 'bold 10.5px system-ui'; ctx.fillStyle = '#B45309'; ctx.textAlign = 'right';
+        ctx.fillText('prom $' + prom, right - 4, y - 5); ctx.restore();
+      }
+    }
+  }
+};
+
 function renderLeadsTend() {
   const S = TEND_SERIES && TEND_SERIES.series; if (!S) return;
+  if ($('tendKpi')) $('tendKpi').innerHTML = ''; // el promedio ahora va DENTRO del gráfico
   const colBar = TEND_CANAL === 'b2b' ? 'rgba(11,95,255,.6)' : 'rgba(29,158,117,.6)';
   const pintar = (canvasId, serie) => {
     destruirChartTend(canvasId);
@@ -8180,21 +8221,22 @@ function renderLeadsTend() {
     ];
     if (per.some(x => x.cpl != null)) dsets.push({ type: 'line', label: 'CPL ($)', data: per.map(x => x.cpl), borderColor: '#EF9F27', backgroundColor: '#EF9F27', tension: .3, yAxisID: 'y2', spanGaps: true, order: 1 });
     new Chart(ctx, { data: { labels: per.map(x => lblPeriodo(x.p)), datasets: dsets },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } },
+      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 16 } },
+        plugins: { legend: { position: 'top' }, leadsLabels: { prom: serie.cplPromedio } },
         scales: { y: { beginAtZero: true, stacked: true, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
           x: { stacked: true },
-          y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } } });
+          y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } },
+      plugins: [pluginLeadsLabels] });
   };
   if (TEND_SPLIT && S.formulario && S.landing) {
     $('tendPanelB').classList.remove('oculto');
-    $('tendTitA').textContent = '📋 Formulario'; $('tendTitB').textContent = '🖥 Landing';
+    $('tendTitA').textContent = '📋 Formulario · prom ' + fmtU2(S.formulario.cplPromedio);
+    $('tendTitB').textContent = '🖥 Landing · prom ' + fmtU2(S.landing.cplPromedio);
     pintar('tendChartA', S.formulario); pintar('tendChartB', S.landing);
-    kpiCplPromedio([{ lbl: 'Formulario', v: S.formulario.cplPromedio }, { lbl: 'Landing', v: S.landing.cplPromedio }]);
   } else {
     $('tendPanelB').classList.add('oculto'); destruirChartTend('tendChartB');
     $('tendTitA').textContent = '';
     pintar('tendChartA', S.total);
-    kpiCplPromedio([{ lbl: 'CPL promedio del periodo', v: S.total.cplPromedio }]);
   }
 }
 
@@ -8216,10 +8258,18 @@ const pluginCostoBarras = {
     chart.data.datasets.forEach((ds, di) => {
       const meta = chart.getDatasetMeta(di); if (meta.hidden) return;
       meta.data.forEach((bar, i) => {
+        const v = ds.data && ds.data[i];
+        if (v == null || v === 0) return;
+        ctx.save(); ctx.textAlign = 'center';
+        // Unidades (cantidad) sobre la barra
+        ctx.font = 'bold 10.5px system-ui'; ctx.fillStyle = '#16233A';
+        ctx.fillText(v, bar.x, bar.y - 4);
+        // Costo por unidad, encima
         const costo = ds.costos && ds.costos[i];
-        if (costo == null) return;
-        ctx.save(); ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
-        ctx.fillText('$' + Number(costo).toLocaleString('en-US', { maximumFractionDigits: 0 }), bar.x, bar.y - 4);
+        if (costo != null) {
+          ctx.font = '9.5px system-ui'; ctx.fillStyle = '#B45309';
+          ctx.fillText('$' + Number(costo).toLocaleString('en-US', { maximumFractionDigits: 0 }), bar.x, bar.y - 16);
+        }
         ctx.restore();
       });
     });
@@ -8233,16 +8283,20 @@ function renderPerfTend() {
     destruirChartTend(canvasId);
     const ctx = document.getElementById(canvasId); if (!ctx || typeof Chart === 'undefined') return;
     const per = serie.periodos || [];
+    // Leads en su PROPIO eje (derecha, barra delgada y tenue) para no aplastar a las etapas.
     const dsets = [
-      { label: 'Leads', data: per.map(x => x.leads + x.organicos), backgroundColor: 'rgba(99,102,241,.6)', costos: per.map(x => x.cpl) }
+      { label: 'Leads', data: per.map(x => x.leads + x.organicos), backgroundColor: 'rgba(99,102,241,.28)', borderColor: 'rgba(99,102,241,.55)', borderWidth: 1, costos: per.map(x => x.cpl), yAxisID: 'y2', barPercentage: .55, order: 3 }
     ];
-    if (!esB2B) dsets.push({ label: 'Agendados', data: per.map(x => x.agendados), backgroundColor: 'rgba(239,159,39,.7)', costos: per.map(x => x.costoAgendado) });
-    dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.7)', costos: per.map(x => x.costoReunion) });
-    dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.7)', costos: per.map(x => x.costoCierre) });
+    if (!esB2B) dsets.push({ label: 'Agendados', data: per.map(x => x.agendados), backgroundColor: 'rgba(239,159,39,.8)', costos: per.map(x => x.costoAgendado), yAxisID: 'y', order: 1 });
+    dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.8)', costos: per.map(x => x.costoReunion), yAxisID: 'y', order: 1 });
+    dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.8)', costos: per.map(x => x.costoCierre), yAxisID: 'y', order: 1 });
     new Chart(ctx, { type: 'bar', data: { labels: per.map(x => x.p), datasets: dsets },
-      options: { responsive: true, maintainAspectRatio: false,
+      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 22 } },
         plugins: { legend: { position: 'top' }, tooltip: { callbacks: { afterLabel: (c) => { const co = c.dataset.costos && c.dataset.costos[c.dataIndex]; return co != null ? 'Costo por unidad: ' + fmtU2(co) : ''; } } } },
-        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Agendados · Reuniones · Cierres' } },
+          y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } }
+        } },
       plugins: [pluginCostoBarras] });
   };
   if (TEND_SPLIT && S.formulario && S.landing) {
@@ -8373,7 +8427,7 @@ function renderCuadrante(ctx) {
   if (oMaxY != null) maxY = oMaxY;
   if (oCorteX != null) corteX = oCorteX;
   if (oCorteY != null) corteY = oCorteY;
-  const radio = a => Math.max(15, 9 + (a.leadsCRM || 0) * 1.3);  // mínimo 15px para que se vea la foto
+  const radio = a => Math.min(26, Math.max(11, 8 + Math.sqrt(a.leadsCRM || 0) * 1.4)); // escala raíz con tope: guarda armonía en el cuadrante
   const colorCorte = a => {
     const altoY = (a[metricaY] || 0) >= corteY, caro = (valX(a) || 0) >= corteX;
     if (altoY && !caro) return '#1baf7a';

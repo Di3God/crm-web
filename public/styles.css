@@ -2581,3 +2581,11 @@ body.night .gm-avance-banner { background:#16241C; border-color:#2B5B3E; color:#
 .tend-kpi-val { flex:0 0 90px; text-align:right; font-size:14px; font-weight:800; color:#B45309; }
 #tendSplitBtn.act { background:#1E40AF; color:#fff; border-color:#1E40AF; }
 body.night .tend-panel, body.night .tend-kpi { background:#1A2534 !important; border-color:#2A3849 !important; }
+
+/* v1.352: alinear filtros del cuadrante + armonía general del modal */
+#tendCuadCtrl { align-items:center !important; gap:10px !important; }
+#tendCuadCtrl .inp { height:36px; box-sizing:border-box; }
+#tendEjes { align-items:center !important; flex-wrap:wrap; }
+#tendEjes .inp { height:36px; box-sizing:border-box; }
+#ovTend .atr-ctrl { align-items:center; }
+#ovTend .atr-niveles { display:flex; align-items:center; }
