@@ -8115,6 +8115,7 @@ function abrirTendencias() {
   $('ovTend').classList.add('act');
   if ($('tendDesde') && $('invDesde')) $('tendDesde').value = $('invDesde').value || '';
   if ($('tendHasta') && $('invHasta')) $('tendHasta').value = $('invHasta').value || '';
+  poblarMetricaYTend();
   setVistaTend('leads');
 }
 
@@ -8138,7 +8139,18 @@ function setVistaTend(v) {
 function setCanalTend(c) {
   TEND_CANAL = c;
   document.querySelectorAll('[data-tcanal]').forEach(b => b.classList.toggle('act', b.getAttribute('data-tcanal') === c));
+  poblarMetricaYTend();
   cargarVistaTend();
+}
+// El eje Y del cuadrante depende del pipeline: B2C (agendados/reuniones/cierres) vs B2B (garantía/reunión/finanzas/BC).
+function poblarMetricaYTend() {
+  const sel = $('tendMetricaY'); if (!sel) return;
+  const ops = TEND_CANAL === 'b2b'
+    ? [['garantia', 'Y: Filtro garantía'], ['reunion', 'Y: Reunión comercial'], ['finanzas', 'Y: Filtro finanzas'], ['bc', 'Y: Business case']]
+    : [['agendado', 'Y: Agendados'], ['reunion', 'Y: Reuniones'], ['cierre', 'Y: Cierres']];
+  const prev = sel.value;
+  sel.innerHTML = ops.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('');
+  sel.value = ops.some(o => o[0] === prev) ? prev : ops[0][0];
 }
 function setAgrupTend(a) {
   TEND_AGRUP = a;
@@ -8294,16 +8306,25 @@ function renderPerfTend() {
     const per = serie.periodos || [];
     // Leads en su PROPIO eje (derecha, barra delgada y tenue) para no aplastar a las etapas.
     const dsets = [
-      { label: 'Leads', data: per.map(x => x.leads + x.organicos), backgroundColor: 'rgba(99,102,241,.28)', borderColor: 'rgba(99,102,241,.55)', borderWidth: 1, costos: per.map(x => x.cpl), yAxisID: 'y2', barPercentage: .55, order: 3 }
+      { label: esB2B ? 'Solicitudes' : 'Leads', data: per.map(x => x.leads + x.organicos), backgroundColor: 'rgba(99,102,241,.28)', borderColor: 'rgba(99,102,241,.55)', borderWidth: 1, costos: per.map(x => x.cpl), yAxisID: 'y2', barPercentage: .55, order: 3 }
     ];
-    if (!esB2B) dsets.push({ label: 'Agendados', data: per.map(x => x.agendados), backgroundColor: 'rgba(239,159,39,.8)', costos: per.map(x => x.costoAgendado), yAxisID: 'y', order: 1 });
-    dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.8)', costos: per.map(x => x.costoReunion), yAxisID: 'y', order: 1 });
-    dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.8)', costos: per.map(x => x.costoCierre), yAxisID: 'y', order: 1 });
+    if (esB2B) {
+      // Pipeline B2B: las 6 etapas acumuladas
+      dsets.push({ label: 'Crédito', data: per.map(x => x.credito), backgroundColor: 'rgba(37,99,235,.8)', costos: per.map(x => x.costoCredito), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Garantía', data: per.map(x => x.garantia), backgroundColor: 'rgba(239,159,39,.8)', costos: per.map(x => x.costoGarantia), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Reunión', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.8)', costos: per.map(x => x.costoReunion), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Finanzas', data: per.map(x => x.finanzas), backgroundColor: 'rgba(147,51,234,.8)', costos: per.map(x => x.costoFinanzas), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Business Case', data: per.map(x => x.bc), backgroundColor: 'rgba(220,38,38,.8)', costos: per.map(x => x.costoBC), yAxisID: 'y', order: 1 });
+    } else {
+      dsets.push({ label: 'Agendados', data: per.map(x => x.agendados), backgroundColor: 'rgba(239,159,39,.8)', costos: per.map(x => x.costoAgendado), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.8)', costos: per.map(x => x.costoReunion), yAxisID: 'y', order: 1 });
+      dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.8)', costos: per.map(x => x.costoCierre), yAxisID: 'y', order: 1 });
+    }
     new Chart(ctx, { type: 'bar', data: { labels: per.map(x => x.p), datasets: dsets },
       options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 22 } },
         plugins: { legend: { position: 'top' }, tooltip: { callbacks: { afterLabel: (c) => { const co = c.dataset.costos && c.dataset.costos[c.dataIndex]; return co != null ? 'Costo por unidad: ' + fmtU2(co) : ''; } } } },
         scales: {
-          y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Agendados · Reuniones · Cierres' } },
+          y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: esB2B ? 'Crédito · Garantía · Reunión · Finanzas · BC' : 'Agendados · Reuniones · Cierres' } },
           y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } }
         } },
       plugins: [pluginCostoBarras] });
@@ -8414,7 +8435,7 @@ let TEND_IMGS = {};
 function renderCuadrante(ctx) {
   const metricaY = $('tendMetricaY') ? $('tendMetricaY').value : 'agendado';
   const metricaX = $('tendMetricaX') ? $('tendMetricaX').value : 'costo';
-  const etiquetaY = metricaY === 'leadsCRM' ? 'Leads CRM' : metricaY === 'cierre' ? 'Cierres' : 'Agendados';
+  const etiquetaY = { leadsCRM: 'Leads CRM', cierre: 'Cierres', agendado: 'Agendados', reunion: TEND_CANAL === 'b2b' ? 'Reunión comercial' : 'Reuniones', garantia: 'Filtro garantía', finanzas: 'Filtro finanzas', bc: 'Business case' }[metricaY] || 'Agendados';
   const esCPL = metricaX === 'cpl';
   const valX = a => esCPL ? (a.leadsCRM ? Math.round((a.costo / a.leadsCRM) * 100) / 100 : null) : (a.costo || 0);
   let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a.leadsCRM || 0) > 0 || (a[metricaY] || 0) > 0);
@@ -8869,7 +8890,7 @@ async function procesarArchivoHistorico(input) {
       email: ix.email >= 0 ? r[ix.email] : '', dia: ix.dia >= 0 ? r[ix.dia] : '',
       campana: ix.campana >= 0 ? r[ix.campana] : '', conjunto: ix.conjunto >= 0 ? r[ix.conjunto] : '',
       anuncio: ix.anuncio >= 0 ? r[ix.anuncio] : '', ultimoEstado: ix.ultimoEstado >= 0 ? r[ix.ultimoEstado] : '',
-      asesor: ix.asesor >= 0 ? r[ix.asesor] : '', monto: ix.monto >= 0 ? r[ix.monto] : '', canal: ix.canal >= 0 ? r[ix.canal] : 'B2C'
+      asesor: ix.asesor >= 0 ? r[ix.asesor] : '', monto: ix.monto >= 0 ? r[ix.monto] : '', canal: ix.canal >= 0 ? r[ix.canal] : '' // vacío: el server detecta por el nombre de la campaña
     }));
     const reemplazar = confirm('¿Reemplazar TODOS los históricos existentes?\n\nAceptar = borra los anteriores y carga estos.\nCancelar = agrega estos a los que ya hay.');
     const r = await api('/api/marketing/historico/importar', {

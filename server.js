@@ -3851,7 +3851,7 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, async (req, res) => {
 
     // Gasto por ANUNCIO desde el API de Meta (misma fuente que Costo x Lead). El Excel de gasto quedó obsoleto.
     const porAnuncio = {};
-    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, creativeUrl: null, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, reunion: 0, cierre: 0 });
+    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, creativeUrl: null, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, reunion: 0, cierre: 0, garantia: 0, finanzas: 0, bc: 0 });
     if (metaInsights.configurado()) {
       try {
         const hoyPm = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
@@ -3891,18 +3891,50 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, async (req, res) => {
       if (cons.etapa === 'Cerrado ganado') { d.cierre++; emb.cierre++; A.cierre++; }
     });
 
+    // B2B VIVO por anuncio: solicitudes con su etapa kanban (anuncio/conjunto desde el ingreso).
+    {
+      const SECB = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+      const ingPorCod = {};
+      db.prepare("SELECT codigoSolicitud, COALESCE(NULLIF(utmCampaign,''),'') campana, COALESCE(NULLIF(conjunto,''),'') conjunto, COALESCE(NULLIF(anuncio,''),'') anuncio FROM b2b_ingresos WHERE codigoSolicitud IS NOT NULL").all()
+        .forEach(i => { if (!ingPorCod[i.codigoSolicitud]) ingPorCod[i.codigoSolicitud] = i; });
+      db.prepare('SELECT * FROM b2b_solicitudes').all().forEach(sol => {
+        const dia = peruFecha(sol.fechaIngreso);
+        if (desde && (!dia || dia < desde)) return;
+        if (hasta && (!dia || dia > hasta)) return;
+        const ing = ingPorCod[sol.codigo] || {};
+        const info = { campana: sol.campana || ing.campana || '', conjunto: ing.conjunto || '', anuncio: ing.anuncio || '' };
+        if (!matchCC(info)) return;
+        const A = Afila(norm(info.anuncio) || '(sin anuncio)', info);
+        A.leadsCRM++;
+        const ix = SECB.indexOf(etapaKanbanB2B(sol));
+        if (ix >= 2) A.garantia++;
+        if (ix >= 3) A.reunion++;
+        if (ix >= 4) A.finanzas++;
+        if (ix >= 5) { A.bc++; A.cierre++; }
+      });
+    }
+
     // HISTÓRICOS: se suman al conteo por anuncio (y al embudo) para analizar campañas de meses anteriores.
     if (req.query.historico === '1') {
       let hs = db.prepare("SELECT fechaCreacion f, COALESCE(campana,'') campana, COALESCE(conjunto,'') conjunto, COALESCE(anuncio,'') anuncio, etapa FROM leads_historicos").all();
       if (desde) hs = hs.filter(h => h.f >= desde);
       if (hasta) hs = hs.filter(h => h.f <= hasta);
+      const SECH = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
       hs.filter(matchCC).forEach(h => {
         const A = Afila(norm(h.anuncio) || '(sin anuncio)', h);
         const d = D(h.f);
         A.leadsCRM++; d.leadsCRM++; emb.leadsCRM++;
-        if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.agendado++; d.agendado++; emb.agendado++; }
-        if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.reunion++; d.reunion++; emb.reunion++; }
-        if (h.etapa === 'Cerrado') { A.cierre++; d.cierre++; emb.cierre++; }
+        const ixB = SECH.indexOf(h.etapa);
+        if (ixB >= 0) { // etapa B2B (histórico B2B)
+          if (ixB >= 2) A.garantia++;
+          if (ixB >= 3) { A.reunion++; d.reunion++; emb.reunion++; }
+          if (ixB >= 4) A.finanzas++;
+          if (ixB >= 5) { A.bc++; A.cierre++; d.cierre++; emb.cierre++; }
+        } else { // etapa B2C
+          if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.agendado++; d.agendado++; emb.agendado++; }
+          if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.reunion++; d.reunion++; emb.reunion++; }
+          if (h.etapa === 'Cerrado') { A.cierre++; d.cierre++; emb.cierre++; }
+        }
       });
     }
 
@@ -6156,7 +6188,7 @@ app.get('/api/marketing/tend-series', async (req, res) => {
     // Serie base por tipo ('' = todas menos whatsapp)
     function serieDe(tipo) {
       const per = {};
-      const P = f => { const k = periodoDe(f); return per[k] = per[k] || { p: k, leads: 0, organicos: 0, gasto: 0, agendados: 0, reuniones: 0, cierres: 0 }; };
+      const P = f => { const k = periodoDe(f); return per[k] = per[k] || { p: k, leads: 0, organicos: 0, gasto: 0, agendados: 0, reuniones: 0, cierres: 0, credito: 0, garantia: 0, finanzas: 0, bc: 0 }; };
       // 1) Leads del período (ingresos vivos)
       if (canal === 'b2c') {
         db.prepare("SELECT fechaRecepcion f, COALESCE(campana,'') c FROM marketing_ingresos WHERE estado NOT IN " + EXC + " AND fechaRecepcion>=? AND fechaRecepcion<=?").all(iniIso, finIso)
@@ -6185,19 +6217,32 @@ app.get('/api/marketing/tend-series', async (req, res) => {
           if (tipo && !matchTipo(sol.campana, tipo)) return;
           const col = etapaKanbanB2B(sol); const ix = SECB.indexOf(col);
           const dp = diaPeru(sol.fechaIngreso); const o = P(dp);
+          if (ix >= 1) o.credito++;
+          if (ix >= 2) o.garantia++;
           if (ix >= 3) o.reuniones++;
-          if (ix >= 5) o.cierres++;
+          if (ix >= 4) o.finanzas++;
+          if (ix >= 5) { o.bc++; o.cierres++; }
         });
       }
       // 3) Históricos (llegaron en su momento y quedaron en su etapa)
       if (incHist) {
+        const SECH = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
         db.prepare("SELECT fechaCreacion f, COALESCE(campana,'') c, etapa FROM leads_historicos WHERE fechaCreacion>=? AND fechaCreacion<=? AND canal=?").all(desde, hasta, canal.toUpperCase()).forEach(h => {
           if (!h.c) { if (!tipo) P(h.f).organicos++; return; }
           if (!matchTipo(h.c, tipo)) return;
           const o = P(h.f); o.leads++;
-          if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.agendados++;
-          if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.reuniones++;
-          if (h.etapa === 'Cerrado') o.cierres++;
+          if (canal === 'b2b') {
+            const ix = SECH.indexOf(h.etapa);
+            if (ix >= 1) o.credito++;
+            if (ix >= 2) o.garantia++;
+            if (ix >= 3) o.reuniones++;
+            if (ix >= 4) o.finanzas++;
+            if (ix >= 5) { o.bc++; o.cierres++; }
+          } else {
+            if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.agendados++;
+            if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') o.reuniones++;
+            if (h.etapa === 'Cerrado') o.cierres++;
+          }
         });
       }
       // 4) Gasto por período (campañas del canal + tipo; excluye whatsapp)
@@ -6216,6 +6261,10 @@ app.get('/api/marketing/tend-series', async (req, res) => {
         o.costoAgendado = o.agendados ? r2(o.gasto / o.agendados) : null;
         o.costoReunion = o.reuniones ? r2(o.gasto / o.reuniones) : null;
         o.costoCierre = o.cierres ? r2(o.gasto / o.cierres) : null;
+        o.costoCredito = o.credito ? r2(o.gasto / o.credito) : null;
+        o.costoGarantia = o.garantia ? r2(o.gasto / o.garantia) : null;
+        o.costoFinanzas = o.finanzas ? r2(o.gasto / o.finanzas) : null;
+        o.costoBC = o.bc ? r2(o.gasto / o.bc) : null;
       });
       return { periodos: arr, gastoTotal: r2(gT), leadsTotal: lT, cplPromedio: lT ? r2(gT / lT) : null };
     }
@@ -6283,6 +6332,16 @@ function mapearEtapaHistorica(estado) {
   if (e.includes('calific')) return 'Agendado'; // calificado va antes de agendar; lo colocamos en la base media
   return 'Por contactar';
 }
+// Mapea el "último estado" del CRM viejo B2B a las 6 etapas del kanban actual.
+function mapearEtapaHistoricaB2B(estado) {
+  const e = String(estado || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (e.includes('business')) return 'Business case';
+  if (e.includes('finanz')) return 'Filtro finanzas';
+  if (e.includes('reunion')) return 'Reunion comercial';
+  if (e.includes('garant')) return 'Filtro garantia';
+  if (e.includes('credito')) return 'Filtro credito';
+  return 'Solicitud';
+}
 // Detecta filas de prueba/ruido para excluirlas.
 function esRuidoHistorico(f) {
   const tel = String(f.telefono || '').replace(/\D/g, '');
@@ -6344,10 +6403,13 @@ app.post('/api/marketing/historico/importar', soloAdminOJefa, (req, res) => {
       const clave = tel + '|' + fecha + '|' + (f.campana || '');
       if (vistos.has(clave)) { dup++; continue; }
       vistos.add(clave);
-      const canal = /b2b/i.test(String(f.canal || '')) ? 'B2B' : 'B2C';
+      // Canal: columna si viene; si no, se detecta por el nombre de la campaña (b2b_... → B2B).
+      const canal = /b2b/i.test(String(f.canal || '')) ? 'B2B'
+        : (String(f.canal || '').trim() ? 'B2C' : (/b2b/i.test(String(f.campana || '')) ? 'B2B' : 'B2C'));
+      const etapaMap = canal === 'B2B' ? mapearEtapaHistoricaB2B(f.ultimoEstado) : mapearEtapaHistorica(f.ultimoEstado);
       ins.run(String(f.nombre || '').trim() || null, tel || null, String(f.email || '').trim() || null, fecha,
         String(f.campana || '').trim() || null, String(f.conjunto || '').trim() || null, String(f.anuncio || '').trim() || null,
-        String(f.ultimoEstado || '').trim() || null, mapearEtapaHistorica(f.ultimoEstado),
+        String(f.ultimoEstado || '').trim() || null, etapaMap,
         String(f.asesor || '').trim() || null, (f.monto != null && f.monto !== '') ? Number(String(f.monto).replace(/[^\d.]/g, '')) || null : null,
         canal, ahora);
       insertados++;
@@ -7425,7 +7487,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.354 (El GASTO del cuadrante ahora viene SIEMPRE del API de Meta a nivel anuncio (insightsAd, misma fuente y cache que Costo x Lead), con leads de Meta (metaLeads) para el conteo leadsAd. El Excel de gasto (marketing_gasto) quedo obsoleto para el cuadrante. Rango por defecto: ultimos 365 dias o el filtro de fechas elegido; boton de fechas mueve gasto y burbujas juntos. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.355 (PIPELINE B2B HISTORICO en Tendencias: el importador ahora mapea el ultimo estado B2B a las 6 etapas del kanban (Solicitud/Credito/Garantia/Reunion/Finanzas/Business case) y detecta el canal por el nombre de campana si no viene columna. Al elegir B2B en el modal: LEADS igual que B2C (leads+CPL+promedio); PERFORMANCE muestra las 6 etapas acumuladas con costo por etapa; CUADRANTE con Y = Garantia/Reunion comercial/Finanzas/Business case (selector dinamico por canal), contando solicitudes vivas por anuncio (etapa kanban, anuncio desde b2b_ingresos) + historicos B2B, con gasto del API de Meta. Server + frontend: restart Railway + Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
