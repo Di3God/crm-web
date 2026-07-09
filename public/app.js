@@ -7531,11 +7531,14 @@ function esCampanaWhatsapp(nombre) {
   const n = String(nombre || '').toLowerCase();
   return n.includes('interaccion') || n.includes('mensajes-whatsapp') || n.includes('wtsp') || (n.includes('whatsapp') && !n.includes('formulario') && !n.includes('landing'));
 }
+function esCampanaTiktok(nombre) { return String(nombre || '').toLowerCase().includes('tiktok'); }
 function filasCplFiltradas() {
   let filas = (CPL_DATA && CPL_DATA.filas) || [];
-  // Toggle: ocultar campañas de WhatsApp/interacción (por defecto ocultas).
+  // Toggles: ocultar WhatsApp/interacción y TikTok (por defecto ocultas).
   const ocultarWA = !($('cplVerWA') && $('cplVerWA').checked);
   if (ocultarWA) filas = filas.filter(f => !esCampanaWhatsapp(f.campana));
+  const ocultarTk = !($('cplVerTiktok') && $('cplVerTiktok').checked);
+  if (ocultarTk) filas = filas.filter(f => !esCampanaTiktok(f.campana));
   if (CPL_CANAL === 'todos') return filas;
   return filas.filter(f => { const c = canalDeFila(f); return c === CPL_CANAL || c === 'todos'; });
 }
@@ -8101,7 +8104,12 @@ async function correrRecuperar(soloPreview) {
 
 // ===================== MODAL TENDENCIAS (gráficos) =====================
 let TEND_DATA = null, TEND_VISTA = 'leads', TEND_CHART = null;
-let TEND_CANAL = 'b2c', TEND_AGRUP = 'mes', TEND_SPLIT = false, TEND_SERIES = null;
+let TEND_CANAL = 'b2c', TEND_AGRUP = 'mes', TEND_SPLIT = false, TEND_SERIES = null, TEND_TIPO_CUAD = '';
+function setTipoCuad(t) {
+  TEND_TIPO_CUAD = t;
+  document.querySelectorAll('[data-ttipo]').forEach(b => b.classList.toggle('act', b.getAttribute('data-ttipo') === t));
+  renderTendencias();
+}
 
 function abrirTendencias() {
   $('ovTend').classList.add('act');
@@ -8156,6 +8164,7 @@ async function cargarTendSeries() {
   if (TEND_SPLIT) qs.push('split=1');
   // Históricos: manda el toggle de la hoja principal de Costo x Lead.
   if ($('cplHistorico') && $('cplHistorico').checked) qs.push('historico=1');
+  if ($('cplVerTiktok') && $('cplVerTiktok').checked) qs.push('tiktok=1');
   try { TEND_SERIES = await api('/api/marketing/tend-series?' + qs.join('&')); }
   catch (e) { $('tendMsg').textContent = 'No se pudo cargar: ' + e.message; return; }
   $('tendMsg').textContent = '';
@@ -8317,6 +8326,7 @@ async function cargarTendencias() {
   const qs = [];
   if ($('tendDesde').value) qs.push('desde=' + $('tendDesde').value);
   if ($('tendHasta').value) qs.push('hasta=' + $('tendHasta').value);
+  if ($('cplHistorico') && $('cplHistorico').checked) qs.push('historico=1');
   try {
     TEND_DATA = await api('/api/marketing/tendencias' + (qs.length ? '?' + qs.join('&') : ''));
     $('tendMsg').textContent = '';
@@ -8410,6 +8420,10 @@ function renderCuadrante(ctx) {
   let ans = (TEND_DATA.anuncios || []).filter(a => (a.costo || 0) > 0 || (a.leadsCRM || 0) > 0 || (a[metricaY] || 0) > 0);
   // Respeta el mundo activo (B2C/B2B) por el nombre de la campaña.
   ans = ans.filter(a => TEND_CANAL === 'b2b' ? /b2b/i.test(a.campana || '') : /b2c/i.test(a.campana || ''));
+  // Filtro de tipo del cuadrante (Todas | Formulario | Landing) + exclusiones globales.
+  if (TEND_TIPO_CUAD) ans = ans.filter(a => String(a.campana || '').toLowerCase().includes(TEND_TIPO_CUAD));
+  ans = ans.filter(a => !esCampanaWhatsapp(a.campana));
+  if (!($('cplVerTiktok') && $('cplVerTiktok').checked)) ans = ans.filter(a => !esCampanaTiktok(a.campana));
   let excluidos = 0;
   if (esCPL) { const total = ans.length; ans = ans.filter(a => a.leadsCRM > 0); excluidos = total - ans.length; }
   if (!ans.length) { $('tendMsg').textContent = 'No hay anuncios con datos para esta métrica.'; return; }

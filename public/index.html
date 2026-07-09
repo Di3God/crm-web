@@ -404,6 +404,7 @@
         <button class="btn sec" onclick="cargarCplMeta(true)" title="Ignorar caché y volver a pedir a Meta">⟳ Actualizar de Meta</button>
         <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Suma los leads históricos de campañas anteriores"><input type="checkbox" id="cplHistorico" onchange="cargarCplMeta()" style="width:auto"> 📦 Históricos</label>
         <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Mostrar campañas de WhatsApp/interacción (por defecto ocultas: tienen gasto pero no generan leads de formulario)"><input type="checkbox" id="cplVerWA" onchange="renderCplPanel()" style="width:auto"> 💬 Ver WhatsApp</label>
+        <label class="sub" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Mostrar campañas de TikTok (por defecto ocultas: su gasto real aún no se jala, distorsionan el CPL)"><input type="checkbox" id="cplVerTiktok" onchange="renderCplPanel()" style="width:auto"> 🎵 Ver TikTok</label>
         <button class="btn sec soloAdminMkt oculto" onclick="abrirImportHistorico()" title="Cargar leads de campañas anteriores">⬆ Cargar históricos</button>
         <input type="file" id="histFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="procesarArchivoHistorico(this)">
         <span id="cplStatus" class="sub" style="margin-left:auto"></span>
@@ -986,6 +987,11 @@
       <button class="btn sec" onclick="limpiarFechasTend()">Todo</button>
     </div>
     <div id="tendCuadCtrl" class="atr-ctrl" style="flex-wrap:wrap;margin-bottom:6px;display:none">
+      <span class="atr-niveles">
+        <button class="atr-niv act" data-ttipo="" onclick="setTipoCuad('')">Todas</button>
+        <button class="atr-niv" data-ttipo="formulario" onclick="setTipoCuad('formulario')">📋 Formulario</button>
+        <button class="atr-niv" data-ttipo="landing" onclick="setTipoCuad('landing')">🖥 Landing</button>
+      </span>
       <select id="tendMetricaX" class="inp" style="width:auto" onchange="renderTendencias()">
         <option value="cpl">X: Costo por lead</option>
         <option value="costo">X: Costo total</option>

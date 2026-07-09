@@ -3840,7 +3840,7 @@ app.get('/api/marketing/inversion', soloAdminOJefa, (req, res) => {
 
 // Series diarias para el modal de Tendencias: gasto, leads (Ad y CRM), embudo y CPL por día.
 // Filtra por fechas (Perú) + campaña + conjunto. Devuelve además las listas para los selectores.
-app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
+app.get('/api/marketing/tendencias', soloAdminOJefa, async (req, res) => {
   try {
     const desde = req.query.desde || null, hasta = req.query.hasta || null;
     const norm = s => String(s || '').trim().toLowerCase();
@@ -3849,17 +3849,21 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
     const porDia = {};
     const D = f => (porDia[f] = porDia[f] || { fecha: f, gasto: 0, leadsAd: 0, leadsCRM: 0, tocados: 0, contactado: 0, calificado: 0, agendado: 0, reunion: 0, negociacion: 0, cierre: 0 });
 
-    // Gasto por día (gasto.fecha es fecha plana del Excel) + acumulado por anuncio
+    // Gasto por ANUNCIO desde el API de Meta (misma fuente que Costo x Lead). El Excel de gasto quedó obsoleto.
     const porAnuncio = {};
-    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, creativeUrl: null, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, cierre: 0 });
-    let gastoRows = db.prepare('SELECT * FROM marketing_gasto').all();
-    if (desde) gastoRows = gastoRows.filter(g => g.fecha >= desde);
-    if (hasta) gastoRows = gastoRows.filter(g => g.fecha <= hasta);
-    gastoRows.filter(matchCC).forEach(g => {
-      const d = D(g.fecha); d.gasto += g.costo || 0; d.leadsAd += g.resultados || 0;
-      const A = Afila(norm(g.anuncio) || '(sin anuncio)', g); A.costo += g.costo || 0; A.leadsAd += g.resultados || 0;
-      if (!A.creativeUrl && g.creativeUrl) A.creativeUrl = g.creativeUrl;
-    });
+    const Afila = (an, muestra) => (porAnuncio[an] = porAnuncio[an] || { anuncio: muestra.anuncio || '(sin anuncio)', campana: muestra.campana, conjunto: muestra.conjunto, creativeUrl: null, costo: 0, leadsAd: 0, leadsCRM: 0, agendado: 0, reunion: 0, cierre: 0 });
+    if (metaInsights.configurado()) {
+      try {
+        const hoyPm = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+        const gDesde = desde || new Date(Date.now() - 5 * 3600000 - 365 * 86400000).toISOString().slice(0, 10);
+        const gHasta = hasta || hoyPm;
+        const ad = await metaInsights.insightsAd(gDesde, gHasta, req.query.force === '1');
+        (ad.filas || []).filter(matchCC).forEach(g => {
+          const A = Afila(norm(g.anuncio) || '(sin anuncio)', g);
+          A.costo += g.spend || 0; A.leadsAd += g.metaLeads || 0;
+        });
+      } catch (e) { console.error('[tendencias gasto Meta]', e.message); /* sin gasto: el cuadrante igual muestra conteos */ }
+    }
 
     // Leads por día + embudo total + por anuncio
     const SIN = L.RESULTADOS_SIN_CONTACTO || [];
@@ -3882,10 +3886,25 @@ app.get('/api/marketing/tendencias', soloAdminOJefa, (req, res) => {
       if (gs.some(x => !SIN.includes(x.resultado))) { d.contactado++; emb.contactado++; }
       if (ord >= 2) { d.calificado++; emb.calificado++; }
       if (ord >= 3) { d.agendado++; emb.agendado++; A.agendado++; }
-      if (ord >= 4) { d.reunion++; emb.reunion++; }
+      if (ord >= 4) { d.reunion++; emb.reunion++; A.reunion++; }
       if (ord >= 5) { d.negociacion++; emb.negociacion++; }
       if (cons.etapa === 'Cerrado ganado') { d.cierre++; emb.cierre++; A.cierre++; }
     });
+
+    // HISTÓRICOS: se suman al conteo por anuncio (y al embudo) para analizar campañas de meses anteriores.
+    if (req.query.historico === '1') {
+      let hs = db.prepare("SELECT fechaCreacion f, COALESCE(campana,'') campana, COALESCE(conjunto,'') conjunto, COALESCE(anuncio,'') anuncio, etapa FROM leads_historicos").all();
+      if (desde) hs = hs.filter(h => h.f >= desde);
+      if (hasta) hs = hs.filter(h => h.f <= hasta);
+      hs.filter(matchCC).forEach(h => {
+        const A = Afila(norm(h.anuncio) || '(sin anuncio)', h);
+        const d = D(h.f);
+        A.leadsCRM++; d.leadsCRM++; emb.leadsCRM++;
+        if (h.etapa === 'Agendado' || h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.agendado++; d.agendado++; emb.agendado++; }
+        if (h.etapa === 'Reunión' || h.etapa === 'Cerrado') { A.reunion++; d.reunion++; emb.reunion++; }
+        if (h.etapa === 'Cerrado') { A.cierre++; d.cierre++; emb.cierre++; }
+      });
+    }
 
     const r2 = n => Math.round(n * 100) / 100;
     const dias = Object.values(porDia).sort((a, b) => a.fecha.localeCompare(b.fecha)).map(d => {
@@ -6120,7 +6139,14 @@ app.get('/api/marketing/tend-series', async (req, res) => {
       return f;
     };
     const esWA = n => { const x = String(n || '').toLowerCase(); return x.includes('interaccion') || x.includes('mensajes-whatsapp') || x.includes('wtsp'); };
-    const matchTipo = (camp, tipo) => { if (!tipo) return !esWA(camp); const c = String(camp || '').toLowerCase(); return c.includes(tipo); };
+    const verTiktok = req.query.tiktok === '1';
+    const esTk = n => String(n || '').toLowerCase().includes('tiktok');
+    const matchTipo = (camp, tipo) => {
+      if (esWA(camp)) return false;
+      if (!verTiktok && esTk(camp)) return false; // TikTok oculto por defecto: su gasto real aún no se jala
+      if (!tipo) return true;
+      return String(camp || '').toLowerCase().includes(tipo);
+    };
     const esCanal = camp => canal === 'b2b' ? /b2b/i.test(camp || '') : /b2c/i.test(camp || '');
 
     // Gasto diario por campaña (Meta) — una sola llamada, se reparte por tipo.
@@ -7399,7 +7425,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.352 (Pulido Tendencias v2: LEADS con etiquetas de datos (total sobre cada barra apilada y valor CPL sobre cada punto de la linea) y el CPL PROMEDIO ahora atraviesa el grafico como linea horizontal punteada con el valor en el extremo (tambien en los 2 graficos del split, con el promedio en el titulo de cada panel). PERFORMANCE: Leads pasa a su propio eje derecho como barra delgada y tenue para que Agendados/Reuniones/Cierres crezcan en el eje izquierdo; etiquetas con UNIDADES sobre cada barra + costo por unidad encima. CUADRANTE: burbujas con escala raiz cuadrada y tope de 26px (ya no gigantes, guardan armonia) y filtros alineados. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.354 (El GASTO del cuadrante ahora viene SIEMPRE del API de Meta a nivel anuncio (insightsAd, misma fuente y cache que Costo x Lead), con leads de Meta (metaLeads) para el conteo leadsAd. El Excel de gasto (marketing_gasto) quedo obsoleto para el cuadrante. Rango por defecto: ultimos 365 dias o el filtro de fechas elegido; boton de fechas mueve gasto y burbujas juntos. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
