@@ -555,7 +555,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia', 'mi-b2b-ops']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -567,10 +567,10 @@ async function arrancar() {
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
@@ -629,7 +629,6 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
-  if (v === 'b2b-ops') cargarB2BOps();
   if (v === 'b2b-dia') cargarB2BDia();
   if (v === 'atribucion') cargarMarketing();
   if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
@@ -653,7 +652,6 @@ function navB2B(which) {
   if (which === 'releads') { ir('b2b-releads'); return; }
   if (which === 'audit') { ir('b2b-audit'); return; }
   if (which === 'dia') { ir('b2b-dia'); return; }
-  if (which === 'ops') { ir('b2b-ops'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -8978,149 +8976,4 @@ async function procesarArchivoHistorico(input) {
     if ($('cplHistorico')) $('cplHistorico').checked = true;
     cargarCplMeta();
   } catch (e) { alert('Error al procesar el archivo: ' + e.message); }
-}
-
-// ============================================================
-// CENTRO DE OPERACIONES B2B (v1.364) — vista de jefatura
-// Sidebar de filtros (funcionario + fecha + IA) · KPIs con iconos ·
-// avances por etapa destino · meta del mes editable · desestimados filtrados.
-// ============================================================
-function esc(v) { return (v == null ? '' : String(v)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-let OPS_DATA = null;
-
-async function cargarB2BOps() {
-  const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
-  const hoyPeru = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
-  if ($('opsFecha') && !$('opsFecha').value) $('opsFecha').value = hoyPeru;
-  const fecha = $('opsFecha') ? $('opsFecha').value : hoyPeru;
-  try {
-    const qs = [];
-    if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
-    if (fecha && fecha !== hoyPeru) qs.push('fecha=' + fecha);
-    const d = await api('/api/b2b/dashboard' + (qs.length ? '?' + qs.join('&') : ''));
-    OPS_DATA = d;
-    renderB2BOps(d);
-  } catch (e) {
-    if ($('opsKpis')) $('opsKpis').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>';
-  }
-}
-
-function opsDelta(delta) {
-  if (delta == null) return '';
-  const cls = delta > 0 ? 'ops-up' : delta < 0 ? 'ops-down' : 'ops-flat';
-  return '<span class="' + cls + '">' + (delta > 0 ? '+' : '') + delta + ' vs día anterior</span>';
-}
-
-function renderB2BOps(d) {
-  const sel = $('opsAsesor');
-  if (sel && sel.options.length <= 1) {
-    (d.productividad || []).filter(p => p.ejecutivo !== 'Sin asignar').forEach(p => sel.add(new Option(p.ejecutivo, p.ejecutivo)));
-    if (d.asesor) sel.value = d.asesor;
-  }
-  if ($('opsHeroSub')) $('opsHeroSub').textContent = (d.asesor ? 'Cartera de ' + d.asesor : 'Vista jefatura · todo el equipo') + ' · ' + d.fecha;
-  if ($('opsActualizado')) $('opsActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-
-  // ---- KPIs con iconos ----
-  const K = d.kpis, M = d.meta, G = d.agenda;
-  const card = (icono, tinte, label, valor, sub, ancho) => '<div class="ops-kpi' + (ancho ? ' ops-kpi-w' : '') + '"><div class="ops-ico ' + tinte + '">' + icono + '</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">' + label + '</div><div class="ops-kpi-val">' + valor + '</div><div class="ops-kpi-sub">' + (sub || '') + '</div></div></div>';
-  const barra = (pct, ok) => '<div class="ops-bar"><div class="ops-bar-fill ' + (ok ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
-
-  const avancesTxt = (K.avancesPorEtapa || []).map(a => {
-    const corto = { 'Filtro credito': '→Crédito', 'Filtro garantia': '→Garantía', 'Reunion comercial': '→Reunión', 'Filtro finanzas': '→Finanzas', 'Business case': '→B. Case' }[a.etapa] || a.etapa;
-    return '<span class="ops-av' + (a.n > 0 ? ' on' : '') + '"><b>' + a.n + '</b> ' + corto + '</span>';
-  }).join('');
-
-  const metaHtml = M.monto > 0
-    ? '<b>' + M.logradoFmt + '</b> <span class="ops-kpi-meta-de">de ' + M.montoFmt + '</span>' + barra(M.pct || 0, (M.pct || 0) >= 50) +
-      '<span class="ops-kpi-sub">' + M.pct + '% · falta ' + M.faltaFmt + ' · ' + M.operacionesBC + ' op. en B. Case · quedan ' + M.diasRestantes + ' días</span>'
-    : '<span class="ops-kpi-sub">Sin meta definida para ' + M.mes + '</span>';
-  const metaEdit = (YO && ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(YO.rol)) ? '<button class="ops-meta-edit" onclick="editarMetaB2B()" title="Fijar meta del mes">✎</button>' : '';
-
-  $('opsKpis').innerHTML =
-    card('🆕', 't-azul', 'Leads nuevos', K.nuevos.hoy, opsDelta(K.nuevos.delta)) +
-    card('📞', 't-teal', 'Gestión del día', K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span>', opsDelta(K.gestionados.delta)) +
-    card('🎯', 't-verde', 'Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra(K.cumpl3x3.pct, K.cumpl3x3.pct >= 70) + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidosIncumplidos + ' vencidos s/intentos') +
-    card('🤝', 't-teal', 'Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
-    '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div></div></div>' +
-    card('💼', 't-azul', 'Pipeline activo', K.pipeline.montoFmt, K.pipeline.n + ' solicitudes vivas') +
-    card('🔕', K.avanzaronSinContacto.n > 0 ? 't-rojo' : 't-verde', 'Avanzaron sin contacto', K.avanzaronSinContacto.n, K.avanzaronSinContacto.montoFmt + ' en Garantía+ sin abordar') +
-    card('📅', G.accionesVencidas > 0 ? 't-ambar' : 't-teal', 'Agenda de hoy', G.vencenHoy + ' <span class="ops-kpi-de">vencen hoy</span>', G.reunionesHoy + ' reuniones · ' + G.seguimientosHoy + ' seguimientos · <span class="' + (G.accionesVencidas > 0 ? 'ops-rojo' : '') + '">' + G.accionesVencidas + ' vencidas</span>') +
-    '<div class="ops-kpi ops-kpi-w ops-kpi-meta"><div class="ops-ico t-dorado">🏆</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Meta del mes <span class="ops-kpi-de">monto que llega a Business case</span>' + metaEdit + '</div><div class="ops-kpi-val ops-kpi-val-meta">' + metaHtml + '</div></div></div>';
-
-  // ---- Alertas ----
-  const alertasEl = $('opsAlertas');
-  if (!d.alertas.length) alertasEl.innerHTML = '<div class="vacio">Sin alertas activas. Todo bajo control ✅</div>';
-  else alertasEl.innerHTML = d.alertas.map((a, i) => {
-    const cls = { critica: 'al-critica', alta: 'al-alta', media: 'al-media', info: 'al-info', logro: 'al-logro' }[a.prioridad] || 'al-media';
-    const tag = { critica: 'CRÍTICA', alta: 'ALTA', media: 'MEDIA', info: 'INFO', logro: 'LOGRO' }[a.prioridad];
-    const btn = (a.codigos && a.codigos.length) ? '<button class="btn sec ops-al-btn" onclick="opsToggleLeads(' + i + ')">Ver leads (' + a.codigos.length + ')</button>' : '';
-    const chips = (a.codigos || []).map(c => '<span class="ops-chip" onclick="abrirFichaB2B(\'' + c + '\')">' + esc(c) + '</span>').join('');
-    return '<div class="ops-alerta ' + cls + '"><span class="ops-al-tag">' + tag + '</span><div class="ops-al-txt">' + esc(a.texto) + '</div>' + btn + '</div>' +
-      (chips ? '<div class="ops-chips oculto" id="opsChips' + i + '">' + chips + '</div>' : '');
-  }).join('');
-
-  // ---- Cuellos de botella: flujo del pipeline ----
-  const peor = d.salud && d.salud.peorCuello ? d.salud.peorCuello.etapa : null;
-  const corto = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
-  const iconoEt = { 'Solicitud': '📥', 'Filtro credito': '📊', 'Filtro garantia': '🏠', 'Reunion comercial': '🤝', 'Filtro finanzas': '💰', 'Business case': '📁' };
-  $('opsCuellos').innerHTML = '<div class="ops-flujo">' + d.cuellos.map((c, i) => {
-    const esPeor = peor === c.etapa && c.n > 0;
-    return (i > 0 ? '<div class="ops-flecha">›</div>' : '') +
-      '<div class="ops-etapa' + (esPeor ? ' peor' : '') + (c.n === 0 ? ' vacia' : '') + '">' +
-      '<div class="ops-etapa-ico">' + iconoEt[c.etapa] + '</div>' +
-      '<div class="ops-etapa-n">' + c.n + '</div>' +
-      '<div class="ops-etapa-lbl">' + corto[c.etapa] + '</div>' +
-      '<div class="ops-etapa-sub">' + fmtMontoOps(c.monto) + '</div>' +
-      '<div class="ops-etapa-sub">' + c.promDias + ' d prom · máx ' + c.maxDias + '</div>' +
-      (c.sinGestion ? '<div class="ops-etapa-alerta">' + c.sinGestion + ' sin gestión</div>' : '') +
-      (esPeor ? '<div class="ops-etapa-peor">cuello crítico</div>' : '') +
-      '</div>';
-  }).join('') + '</div>';
-
-  // ---- Embudo ----
-  $('opsEmbudo').innerHTML = d.embudo.map(e =>
-    '<div class="ops-emb-fila"><div class="ops-emb-bar" style="width:' + Math.max(10, e.pctDelTotal) + '%"><span>' + esc(corto[e.etapa] || e.etapa) + '</span><b>' + e.nAcum + ' · ' + e.montoAcumFmt + '</b></div>' +
-    '<div class="ops-emb-sub">' + e.pctDelTotal + '% del total · conv ' + e.convDesdeAnterior + '% · ' + e.promDias + ' d prom.</div></div>').join('');
-
-  // ---- Desestimados (horizonte único: 30 días, ya filtrado por el backend) ----
-  const X = d.desestimados;
-  const mot = (X.motivos || []).map(m => '<div class="ops-emb-sub">• ' + esc(m.motivo) + ' <b>(' + m.n + ')</b></div>').join('') || '<div class="vacio">Sin descartes en el periodo.</div>';
-  const rec = (X.recientes || []).map(r =>
-    '<tr><td><span class="ops-chip" onclick="abrirFichaB2B(\'' + r.codigo + '\')">' + esc(r.codigo) + '</span></td><td>' + esc(r.empresa) + '</td><td>' + r.montoFmt + '</td><td>' + esc((r.motivo || '').slice(0, 28)) + '</td><td>' + esc(r.por) + '</td>' +
-    '<td>' + (r.prematuro ? '<span class="ops-pill ops-pill-r">prematuro</span>' : r.tuvoContacto ? '<span class="ops-pill ops-pill-v">contactado</span>' : '<span class="ops-pill ops-pill-a">sin contacto</span>') + '</td></tr>').join('');
-  $('opsDesest').innerHTML =
-    '<div class="ops-desest-head"><div><b class="ops-desest-n">' + X.ultimos30 + '</b> descartes · <b>' + X.monto30Fmt + '</b></div>' +
-    (X.prematuros30 ? '<span class="ops-pill ops-pill-r">' + X.prematuros30 + ' prematuros</span>' : '<span class="ops-pill ops-pill-v">sin prematuros</span>') + '</div>' +
-    '<div class="ops-desest-tit">Motivos</div>' + mot +
-    (rec ? '<div class="ops-desest-tit">Recientes</div><table class="ops-tabla ops-tabla-sm"><tbody>' + rec + '</tbody></table>' : '');
-}
-
-function fmtMontoOps(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
-function opsToggleLeads(i) { const el = $('opsChips' + i); if (el) el.classList.toggle('oculto'); }
-
-async function editarMetaB2B() {
-  const actual = OPS_DATA && OPS_DATA.meta ? OPS_DATA.meta.monto : 0;
-  const v = prompt('Meta del mes B2B (monto en S/ que debe llegar a Business case):', actual || '');
-  if (v === null) return;
-  const monto = Number(String(v).replace(/[^\d.]/g, ''));
-  if (!isFinite(monto) || monto < 0) { alert('Monto inválido.'); return; }
-  try {
-    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto }) });
-    cargarB2BOps();
-  } catch (e) { alert(e.message || 'No se pudo guardar la meta'); }
-}
-
-async function generarIAOps() {
-  const el = $('opsIA');
-  if ($('opsIAPanel')) $('opsIAPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  el.innerHTML = '<div class="vacio">🤖 Analizando el tablero con IA…</div>';
-  try {
-    const r = await api('/api/b2b/dashboard/ia');
-    if (!r.disponible) { el.innerHTML = '<div class="vacio">' + esc(r.error || 'IA no disponible') + '</div>'; return; }
-    const html = esc(r.texto)
-      .replace(/\*([^*\n]+)\*/g, '<b>$1</b>')
-      .split('\n').filter(l => l.trim())
-      .map(l => l.trim().startsWith('-') ? '<div class="ops-ia-linea">' + l.replace(/^-\s*/, '') + '</div>' : '<div class="ops-ia-bloque">' + l + '</div>').join('');
-    el.innerHTML = html + '<div class="ops-emb-sub ops-mt8">Generado ' + new Date(r.generado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + (r.cache ? ' (caché, se renueva cada 10 min)' : '') + '</div>';
-  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
 }
