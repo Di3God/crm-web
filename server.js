@@ -7653,7 +7653,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.366 (Centro Operaciones B2B v4: FIX barra sticky (margen negativo, se ancla al tope real y se queda fija al scrollear). NUEVO modal Asignar metas B2B en menu usuario (junto al de B2C, solo admin/Diego): meta global + individuales por funcionario con validacion de suma; mismo modal se abre desde el panel. Panel Metas ahora muestra global arriba + individuales que la suman (sin edicion inline). NUEVO modal Leads trabajados al click en card Gestion del dia: empresa acotada, estado inicial, estado actual, proxima accion + cuando, monto; leads del rango de fechas (GET /api/b2b/dashboard/trabajados). GET /api/b2b/funcionarios. Front: Ctrl+F5. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.367 (FIX critico de cache: index.html ahora carga app.js?v=1367 y styles.css?v=1367 (cache-busting; antes el navegador podia mezclar archivos viejos cacheados con nuevos, causando que dejaran de abrir la ficha del kanban o el ranking GP pese a que el codigo esta sano - validado end-to-end en simulacion DOM: parse, abrirFichaB2B y abrirRanking funcionan). Columna PROPIETARIO (contacto) agregada al modal de Leads trabajados. IMPORTANTE: en proximas versiones bumpear el ?v= al cambiar app.js o styles.css. Front: recargar normal ya basta gracias al busting. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -9193,9 +9193,10 @@ async function abrirTrabajados() {
     const d = await api('/api/b2b/dashboard/trabajados' + (qs.length ? '?' + qs.join('&') : ''));
     if ($('opsTrabTit')) $('opsTrabTit').textContent = '📞 Leads trabajados (' + d.total + ')';
     if (!d.leads.length) { el.innerHTML = '<div class="vacio">Sin leads trabajados en el periodo.</div>'; return; }
-    el.innerHTML = '<table class="ops-tabla ops-trab-tabla"><thead><tr><th>Empresa</th><th>Estado inicial</th><th>Estado actual</th><th>Próxima acción</th><th>Cuándo</th><th>Monto</th></tr></thead><tbody>' +
+    el.innerHTML = '<table class="ops-tabla ops-trab-tabla"><thead><tr><th>Empresa</th><th>Propietario</th><th>Estado inicial</th><th>Estado actual</th><th>Próxima acción</th><th>Cuándo</th><th>Monto</th></tr></thead><tbody>' +
       d.leads.map(l => '<tr onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
         '<td><b>' + esc(l.empresa) + '</b></td>' +
+        '<td>' + esc(l.propietario || '—') + '</td>' +
         '<td><span class="ops-est">' + esc(l.estadoInicial) + '</span></td>' +
         '<td>' + (l.desestimado ? '<span class="ops-pill ops-pill-r">Desestimado</span>' : '<span class="ops-est ops-est-act">' + esc(l.estadoActual) + '</span>') + '</td>' +
         '<td>' + esc(l.proximaAccion) + '</td>' +

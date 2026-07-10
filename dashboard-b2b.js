@@ -592,6 +592,7 @@ module.exports = function (deps) {
       const ug = db.prepare('SELECT proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC LIMIT 1').get(s.codigo);
       const desestimado = s.archivado || s.estado === 'No elegible';
       return { codigo: s.codigo, empresa: (s.razonSocial || s.nombreComercial || s.contacto || s.codigo).slice(0, 40),
+        propietario: (s.contacto || '—').slice(0, 30),
         estadoInicial: primerEstado[s.codigo] || 'Solicitud', estadoActual: desestimado ? 'Desestimado' : etapa,
         proximaAccion: ug ? (ug.proximaAccion || '—') : '—',
         fechaProxAccion: ug && ug.fechaProxAccion ? diaLima(ug.fechaProxAccion) : null,
