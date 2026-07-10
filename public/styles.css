@@ -2608,7 +2608,8 @@ body.night #fbContactabilidad .g35-vacio { border-color:#33465C; }
 
 /* ===== Centro de Operaciones B2B (v1.365) — sticky + modal IA ===== */
 #v-b2b-ops.vista { padding:0; }
-.ops-topbar { position:sticky; top:0; z-index:30; background:#0B72E8; padding:12px 20px; display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; box-shadow:0 2px 8px rgba(11,114,232,.18); }
+/* La barra se saca del padding del .content (20px 24px) y se ancla al tope real */
+.ops-topbar { position:sticky; top:0; z-index:40; background:#0B72E8; padding:12px 24px; margin:-20px -24px 16px; display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; box-shadow:0 3px 10px rgba(11,114,232,.22); }
 .ops-hero-brand { display:flex; align-items:center; gap:12px; }
 .ops-hero-brand img { height:30px; background:#fff; border-radius:7px; padding:3px 7px; }
 .ops-hero-tit { color:#fff; font-size:17px; font-weight:700; }
@@ -2619,7 +2620,7 @@ body.night #fbContactabilidad .g35-vacio { border-color:#33465C; }
 .ops-tf select, .ops-tf input { font-size:12px; padding:6px 8px; border:none; border-radius:7px; background:#fff; color:#1c2430; }
 .ops-ia-launch { align-self:flex-end; background:#fff; color:#0B72E8; border:none; font-weight:700; font-size:13px; padding:8px 16px; border-radius:8px; cursor:pointer; }
 .ops-ia-launch:hover { background:#E6F1FB; }
-.ops-scroll { padding:16px 20px 30px; }
+.ops-scroll { padding:0; }
 .ops-updated { font-size:11px; color:#8b96a5; margin-bottom:12px; }
 .ops-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
 @media (max-width:1100px){ .ops-kpis { grid-template-columns:repeat(2,1fr); } }
@@ -2719,3 +2720,22 @@ body.night #fbContactabilidad .g35-vacio { border-color:#33465C; }
 .ops-ia-loading { text-align:center; padding:40px 20px; color:#6b7686; font-size:14px; }
 .ops-ia-spin { width:28px; height:28px; border:3px solid #E6F1FB; border-top-color:#0B72E8; border-radius:50%; margin:16px auto 0; animation:opsspin 0.8s linear infinite; }
 @keyframes opsspin { to { transform:rotate(360deg); } }
+
+/* v1.366: modal metas B2B, leads trabajados, ajustes */
+.ops-kpi-click { cursor:pointer; transition:box-shadow .15s; }
+.ops-kpi-click:hover { box-shadow:0 3px 12px rgba(11,114,232,.15); border-color:#B5D4F4; }
+.ops-modal-wide { max-width:820px; }
+.ops-meta-asignar { background:#0B72E8; color:#fff; border:none; font-size:11px; padding:3px 10px; border-radius:6px; cursor:pointer; font-weight:600; }
+.ops-meta-asignar:hover { background:#0a63c9; }
+.mb-tit { font-size:13px; font-weight:700; color:#2a3340; margin-bottom:6px; }
+.mb-mt { margin-top:18px; }
+.mb-sub { font-size:11px; color:#8b96a5; margin-bottom:10px; }
+.mb-inp { width:100%; font-size:14px; padding:9px 11px; border:1px solid #dfe6ef; border-radius:8px; box-sizing:border-box; }
+.mb-inp-sm { width:130px; font-size:13px; padding:7px 9px; border:1px solid #dfe6ef; border-radius:8px; }
+.mb-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #eef1f5; }
+.mb-nom { font-size:13px; color:#2a3340; }
+.mb-suma { margin-top:12px; padding:10px 12px; background:#F4F8FD; border-radius:8px; font-size:12px; color:#4a5568; }
+.mb-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
+.ops-trab-tabla th { text-align:left; font-weight:500; color:#6b7686; font-size:11px; padding:6px; border-bottom:1px solid #E4EAF2; position:sticky; top:0; background:#fff; }
+.ops-est { font-size:11px; background:#eef3fa; color:#4a5568; padding:2px 8px; border-radius:10px; }
+.ops-est-act { background:#E6F1FB; color:#0C447C; }

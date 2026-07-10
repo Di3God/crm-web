@@ -5521,6 +5521,22 @@ app.get('/api/b2b/dashboard', soloB2B, (req, res) => {
   }
 });
 
+// LEADS TRABAJADOS del periodo (v1.366): para el modal al hacer clic en "Gestión del día".
+// GET /api/b2b/dashboard/trabajados?desde&hasta&asesor
+app.get('/api/b2b/dashboard/trabajados', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try { res.json(dashB2B.leadsTrabajados({ desde: req.query.desde, hasta: req.query.hasta, asesor: req.query.asesor })); }
+  catch (e) { console.error('[b2b/trabajados]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Funcionarios B2B (para el modal de asignar metas).
+app.get('/api/b2b/funcionarios', soloB2B, (req, res) => {
+  try { res.json({ funcionarios: dashB2B.funcionariosB2B() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // META MENSUAL B2B (v1.364): la fija jefatura desde el Centro de Operaciones.
 // POST /api/b2b/dashboard/meta { monto }  -> guarda en app_config 'b2b_meta_mes'
 app.post('/api/b2b/dashboard/meta', soloB2B, (req, res) => {
@@ -7637,7 +7653,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.365 (Centro Operaciones B2B v3: filtro RANGO fechas desde-hasta (auto, sin boton), barra STICKY (solo scrollea panel), leads TRABAJADOS incluye desestimados, COMPUERTA descarte v2 = requiere gestion registrada en modal (sin gestion bloqueo absoluto), META global equipo + INDIVIDUAL por funcionario (solo Diego Cubas asigna, POST /api/b2b/dashboard/meta con funcionario opcional, app_config b2b_meta_mes_ind JSON), desestimados filtran por rango, ANALISIS IA en MODAL central (panorama+diagnostico+plan, elimina panel IA de abajo), vista solo jefes/admin. NUEVOS paneles: Distribucion pipeline por monto, Leads sin movimiento (dona 0-24/24-48/48-72/+72h), Top leads en riesgo (monto+Priority Score), Metas por funcionario. Front: Ctrl+F5. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.366 (Centro Operaciones B2B v4: FIX barra sticky (margen negativo, se ancla al tope real y se queda fija al scrollear). NUEVO modal Asignar metas B2B en menu usuario (junto al de B2C, solo admin/Diego): meta global + individuales por funcionario con validacion de suma; mismo modal se abre desde el panel. Panel Metas ahora muestra global arriba + individuales que la suman (sin edicion inline). NUEVO modal Leads trabajados al click en card Gestion del dia: empresa acotada, estado inicial, estado actual, proxima accion + cuando, monto; leads del rango de fechas (GET /api/b2b/dashboard/trabajados). GET /api/b2b/funcionarios. Front: Ctrl+F5. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -9040,7 +9040,7 @@ function renderB2BOps(d) {
 
   $('opsKpis').innerHTML =
     card('🆕', 't-azul', 'Leads nuevos', K.nuevos.hoy, opsDelta(K.nuevos.delta)) +
-    card('📞', 't-teal', 'Gestión del día', K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span>', opsDelta(K.gestionados.delta) + ' · incluye desestimados') +
+    '<div class="ops-kpi ops-kpi-click" onclick="abrirTrabajados()"><div class="ops-ico t-teal">📞</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Gestión del día <span class="ops-kpi-de">clic para ver detalle</span></div><div class="ops-kpi-val">' + K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span></div><div class="ops-kpi-sub">' + opsDelta(K.gestionados.delta) + ' · incluye desestimados</div></div></div>' +
     card('🎯', 't-verde', 'Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra(K.cumpl3x3.pct, K.cumpl3x3.pct >= 70) + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidosIncumplidos + ' vencidos s/intentos') +
     card('🤝', 't-teal', 'Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
     '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div></div></div>' +
@@ -9111,37 +9111,99 @@ function renderB2BOps(d) {
     '<div class="ops-desest-tit">Motivos</div>' + mot +
     (rec ? '<div class="ops-desest-tit">Recientes</div><table class="ops-tabla ops-tabla-sm"><tbody>' + rec + '</tbody></table>' : '');
 
-  // ---- Metas por funcionario ----
-  const esDiego = YO && (YO.rol === 'admin' || /diego cubas/i.test(YO.nombre || ''));
-  if ($('opsMetaSub')) $('opsMetaSub').textContent = esDiego ? 'clic para asignar' : '';
+  // ---- Metas por funcionario (global arriba + individuales que la suman) ----
+  const sumInd = (M.individuales || []).reduce((a, x) => a + (x.monto || 0), 0);
+  const gaugeG = M.global.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + ((M.global.pct || 0) >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, M.global.pct || 0) + '%"></div></div>' : '';
+  const globalRow = '<div class="ops-meta-global"><div class="ops-meta-nom">🏢 Meta global equipo</div>' +
+    '<div class="ops-meta-val">' + (M.global.monto > 0 ? M.global.logradoFmt + ' / ' + M.global.montoFmt + ' (' + M.global.pct + '%)' : '<span class="ops-sinmeta">sin meta asignada</span>') + '</div>' + gaugeG +
+    (M.global.monto > 0 && sumInd > 0 ? '<div class="ops-emb-sub">Suma de individuales: ' + fmtMontoOps(sumInd) + (sumInd !== M.global.monto ? ' (difiere de la global)' : ' ✓') + '</div>' : '') + '</div>';
   const inds = M.individuales || [];
-  const filasMeta = (d.productividad || []).filter(p => p.ejecutivo !== 'Sin asignar').map(p => {
-    const mi = inds.find(x => x.nombre === p.ejecutivo);
-    const pct = mi && mi.pct != null ? mi.pct : null;
-    const barra = mi && mi.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + (pct >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>' : '';
-    const txt = mi && mi.monto > 0 ? mi.logradoFmt + ' / ' + mi.montoFmt + ' (' + pct + '%)' : '<span class="ops-sinmeta">sin meta</span>';
-    return '<div class="ops-meta-row' + (esDiego ? ' editable' : '') + '"' + (esDiego ? ' onclick="asignarMetaInd(\'' + esc(p.ejecutivo) + '\')"' : '') + '>' +
-      '<div class="ops-meta-nom">' + esc(p.ejecutivo) + (esDiego ? ' <span class="ops-meta-pen">✎</span>' : '') + '</div><div class="ops-meta-val">' + txt + '</div>' + barra + '</div>';
-  }).join('');
-  const globalRow = '<div class="ops-meta-global"><div class="ops-meta-nom">🏢 Meta global equipo' + (esDiego ? ' <span class="ops-meta-pen" onclick="asignarMetaInd(\'\')">✎</span>' : '') + '</div><div class="ops-meta-val">' + (M.global.monto > 0 ? M.global.logradoFmt + ' / ' + M.global.montoFmt + ' (' + M.global.pct + '%)' : '<span class="ops-sinmeta">sin meta</span>') + '</div></div>';
+  const filasMeta = inds.length ? inds.map(mi => {
+    const pct = mi.pct != null ? mi.pct : 0;
+    const barra = mi.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + (pct >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>' : '';
+    return '<div class="ops-meta-row"><div class="ops-meta-nom">' + esc(mi.nombre) + '</div><div class="ops-meta-val">' + mi.logradoFmt + ' / ' + mi.montoFmt + ' (' + (mi.pct != null ? mi.pct : 0) + '%)</div>' + barra + '</div>';
+  }).join('') : '<div class="vacio">Aún no hay metas individuales asignadas.</div>';
+  const esDiego = YO && (YO.rol === 'admin' || /diego cubas/i.test(YO.nombre || ''));
+  if ($('opsMetaSub')) $('opsMetaSub').innerHTML = esDiego ? '<button class="ops-meta-asignar" onclick="abrirMetasB2B()">✎ asignar</button>' : '';
   $('opsMetas').innerHTML = globalRow + filasMeta;
 }
 
 function opsToggleLeads(i) { const el = $('opsChips' + i); if (el) el.classList.toggle('oculto'); }
 
-async function asignarMetaInd(funcionario) {
-  const inds = (OPS_DATA && OPS_DATA.meta && OPS_DATA.meta.individuales) || [];
-  const actual = funcionario ? (inds.find(x => x.nombre === funcionario) || {}).monto || 0 : (OPS_DATA && OPS_DATA.meta.global.monto) || 0;
-  const label = funcionario ? 'Meta mensual de ' + funcionario : 'Meta mensual GLOBAL del equipo';
-  const v = prompt(label + ' (monto en S/ que debe llegar a Business case):', actual || '');
-  if (v === null) return;
-  const monto = Number(String(v).replace(/[^\d.]/g, ''));
-  if (!isFinite(monto) || monto < 0) { alert('Monto inválido.'); return; }
+// ---- Modal Asignar Metas B2B (solo Diego/admin) ----
+async function abrirMetasB2B() {
+  $('metasB2BModal').classList.remove('oculto');
+  const el = $('metasB2BContent');
+  el.innerHTML = '<div class="ops-ia-loading">Cargando…</div>';
   try {
-    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(funcionario ? { monto, funcionario } : { monto }) });
-    cargarB2BOps();
-  } catch (e) { alert(e.message || 'No se pudo guardar la meta'); }
+    // Usa el payload actual si existe, si no lo pide
+    let M = OPS_DATA && OPS_DATA.meta;
+    if (!M) { const d = await api('/api/b2b/dashboard'); M = d.meta; }
+    const funcs = (await api('/api/b2b/funcionarios')).funcionarios || [];
+    const indMap = {}; (M.individuales || []).forEach(x => indMap[x.nombre] = x.monto);
+    let h = '<div class="mb-tit">Meta global del equipo (S/ a Business case este mes)</div>' +
+      '<input type="number" min="0" id="mbGlobal" class="mb-inp" value="' + (M.global.monto || '') + '" placeholder="Ej: 5000000">' +
+      '<div class="mb-tit mb-mt">Metas individuales por funcionario</div>' +
+      '<div class="mb-sub">La suma de las individuales debería igualar la meta global.</div>';
+    funcs.forEach((f, i) => {
+      h += '<div class="mb-row"><span class="mb-nom">' + esc(f) + '</span><input type="number" min="0" id="mbInd' + i + '" data-nom="' + esc(f) + '" class="mb-inp-sm" value="' + (indMap[f] || '') + '" oninput="mbSuma()" placeholder="0"></div>';
+    });
+    h += '<div class="mb-suma" id="mbSumaTxt"></div>' +
+      '<div class="mb-actions"><button class="btn sec" onclick="cerrarMetasB2B()">Cancelar</button><button class="btn" onclick="guardarMetasB2B()">Guardar metas</button></div>';
+    el.innerHTML = h;
+    mbSuma();
+  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
 }
+function mbSuma() {
+  let s = 0;
+  document.querySelectorAll('[id^="mbInd"]').forEach(inp => s += Number(inp.value) || 0);
+  const g = Number(($('mbGlobal') || {}).value) || 0;
+  const el = $('mbSumaTxt'); if (!el) return;
+  const dif = s - g;
+  el.innerHTML = 'Suma individuales: <b>' + fmtMontoOps(s) + '</b>' + (g > 0 ? ' · global: <b>' + fmtMontoOps(g) + '</b>' + (dif === 0 ? ' <span class="ops-up">✓ cuadra</span>' : ' <span class="ops-down">' + (dif > 0 ? '+' : '') + fmtMontoOps(dif) + '</span>') : '');
+}
+async function guardarMetasB2B() {
+  try {
+    const g = Number(($('mbGlobal') || {}).value) || 0;
+    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto: g }) });
+    const inputs = document.querySelectorAll('[id^="mbInd"]');
+    for (const inp of inputs) {
+      const monto = Number(inp.value) || 0;
+      await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto, funcionario: inp.dataset.nom }) });
+    }
+    cerrarMetasB2B();
+    if (document.getElementById('v-b2b-ops') && document.getElementById('v-b2b-ops').classList.contains('act')) cargarB2BOps();
+  } catch (e) { alert(e.message || 'No se pudo guardar'); }
+}
+function cerrarMetasB2B() { $('metasB2BModal').classList.add('oculto'); }
+
+// ---- Modal Leads trabajados ----
+async function abrirTrabajados() {
+  $('opsTrabajadosModal').classList.remove('oculto');
+  const el = $('opsTrabContent');
+  el.innerHTML = '<div class="ops-ia-loading">Cargando leads trabajados…</div>';
+  const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
+  const desde = $('opsDesde') ? $('opsDesde').value : '';
+  const hasta = $('opsHasta') ? $('opsHasta').value : '';
+  try {
+    const qs = [];
+    if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
+    const d = await api('/api/b2b/dashboard/trabajados' + (qs.length ? '?' + qs.join('&') : ''));
+    if ($('opsTrabTit')) $('opsTrabTit').textContent = '📞 Leads trabajados (' + d.total + ')';
+    if (!d.leads.length) { el.innerHTML = '<div class="vacio">Sin leads trabajados en el periodo.</div>'; return; }
+    el.innerHTML = '<table class="ops-tabla ops-trab-tabla"><thead><tr><th>Empresa</th><th>Estado inicial</th><th>Estado actual</th><th>Próxima acción</th><th>Cuándo</th><th>Monto</th></tr></thead><tbody>' +
+      d.leads.map(l => '<tr onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
+        '<td><b>' + esc(l.empresa) + '</b></td>' +
+        '<td><span class="ops-est">' + esc(l.estadoInicial) + '</span></td>' +
+        '<td>' + (l.desestimado ? '<span class="ops-pill ops-pill-r">Desestimado</span>' : '<span class="ops-est ops-est-act">' + esc(l.estadoActual) + '</span>') + '</td>' +
+        '<td>' + esc(l.proximaAccion) + '</td>' +
+        '<td>' + (l.fechaProxAccion || '—') + '</td>' +
+        '<td>' + l.montoFmt + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
+}
+function cerrarTrabajados() { $('opsTrabajadosModal').classList.add('oculto'); }
 
 // ---- Modal Análisis IA ----
 function abrirModalIA() {

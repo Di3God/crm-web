@@ -56,6 +56,7 @@
     </button>
     <div class="tu-menu oculto" id="tuMenu">
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetas()">🎯 Asignar metas</button>
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetasB2B()">🏢 Asignar metas B2B</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirVerMetas()">📊 Ver metas cargadas</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirLlegadas()">🕐 Llegada de leads por hora</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirAutoasig()">🔀 Auto-asignación</button>
@@ -729,6 +730,22 @@
     <div class="ops-modal-box">
       <div class="ops-modal-head"><span>🤖 Análisis IA · Centro de Operaciones</span><button class="ops-modal-x" onclick="cerrarModalIA()">✕</button></div>
       <div class="ops-modal-body" id="opsIAContent"></div>
+    </div>
+  </div>
+
+  <!-- Modal Asignar Metas B2B (solo Diego/admin) -->
+  <div id="metasB2BModal" class="ops-modal oculto" onclick="if(event.target===this)cerrarMetasB2B()">
+    <div class="ops-modal-box">
+      <div class="ops-modal-head"><span>🏢 Metas B2B · monto que llega a Business case</span><button class="ops-modal-x" onclick="cerrarMetasB2B()">✕</button></div>
+      <div class="ops-modal-body" id="metasB2BContent"></div>
+    </div>
+  </div>
+
+  <!-- Modal Leads trabajados -->
+  <div id="opsTrabajadosModal" class="ops-modal oculto" onclick="if(event.target===this)cerrarTrabajados()">
+    <div class="ops-modal-box ops-modal-wide">
+      <div class="ops-modal-head"><span id="opsTrabTit">📞 Leads trabajados</span><button class="ops-modal-x" onclick="cerrarTrabajados()">✕</button></div>
+      <div class="ops-modal-body" id="opsTrabContent"></div>
     </div>
   </div>
 

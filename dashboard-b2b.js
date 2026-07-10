@@ -558,5 +558,52 @@ module.exports = function (deps) {
     };
   }
 
-  return { construirDashboard, estado3x3, estado3x3PorCodigo, esExigible3x3, tieneGestionRegistrada, CONTACTO_EFECTIVO };
+  // Lista de leads TRABAJADOS en el rango (para el modal): empresa, estado inicial,
+  // estado actual, próxima acción + cuándo, monto. Incluye desestimados del periodo.
+  function leadsTrabajados(opts = {}) {
+    const val = f => /^\d{4}-\d{2}-\d{2}$/.test(f || '') ? f : null;
+    const hoy = hoyLima();
+    const desde = val(opts.desde) || val(opts.fecha) || hoy;
+    const hasta = val(opts.hasta) || val(opts.fecha) || desde;
+    const [ini] = rangoDia(desde <= hasta ? desde : hasta);
+    const [, fin] = rangoDia(desde <= hasta ? hasta : desde);
+    const asesor = (opts.asesor || '').trim() || null;
+
+    // Códigos trabajados en el rango (gestión, trabajo de filtros o descarte)
+    const cods = new Set();
+    db.prepare('SELECT DISTINCT codigoSolicitud c FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin).forEach(r => cods.add(r.c));
+    const phT = ACCIONES_TRABAJO.map(() => '?').join(',');
+    db.prepare('SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN (' + phT + ')').all(ini, fin, ...ACCIONES_TRABAJO).forEach(r => cods.add(r.c));
+    db.prepare("SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin).forEach(r => cods.add(r.c));
+    if (!cods.size) return { total: 0, leads: [] };
+
+    const ph = [...cods].map(() => '?').join(',');
+    let rows = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo IN (' + ph + ')').all(...cods);
+    if (asesor) rows = rows.filter(s => s.responsableActual === asesor);
+
+    // Estado inicial: primer estado registrado en auditoría de cambios de etapa; si no hay, 'Solicitud'.
+    const primerEstado = {};
+    db.prepare("SELECT objetivo, detalle, fecha FROM auditoria WHERE accion IN ('b2b_kanban_mover','b2b_avanzar_etapa') ORDER BY fecha ASC").all()
+      .forEach(a => { if (!primerEstado[a.objetivo]) { const mm = String(a.detalle || '').match(/^(.+?)\s*→/); if (mm) primerEstado[a.objetivo] = mm[1].trim(); } });
+
+    const leads = rows.map(s => {
+      const etapa = etapaKanbanB2B(s);
+      const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
+      const ug = db.prepare('SELECT proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC LIMIT 1').get(s.codigo);
+      const desestimado = s.archivado || s.estado === 'No elegible';
+      return { codigo: s.codigo, empresa: (s.razonSocial || s.nombreComercial || s.contacto || s.codigo).slice(0, 40),
+        estadoInicial: primerEstado[s.codigo] || 'Solicitud', estadoActual: desestimado ? 'Desestimado' : etapa,
+        proximaAccion: ug ? (ug.proximaAccion || '—') : '—',
+        fechaProxAccion: ug && ug.fechaProxAccion ? diaLima(ug.fechaProxAccion) : null,
+        monto, montoFmt: fmtMM(monto), desestimado };
+    }).sort((a, b) => b.monto - a.monto);
+    return { total: leads.length, periodo: { desde, hasta }, leads };
+  }
+
+  // Funcionarios B2B activos (para el modal de asignar metas).
+  function funcionariosB2B() {
+    return db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos','jefe_creditos','jefe_b2b') ORDER BY nombre").all().map(u => u.nombre);
+  }
+
+  return { construirDashboard, estado3x3, estado3x3PorCodigo, esExigible3x3, tieneGestionRegistrada, leadsTrabajados, funcionariosB2B, CONTACTO_EFECTIVO };
 };
