@@ -196,20 +196,22 @@ async function analizarOperacionB2B(D) {
   const cue = (D.cuellos || []).filter(c => c.n > 0).map(c => `  ${c.etapa}: ${c.n} leads, ${c.promDias} días prom (máx ${c.maxDias}), ${c.sinGestion} sin gestión`).join('\n');
   const alertasTxt = (D.alertas || []).slice(0, 8).map(a => `  [${a.prioridad}] ${a.texto}`).join('\n') || '  (sin alertas)';
   const X = D.desestimados || {};
-  const motivosTxt = (X.motivos || []).map(m => `  ${m.motivo}: ${m.n}`).join('\n') || '  (sin descartes en 30 días)';
+  const motivosTxt = (X.motivos || []).map(m => `  ${m.motivo}: ${m.n}`).join('\n') || '  (sin descartes en el periodo)';
   const quienTxt = (X.porQuien || []).map(q => `  ${q.por}: ${q.n}`).join('\n') || '  —';
   const instruccion = `Eres el analista del CENTRO DE OPERACIONES B2B de TasaTop (crédito empresarial con garantía inmobiliaria). Fecha: ${D.fecha}.\n\n` +
-    `KPIs DE HOY: ${K.nuevos ? K.nuevos.hoy : 0} leads nuevos (${K.nuevos ? (K.nuevos.delta >= 0 ? '+' : '') + K.nuevos.delta : 0} vs ayer), ${K.gestionados ? K.gestionados.hoy : 0} gestionados, movimiento ${K.movimiento ? K.movimiento.avanzaron + '↑ ' + K.movimiento.retrocedieron + '↓' : 's/d'}. ` +
+    `KPIs DEL PERIODO: ${K.nuevos ? K.nuevos.hoy : 0} leads nuevos (${K.nuevos ? (K.nuevos.delta >= 0 ? '+' : '') + K.nuevos.delta : 0} vs periodo anterior), ${K.gestionados ? K.gestionados.hoy : 0} gestionados, movimiento ${K.movimiento ? K.movimiento.avanzaron + '↑ ' + K.movimiento.retrocedieron + '↓' : 's/d'}. ` +
     `Cumplimiento 3x3: ${K.cumpl3x3 ? K.cumpl3x3.pct : 0}% (${K.cumpl3x3 ? K.cumpl3x3.exigibles : 0} exigibles, ${K.cumpl3x3 ? K.cumpl3x3.atrasados : 0} atrasados, ${K.cumpl3x3 ? K.cumpl3x3.vencidosIncumplidos || 0 : 0} vencidos SIN registrar intentos [grave], ${K.cumpl3x3 ? K.cumpl3x3.vencidosOk || 0 : 0} con intentos completos sin lograr contacto). ` +
     `Contactabilidad ${K.contactabilidad ? K.contactabilidad.pct : 0}%. Avanzaron sin contacto: ${K.avanzaronSinContacto ? K.avanzaronSinContacto.n : 0} (${K.avanzaronSinContacto ? K.avanzaronSinContacto.montoFmt : ''}). ` +
     `Pipeline ${K.pipeline ? K.pipeline.montoFmt : ''} en ${K.pipeline ? K.pipeline.n : 0} solicitudes. Riesgo alto: ${K.riesgoAlto ? K.riesgoAlto.n : 0}. Salud del pipeline: ${D.salud ? D.salud.indice : 's/d'}/100 (${D.salud ? D.salud.etiqueta : ''}).\n\n` +
+    `META DEL MES (equipo): ${D.meta && D.meta.global ? D.meta.global.logradoFmt + ' de ' + D.meta.global.montoFmt + ' (' + (D.meta.global.pct != null ? D.meta.global.pct + '%' : 's/meta') + '), quedan ' + D.meta.diasRestantes + ' días' : 's/d'}.\n\n` +
     `ALERTAS ACTIVAS:\n${alertasTxt}\n\nPRODUCTIVIDAD POR EJECUTIVO:\n${prod || '  (sin datos)'}\n\nCUELLOS DE BOTELLA:\n${cue || '  (sin datos)'}\n\n` +
-    `DESESTIMADOS: hoy ${X.hoy || 0}, últimos 7 días ${X.ultimos7 || 0}, últimos 30 días ${X.ultimos30 || 0} (${X.monto30Fmt || 'S/ 0'}). Sin contacto previo: ${X.sinContacto30 || 0} de los 30d. Descartes PREMATUROS (sin contacto y antes de cumplir el 3x3): ${X.prematuros30 || 0}.\nMOTIVOS DE DESCARTE (30d):\n${motivosTxt}\nQUIÉN DESCARTA (30d):\n${quienTxt}\n\n` +
-    `Escribe recomendaciones para el jefe comercial B2B en DOS bloques con este formato exacto:\n` +
-    `*🎛 OPERACIÓN*\n(máximo 6 líneas, cada una empieza con "- ": qué está frenando el pipeline, qué ejecutivo necesita apoyo o redistribución, qué acción concreta tomar HOY, oportunidades por monto)\n` +
-    `*🗑 DESESTIMADOS*\n(máximo 4 líneas con "- ": patrones en los motivos, si hay descartes prematuros o sin contacto señálalo como problema de disciplina, si algún motivo se repite sugiere causa raíz, y si el volumen de descarte es sano o excesivo vs el ingreso)\n` +
-    `Sé directo y accionable, con las cifras clave. No inventes datos ni nombres.`;
-  return await llamar(instruccion, 900);
+    `DESESTIMADOS DEL PERIODO: ${X.total || 0} descartes (${X.montoFmt || 'S/ 0'}). Sin contacto previo: ${X.sinContacto || 0}. Descartes PREMATUROS (sin contacto registrado y antes de cumplir el 3x3): ${X.prematuros || 0}.\nMOTIVOS:\n${motivosTxt}\nQUIÉN DESCARTA:\n${quienTxt}\n\n` +
+    `Escribe un REPORTE EJECUTIVO para el jefe comercial B2B con EXACTAMENTE estos tres bloques, cada título en su propia línea con el formato indicado:\n` +
+    `*📊 PANORAMA*\n(2-3 líneas de prosa: el estado general del pipeline hoy — volumen, salud, meta, lo más relevante)\n` +
+    `*🔍 DIAGNÓSTICO*\n(máximo 5 líneas, cada una empieza con "- ": los problemas concretos ordenados por gravedad — cuellos, ejecutivos rezagados, contactabilidad, descartes indebidos, avances sin contacto)\n` +
+    `*🎯 PLAN DE ACCIÓN*\n(máximo 5 líneas, cada una empieza con "- ": acciones específicas y priorizadas para HOY/esta semana, con nombres y montos cuando aplique)\n` +
+    `Sé directo, ejecutivo y accionable, con las cifras clave. No inventes datos ni nombres que no estén arriba.`;
+  return await llamar(instruccion, 1000);
 }
 
 module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B };

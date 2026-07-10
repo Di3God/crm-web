@@ -8981,22 +8981,28 @@ async function procesarArchivoHistorico(input) {
 }
 
 // ============================================================
-// CENTRO DE OPERACIONES B2B (v1.364) — vista de jefatura
-// Sidebar de filtros (funcionario + fecha + IA) · KPIs con iconos ·
-// avances por etapa destino · meta del mes editable · desestimados filtrados.
+// CENTRO DE OPERACIONES B2B (v1.365) — solo jefes/admin
+// Barra sticky · filtros desde-hasta (auto, sin botón) · gestionados incluye
+// desestimados · meta global + individual (solo Diego) · distribución pipeline ·
+// leads sin movimiento · top en riesgo · Análisis IA en modal central.
 // ============================================================
 function esc(v) { return (v == null ? '' : String(v)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 let OPS_DATA = null;
+const OPS_CORTO = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
+const OPS_ICO = { 'Solicitud': '📥', 'Filtro credito': '📊', 'Filtro garantia': '🏠', 'Reunion comercial': '🤝', 'Filtro finanzas': '💰', 'Business case': '📁' };
 
 async function cargarB2BOps() {
   const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
-  const hoyPeru = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
-  if ($('opsFecha') && !$('opsFecha').value) $('opsFecha').value = hoyPeru;
-  const fecha = $('opsFecha') ? $('opsFecha').value : hoyPeru;
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  if ($('opsDesde') && !$('opsDesde').value) $('opsDesde').value = hoyP;
+  if ($('opsHasta') && !$('opsHasta').value) $('opsHasta').value = hoyP;
+  const desde = $('opsDesde') ? $('opsDesde').value : hoyP;
+  const hasta = $('opsHasta') ? $('opsHasta').value : hoyP;
   try {
     const qs = [];
     if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
-    if (fecha && fecha !== hoyPeru) qs.push('fecha=' + fecha);
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
     const d = await api('/api/b2b/dashboard' + (qs.length ? '?' + qs.join('&') : ''));
     OPS_DATA = d;
     renderB2BOps(d);
@@ -9008,8 +9014,9 @@ async function cargarB2BOps() {
 function opsDelta(delta) {
   if (delta == null) return '';
   const cls = delta > 0 ? 'ops-up' : delta < 0 ? 'ops-down' : 'ops-flat';
-  return '<span class="' + cls + '">' + (delta > 0 ? '+' : '') + delta + ' vs día anterior</span>';
+  return '<span class="' + cls + '">' + (delta > 0 ? '+' : '') + delta + ' vs periodo anterior</span>';
 }
+function fmtMontoOps(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
 
 function renderB2BOps(d) {
   const sel = $('opsAsesor');
@@ -9017,35 +9024,30 @@ function renderB2BOps(d) {
     (d.productividad || []).filter(p => p.ejecutivo !== 'Sin asignar').forEach(p => sel.add(new Option(p.ejecutivo, p.ejecutivo)));
     if (d.asesor) sel.value = d.asesor;
   }
-  if ($('opsHeroSub')) $('opsHeroSub').textContent = (d.asesor ? 'Cartera de ' + d.asesor : 'Vista jefatura · todo el equipo') + ' · ' + d.fecha;
-  if ($('opsActualizado')) $('opsActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  const rango = d.periodo && d.periodo.desde === d.periodo.hasta ? d.periodo.desde : (d.periodo.desde + ' → ' + d.periodo.hasta);
+  if ($('opsHeroSub')) $('opsHeroSub').textContent = (d.asesor ? 'Cartera de ' + d.asesor : 'Vista jefatura · todo el equipo');
+  if ($('opsActualizado')) $('opsActualizado').textContent = 'Periodo ' + rango + ' · actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
-  // ---- KPIs con iconos ----
   const K = d.kpis, M = d.meta, G = d.agenda;
   const card = (icono, tinte, label, valor, sub, ancho) => '<div class="ops-kpi' + (ancho ? ' ops-kpi-w' : '') + '"><div class="ops-ico ' + tinte + '">' + icono + '</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">' + label + '</div><div class="ops-kpi-val">' + valor + '</div><div class="ops-kpi-sub">' + (sub || '') + '</div></div></div>';
   const barra = (pct, ok) => '<div class="ops-bar"><div class="ops-bar-fill ' + (ok ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
 
-  const avancesTxt = (K.avancesPorEtapa || []).map(a => {
-    const corto = { 'Filtro credito': '→Crédito', 'Filtro garantia': '→Garantía', 'Reunion comercial': '→Reunión', 'Filtro finanzas': '→Finanzas', 'Business case': '→B. Case' }[a.etapa] || a.etapa;
-    return '<span class="ops-av' + (a.n > 0 ? ' on' : '') + '"><b>' + a.n + '</b> ' + corto + '</span>';
-  }).join('');
-
+  const avancesTxt = (K.avancesPorEtapa || []).map(a => '<span class="ops-av' + (a.n > 0 ? ' on' : '') + '"><b>' + a.n + '</b> →' + (OPS_CORTO[a.etapa] || a.etapa) + '</span>').join('');
   const metaHtml = M.monto > 0
     ? '<b>' + M.logradoFmt + '</b> <span class="ops-kpi-meta-de">de ' + M.montoFmt + '</span>' + barra(M.pct || 0, (M.pct || 0) >= 50) +
-      '<span class="ops-kpi-sub">' + M.pct + '% · falta ' + M.faltaFmt + ' · ' + M.operacionesBC + ' op. en B. Case · quedan ' + M.diasRestantes + ' días</span>'
-    : '<span class="ops-kpi-sub">Sin meta definida para ' + M.mes + '</span>';
-  const metaEdit = (YO && ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(YO.rol)) ? '<button class="ops-meta-edit" onclick="editarMetaB2B()" title="Fijar meta del mes">✎</button>' : '';
+      '<span class="ops-kpi-sub">' + M.pct + '% · falta ' + M.faltaFmt + ' · quedan ' + M.diasRestantes + ' días</span>'
+    : '<span class="ops-kpi-sub">Sin meta definida' + (M.alcance !== 'equipo' ? ' para ' + esc(M.alcance) : '') + '</span>';
 
   $('opsKpis').innerHTML =
     card('🆕', 't-azul', 'Leads nuevos', K.nuevos.hoy, opsDelta(K.nuevos.delta)) +
-    card('📞', 't-teal', 'Gestión del día', K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span>', opsDelta(K.gestionados.delta)) +
+    card('📞', 't-teal', 'Gestión del día', K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span>', opsDelta(K.gestionados.delta) + ' · incluye desestimados') +
     card('🎯', 't-verde', 'Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra(K.cumpl3x3.pct, K.cumpl3x3.pct >= 70) + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidosIncumplidos + ' vencidos s/intentos') +
     card('🤝', 't-teal', 'Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
     '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div></div></div>' +
     card('💼', 't-azul', 'Pipeline activo', K.pipeline.montoFmt, K.pipeline.n + ' solicitudes vivas') +
     card('🔕', K.avanzaronSinContacto.n > 0 ? 't-rojo' : 't-verde', 'Avanzaron sin contacto', K.avanzaronSinContacto.n, K.avanzaronSinContacto.montoFmt + ' en Garantía+ sin abordar') +
     card('📅', G.accionesVencidas > 0 ? 't-ambar' : 't-teal', 'Agenda de hoy', G.vencenHoy + ' <span class="ops-kpi-de">vencen hoy</span>', G.reunionesHoy + ' reuniones · ' + G.seguimientosHoy + ' seguimientos · <span class="' + (G.accionesVencidas > 0 ? 'ops-rojo' : '') + '">' + G.accionesVencidas + ' vencidas</span>') +
-    '<div class="ops-kpi ops-kpi-w ops-kpi-meta"><div class="ops-ico t-dorado">🏆</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Meta del mes <span class="ops-kpi-de">monto que llega a Business case</span>' + metaEdit + '</div><div class="ops-kpi-val ops-kpi-val-meta">' + metaHtml + '</div></div></div>';
+    '<div class="ops-kpi ops-kpi-w ops-kpi-meta"><div class="ops-ico t-dorado">🏆</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Meta del mes <span class="ops-kpi-de">' + (M.alcance === 'equipo' ? 'equipo · monto a Business case' : esc(M.alcance)) + '</span></div><div class="ops-kpi-val ops-kpi-val-meta">' + metaHtml + '</div></div></div>';
 
   // ---- Alertas ----
   const alertasEl = $('opsAlertas');
@@ -9059,68 +9061,100 @@ function renderB2BOps(d) {
       (chips ? '<div class="ops-chips oculto" id="opsChips' + i + '">' + chips + '</div>' : '');
   }).join('');
 
-  // ---- Cuellos de botella: flujo del pipeline ----
+  // ---- Cuellos de botella (flujo pipeline) ----
   const peor = d.salud && d.salud.peorCuello ? d.salud.peorCuello.etapa : null;
-  const corto = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
-  const iconoEt = { 'Solicitud': '📥', 'Filtro credito': '📊', 'Filtro garantia': '🏠', 'Reunion comercial': '🤝', 'Filtro finanzas': '💰', 'Business case': '📁' };
   $('opsCuellos').innerHTML = '<div class="ops-flujo">' + d.cuellos.map((c, i) => {
     const esPeor = peor === c.etapa && c.n > 0;
     return (i > 0 ? '<div class="ops-flecha">›</div>' : '') +
       '<div class="ops-etapa' + (esPeor ? ' peor' : '') + (c.n === 0 ? ' vacia' : '') + '">' +
-      '<div class="ops-etapa-ico">' + iconoEt[c.etapa] + '</div>' +
-      '<div class="ops-etapa-n">' + c.n + '</div>' +
-      '<div class="ops-etapa-lbl">' + corto[c.etapa] + '</div>' +
-      '<div class="ops-etapa-sub">' + fmtMontoOps(c.monto) + '</div>' +
+      '<div class="ops-etapa-ico">' + OPS_ICO[c.etapa] + '</div><div class="ops-etapa-n">' + c.n + '</div>' +
+      '<div class="ops-etapa-lbl">' + OPS_CORTO[c.etapa] + '</div><div class="ops-etapa-sub">' + fmtMontoOps(c.monto) + '</div>' +
       '<div class="ops-etapa-sub">' + c.promDias + ' d prom · máx ' + c.maxDias + '</div>' +
       (c.sinGestion ? '<div class="ops-etapa-alerta">' + c.sinGestion + ' sin gestión</div>' : '') +
-      (esPeor ? '<div class="ops-etapa-peor">cuello crítico</div>' : '') +
-      '</div>';
+      (esPeor ? '<div class="ops-etapa-peor">cuello crítico</div>' : '') + '</div>';
   }).join('') + '</div>';
 
   // ---- Embudo ----
   $('opsEmbudo').innerHTML = d.embudo.map(e =>
-    '<div class="ops-emb-fila"><div class="ops-emb-bar" style="width:' + Math.max(10, e.pctDelTotal) + '%"><span>' + esc(corto[e.etapa] || e.etapa) + '</span><b>' + e.nAcum + ' · ' + e.montoAcumFmt + '</b></div>' +
+    '<div class="ops-emb-fila"><div class="ops-emb-bar" style="width:' + Math.max(12, e.pctDelTotal) + '%"><span>' + esc(OPS_CORTO[e.etapa] || e.etapa) + '</span><b>' + e.nAcum + ' · ' + e.montoAcumFmt + '</b></div>' +
     '<div class="ops-emb-sub">' + e.pctDelTotal + '% del total · conv ' + e.convDesdeAnterior + '% · ' + e.promDias + ' d prom.</div></div>').join('');
 
-  // ---- Desestimados (horizonte único: 30 días, ya filtrado por el backend) ----
+  // ---- Distribución del pipeline (barras por monto) ----
+  const maxD = Math.max(1, ...d.distribucion.map(x => x.monto));
+  $('opsDistrib').innerHTML = '<div class="ops-dist-total">Total: ' + K.pipeline.montoFmt + '</div>' + d.distribucion.map(x =>
+    '<div class="ops-dist-fila"><span class="ops-dist-lbl">' + esc(OPS_CORTO[x.etapa] || x.etapa) + '</span>' +
+    '<div class="ops-dist-track"><div class="ops-dist-bar" style="width:' + Math.round(x.monto / maxD * 100) + '%"></div></div>' +
+    '<span class="ops-dist-val">' + x.montoFmt + ' (' + x.pct + '%)</span></div>').join('');
+
+  // ---- Leads sin movimiento (dona) ----
+  const SM = d.sinMovimiento;
+  const colores = { verde: '#3B6D11', amarillo: '#BA7517', ambar: '#D85A30', rojo: '#A32D2D' };
+  let acc = 0; const segs = SM.rangos.map(r => { const ini = acc; acc += r.pct; return colores[r.color] + ' ' + ini + '% ' + acc + '%'; }).join(', ');
+  $('opsSinMov').innerHTML = '<div class="ops-dona-wrap"><div class="ops-dona" style="background:conic-gradient(' + segs + ')"><div class="ops-dona-in"><b>' + SM.total + '</b><span>leads</span></div></div>' +
+    '<div class="ops-dona-leg">' + SM.rangos.map(r => '<div class="ops-leg-fila"><span class="ops-leg-dot" style="background:' + colores[r.color] + '"></span>' + r.label + '<b>' + r.n + '</b><span class="ops-leg-pct">(' + r.pct + '%)</span></div>').join('') + '</div></div>';
+
+  // ---- Top leads en riesgo ----
+  $('opsTopRiesgo').innerHTML = !d.topRiesgo.length ? '<div class="vacio">Sin leads en cartera.</div>' :
+    '<table class="ops-tabla"><tbody>' + d.topRiesgo.map((t, i) =>
+      '<tr onclick="abrirFichaB2B(\'' + t.codigo + '\')"><td class="ops-rank">' + (i + 1) + '</td><td><b>' + esc(t.empresa) + '</b></td><td class="ops-tr-et">' + esc(OPS_CORTO[t.etapa] || t.etapa) + '</td><td>' + t.montoFmt + '</td>' +
+      '<td><span class="ops-score ops-score-' + t.nivel + '">' + t.score + '</span></td></tr>').join('') + '</tbody></table>';
+
+  // ---- Desestimados (periodo) ----
   const X = d.desestimados;
   const mot = (X.motivos || []).map(m => '<div class="ops-emb-sub">• ' + esc(m.motivo) + ' <b>(' + m.n + ')</b></div>').join('') || '<div class="vacio">Sin descartes en el periodo.</div>';
   const rec = (X.recientes || []).map(r =>
-    '<tr><td><span class="ops-chip" onclick="abrirFichaB2B(\'' + r.codigo + '\')">' + esc(r.codigo) + '</span></td><td>' + esc(r.empresa) + '</td><td>' + r.montoFmt + '</td><td>' + esc((r.motivo || '').slice(0, 28)) + '</td><td>' + esc(r.por) + '</td>' +
+    '<tr><td><span class="ops-chip" onclick="abrirFichaB2B(\'' + r.codigo + '\')">' + esc(r.codigo) + '</span></td><td>' + esc(r.empresa) + '</td><td>' + r.montoFmt + '</td><td>' + esc((r.motivo || '').slice(0, 26)) + '</td><td>' + esc(r.por) + '</td>' +
     '<td>' + (r.prematuro ? '<span class="ops-pill ops-pill-r">prematuro</span>' : r.tuvoContacto ? '<span class="ops-pill ops-pill-v">contactado</span>' : '<span class="ops-pill ops-pill-a">sin contacto</span>') + '</td></tr>').join('');
   $('opsDesest').innerHTML =
-    '<div class="ops-desest-head"><div><b class="ops-desest-n">' + X.ultimos30 + '</b> descartes · <b>' + X.monto30Fmt + '</b></div>' +
-    (X.prematuros30 ? '<span class="ops-pill ops-pill-r">' + X.prematuros30 + ' prematuros</span>' : '<span class="ops-pill ops-pill-v">sin prematuros</span>') + '</div>' +
+    '<div class="ops-desest-head"><div><b class="ops-desest-n">' + X.total + '</b> descartes · <b>' + X.montoFmt + '</b></div>' +
+    (X.prematuros ? '<span class="ops-pill ops-pill-r">' + X.prematuros + ' prematuros</span>' : '<span class="ops-pill ops-pill-v">sin prematuros</span>') + '</div>' +
     '<div class="ops-desest-tit">Motivos</div>' + mot +
     (rec ? '<div class="ops-desest-tit">Recientes</div><table class="ops-tabla ops-tabla-sm"><tbody>' + rec + '</tbody></table>' : '');
+
+  // ---- Metas por funcionario ----
+  const esDiego = YO && (YO.rol === 'admin' || /diego cubas/i.test(YO.nombre || ''));
+  if ($('opsMetaSub')) $('opsMetaSub').textContent = esDiego ? 'clic para asignar' : '';
+  const inds = M.individuales || [];
+  const filasMeta = (d.productividad || []).filter(p => p.ejecutivo !== 'Sin asignar').map(p => {
+    const mi = inds.find(x => x.nombre === p.ejecutivo);
+    const pct = mi && mi.pct != null ? mi.pct : null;
+    const barra = mi && mi.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + (pct >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>' : '';
+    const txt = mi && mi.monto > 0 ? mi.logradoFmt + ' / ' + mi.montoFmt + ' (' + pct + '%)' : '<span class="ops-sinmeta">sin meta</span>';
+    return '<div class="ops-meta-row' + (esDiego ? ' editable' : '') + '"' + (esDiego ? ' onclick="asignarMetaInd(\'' + esc(p.ejecutivo) + '\')"' : '') + '>' +
+      '<div class="ops-meta-nom">' + esc(p.ejecutivo) + (esDiego ? ' <span class="ops-meta-pen">✎</span>' : '') + '</div><div class="ops-meta-val">' + txt + '</div>' + barra + '</div>';
+  }).join('');
+  const globalRow = '<div class="ops-meta-global"><div class="ops-meta-nom">🏢 Meta global equipo' + (esDiego ? ' <span class="ops-meta-pen" onclick="asignarMetaInd(\'\')">✎</span>' : '') + '</div><div class="ops-meta-val">' + (M.global.monto > 0 ? M.global.logradoFmt + ' / ' + M.global.montoFmt + ' (' + M.global.pct + '%)' : '<span class="ops-sinmeta">sin meta</span>') + '</div></div>';
+  $('opsMetas').innerHTML = globalRow + filasMeta;
 }
 
-function fmtMontoOps(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
 function opsToggleLeads(i) { const el = $('opsChips' + i); if (el) el.classList.toggle('oculto'); }
 
-async function editarMetaB2B() {
-  const actual = OPS_DATA && OPS_DATA.meta ? OPS_DATA.meta.monto : 0;
-  const v = prompt('Meta del mes B2B (monto en S/ que debe llegar a Business case):', actual || '');
+async function asignarMetaInd(funcionario) {
+  const inds = (OPS_DATA && OPS_DATA.meta && OPS_DATA.meta.individuales) || [];
+  const actual = funcionario ? (inds.find(x => x.nombre === funcionario) || {}).monto || 0 : (OPS_DATA && OPS_DATA.meta.global.monto) || 0;
+  const label = funcionario ? 'Meta mensual de ' + funcionario : 'Meta mensual GLOBAL del equipo';
+  const v = prompt(label + ' (monto en S/ que debe llegar a Business case):', actual || '');
   if (v === null) return;
   const monto = Number(String(v).replace(/[^\d.]/g, ''));
   if (!isFinite(monto) || monto < 0) { alert('Monto inválido.'); return; }
   try {
-    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto }) });
+    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(funcionario ? { monto, funcionario } : { monto }) });
     cargarB2BOps();
   } catch (e) { alert(e.message || 'No se pudo guardar la meta'); }
 }
 
-async function generarIAOps() {
-  const el = $('opsIA');
-  if ($('opsIAPanel')) $('opsIAPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  el.innerHTML = '<div class="vacio">🤖 Analizando el tablero con IA…</div>';
-  try {
-    const r = await api('/api/b2b/dashboard/ia');
+// ---- Modal Análisis IA ----
+function abrirModalIA() {
+  $('opsIAModal').classList.remove('oculto');
+  const el = $('opsIAContent');
+  el.innerHTML = '<div class="ops-ia-loading">🤖 Analizando el panorama con IA…<div class="ops-ia-spin"></div></div>';
+  api('/api/b2b/dashboard/ia').then(r => {
     if (!r.disponible) { el.innerHTML = '<div class="vacio">' + esc(r.error || 'IA no disponible') + '</div>'; return; }
     const html = esc(r.texto)
-      .replace(/\*([^*\n]+)\*/g, '<b>$1</b>')
+      .replace(/\*([^*\n]+)\*/g, '<h3 class="ops-ia-h">$1</h3>')
       .split('\n').filter(l => l.trim())
-      .map(l => l.trim().startsWith('-') ? '<div class="ops-ia-linea">' + l.replace(/^-\s*/, '') + '</div>' : '<div class="ops-ia-bloque">' + l + '</div>').join('');
+      .map(l => l.includes('ops-ia-h') ? l : (l.trim().startsWith('-') ? '<div class="ops-ia-linea">' + l.replace(/^-\s*/, '') + '</div>' : '<p class="ops-ia-p">' + l + '</p>')).join('');
     el.innerHTML = html + '<div class="ops-emb-sub ops-mt8">Generado ' + new Date(r.generado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + (r.cache ? ' (caché, se renueva cada 10 min)' : '') + '</div>';
-  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
+  }).catch(e => { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; });
 }
+function cerrarModalIA() { $('opsIAModal').classList.add('oculto'); }
