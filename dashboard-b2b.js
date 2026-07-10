@@ -121,12 +121,6 @@ module.exports = function (deps) {
       esperados, esperadosTotales, cumplidos, alDia, puedeDescartar, motivoBloqueo };
   }
 
-  // ¿Tiene al menos una gestión registrada en el modal? (intento o contacto).
-  // Requisito para poder desestimar: el funcionario debe haber registrado su gestión.
-  function tieneGestionRegistrada(codigo) {
-    return db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud=? LIMIT 1').get(codigo) != null;
-  }
-
   // Para la compuerta de descarte (fase 3) y consultas puntuales.
   function estado3x3PorCodigo(codigo) {
     const sol = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(codigo);
@@ -154,20 +148,12 @@ module.exports = function (deps) {
     'b2b_guardar_garantia', 'b2b_credito_link', 'b2b_credito_agregar_sujeto', 'b2b_garantia_agregar_inmueble'];
 
   function construirDashboard(opts = {}) {
-    // Rango de fechas para las métricas "del periodo" (nuevos, gestionados, movimiento,
-    // avances, primer contacto, desestimados). El estado VIVO (3x3, pipeline, cuellos,
-    // leads sin movimiento) es siempre actual. Default: hoy.
-    const hoy = hoyLima();
-    const val = f => /^\d{4}-\d{2}-\d{2}$/.test(f || '') ? f : null;
-    const desde = val(opts.desde) || val(opts.fecha) || hoy;
-    const hasta = val(opts.hasta) || val(opts.fecha) || desde;
-    const [rDesde] = rangoDia(desde <= hasta ? desde : hasta);
-    const [, rHasta] = rangoDia(desde <= hasta ? hasta : desde);
-    const iniH = rDesde, finH = rHasta;           // periodo seleccionado
-    // Periodo anterior de igual duración (para "vs")
-    const durDias = Math.max(1, Math.round((new Date(rHasta) - new Date(rDesde)) / 86400000));
-    const [iniA] = rangoDia(diaMas(desde, -durDias));
-    const finA = rDesde;
+    // Día de referencia para las métricas "del día" (nuevos, gestionados, movimiento,
+    // avances, primer contacto). El estado VIVO (3x3, pipeline, cuellos) es siempre actual.
+    const hoy = /^\d{4}-\d{2}-\d{2}$/.test(opts.fecha || '') ? opts.fecha : hoyLima();
+    const ayer = diaMas(hoy, -1);
+    const [iniH, finH] = rangoDia(hoy);
+    const [iniA, finA] = rangoDia(ayer);
     const asesorFiltro = (opts.asesor || '').trim() || null;
 
     // --- Base: solicitudes vivas + gestiones agrupadas (2 queries, no N+1) ---
@@ -211,24 +197,16 @@ module.exports = function (deps) {
     const nuevosHoy = qNuevos(iniH, finH);
     const nuevosAyer = qNuevos(iniA, finA);
 
-    // --- KPI: gestionados (leads únicos con gestión formal, trabajo de filtros, O descarte) ---
-    // Los DESESTIMADOS cuentan: al descartarlos el funcionario ya los gestionó.
+    // --- KPI: gestionados hoy/ayer (leads únicos: gestión formal O trabajo de filtros) ---
     const phT = ACCIONES_TRABAJO.map(() => '?').join(',');
     const codsGestionados = (ini, fin) => {
       const set = new Set();
       db.prepare('SELECT DISTINCT codigoSolicitud c FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin).forEach(r => set.add(r.c));
       db.prepare('SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN (' + phT + ')').all(ini, fin, ...ACCIONES_TRABAJO).forEach(r => set.add(r.c));
-      db.prepare("SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin).forEach(r => set.add(r.c));
       return set;
     };
     let gestHoySet = codsGestionados(iniH, finH), gestAyerSet = codsGestionados(iniA, finA);
-    if (asesorFiltro) {
-      // filtro por responsable: incluye tanto vivos en scope como descartados del asesor
-      const descAsesor = new Set(db.prepare("SELECT codigo FROM b2b_solicitudes WHERE responsableActual=? AND (COALESCE(archivado,0)=1 OR estado='No elegible')").all(asesorFiltro).map(r => r.codigo));
-      const enAlcance = c => enScope.has(c) || descAsesor.has(c);
-      gestHoySet = new Set([...gestHoySet].filter(enAlcance));
-      gestAyerSet = new Set([...gestAyerSet].filter(enAlcance));
-    }
+    if (asesorFiltro) { gestHoySet = new Set([...gestHoySet].filter(c => enScope.has(c))); gestAyerSet = new Set([...gestAyerSet].filter(c => enScope.has(c))); }
 
     // --- KPI: movimiento de etapa del día (auditoría 'X → Y'), limitado al alcance del filtro ---
     const movs = db.prepare("SELECT objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_avanzar_etapa')").all(iniH, finH)
@@ -424,6 +402,7 @@ module.exports = function (deps) {
     db.prepare("SELECT objetivo, fecha, nombre FROM auditoria WHERE accion IN ('b2b_descartar','b2b_descartar_duplicado') ORDER BY fecha ASC").all()
       .forEach(a => { auditDesc[a.objetivo] = { fecha: a.fecha, por: a.nombre || '' }; });
     if (asesorFiltro) descartados = descartados.filter(s => s.responsableActual === asesorFiltro || (auditDesc[s.codigo] || {}).por === asesorFiltro);
+    const d30 = diaMas(hoy, -30), d7 = diaMas(hoy, -7);
     const codsDesc = descartados.map(s => s.codigo);
     const gestDesc = {}; // gestiones de los descartados (para saber si hubo contacto antes del descarte)
     if (codsDesc.length) {
@@ -439,99 +418,67 @@ module.exports = function (deps) {
       const tuvoContacto = gs.some(g => esContactoEfectivo(g.resultado));
       const base3 = s.fecha3x3 || s.fechaIngreso;
       const diasHastaDesc = (fDesc && base3) ? (new Date(fDesc) - new Date(base3)) / 86400000 : null;
+      // Prematuro: descartado sin contacto efectivo y ANTES de cumplir los 3 días del 3x3 (la compuerta lo evita hacia adelante).
       const prematuro = !tuvoContacto && diasHastaDesc != null && diasHastaDesc < DIAS_3X3;
       const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
       return { codigo: s.codigo, empresa: s.razonSocial || s.nombreComercial || s.contacto || s.codigo,
         monto, motivo: (s.motivoDescarte || 'Sin motivo').trim(), por: au.por || s.responsableActual || '—',
         fecha: fDesc, dia: dDesc, tuvoContacto, prematuro };
     });
-    // Filtra por el RANGO de fechas seleccionado (desde..hasta), no un fijo de 30 días.
-    const descR = enriquecidosDesc.filter(x => x.dia && x.dia >= desde && x.dia <= hasta);
+    const desc30 = enriquecidosDesc.filter(x => x.dia && x.dia >= d30);
     const motivosMap = {};
-    descR.forEach(x => { const m = x.motivo.slice(0, 60); motivosMap[m] = (motivosMap[m] || 0) + 1; });
+    desc30.forEach(x => { const m = x.motivo.slice(0, 60); motivosMap[m] = (motivosMap[m] || 0) + 1; });
     const porQuienMap = {};
-    descR.forEach(x => { porQuienMap[x.por] = (porQuienMap[x.por] || 0) + 1; });
-    const prematurosR = descR.filter(x => x.prematuro);
+    desc30.forEach(x => { porQuienMap[x.por] = (porQuienMap[x.por] || 0) + 1; });
+    const prematuros30 = desc30.filter(x => x.prematuro);
     const desestimados = {
-      total: descR.length,
-      monto: descR.reduce((a, x) => a + x.monto, 0),
-      montoFmt: fmtMM(descR.reduce((a, x) => a + x.monto, 0)),
-      sinContacto: descR.filter(x => !x.tuvoContacto).length,
-      prematuros: prematurosR.length,
-      prematurosMonto: prematurosR.reduce((a, x) => a + x.monto, 0),
-      prematurosCodigos: prematurosR.map(x => x.codigo),
+      hoy: enriquecidosDesc.filter(x => x.dia === hoy).length,
+      ultimos7: enriquecidosDesc.filter(x => x.dia && x.dia >= d7).length,
+      ultimos30: desc30.length,
+      monto30: desc30.reduce((a, x) => a + x.monto, 0),
+      monto30Fmt: fmtMM(desc30.reduce((a, x) => a + x.monto, 0)),
+      sinContacto30: desc30.filter(x => !x.tuvoContacto).length,
+      prematuros30: prematuros30.length,
+      prematuros30Monto: prematuros30.reduce((a, x) => a + x.monto, 0),
+      prematurosCodigos: prematuros30.map(x => x.codigo),
       motivos: Object.entries(motivosMap).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 8),
       porQuien: Object.entries(porQuienMap).map(([por, n]) => ({ por, n })).sort((a, b) => b.n - a.n),
-      recientes: descR.filter(x => x.fecha).sort((a, b) => (b.fecha > a.fecha ? 1 : -1)).slice(0, 12)
+      recientes: desc30.filter(x => x.fecha).sort((a, b) => (b.fecha > a.fecha ? 1 : -1)).slice(0, 12)
         .map(x => ({ codigo: x.codigo, empresa: x.empresa, monto: x.monto, montoFmt: fmtMM(x.monto), motivo: x.motivo, por: primerNombre(x.por), fecha: x.fecha, tuvoContacto: x.tuvoContacto, prematuro: x.prematuro }))
     };
-    if (prematurosR.length >= 2) A('alta', `${prematurosR.length} descartes PREMATUROS en el periodo (sin contacto y antes de cumplir el 3x3) — ${fmtMM(desestimados.prematurosMonto)}`,
-      { codigos: prematurosR.map(x => x.codigo), tipo: 'descartes_prematuros' });
+    if (prematuros30.length >= 2) A('alta', `${prematuros30.length} descartes PREMATUROS en 30 días (sin contacto y antes de cumplir el 3x3) — ${fmtMM(desestimados.prematuros30Monto)}`,
+      { codigos: prematuros30.map(x => x.codigo), tipo: 'descartes_prematuros' });
     alertas.sort((a, b) => ordenP[a.prioridad] - ordenP[b.prioridad]);
 
-    // --- META DEL MES (global del equipo + individual por funcionario).
-    //     Global en app_config 'b2b_meta_mes'; individuales en 'b2b_meta_mes_ind' (JSON {nombre: monto}).
-    //     Solo Diego Cubas / admin las fija. "Logrado" = monto que LLEGA a Business case en el mes.
-    let metaMonto = 0, metaInd = {};
+    // --- META DEL MES (equipo, siempre global): monto que LLEGA a Business case en el mes.
+    //     La meta se guarda en app_config 'b2b_meta_mes' (la edita jefatura desde el dashboard).
+    let metaMonto = 0;
     try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_meta_mes'").get(); if (r && r.valor) metaMonto = Number(r.valor) || 0; } catch (e) { }
-    try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_meta_mes_ind'").get(); if (r && r.valor) metaInd = JSON.parse(r.valor) || {}; } catch (e) { }
     const mesIni = hoy.slice(0, 7) + '-01';
     const [iniMes] = rangoDia(mesIni);
     const codsBC = new Set();
+    // a) movimientos a Business case registrados en auditoría este mes
     db.prepare("SELECT objetivo, detalle FROM auditoria WHERE fecha>=? AND accion IN ('b2b_kanban_mover','b2b_avanzar_etapa')").all(iniMes)
       .forEach(m => { if (/→\s*Business case/i.test(m.detalle || '')) codsBC.add(m.objetivo); });
+    // b) respaldo: solicitudes actualmente en Business case cuya fechaEtapa cae en el mes
     db.prepare("SELECT codigo, fechaEtapa FROM b2b_solicitudes WHERE estado IN ('Expediente','Traspasado B2B','Reunion agendada')").all()
       .forEach(s => { if (s.fechaEtapa && diaLima(s.fechaEtapa) >= mesIni) codsBC.add(s.codigo); });
-    let metaLogrado = 0; const logradoInd = {};
+    let metaLogrado = 0;
     if (codsBC.size) {
       const phB = [...codsBC].map(() => '?').join(',');
-      db.prepare('SELECT codigo, responsableActual, montoSolicitado, montoRango FROM b2b_solicitudes WHERE codigo IN (' + phB + ')').all(...codsBC)
-        .forEach(s => { const m = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0); metaLogrado += m; const r = s.responsableActual || 'Sin asignar'; logradoInd[r] = (logradoInd[r] || 0) + m; });
+      db.prepare('SELECT montoSolicitado, montoRango FROM b2b_solicitudes WHERE codigo IN (' + phB + ')').all(...codsBC)
+        .forEach(s => { metaLogrado += s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0); });
     }
     const finMes = new Date(new Date(mesIni + 'T12:00:00Z')); finMes.setUTCMonth(finMes.getUTCMonth() + 1); finMes.setUTCDate(0);
     const diasRestantes = Math.max(0, finMes.getUTCDate() - Number(hoy.slice(8, 10)));
-    // Con filtro de asesor, la tarjeta muestra SU meta individual; sin filtro, la global.
-    const metaVigente = asesorFiltro ? (Number(metaInd[asesorFiltro]) || 0) : metaMonto;
-    const logradoVigente = asesorFiltro ? (logradoInd[asesorFiltro] || 0) : metaLogrado;
-    const meta = { alcance: asesorFiltro || 'equipo',
-      monto: metaVigente, montoFmt: fmtMM(metaVigente), logrado: logradoVigente, logradoFmt: fmtMM(logradoVigente),
-      falta: Math.max(0, metaVigente - logradoVigente), faltaFmt: fmtMM(Math.max(0, metaVigente - logradoVigente)),
-      pct: metaVigente > 0 ? Math.min(100, Math.round(logradoVigente / metaVigente * 100)) : null,
-      operacionesBC: codsBC.size, diasRestantes, mes: hoy.slice(0, 7),
-      global: { monto: metaMonto, montoFmt: fmtMM(metaMonto), logrado: metaLogrado, logradoFmt: fmtMM(metaLogrado), pct: metaMonto > 0 ? Math.min(100, Math.round(metaLogrado / metaMonto * 100)) : null },
-      individuales: Object.entries(metaInd).map(([nombre, m]) => ({ nombre, monto: Number(m) || 0, montoFmt: fmtMM(Number(m) || 0), logrado: logradoInd[nombre] || 0, logradoFmt: fmtMM(logradoInd[nombre] || 0), pct: (Number(m) || 0) > 0 ? Math.min(100, Math.round((logradoInd[nombre] || 0) / (Number(m) || 0) * 100)) : null })) };
-
-    // --- DISTRIBUCIÓN DEL PIPELINE (monto por etapa, con % del total) ---
-    const totalPipeMonto = L.reduce((a, l) => a + l.monto, 0);
-    const distribucion = ETAPAS.map(e => {
-      const m = L.filter(l => l.etapa === e).reduce((a, l) => a + l.monto, 0);
-      return { etapa: e, monto: m, montoFmt: fmtMM(m), pct: totalPipeMonto > 0 ? Math.round(m / totalPipeMonto * 100) : 0 };
-    });
-
-    // --- LEADS SIN MOVIMIENTO (dona por antigüedad de la última gestión) ---
-    const buckets = { b0: 0, b1: 0, b2: 0, b3: 0 }; // 0-24h, 24-48h, 48-72h, +72h
-    L.forEach(l => {
-      const h = l.ps.diasSinGestion * 24;
-      if (h < 24) buckets.b0++; else if (h < 48) buckets.b1++; else if (h < 72) buckets.b2++; else buckets.b3++;
-    });
-    const totalSM = L.length || 1;
-    const sinMovimiento = { total: L.length,
-      rangos: [
-        { label: '0-24 h', n: buckets.b0, pct: Math.round(buckets.b0 / totalSM * 100), color: 'verde' },
-        { label: '24-48 h', n: buckets.b1, pct: Math.round(buckets.b1 / totalSM * 100), color: 'amarillo' },
-        { label: '48-72 h', n: buckets.b2, pct: Math.round(buckets.b2 / totalSM * 100), color: 'ambar' },
-        { label: '+72 h', n: buckets.b3, pct: Math.round(buckets.b3 / totalSM * 100), color: 'rojo' }
-      ] };
-
-    // --- TOP LEADS EN RIESGO (por monto y Priority Score) ---
-    const topRiesgo = [...L].sort((a, b) => (b.ps.score - a.ps.score) || (b.monto - a.monto)).slice(0, 6)
-      .map(l => ({ codigo: l.s.codigo, empresa: l.s.razonSocial || l.s.nombreComercial || l.s.contacto || l.s.codigo,
-        etapa: l.etapa, monto: l.monto, montoFmt: fmtMM(l.monto), score: l.ps.score,
-        nivel: l.ps.score >= 90 ? 'critico' : l.ps.score >= 80 ? 'alto' : 'medio' }));
+    const meta = { monto: metaMonto, montoFmt: fmtMM(metaMonto), logrado: metaLogrado, logradoFmt: fmtMM(metaLogrado),
+      falta: Math.max(0, metaMonto - metaLogrado), faltaFmt: fmtMM(Math.max(0, metaMonto - metaLogrado)),
+      pct: metaMonto > 0 ? Math.min(100, Math.round(metaLogrado / metaMonto * 100)) : null,
+      operacionesBC: codsBC.size, diasRestantes, mes: hoy.slice(0, 7) };
 
     // --- Payload final ---
     return {
-      fecha: hoy, periodo: { desde, hasta }, actualizado: new Date().toISOString(), asesor: asesorFiltro,
+      fecha: hoy, actualizado: new Date().toISOString(), asesor: asesorFiltro,
       kpis: {
         nuevos: { hoy: nuevosHoy, ayer: nuevosAyer, delta: nuevosHoy - nuevosAyer },
         gestionados: { hoy: gestHoySet.size, ayer: gestAyerSet.size, delta: gestHoySet.size - gestAyerSet.size },
@@ -549,62 +496,11 @@ module.exports = function (deps) {
       productividad,
       cuellos,
       embudo,
-      distribucion,
-      sinMovimiento,
-      topRiesgo,
       desestimados,
       meta,
       agenda: { reunionesHoy, seguimientosHoy, vencenHoy, accionesVencidas }
     };
   }
 
-  // Lista de leads TRABAJADOS en el rango (para el modal): empresa, estado inicial,
-  // estado actual, próxima acción + cuándo, monto. Incluye desestimados del periodo.
-  function leadsTrabajados(opts = {}) {
-    const val = f => /^\d{4}-\d{2}-\d{2}$/.test(f || '') ? f : null;
-    const hoy = hoyLima();
-    const desde = val(opts.desde) || val(opts.fecha) || hoy;
-    const hasta = val(opts.hasta) || val(opts.fecha) || desde;
-    const [ini] = rangoDia(desde <= hasta ? desde : hasta);
-    const [, fin] = rangoDia(desde <= hasta ? hasta : desde);
-    const asesor = (opts.asesor || '').trim() || null;
-
-    // Códigos trabajados en el rango (gestión, trabajo de filtros o descarte)
-    const cods = new Set();
-    db.prepare('SELECT DISTINCT codigoSolicitud c FROM b2b_gestiones WHERE fecha>=? AND fecha<?').all(ini, fin).forEach(r => cods.add(r.c));
-    const phT = ACCIONES_TRABAJO.map(() => '?').join(',');
-    db.prepare('SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN (' + phT + ')').all(ini, fin, ...ACCIONES_TRABAJO).forEach(r => cods.add(r.c));
-    db.prepare("SELECT DISTINCT objetivo c FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin).forEach(r => cods.add(r.c));
-    if (!cods.size) return { total: 0, leads: [] };
-
-    const ph = [...cods].map(() => '?').join(',');
-    let rows = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo IN (' + ph + ')').all(...cods);
-    if (asesor) rows = rows.filter(s => s.responsableActual === asesor);
-
-    // Estado inicial: primer estado registrado en auditoría de cambios de etapa; si no hay, 'Solicitud'.
-    const primerEstado = {};
-    db.prepare("SELECT objetivo, detalle, fecha FROM auditoria WHERE accion IN ('b2b_kanban_mover','b2b_avanzar_etapa') ORDER BY fecha ASC").all()
-      .forEach(a => { if (!primerEstado[a.objetivo]) { const mm = String(a.detalle || '').match(/^(.+?)\s*→/); if (mm) primerEstado[a.objetivo] = mm[1].trim(); } });
-
-    const leads = rows.map(s => {
-      const etapa = etapaKanbanB2B(s);
-      const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
-      const ug = db.prepare('SELECT proximaAccion, fechaProxAccion FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha DESC LIMIT 1').get(s.codigo);
-      const desestimado = s.archivado || s.estado === 'No elegible';
-      return { codigo: s.codigo, empresa: (s.razonSocial || s.nombreComercial || s.contacto || s.codigo).slice(0, 40),
-        propietario: (s.contacto || '—').slice(0, 30),
-        estadoInicial: primerEstado[s.codigo] || 'Solicitud', estadoActual: desestimado ? 'Desestimado' : etapa,
-        proximaAccion: ug ? (ug.proximaAccion || '—') : '—',
-        fechaProxAccion: ug && ug.fechaProxAccion ? diaLima(ug.fechaProxAccion) : null,
-        monto, montoFmt: fmtMM(monto), desestimado };
-    }).sort((a, b) => b.monto - a.monto);
-    return { total: leads.length, periodo: { desde, hasta }, leads };
-  }
-
-  // Funcionarios B2B activos (para el modal de asignar metas).
-  function funcionariosB2B() {
-    return db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos','jefe_creditos','jefe_b2b') ORDER BY nombre").all().map(u => u.nombre);
-  }
-
-  return { construirDashboard, estado3x3, estado3x3PorCodigo, esExigible3x3, tieneGestionRegistrada, leadsTrabajados, funcionariosB2B, CONTACTO_EFECTIVO };
+  return { construirDashboard, estado3x3, estado3x3PorCodigo, esExigible3x3, CONTACTO_EFECTIVO };
 };
