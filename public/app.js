@@ -555,7 +555,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia', 'mi-b2b-ops']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -567,10 +567,10 @@ async function arrancar() {
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
@@ -629,6 +629,7 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
+  if (v === 'b2b-ops') cargarB2BOps();
   if (v === 'b2b-dia') cargarB2BDia();
   if (v === 'atribucion') cargarMarketing();
   if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
@@ -652,6 +653,7 @@ function navB2B(which) {
   if (which === 'releads') { ir('b2b-releads'); return; }
   if (which === 'audit') { ir('b2b-audit'); return; }
   if (which === 'dia') { ir('b2b-dia'); return; }
+  if (which === 'ops') { ir('b2b-ops'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -8977,3 +8979,245 @@ async function procesarArchivoHistorico(input) {
     cargarCplMeta();
   } catch (e) { alert('Error al procesar el archivo: ' + e.message); }
 }
+
+// ============================================================
+// CENTRO DE OPERACIONES B2B (v1.365) — solo jefes/admin
+// Barra sticky · filtros desde-hasta (auto, sin botón) · gestionados incluye
+// desestimados · meta global + individual (solo Diego) · distribución pipeline ·
+// leads sin movimiento · top en riesgo · Análisis IA en modal central.
+// ============================================================
+function esc(v) { return (v == null ? '' : String(v)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+let OPS_DATA = null;
+const OPS_CORTO = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
+const OPS_ICO = { 'Solicitud': '📥', 'Filtro credito': '📊', 'Filtro garantia': '🏠', 'Reunion comercial': '🤝', 'Filtro finanzas': '💰', 'Business case': '📁' };
+
+async function cargarB2BOps() {
+  const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  if ($('opsDesde') && !$('opsDesde').value) $('opsDesde').value = hoyP;
+  if ($('opsHasta') && !$('opsHasta').value) $('opsHasta').value = hoyP;
+  const desde = $('opsDesde') ? $('opsDesde').value : hoyP;
+  const hasta = $('opsHasta') ? $('opsHasta').value : hoyP;
+  try {
+    const qs = [];
+    if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
+    const d = await api('/api/b2b/dashboard' + (qs.length ? '?' + qs.join('&') : ''));
+    OPS_DATA = d;
+    renderB2BOps(d);
+  } catch (e) {
+    if ($('opsKpis')) $('opsKpis').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>';
+  }
+}
+
+function opsDelta(delta) {
+  if (delta == null) return '';
+  const cls = delta > 0 ? 'ops-up' : delta < 0 ? 'ops-down' : 'ops-flat';
+  return '<span class="' + cls + '">' + (delta > 0 ? '+' : '') + delta + ' vs periodo anterior</span>';
+}
+function fmtMontoOps(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
+
+function renderB2BOps(d) {
+  const sel = $('opsAsesor');
+  if (sel && sel.options.length <= 1) {
+    (d.productividad || []).filter(p => p.ejecutivo !== 'Sin asignar').forEach(p => sel.add(new Option(p.ejecutivo, p.ejecutivo)));
+    if (d.asesor) sel.value = d.asesor;
+  }
+  const rango = d.periodo && d.periodo.desde === d.periodo.hasta ? d.periodo.desde : (d.periodo.desde + ' → ' + d.periodo.hasta);
+  if ($('opsHeroSub')) $('opsHeroSub').textContent = (d.asesor ? 'Cartera de ' + d.asesor : 'Vista jefatura · todo el equipo');
+  if ($('opsActualizado')) $('opsActualizado').textContent = 'Periodo ' + rango + ' · actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+
+  const K = d.kpis, M = d.meta, G = d.agenda;
+  const card = (icono, tinte, label, valor, sub, ancho) => '<div class="ops-kpi' + (ancho ? ' ops-kpi-w' : '') + '"><div class="ops-ico ' + tinte + '">' + icono + '</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">' + label + '</div><div class="ops-kpi-val">' + valor + '</div><div class="ops-kpi-sub">' + (sub || '') + '</div></div></div>';
+  const barra = (pct, ok) => '<div class="ops-bar"><div class="ops-bar-fill ' + (ok ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
+
+  const avancesTxt = (K.avancesPorEtapa || []).map(a => '<span class="ops-av' + (a.n > 0 ? ' on' : '') + '"><b>' + a.n + '</b> →' + (OPS_CORTO[a.etapa] || a.etapa) + '</span>').join('');
+  const metaHtml = M.monto > 0
+    ? '<b>' + M.logradoFmt + '</b> <span class="ops-kpi-meta-de">de ' + M.montoFmt + '</span>' + barra(M.pct || 0, (M.pct || 0) >= 50) +
+      '<span class="ops-kpi-sub">' + M.pct + '% · falta ' + M.faltaFmt + ' · quedan ' + M.diasRestantes + ' días</span>'
+    : '<span class="ops-kpi-sub">Sin meta definida' + (M.alcance !== 'equipo' ? ' para ' + esc(M.alcance) : '') + '</span>';
+
+  $('opsKpis').innerHTML =
+    card('🆕', 't-azul', 'Leads nuevos', K.nuevos.hoy, opsDelta(K.nuevos.delta)) +
+    '<div class="ops-kpi ops-kpi-click" onclick="abrirTrabajados()"><div class="ops-ico t-teal">📞</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Gestión del día <span class="ops-kpi-de">clic para ver detalle</span></div><div class="ops-kpi-val">' + K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span></div><div class="ops-kpi-sub">' + opsDelta(K.gestionados.delta) + ' · incluye desestimados</div></div></div>' +
+    card('🎯', 't-verde', 'Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra(K.cumpl3x3.pct, K.cumpl3x3.pct >= 70) + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidosIncumplidos + ' vencidos s/intentos') +
+    card('🤝', 't-teal', 'Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
+    '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div></div></div>' +
+    card('💼', 't-azul', 'Pipeline activo', K.pipeline.montoFmt, K.pipeline.n + ' solicitudes vivas') +
+    card('🔕', K.avanzaronSinContacto.n > 0 ? 't-rojo' : 't-verde', 'Avanzaron sin contacto', K.avanzaronSinContacto.n, K.avanzaronSinContacto.montoFmt + ' en Garantía+ sin abordar') +
+    card('📅', G.accionesVencidas > 0 ? 't-ambar' : 't-teal', 'Agenda de hoy', G.vencenHoy + ' <span class="ops-kpi-de">vencen hoy</span>', G.reunionesHoy + ' reuniones · ' + G.seguimientosHoy + ' seguimientos · <span class="' + (G.accionesVencidas > 0 ? 'ops-rojo' : '') + '">' + G.accionesVencidas + ' vencidas</span>') +
+    '<div class="ops-kpi ops-kpi-w ops-kpi-meta"><div class="ops-ico t-dorado">🏆</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Meta del mes <span class="ops-kpi-de">' + (M.alcance === 'equipo' ? 'equipo · monto a Business case' : esc(M.alcance)) + '</span></div><div class="ops-kpi-val ops-kpi-val-meta">' + metaHtml + '</div></div></div>';
+
+  // ---- Alertas ----
+  const alertasEl = $('opsAlertas');
+  if (!d.alertas.length) alertasEl.innerHTML = '<div class="vacio">Sin alertas activas. Todo bajo control ✅</div>';
+  else alertasEl.innerHTML = d.alertas.map((a, i) => {
+    const cls = { critica: 'al-critica', alta: 'al-alta', media: 'al-media', info: 'al-info', logro: 'al-logro' }[a.prioridad] || 'al-media';
+    const tag = { critica: 'CRÍTICA', alta: 'ALTA', media: 'MEDIA', info: 'INFO', logro: 'LOGRO' }[a.prioridad];
+    const btn = (a.codigos && a.codigos.length) ? '<button class="btn sec ops-al-btn" onclick="opsToggleLeads(' + i + ')">Ver leads (' + a.codigos.length + ')</button>' : '';
+    const chips = (a.codigos || []).map(c => '<span class="ops-chip" onclick="abrirFichaB2B(\'' + c + '\')">' + esc(c) + '</span>').join('');
+    return '<div class="ops-alerta ' + cls + '"><span class="ops-al-tag">' + tag + '</span><div class="ops-al-txt">' + esc(a.texto) + '</div>' + btn + '</div>' +
+      (chips ? '<div class="ops-chips oculto" id="opsChips' + i + '">' + chips + '</div>' : '');
+  }).join('');
+
+  // ---- Cuellos de botella (flujo pipeline) ----
+  const peor = d.salud && d.salud.peorCuello ? d.salud.peorCuello.etapa : null;
+  $('opsCuellos').innerHTML = '<div class="ops-flujo">' + d.cuellos.map((c, i) => {
+    const esPeor = peor === c.etapa && c.n > 0;
+    return (i > 0 ? '<div class="ops-flecha">›</div>' : '') +
+      '<div class="ops-etapa' + (esPeor ? ' peor' : '') + (c.n === 0 ? ' vacia' : '') + '">' +
+      '<div class="ops-etapa-ico">' + OPS_ICO[c.etapa] + '</div><div class="ops-etapa-n">' + c.n + '</div>' +
+      '<div class="ops-etapa-lbl">' + OPS_CORTO[c.etapa] + '</div><div class="ops-etapa-sub">' + fmtMontoOps(c.monto) + '</div>' +
+      '<div class="ops-etapa-sub">' + c.promDias + ' d prom · máx ' + c.maxDias + '</div>' +
+      (c.sinGestion ? '<div class="ops-etapa-alerta">' + c.sinGestion + ' sin gestión</div>' : '') +
+      (esPeor ? '<div class="ops-etapa-peor">cuello crítico</div>' : '') + '</div>';
+  }).join('') + '</div>';
+
+  // ---- Embudo ----
+  $('opsEmbudo').innerHTML = d.embudo.map(e =>
+    '<div class="ops-emb-fila"><div class="ops-emb-bar" style="width:' + Math.max(12, e.pctDelTotal) + '%"><span>' + esc(OPS_CORTO[e.etapa] || e.etapa) + '</span><b>' + e.nAcum + ' · ' + e.montoAcumFmt + '</b></div>' +
+    '<div class="ops-emb-sub">' + e.pctDelTotal + '% del total · conv ' + e.convDesdeAnterior + '% · ' + e.promDias + ' d prom.</div></div>').join('');
+
+  // ---- Distribución del pipeline (barras por monto) ----
+  const maxD = Math.max(1, ...d.distribucion.map(x => x.monto));
+  $('opsDistrib').innerHTML = '<div class="ops-dist-total">Total: ' + K.pipeline.montoFmt + '</div>' + d.distribucion.map(x =>
+    '<div class="ops-dist-fila"><span class="ops-dist-lbl">' + esc(OPS_CORTO[x.etapa] || x.etapa) + '</span>' +
+    '<div class="ops-dist-track"><div class="ops-dist-bar" style="width:' + Math.round(x.monto / maxD * 100) + '%"></div></div>' +
+    '<span class="ops-dist-val">' + x.montoFmt + ' (' + x.pct + '%)</span></div>').join('');
+
+  // ---- Leads sin movimiento (dona) ----
+  const SM = d.sinMovimiento;
+  const colores = { verde: '#3B6D11', amarillo: '#BA7517', ambar: '#D85A30', rojo: '#A32D2D' };
+  let acc = 0; const segs = SM.rangos.map(r => { const ini = acc; acc += r.pct; return colores[r.color] + ' ' + ini + '% ' + acc + '%'; }).join(', ');
+  $('opsSinMov').innerHTML = '<div class="ops-dona-wrap"><div class="ops-dona" style="background:conic-gradient(' + segs + ')"><div class="ops-dona-in"><b>' + SM.total + '</b><span>leads</span></div></div>' +
+    '<div class="ops-dona-leg">' + SM.rangos.map(r => '<div class="ops-leg-fila"><span class="ops-leg-dot" style="background:' + colores[r.color] + '"></span>' + r.label + '<b>' + r.n + '</b><span class="ops-leg-pct">(' + r.pct + '%)</span></div>').join('') + '</div></div>';
+
+  // ---- Top leads en riesgo ----
+  $('opsTopRiesgo').innerHTML = !d.topRiesgo.length ? '<div class="vacio">Sin leads en cartera.</div>' :
+    '<table class="ops-tabla"><tbody>' + d.topRiesgo.map((t, i) =>
+      '<tr onclick="abrirFichaB2B(\'' + t.codigo + '\')"><td class="ops-rank">' + (i + 1) + '</td><td><b>' + esc(t.empresa) + '</b></td><td class="ops-tr-et">' + esc(OPS_CORTO[t.etapa] || t.etapa) + '</td><td>' + t.montoFmt + '</td>' +
+      '<td><span class="ops-score ops-score-' + t.nivel + '">' + t.score + '</span></td></tr>').join('') + '</tbody></table>';
+
+  // ---- Desestimados (periodo) ----
+  const X = d.desestimados;
+  const mot = (X.motivos || []).map(m => '<div class="ops-emb-sub">• ' + esc(m.motivo) + ' <b>(' + m.n + ')</b></div>').join('') || '<div class="vacio">Sin descartes en el periodo.</div>';
+  const rec = (X.recientes || []).map(r =>
+    '<tr><td><span class="ops-chip" onclick="abrirFichaB2B(\'' + r.codigo + '\')">' + esc(r.codigo) + '</span></td><td>' + esc(r.empresa) + '</td><td>' + r.montoFmt + '</td><td>' + esc((r.motivo || '').slice(0, 26)) + '</td><td>' + esc(r.por) + '</td>' +
+    '<td>' + (r.prematuro ? '<span class="ops-pill ops-pill-r">prematuro</span>' : r.tuvoContacto ? '<span class="ops-pill ops-pill-v">contactado</span>' : '<span class="ops-pill ops-pill-a">sin contacto</span>') + '</td></tr>').join('');
+  $('opsDesest').innerHTML =
+    '<div class="ops-desest-head"><div><b class="ops-desest-n">' + X.total + '</b> descartes · <b>' + X.montoFmt + '</b></div>' +
+    (X.prematuros ? '<span class="ops-pill ops-pill-r">' + X.prematuros + ' prematuros</span>' : '<span class="ops-pill ops-pill-v">sin prematuros</span>') + '</div>' +
+    '<div class="ops-desest-tit">Motivos</div>' + mot +
+    (rec ? '<div class="ops-desest-tit">Recientes</div><table class="ops-tabla ops-tabla-sm"><tbody>' + rec + '</tbody></table>' : '');
+
+  // ---- Metas por funcionario (global arriba + individuales que la suman) ----
+  const sumInd = (M.individuales || []).reduce((a, x) => a + (x.monto || 0), 0);
+  const gaugeG = M.global.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + ((M.global.pct || 0) >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, M.global.pct || 0) + '%"></div></div>' : '';
+  const globalRow = '<div class="ops-meta-global"><div class="ops-meta-nom">🏢 Meta global equipo</div>' +
+    '<div class="ops-meta-val">' + (M.global.monto > 0 ? M.global.logradoFmt + ' / ' + M.global.montoFmt + ' (' + M.global.pct + '%)' : '<span class="ops-sinmeta">sin meta asignada</span>') + '</div>' + gaugeG +
+    (M.global.monto > 0 && sumInd > 0 ? '<div class="ops-emb-sub">Suma de individuales: ' + fmtMontoOps(sumInd) + (sumInd !== M.global.monto ? ' (difiere de la global)' : ' ✓') + '</div>' : '') + '</div>';
+  const inds = M.individuales || [];
+  const filasMeta = inds.length ? inds.map(mi => {
+    const pct = mi.pct != null ? mi.pct : 0;
+    const barra = mi.monto > 0 ? '<div class="ops-bar"><div class="ops-bar-fill ' + (pct >= 50 ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>' : '';
+    return '<div class="ops-meta-row"><div class="ops-meta-nom">' + esc(mi.nombre) + '</div><div class="ops-meta-val">' + mi.logradoFmt + ' / ' + mi.montoFmt + ' (' + (mi.pct != null ? mi.pct : 0) + '%)</div>' + barra + '</div>';
+  }).join('') : '<div class="vacio">Aún no hay metas individuales asignadas.</div>';
+  const esDiego = YO && (YO.rol === 'admin' || /diego cubas/i.test(YO.nombre || ''));
+  if ($('opsMetaSub')) $('opsMetaSub').innerHTML = esDiego ? '<button class="ops-meta-asignar" onclick="abrirMetasB2B()">✎ asignar</button>' : '';
+  $('opsMetas').innerHTML = globalRow + filasMeta;
+}
+
+function opsToggleLeads(i) { const el = $('opsChips' + i); if (el) el.classList.toggle('oculto'); }
+
+// ---- Modal Asignar Metas B2B (solo Diego/admin) ----
+async function abrirMetasB2B() {
+  $('metasB2BModal').classList.remove('oculto');
+  const el = $('metasB2BContent');
+  el.innerHTML = '<div class="ops-ia-loading">Cargando…</div>';
+  try {
+    // Usa el payload actual si existe, si no lo pide
+    let M = OPS_DATA && OPS_DATA.meta;
+    if (!M) { const d = await api('/api/b2b/dashboard'); M = d.meta; }
+    const funcs = (await api('/api/b2b/funcionarios')).funcionarios || [];
+    const indMap = {}; (M.individuales || []).forEach(x => indMap[x.nombre] = x.monto);
+    let h = '<div class="mb-tit">Meta global del equipo (S/ a Business case este mes)</div>' +
+      '<input type="number" min="0" id="mbGlobal" class="mb-inp" value="' + (M.global.monto || '') + '" placeholder="Ej: 5000000">' +
+      '<div class="mb-tit mb-mt">Metas individuales por funcionario</div>' +
+      '<div class="mb-sub">La suma de las individuales debería igualar la meta global.</div>';
+    funcs.forEach((f, i) => {
+      h += '<div class="mb-row"><span class="mb-nom">' + esc(f) + '</span><input type="number" min="0" id="mbInd' + i + '" data-nom="' + esc(f) + '" class="mb-inp-sm" value="' + (indMap[f] || '') + '" oninput="mbSuma()" placeholder="0"></div>';
+    });
+    h += '<div class="mb-suma" id="mbSumaTxt"></div>' +
+      '<div class="mb-actions"><button class="btn sec" onclick="cerrarMetasB2B()">Cancelar</button><button class="btn" onclick="guardarMetasB2B()">Guardar metas</button></div>';
+    el.innerHTML = h;
+    mbSuma();
+  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
+}
+function mbSuma() {
+  let s = 0;
+  document.querySelectorAll('[id^="mbInd"]').forEach(inp => s += Number(inp.value) || 0);
+  const g = Number(($('mbGlobal') || {}).value) || 0;
+  const el = $('mbSumaTxt'); if (!el) return;
+  const dif = s - g;
+  el.innerHTML = 'Suma individuales: <b>' + fmtMontoOps(s) + '</b>' + (g > 0 ? ' · global: <b>' + fmtMontoOps(g) + '</b>' + (dif === 0 ? ' <span class="ops-up">✓ cuadra</span>' : ' <span class="ops-down">' + (dif > 0 ? '+' : '') + fmtMontoOps(dif) + '</span>') : '');
+}
+async function guardarMetasB2B() {
+  try {
+    const g = Number(($('mbGlobal') || {}).value) || 0;
+    await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto: g }) });
+    const inputs = document.querySelectorAll('[id^="mbInd"]');
+    for (const inp of inputs) {
+      const monto = Number(inp.value) || 0;
+      await api('/api/b2b/dashboard/meta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto, funcionario: inp.dataset.nom }) });
+    }
+    cerrarMetasB2B();
+    if (document.getElementById('v-b2b-ops') && document.getElementById('v-b2b-ops').classList.contains('act')) cargarB2BOps();
+  } catch (e) { alert(e.message || 'No se pudo guardar'); }
+}
+function cerrarMetasB2B() { $('metasB2BModal').classList.add('oculto'); }
+
+// ---- Modal Leads trabajados ----
+async function abrirTrabajados() {
+  $('opsTrabajadosModal').classList.remove('oculto');
+  const el = $('opsTrabContent');
+  el.innerHTML = '<div class="ops-ia-loading">Cargando leads trabajados…</div>';
+  const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
+  const desde = $('opsDesde') ? $('opsDesde').value : '';
+  const hasta = $('opsHasta') ? $('opsHasta').value : '';
+  try {
+    const qs = [];
+    if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
+    const d = await api('/api/b2b/dashboard/trabajados' + (qs.length ? '?' + qs.join('&') : ''));
+    if ($('opsTrabTit')) $('opsTrabTit').textContent = '📞 Leads trabajados (' + d.total + ')';
+    if (!d.leads.length) { el.innerHTML = '<div class="vacio">Sin leads trabajados en el periodo.</div>'; return; }
+    el.innerHTML = '<table class="ops-tabla ops-trab-tabla"><thead><tr><th>Empresa</th><th>Propietario</th><th>Estado inicial</th><th>Estado actual</th><th>Próxima acción</th><th>Cuándo</th><th>Monto</th></tr></thead><tbody>' +
+      d.leads.map(l => '<tr onclick="abrirFichaB2B(\'' + l.codigo + '\')">' +
+        '<td><b>' + esc(l.empresa) + '</b></td>' +
+        '<td>' + esc(l.propietario || '—') + '</td>' +
+        '<td><span class="ops-est">' + esc(l.estadoInicial) + '</span></td>' +
+        '<td>' + (l.desestimado ? '<span class="ops-pill ops-pill-r">Desestimado</span>' : '<span class="ops-est ops-est-act">' + esc(l.estadoActual) + '</span>') + '</td>' +
+        '<td>' + esc(l.proximaAccion) + '</td>' +
+        '<td>' + (l.fechaProxAccion || '—') + '</td>' +
+        '<td>' + l.montoFmt + '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
+}
+function cerrarTrabajados() { $('opsTrabajadosModal').classList.add('oculto'); }
+
+// ---- Modal Análisis IA ----
+function abrirModalIA() {
+  $('opsIAModal').classList.remove('oculto');
+  const el = $('opsIAContent');
+  el.innerHTML = '<div class="ops-ia-loading">🤖 Analizando el panorama con IA…<div class="ops-ia-spin"></div></div>';
+  api('/api/b2b/dashboard/ia').then(r => {
+    if (!r.disponible) { el.innerHTML = '<div class="vacio">' + esc(r.error || 'IA no disponible') + '</div>'; return; }
+    const html = esc(r.texto)
+      .replace(/\*([^*\n]+)\*/g, '<h3 class="ops-ia-h">$1</h3>')
+      .split('\n').filter(l => l.trim())
+      .map(l => l.includes('ops-ia-h') ? l : (l.trim().startsWith('-') ? '<div class="ops-ia-linea">' + l.replace(/^-\s*/, '') + '</div>' : '<p class="ops-ia-p">' + l + '</p>')).join('');
+    el.innerHTML = html + '<div class="ops-emb-sub ops-mt8">Generado ' + new Date(r.generado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + (r.cache ? ' (caché, se renueva cada 10 min)' : '') + '</div>';
+  }).catch(e => { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; });
+}
+function cerrarModalIA() { $('opsIAModal').classList.add('oculto'); }

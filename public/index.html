@@ -6,7 +6,7 @@
 <title>MiTasatop</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" href="favicon.svg">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=1367">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
@@ -38,6 +38,7 @@
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
         <button class="mundo-item oculto" id="mi-b2b-dia" onclick="navB2B('dia')">📊 Gestión del día</button>
+        <button class="mundo-item oculto" id="mi-b2b-ops" onclick="navB2B('ops')">🎛 Centro de Operaciones</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
       </div>
     </div>
@@ -55,6 +56,7 @@
     </button>
     <div class="tu-menu oculto" id="tuMenu">
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetas()">🎯 Asignar metas</button>
+      <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirMetasB2B()">🏢 Asignar metas B2B</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirVerMetas()">📊 Ver metas cargadas</button>
       <button class="tu-item soloAdmin oculto" onclick="cerrarMenuUsuario();abrirLlegadas()">🕐 Llegada de leads por hora</button>
       <button class="tu-item soloAdminJefa oculto" onclick="cerrarMenuUsuario();abrirAutoasig()">🔀 Auto-asignación</button>
@@ -668,6 +670,85 @@
       <div id="bdAsesores"></div>
     </div>
   </section>
+  <!-- ===== CENTRO DE OPERACIONES B2B (v1.365) ===== -->
+  <section id="v-b2b-ops" class="vista">
+    <div class="ops-topbar">
+      <div class="ops-hero-brand"><img src="logo.png" alt="TasaTop"><div><div class="ops-hero-tit">Centro de Operaciones B2B</div><div class="ops-hero-sub" id="opsHeroSub">Vista jefatura</div></div></div>
+      <div class="ops-topfilters">
+        <div class="ops-tf"><label>Funcionario</label><select id="opsAsesor" onchange="cargarB2BOps()"><option value="">Todo el equipo</option></select></div>
+        <div class="ops-tf"><label>Desde</label><input type="date" id="opsDesde" onchange="cargarB2BOps()"></div>
+        <div class="ops-tf"><label>Hasta</label><input type="date" id="opsHasta" onchange="cargarB2BOps()"></div>
+        <button class="ops-ia-launch" onclick="abrirModalIA()">🤖 Análisis IA</button>
+      </div>
+    </div>
+    <div class="ops-scroll">
+      <div class="ops-updated" id="opsActualizado"></div>
+      <div id="opsKpis" class="ops-kpis"></div>
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">⚡ Centro de alertas inteligentes</div>
+        <div id="opsAlertas"></div>
+      </div>
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">Cuellos de botella <span class="bd-sub">el pipeline etapa por etapa</span></div>
+        <div id="opsCuellos"></div>
+      </div>
+      <div class="ops-grid2">
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">Embudo comercial <span class="bd-sub">alcance acumulado</span></div>
+          <div id="opsEmbudo"></div>
+        </div>
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">Distribución del pipeline <span class="bd-sub">por monto</span></div>
+          <div id="opsDistrib"></div>
+        </div>
+      </div>
+      <div class="ops-grid2">
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">Leads sin movimiento <span class="bd-sub">detenidos por tiempo</span></div>
+          <div id="opsSinMov"></div>
+        </div>
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">Top leads en riesgo <span class="bd-sub">por monto y Priority Score</span></div>
+          <div id="opsTopRiesgo"></div>
+        </div>
+      </div>
+      <div class="ops-grid2">
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">🗑 Desestimados <span class="bd-sub">del periodo · respeta el filtro</span></div>
+          <div id="opsDesest"></div>
+        </div>
+        <div class="com-panel bd-panel">
+          <div class="com-panel-tit">🎯 Metas por funcionario <span class="bd-sub" id="opsMetaSub"></span></div>
+          <div id="opsMetas"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Modal Análisis IA -->
+  <div id="opsIAModal" class="ops-modal oculto" onclick="if(event.target===this)cerrarModalIA()">
+    <div class="ops-modal-box">
+      <div class="ops-modal-head"><span>🤖 Análisis IA · Centro de Operaciones</span><button class="ops-modal-x" onclick="cerrarModalIA()">✕</button></div>
+      <div class="ops-modal-body" id="opsIAContent"></div>
+    </div>
+  </div>
+
+  <!-- Modal Asignar Metas B2B (solo Diego/admin) -->
+  <div id="metasB2BModal" class="ops-modal oculto" onclick="if(event.target===this)cerrarMetasB2B()">
+    <div class="ops-modal-box">
+      <div class="ops-modal-head"><span>🏢 Metas B2B · monto que llega a Business case</span><button class="ops-modal-x" onclick="cerrarMetasB2B()">✕</button></div>
+      <div class="ops-modal-body" id="metasB2BContent"></div>
+    </div>
+  </div>
+
+  <!-- Modal Leads trabajados -->
+  <div id="opsTrabajadosModal" class="ops-modal oculto" onclick="if(event.target===this)cerrarTrabajados()">
+    <div class="ops-modal-box ops-modal-wide">
+      <div class="ops-modal-head"><span id="opsTrabTit">📞 Leads trabajados</span><button class="ops-modal-x" onclick="cerrarTrabajados()">✕</button></div>
+      <div class="ops-modal-body" id="opsTrabContent"></div>
+    </div>
+  </div>
+
   <section id="v-b2b-audit" class="vista">
     <div class="barra">
       <h2>Auditoría B2B</h2>
@@ -1247,7 +1328,7 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=1367"></script>
 
 <!-- Softphone Aircall embebido (persistente en toda la app) -->
 <button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>

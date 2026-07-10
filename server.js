@@ -476,6 +476,8 @@ try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN adId TEXT"); } catch (e) {
 // v1.214: seguimiento de tiempo en etapa (para deadlines por etapa del kanban)
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN fechaEtapa TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN fechaEtapaCol TEXT"); } catch (e) { }
+// v1.362: ancla del reloj 3x3 B2B (regla de contactabilidad). Se sella lazy desde dashboard-b2b.js.
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN fecha3x3 TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN montoRango TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN registradoSunarp TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_ingresos ADD COLUMN departamentoInmueble TEXT"); } catch (e) { }
@@ -1344,6 +1346,8 @@ const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolida
 const iaReportes = require('./ia-reportes.js');
 // Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
 const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
+// v1.362: Centro de Operaciones B2B (motor 3x3 + dashboard de jefatura). Solo lee la BD.
+const dashB2B = require('./dashboard-b2b.js')({ db, etapaKanbanB2B, priorityScoreB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo, sellarFechaEtapa });
 // alertasWAB2B.iniciarCortes(); // DESACTIVADO temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos. Los 3 cortes se pueden enviar manualmente con /api/b2b/alertas-wa/enviar o reactivar aquí.
 // Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
 const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
@@ -5493,6 +5497,95 @@ app.get('/api/b2b/gamificacion', soloB2B, (req, res) => {
 
 // CENTRO DE COMANDO B2B: resumen de la jornada del asesor (tareas críticas, carga, progreso).
 // GET /api/b2b/comando?asesor=
+// CENTRO DE OPERACIONES B2B (v1.362): payload completo del dashboard de jefatura.
+// KPIs con vs-ayer, regla 3x3 de contactabilidad, alertas inteligentes por reglas,
+// salud del pipeline 0-100, productividad con Índice de Gestión, cuellos de botella,
+// embudo acumulado y agenda. Cálculo en dashboard-b2b.js.
+// GET /api/b2b/dashboard              -> payload completo
+// GET /api/b2b/dashboard?asesor=XXX   -> filtrado a la cartera de un ejecutivo
+// GET /api/b2b/dashboard?lead=CODIGO  -> solo el estado 3x3 de un lead (debug/compuerta)
+app.get('/api/b2b/dashboard', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try {
+    if (req.query.lead) {
+      const e = dashB2B.estado3x3PorCodigo(String(req.query.lead).trim());
+      if (!e) return res.status(404).json({ error: 'lead no encontrado' });
+      return res.json({ codigo: req.query.lead, estado3x3: e });
+    }
+    res.json(dashB2B.construirDashboard({ asesor: req.query.asesor, desde: req.query.desde, hasta: req.query.hasta, fecha: req.query.fecha }));
+  } catch (e) {
+    console.error('[b2b/dashboard]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// LEADS TRABAJADOS del periodo (v1.366): para el modal al hacer clic en "Gestión del día".
+// GET /api/b2b/dashboard/trabajados?desde&hasta&asesor
+app.get('/api/b2b/dashboard/trabajados', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try { res.json(dashB2B.leadsTrabajados({ desde: req.query.desde, hasta: req.query.hasta, asesor: req.query.asesor })); }
+  catch (e) { console.error('[b2b/trabajados]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Funcionarios B2B (para el modal de asignar metas).
+app.get('/api/b2b/funcionarios', soloB2B, (req, res) => {
+  try { res.json({ funcionarios: dashB2B.funcionariosB2B() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// META MENSUAL B2B (v1.364): la fija jefatura desde el Centro de Operaciones.
+// POST /api/b2b/dashboard/meta { monto }  -> guarda en app_config 'b2b_meta_mes'
+app.post('/api/b2b/dashboard/meta', soloB2B, (req, res) => {
+  // Solo Diego Cubas (o admin) fija las metas. { monto, funcionario? }
+  // Sin 'funcionario' → meta GLOBAL del equipo. Con 'funcionario' → meta INDIVIDUAL.
+  const esDiego = req.user && (req.user.rol === 'admin' || /dcubas@tasatop\.com/i.test(req.user.usuario || '') || /diego cubas/i.test(req.user.nombre || ''));
+  if (!esDiego) return res.status(403).json({ error: 'Solo Diego Cubas puede asignar metas' });
+  const monto = Number(req.body && req.body.monto);
+  if (!isFinite(monto) || monto < 0) return res.status(400).json({ error: 'Monto inválido' });
+  const funcionario = req.body && req.body.funcionario ? String(req.body.funcionario).trim() : '';
+  if (funcionario) {
+    let ind = {};
+    try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_meta_mes_ind'").get(); if (r && r.valor) ind = JSON.parse(r.valor) || {}; } catch (e) {}
+    ind[funcionario] = monto;
+    db.prepare("INSERT INTO app_config (clave,valor) VALUES ('b2b_meta_mes_ind',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(JSON.stringify(ind));
+    auditar(req, 'b2b_meta_mes_ind', funcionario, 'S/ ' + monto.toLocaleString('es-PE'));
+    return res.json({ ok: true, funcionario, monto });
+  }
+  db.prepare("INSERT INTO app_config (clave,valor) VALUES ('b2b_meta_mes',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(String(monto));
+  auditar(req, 'b2b_meta_mes', 'config', 'S/ ' + monto.toLocaleString('es-PE'));
+  res.json({ ok: true, monto });
+});
+
+// PANEL IA del Centro de Operaciones (v1.363): análisis con Claude Haiku sobre el
+// payload YA CALCULADO (nunca inventa cifras). Caché de 10 min para no gastar por refresco.
+// GET /api/b2b/dashboard/ia            -> { disponible, texto, generado, cache }
+// GET /api/b2b/dashboard/ia?fresco=1   -> fuerza regenerar
+let _iaOpsCache = { texto: null, ts: 0 };
+app.get('/api/b2b/dashboard/ia', soloB2B, async (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try {
+    if (!iaReportes.configurado()) return res.json({ disponible: false, error: 'Falta ANTHROPIC_API_KEY en Railway' });
+    const fresco = req.query.fresco === '1';
+    if (!fresco && _iaOpsCache.texto && (Date.now() - _iaOpsCache.ts) < 10 * 60000) {
+      return res.json({ disponible: true, texto: _iaOpsCache.texto, generado: new Date(_iaOpsCache.ts).toISOString(), cache: true });
+    }
+    const D = dashB2B.construirDashboard({});
+    const texto = await iaReportes.analizarOperacionB2B(D);
+    if (!texto) return res.json({ disponible: false, error: 'La IA no respondió (timeout o error de API); intenta de nuevo' });
+    _iaOpsCache = { texto, ts: Date.now() };
+    res.json({ disponible: true, texto, generado: new Date().toISOString(), cache: false });
+  } catch (e) {
+    console.error('[b2b/dashboard/ia]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/b2b/comando', soloB2B, (req, res) => {
   try {
     const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
@@ -6779,6 +6872,20 @@ app.post('/api/b2b/wa/mensaje', soloB2B, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Mensaje LIBRE al grupo B2C (grupo por defecto del bot, donde llegan los cortes B2C).
+// POST /api/b2c/wa/mensaje  { texto }
+app.post('/api/b2c/wa/mensaje', soloAdminOJefa, async (req, res) => {
+  const texto = String((req.body && req.body.texto) || '').trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto del mensaje' });
+  if (texto.length > 2000) return res.status(400).json({ error: 'Mensaje demasiado largo (máx 2000 caracteres)' });
+  try {
+    // Sin JID → cae al grupo por defecto del bot (el de B2C/leads), igual que los cortes B2C.
+    const ok = await enviarAlertaWA(texto, process.env.WA_GRUPO_LEADS_JID || undefined);
+    auditar(req, 'b2c_wa_mensaje_libre', null, texto.slice(0, 80));
+    res.json({ ok: !!ok });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -6790,6 +6897,15 @@ app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const motivo = (req.body && req.body.motivo && String(req.body.motivo).trim()) || 'No contactable';
+  // COMPUERTA (v1.365): para desestimar, el funcionario DEBE haber registrado su gestión
+  // en el modal (al menos un intento o contacto). Sin gestión registrada = bloqueo absoluto
+  // (nadie puede, ni jefatura): primero se registra el trabajo, luego se acciona la bandera roja.
+  const e33 = dashB2B.estado3x3PorCodigo(s.codigo);
+  if (e33 && e33.exigible && !dashB2B.tieneGestionRegistrada(s.codigo)) {
+    return res.status(422).json({
+      error: 'Para desestimar, primero registra tu gestión (un intento o contacto) en el modal de gestión.',
+      bloqueoGestion: true });
+  }
   db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
   auditar(req, 'b2b_descartar', s.codigo, motivo);
   res.json({ ok: true });
@@ -7537,7 +7653,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.360 (Nuevo endpoint POST /api/b2b/wa/mensaje {texto} para enviar un mensaje LIBRE al grupo B2B (motivar al equipo, avisos puntuales). Solo admin/jefe B2B, max 2000 caracteres, deja rastro en auditoria (b2b_wa_mensaje_libre). Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.368 (FIX CRITICO: al agregar el Centro de Operaciones B2B (v1.365) quedo DUPLICADO el tag <section id=v-b2b-audit> en la misma linea del index.html, dejando el DOM roto: por eso dejaron de abrirse las tarjetas del Kanban/cola/codigo en B2B y el modal de ranking B2C. Se elimino la etiqueta section duplicada; ahora 15 aperturas = 15 cierres, sin IDs duplicados. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
