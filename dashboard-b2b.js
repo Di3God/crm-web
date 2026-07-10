@@ -128,7 +128,7 @@ module.exports = function (deps) {
     if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K';
     return 'S/ ' + Math.round(n).toLocaleString('es-PE');
   };
-  const primerNombre = s => String(s || '').trim().split(/\s+/)[0] || s;
+  const primerNombre = s => { s = String(s || '').trim(); if (!s || /^sin asignar$/i.test(s)) return 'Sin asignar'; return s.split(/\s+/)[0]; };
   const prom = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
 
   // Acciones de auditoría que cuentan como "trabajo sobre el lead" (misma lista que /api/b2b/dia).
@@ -360,6 +360,59 @@ module.exports = function (deps) {
     const ordenP = { critica: 0, alta: 1, media: 2, info: 3, logro: 4 };
     alertas.sort((a, b) => ordenP[a.prioridad] - ordenP[b.prioridad]);
 
+    // --- DESESTIMADOS: análisis de descartes (hoy / 7d / 30d, motivos, prematuros) ---
+    const descartados = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").all();
+    const auditDesc = {}; // codigo -> { fecha, por }
+    db.prepare("SELECT objetivo, fecha, nombre FROM auditoria WHERE accion IN ('b2b_descartar','b2b_descartar_duplicado') ORDER BY fecha ASC").all()
+      .forEach(a => { auditDesc[a.objetivo] = { fecha: a.fecha, por: a.nombre || '' }; });
+    const d30 = diaMas(hoy, -30), d7 = diaMas(hoy, -7);
+    const codsDesc = descartados.map(s => s.codigo);
+    const gestDesc = {}; // gestiones de los descartados (para saber si hubo contacto antes del descarte)
+    if (codsDesc.length) {
+      const phD = codsDesc.map(() => '?').join(',');
+      db.prepare('SELECT codigoSolicitud, fecha, canal, resultado FROM b2b_gestiones WHERE codigoSolicitud IN (' + phD + ')').all(...codsDesc)
+        .forEach(g => (gestDesc[g.codigoSolicitud] = gestDesc[g.codigoSolicitud] || []).push(g));
+    }
+    const enriquecidosDesc = descartados.map(s => {
+      const au = auditDesc[s.codigo] || {};
+      const fDesc = au.fecha || s.fechaIngreso;
+      const dDesc = fDesc ? diaLima(fDesc) : null;
+      const gs = gestDesc[s.codigo] || [];
+      const tuvoContacto = gs.some(g => esContactoEfectivo(g.resultado));
+      const base3 = s.fecha3x3 || s.fechaIngreso;
+      const diasHastaDesc = (fDesc && base3) ? (new Date(fDesc) - new Date(base3)) / 86400000 : null;
+      // Prematuro: descartado sin contacto efectivo y ANTES de cumplir los 3 días del 3x3 (la compuerta lo evita hacia adelante).
+      const prematuro = !tuvoContacto && diasHastaDesc != null && diasHastaDesc < DIAS_3X3;
+      const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
+      return { codigo: s.codigo, empresa: s.razonSocial || s.nombreComercial || s.contacto || s.codigo,
+        monto, motivo: (s.motivoDescarte || 'Sin motivo').trim(), por: au.por || s.responsableActual || '—',
+        fecha: fDesc, dia: dDesc, tuvoContacto, prematuro };
+    });
+    const desc30 = enriquecidosDesc.filter(x => x.dia && x.dia >= d30);
+    const motivosMap = {};
+    desc30.forEach(x => { const m = x.motivo.slice(0, 60); motivosMap[m] = (motivosMap[m] || 0) + 1; });
+    const porQuienMap = {};
+    desc30.forEach(x => { porQuienMap[x.por] = (porQuienMap[x.por] || 0) + 1; });
+    const prematuros30 = desc30.filter(x => x.prematuro);
+    const desestimados = {
+      hoy: enriquecidosDesc.filter(x => x.dia === hoy).length,
+      ultimos7: enriquecidosDesc.filter(x => x.dia && x.dia >= d7).length,
+      ultimos30: desc30.length,
+      monto30: desc30.reduce((a, x) => a + x.monto, 0),
+      monto30Fmt: fmtMM(desc30.reduce((a, x) => a + x.monto, 0)),
+      sinContacto30: desc30.filter(x => !x.tuvoContacto).length,
+      prematuros30: prematuros30.length,
+      prematuros30Monto: prematuros30.reduce((a, x) => a + x.monto, 0),
+      prematurosCodigos: prematuros30.map(x => x.codigo),
+      motivos: Object.entries(motivosMap).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 8),
+      porQuien: Object.entries(porQuienMap).map(([por, n]) => ({ por, n })).sort((a, b) => b.n - a.n),
+      recientes: enriquecidosDesc.filter(x => x.fecha).sort((a, b) => (b.fecha > a.fecha ? 1 : -1)).slice(0, 12)
+        .map(x => ({ codigo: x.codigo, empresa: x.empresa, monto: x.monto, montoFmt: fmtMM(x.monto), motivo: x.motivo, por: primerNombre(x.por), fecha: x.fecha, tuvoContacto: x.tuvoContacto, prematuro: x.prematuro }))
+    };
+    if (prematuros30.length >= 2) A('alta', `${prematuros30.length} descartes PREMATUROS en 30 días (sin contacto y antes de cumplir el 3x3) — ${fmtMM(desestimados.prematuros30Monto)}`,
+      { codigos: prematuros30.map(x => x.codigo), tipo: 'descartes_prematuros' });
+    alertas.sort((a, b) => ordenP[a.prioridad] - ordenP[b.prioridad]);
+
     // --- Payload final ---
     return {
       fecha: hoy, actualizado: new Date().toISOString(), asesor: asesorFiltro,
@@ -379,6 +432,7 @@ module.exports = function (deps) {
       productividad,
       cuellos,
       embudo,
+      desestimados,
       agenda: { reunionesHoy, seguimientosHoy, vencenHoy, accionesVencidas }
     };
   }

@@ -5521,6 +5521,32 @@ app.get('/api/b2b/dashboard', soloB2B, (req, res) => {
   }
 });
 
+// PANEL IA del Centro de Operaciones (v1.363): análisis con Claude Haiku sobre el
+// payload YA CALCULADO (nunca inventa cifras). Caché de 10 min para no gastar por refresco.
+// GET /api/b2b/dashboard/ia            -> { disponible, texto, generado, cache }
+// GET /api/b2b/dashboard/ia?fresco=1   -> fuerza regenerar
+let _iaOpsCache = { texto: null, ts: 0 };
+app.get('/api/b2b/dashboard/ia', soloB2B, async (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try {
+    if (!iaReportes.configurado()) return res.json({ disponible: false, error: 'Falta ANTHROPIC_API_KEY en Railway' });
+    const fresco = req.query.fresco === '1';
+    if (!fresco && _iaOpsCache.texto && (Date.now() - _iaOpsCache.ts) < 10 * 60000) {
+      return res.json({ disponible: true, texto: _iaOpsCache.texto, generado: new Date(_iaOpsCache.ts).toISOString(), cache: true });
+    }
+    const D = dashB2B.construirDashboard({});
+    const texto = await iaReportes.analizarOperacionB2B(D);
+    if (!texto) return res.json({ disponible: false, error: 'La IA no respondió (timeout o error de API); intenta de nuevo' });
+    _iaOpsCache = { texto, ts: Date.now() };
+    res.json({ disponible: true, texto, generado: new Date().toISOString(), cache: false });
+  } catch (e) {
+    console.error('[b2b/dashboard/ia]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/b2b/comando', soloB2B, (req, res) => {
   try {
     const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
@@ -6832,6 +6858,22 @@ app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const motivo = (req.body && req.body.motivo && String(req.body.motivo).trim()) || 'No contactable';
+  // COMPUERTA 3x3 (v1.363): sin contacto efectivo NO se puede descartar hasta cumplir
+  // los 3 días de contactabilidad. Se descarta antes SOLO si el cliente respondió
+  // (contacto efectivo, p.ej. "No interesado") o si el 3x3 ya venció (ilocalizable).
+  // Jefatura puede forzar con { forzar: true } y queda auditado como forzado.
+  const e33 = dashB2B.estado3x3PorCodigo(s.codigo);
+  if (e33 && e33.exigible && !e33.contactoEfectivo && !e33.puedeDescartar) {
+    const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos'].includes(req.user.rol);
+    const forzar = esJefe && req.body && req.body.forzar === true;
+    if (!forzar) {
+      return res.status(422).json({ error: e33.motivoBloqueo || 'Bloqueado por regla 3x3', bloqueo3x3: true,
+        dia: e33.dia, esperados: e33.esperados, cumplidos: e33.cumplidos, puedeForzar: esJefe });
+    }
+    db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
+    auditar(req, 'b2b_descartar', s.codigo, motivo + ' (FORZADO por jefatura: 3x3 incompleto, día ' + e33.dia + ', ' + e33.cumplidos + '/' + e33.esperados + ' intentos)');
+    return res.json({ ok: true, forzado: true });
+  }
   db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
   auditar(req, 'b2b_descartar', s.codigo, motivo);
   res.json({ ok: true });
@@ -7579,7 +7621,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.362 (FASE 1 Centro de Operaciones B2B: nuevo modulo dashboard-b2b.js con motor 3x3 de contactabilidad (exigible desde Filtro credito o RUC observado, 3 intentos/dia por franja x 3 dias, contacto efectivo = Contactado/Pidio informacion/Envio documentos/No interesado, compuerta de descarte calculada) + endpoint GET /api/b2b/dashboard (solo jefatura, ?asesor= filtra, ?lead= debug 3x3) con KPIs vs ayer, alertas inteligentes por reglas, salud 0-100, productividad con Indice de Gestion, cuellos de botella, embudo acumulado y agenda. Columna nueva b2b_solicitudes.fecha3x3 (ALTER auto). Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.363 (FASES 2+3 Centro de Operaciones B2B: nueva vista de jefatura en menu B2B (v-b2b-ops, admin/jefe_b2b/jefe_creditos) con KPIs, alertas con Ver leads, salud gauge, productividad clickeable, cuellos, embudo y panel de DESESTIMADOS (hoy/7d/30d, motivos, prematuros=sin contacto antes del 3x3). COMPUERTA de descarte en PUT /api/b2b/solicitudes/:codigo/descartar: bloquea 422 si exigible sin contacto efectivo y 3x3 incompleto; jefatura puede forzar con {forzar:true} auditado. PANEL IA: GET /api/b2b/dashboard/ia (Haiku via ia-reportes.analizarOperacionB2B, bloques OPERACION+DESESTIMADOS, cache 10min, requiere ANTHROPIC_API_KEY). dashboard-b2b.js suma seccion desestimados y fix nombre Sin asignar. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

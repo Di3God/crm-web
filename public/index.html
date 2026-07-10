@@ -38,6 +38,7 @@
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
         <button class="mundo-item oculto" id="mi-b2b-dia" onclick="navB2B('dia')">📊 Gestión del día</button>
+        <button class="mundo-item oculto" id="mi-b2b-ops" onclick="navB2B('ops')">🎛 Centro de Operaciones</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
       </div>
     </div>
@@ -666,6 +667,54 @@
     <div class="com-panel bd-panel">
       <div class="com-panel-tit">Comparativo por asesor <span class="bd-sub">para coaching</span></div>
       <div id="bdAsesores"></div>
+    </div>
+  </section>
+  <!-- ===== CENTRO DE OPERACIONES B2B (v1.363) ===== -->
+  <section id="v-b2b-ops" class="vista">
+    <div class="barra bd-barra">
+      <h2>🎛 Centro de Operaciones B2B</h2>
+      <select id="opsAsesor" class="bd-mini" onchange="cargarB2BOps()"><option value="">Todo el equipo</option></select>
+      <button class="btn sec bd-mini-btn" onclick="cargarB2BOps()">⟳</button>
+      <span id="opsActualizado" class="bd-sub"></span>
+    </div>
+    <div id="opsKpis" class="ops-kpis"></div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">⚡ Centro de alertas inteligentes</div>
+      <div id="opsAlertas"></div>
+    </div>
+    <div class="ops-grid2">
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">Salud del pipeline <span class="bd-sub">3x3 · primer contacto · avance · conversión · movimiento · vencidas</span></div>
+        <div id="opsSalud"></div>
+      </div>
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">Agenda comercial de hoy</div>
+        <div id="opsAgenda"></div>
+      </div>
+    </div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">Productividad del equipo <span class="bd-sub">clic en un ejecutivo filtra el tablero</span></div>
+      <div id="opsProd"></div>
+    </div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">Cuellos de botella <span class="bd-sub">días en la etapa actual</span></div>
+      <div id="opsCuellos"></div>
+    </div>
+    <div class="ops-grid2">
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">Embudo comercial <span class="bd-sub">alcance acumulado por etapa</span></div>
+        <div id="opsEmbudo"></div>
+      </div>
+      <div class="com-panel bd-panel">
+        <div class="com-panel-tit">🗑 Desestimados <span class="bd-sub">análisis de descartes</span></div>
+        <div id="opsDesest"></div>
+      </div>
+    </div>
+    <div class="com-panel bd-panel">
+      <div class="com-panel-tit">✨ Panel IA <span class="bd-sub">análisis automático sobre los datos del tablero</span>
+        <button class="btn sec bd-mini-btn ops-ia-btn" onclick="generarIAOps()">Generar análisis</button>
+      </div>
+      <div id="opsIA"><div class="vacio">Pulsa "Generar análisis" para que la IA interprete el estado actual (operación + desestimados).</div></div>
     </div>
   </section>
   <section id="v-b2b-audit" class="vista">

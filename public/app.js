@@ -555,7 +555,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia', 'mi-b2b-ops']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -567,10 +567,10 @@ async function arrancar() {
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
@@ -629,6 +629,7 @@ function ir(v) {
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
   if (v === 'b2b-audit') cargarAuditoriaB2B();
+  if (v === 'b2b-ops') cargarB2BOps();
   if (v === 'b2b-dia') cargarB2BDia();
   if (v === 'atribucion') cargarMarketing();
   if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
@@ -652,6 +653,7 @@ function navB2B(which) {
   if (which === 'releads') { ir('b2b-releads'); return; }
   if (which === 'audit') { ir('b2b-audit'); return; }
   if (which === 'dia') { ir('b2b-dia'); return; }
+  if (which === 'ops') { ir('b2b-ops'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -8976,4 +8978,133 @@ async function procesarArchivoHistorico(input) {
     if ($('cplHistorico')) $('cplHistorico').checked = true;
     cargarCplMeta();
   } catch (e) { alert('Error al procesar el archivo: ' + e.message); }
+}
+
+// ============================================================
+// CENTRO DE OPERACIONES B2B (v1.363) — vista de jefatura
+// Consume /api/b2b/dashboard (motor 3x3 + alertas + salud + productividad
+// + cuellos + embudo + desestimados) y /api/b2b/dashboard/ia (Panel IA).
+// ============================================================
+function esc(v) { return (v == null ? '' : String(v)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+let OPS_DATA = null;
+
+async function cargarB2BOps() {
+  const asesor = $('opsAsesor') ? $('opsAsesor').value : '';
+  try {
+    const d = await api('/api/b2b/dashboard' + (asesor ? '?asesor=' + encodeURIComponent(asesor) : ''));
+    OPS_DATA = d;
+    renderB2BOps(d);
+  } catch (e) {
+    if ($('opsKpis')) $('opsKpis').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>';
+  }
+}
+
+function opsDelta(delta) {
+  if (delta == null) return '';
+  const cls = delta > 0 ? 'ops-up' : delta < 0 ? 'ops-down' : 'ops-flat';
+  const sig = delta > 0 ? '+' : '';
+  return '<span class="' + cls + '">' + sig + delta + ' vs ayer</span>';
+}
+
+function renderB2BOps(d) {
+  // Selector de asesor (se llena una vez con los ejecutivos del payload)
+  const sel = $('opsAsesor');
+  if (sel && sel.options.length <= 1 && d.productividad) {
+    d.productividad.filter(p => p.ejecutivo !== 'Sin asignar').forEach(p => sel.add(new Option(p.ejecutivo, p.ejecutivo)));
+    if (d.asesor) sel.value = d.asesor;
+  }
+  if ($('opsActualizado')) $('opsActualizado').textContent = 'Actualizado ' + new Date(d.actualizado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+
+  // ---- KPIs (8 tarjetas) ----
+  const K = d.kpis;
+  const kpi = (label, valor, sub, clase) => '<div class="ops-kpi"><div class="ops-kpi-lbl">' + label + '</div><div class="ops-kpi-val ' + (clase || '') + '">' + valor + '</div><div class="ops-kpi-sub">' + (sub || '') + '</div></div>';
+  const barra3x3 = '<div class="ops-bar"><div class="ops-bar-fill ' + (K.cumpl3x3.pct >= 70 ? 'ok' : 'mal') + '" style="width:' + K.cumpl3x3.pct + '%"></div></div>';
+  $('opsKpis').innerHTML =
+    kpi('Leads nuevos', K.nuevos.hoy, opsDelta(K.nuevos.delta)) +
+    kpi('Leads gestionados', K.gestionados.hoy, opsDelta(K.gestionados.delta)) +
+    kpi('Movimiento de etapa', '<span class="ops-up">' + K.movimiento.avanzaron + '↑</span> <span class="ops-down">' + K.movimiento.retrocedieron + '↓</span> <span class="ops-flat">' + K.movimiento.sinCambio + '=</span>', 'avanzan · retroceden · sin cambio') +
+    kpi('Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra3x3 + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidos + ' vencidos') +
+    kpi('Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
+    kpi('Pipeline activo', K.pipeline.montoFmt, K.pipeline.n + ' solicitudes vivas', 'ops-azul') +
+    kpi('Avanzaron sin contacto', K.avanzaronSinContacto.n, K.avanzaronSinContacto.montoFmt + ' en Garantía+ sin abordar', K.avanzaronSinContacto.n > 0 ? 'ops-rojo' : 'ops-verde') +
+    kpi('Riesgo alto', K.riesgoAlto.n, (K.primerContacto.minHoy != null ? '1er contacto hoy: ' + K.primerContacto.minHoy + ' min' : 'Priority Score crítico'), K.riesgoAlto.n > 10 ? 'ops-rojo' : '');
+
+  // ---- Alertas ----
+  const alertasEl = $('opsAlertas');
+  if (!d.alertas.length) alertasEl.innerHTML = '<div class="vacio">Sin alertas activas. Todo bajo control ✅</div>';
+  else alertasEl.innerHTML = d.alertas.map((a, i) => {
+    const cls = { critica: 'al-critica', alta: 'al-alta', media: 'al-media', info: 'al-info', logro: 'al-logro' }[a.prioridad] || 'al-media';
+    const tag = { critica: 'CRÍTICA', alta: 'ALTA', media: 'MEDIA', info: 'INFO', logro: 'LOGRO' }[a.prioridad];
+    const btn = (a.codigos && a.codigos.length) ? '<button class="btn sec ops-al-btn" onclick="opsToggleLeads(' + i + ')">Ver leads (' + a.codigos.length + ')</button>' : '';
+    const chips = (a.codigos || []).map(c => '<span class="ops-chip" onclick="abrirFichaB2B(\'' + c + '\')">' + esc(c) + '</span>').join('');
+    return '<div class="ops-alerta ' + cls + '"><span class="ops-al-tag">' + tag + '</span><div class="ops-al-txt">' + esc(a.texto) + '</div>' + btn + '</div>' +
+      (chips ? '<div class="ops-chips oculto" id="opsChips' + i + '">' + chips + '</div>' : '');
+  }).join('');
+
+  // ---- Salud (gauge) ----
+  const S = d.salud;
+  const pct = S.indice != null ? S.indice : 0;
+  const color = S.semaforo === 'verde' ? '#3B6D11' : S.semaforo === 'amarillo' ? '#BA7517' : S.semaforo === 'rojo' ? '#A32D2D' : '#999';
+  $('opsSalud').innerHTML = S.indice == null ? '<div class="vacio">Sin datos suficientes.</div>' :
+    '<div class="ops-salud"><div class="ops-gauge" style="background:conic-gradient(' + color + ' 0% ' + pct + '%, #eef1f5 ' + pct + '% 100%)"><div class="ops-gauge-in"><b>' + S.indice + '</b><span>/100</span></div></div>' +
+    '<div><span class="ops-salud-tag" style="color:' + color + '">' + esc(S.etiqueta) + '</span>' +
+    (S.peorCuello ? '<div class="ops-kpi-sub">Peor cuello: ' + esc(S.peorCuello.etapa) + ' (' + S.peorCuello.promDias + ' días prom.)</div>' : '') + '</div></div>';
+
+  // ---- Agenda ----
+  const G = d.agenda;
+  const ag = (v, l, cls) => '<div class="ops-kpi"><div class="ops-kpi-val ' + (cls || '') + '">' + v + '</div><div class="ops-kpi-sub">' + l + '</div></div>';
+  $('opsAgenda').innerHTML = '<div class="ops-agenda">' + ag(G.reunionesHoy, 'reuniones hoy') + ag(G.seguimientosHoy, 'seguimientos hoy') + ag(G.vencenHoy, 'vencen hoy', G.vencenHoy > 0 ? 'ops-ambar' : '') + ag(G.accionesVencidas, 'acciones vencidas', G.accionesVencidas > 0 ? 'ops-rojo' : '') + '</div>';
+
+  // ---- Productividad ----
+  const filas = d.productividad.filter(p => p.asignados > 0);
+  $('opsProd').innerHTML = !filas.length ? '<div class="vacio">Sin cartera asignada.</div>' :
+    '<table class="ops-tabla"><thead><tr><th>Ejecutivo</th><th>Asig.</th><th>Gest. hoy</th><th>Avanz.</th><th>3x3</th><th>1er contacto</th><th>Sin mov.</th><th>Pipeline</th><th>BC</th><th>Índice</th></tr></thead><tbody>' +
+    filas.map(p => {
+      const semCls = p.semaforo === 'verde' ? 'ops-pill-v' : p.semaforo === 'amarillo' ? 'ops-pill-a' : p.semaforo === 'rojo' ? 'ops-pill-r' : 'ops-pill-g';
+      const pc = p.primerContactoMin == null ? '—' : p.primerContactoMin >= 1440 ? Math.round(p.primerContactoMin / 1440) + ' d' : p.primerContactoMin >= 60 ? Math.round(p.primerContactoMin / 60) + ' h' : p.primerContactoMin + ' min';
+      return '<tr onclick="opsFiltraAsesor(\'' + esc(p.ejecutivo) + '\')"><td><b>' + esc(p.ejecutivo) + '</b></td><td>' + p.asignados + '</td><td>' + p.gestionadosHoy + '</td><td>' + p.avanzadosHoy + '</td>' +
+        '<td>' + (p.cumpl3x3 != null ? p.cumpl3x3 + '%' : '—') + '</td><td>' + pc + '</td><td class="' + (p.sinMovimiento > 0 ? 'ops-rojo' : '') + '">' + p.sinMovimiento + '</td>' +
+        '<td>' + p.pipelineFmt + '</td><td>' + p.businessCase + '</td><td><span class="ops-pill ' + semCls + '">' + (p.indice != null ? p.indice : '—') + '</span></td></tr>';
+    }).join('') + '</tbody></table>';
+
+  // ---- Cuellos ----
+  $('opsCuellos').innerHTML = '<div class="ops-cuellos">' + d.cuellos.map(c => {
+    const esPeor = d.salud.peorCuello && d.salud.peorCuello.etapa === c.etapa && c.n > 0;
+    return '<div class="ops-cuello' + (esPeor ? ' peor' : '') + '"><div class="ops-kpi-lbl">' + esc(c.etapa) + '</div><div class="ops-kpi-val">' + c.n + '</div>' +
+      '<div class="ops-kpi-sub">prom. ' + c.promDias + ' d · máx ' + c.maxDias + ' d' + (c.sinGestion ? '<br><span class="ops-ambar">' + c.sinGestion + ' sin gestión</span>' : '') + (esPeor ? '<br><span class="ops-rojo">cuello crítico</span>' : '') + '</div></div>';
+  }).join('') + '</div>';
+
+  // ---- Embudo ----
+  $('opsEmbudo').innerHTML = d.embudo.map(e =>
+    '<div class="ops-emb-fila"><div class="ops-emb-bar" style="width:' + Math.max(8, e.pctDelTotal) + '%"><span>' + esc(e.etapa) + '</span><b>' + e.nAcum + ' · ' + e.montoAcumFmt + '</b></div>' +
+    '<div class="ops-emb-sub">' + e.pctDelTotal + '% del total · conv ' + e.convDesdeAnterior + '% · ' + e.promDias + ' d prom.</div></div>').join('');
+
+  // ---- Desestimados ----
+  const X = d.desestimados;
+  const mot = (X.motivos || []).map(m => '<div class="ops-emb-sub">• ' + esc(m.motivo) + ' <b>(' + m.n + ')</b></div>').join('') || '<div class="vacio">Sin descartes en 30 días.</div>';
+  const rec = (X.recientes || []).map(r =>
+    '<tr><td><span class="ops-chip" onclick="abrirFichaB2B(\'' + r.codigo + '\')">' + esc(r.codigo) + '</span></td><td>' + esc(r.empresa) + '</td><td>' + r.montoFmt + '</td><td>' + esc(r.motivo.slice(0, 30)) + '</td><td>' + esc(r.por) + '</td>' +
+    '<td>' + (r.prematuro ? '<span class="ops-pill ops-pill-r">prematuro</span>' : r.tuvoContacto ? '<span class="ops-pill ops-pill-v">contactado</span>' : '<span class="ops-pill ops-pill-a">sin contacto</span>') + '</td></tr>').join('');
+  $('opsDesest').innerHTML =
+    '<div class="ops-agenda">' + ag(X.hoy, 'hoy') + ag(X.ultimos7, 'últimos 7 d') + ag(X.ultimos30, 'últimos 30 d') + ag(X.monto30Fmt, 'monto 30 d') + '</div>' +
+    (X.prematuros30 ? '<div class="ops-alerta al-alta ops-mt8"><span class="ops-al-tag">OJO</span><div class="ops-al-txt">' + X.prematuros30 + ' descartes prematuros en 30 días (sin contacto y antes del 3x3)</div></div>' : '') +
+    '<div class="ops-desest-tit">Motivos (30 días)</div>' + mot +
+    (rec ? '<div class="ops-desest-tit">Recientes</div><table class="ops-tabla ops-tabla-sm"><tbody>' + rec + '</tbody></table>' : '');
+}
+
+function opsToggleLeads(i) { const el = $('opsChips' + i); if (el) el.classList.toggle('oculto'); }
+function opsFiltraAsesor(nombre) { const s = $('opsAsesor'); if (s) { s.value = s.value === nombre ? '' : nombre; cargarB2BOps(); } }
+
+async function generarIAOps() {
+  const el = $('opsIA');
+  el.innerHTML = '<div class="vacio">✨ Analizando el tablero con IA…</div>';
+  try {
+    const r = await api('/api/b2b/dashboard/ia');
+    if (!r.disponible) { el.innerHTML = '<div class="vacio">' + esc(r.error || 'IA no disponible') + '</div>'; return; }
+    const html = esc(r.texto)
+      .replace(/\*([^*\n]+)\*/g, '<b>$1</b>')
+      .split('\n').filter(l => l.trim())
+      .map(l => l.trim().startsWith('-') ? '<div class="ops-ia-linea">' + l.replace(/^-\s*/, '') + '</div>' : '<div class="ops-ia-bloque">' + l + '</div>').join('');
+    el.innerHTML = html + '<div class="ops-emb-sub ops-mt8">Generado ' + new Date(r.generado).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) + (r.cache ? ' (caché, se renueva cada 10 min)' : '') + '</div>';
+  } catch (e) { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; }
 }
