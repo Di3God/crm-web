@@ -5514,11 +5514,24 @@ app.get('/api/b2b/dashboard', soloB2B, (req, res) => {
       if (!e) return res.status(404).json({ error: 'lead no encontrado' });
       return res.json({ codigo: req.query.lead, estado3x3: e });
     }
-    res.json(dashB2B.construirDashboard({ asesor: req.query.asesor }));
+    res.json(dashB2B.construirDashboard({ asesor: req.query.asesor, fecha: req.query.fecha }));
   } catch (e) {
     console.error('[b2b/dashboard]', e.stack || e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// META MENSUAL B2B (v1.364): la fija jefatura desde el Centro de Operaciones.
+// POST /api/b2b/dashboard/meta { monto }  -> guarda en app_config 'b2b_meta_mes'
+app.post('/api/b2b/dashboard/meta', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  const monto = Number(req.body && req.body.monto);
+  if (!isFinite(monto) || monto < 0) return res.status(400).json({ error: 'Monto inválido' });
+  db.prepare("INSERT INTO app_config (clave,valor) VALUES ('b2b_meta_mes',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(String(monto));
+  auditar(req, 'b2b_meta_mes', 'config', 'S/ ' + monto.toLocaleString('es-PE'));
+  res.json({ ok: true, monto });
 });
 
 // PANEL IA del Centro de Operaciones (v1.363): análisis con Claude Haiku sobre el
@@ -7621,7 +7634,7 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.363 (FASES 2+3 Centro de Operaciones B2B: nueva vista de jefatura en menu B2B (v-b2b-ops, admin/jefe_b2b/jefe_creditos) con KPIs, alertas con Ver leads, salud gauge, productividad clickeable, cuellos, embudo y panel de DESESTIMADOS (hoy/7d/30d, motivos, prematuros=sin contacto antes del 3x3). COMPUERTA de descarte en PUT /api/b2b/solicitudes/:codigo/descartar: bloquea 422 si exigible sin contacto efectivo y 3x3 incompleto; jefatura puede forzar con {forzar:true} auditado. PANEL IA: GET /api/b2b/dashboard/ia (Haiku via ia-reportes.analizarOperacionB2B, bloques OPERACION+DESESTIMADOS, cache 10min, requiere ANTHROPIC_API_KEY). dashboard-b2b.js suma seccion desestimados y fix nombre Sin asignar. Server: restart Railway) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.364 (Centro de Operaciones B2B v2: FIX 3x3 (cuota real de intentos registrados en modal de gestion: 3/2/1 el dia 1 segun hora de llegada + 3+3; vencido se divide en vencido_ok descartable y vencido_incumplido BLOQUEADO hasta registrar intentos, los tardios cuentan). Todos los KPIs y desestimados (horizonte unico 30d) respetan filtro de funcionario; nuevo filtro de fecha. UI: sidebar izquierdo (funcionario+fecha+boton IA robot), hero azul TasaTop con logo, KPI cards con iconos, card Gestion del dia, card Avances por etapa destino (dedup: cada lead cuenta en la etapa mas avanzada del dia), card Meta del mes editable por jefatura (POST /api/b2b/dashboard/meta, app_config b2b_meta_mes, logrado=monto a Business case del mes), cuellos rediseñados como flujo de pipeline. Eliminados: tabla productividad, panel salud, panel agenda (agenda ahora es card). Front: Ctrl+F5. Server: restart Railway) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

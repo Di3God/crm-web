@@ -64,8 +64,13 @@ module.exports = function (deps) {
   }
 
   // Estado 3x3 de un lead. gestiones = sus b2b_gestiones ordenadas ASC (opcional; si no, las lee).
-  // Devuelve: { exigible, contactoEfectivo, dia, esperados, cumplidos, alDia, estado, puedeDescartar, motivoBloqueo }
-  //   estado: 'no_exigible' | 'cumplido' (contactó) | 'al_dia' | 'atrasado' | 'vencido' (3 días sin contacto)
+  // CUOTA de intentos (registrados en el modal de gestión, canal Llamada/WhatsApp):
+  //   Día 1: si llega 00:00-12:00 → 3 intentos (M,T,N) · 12:00-16:00 → 2 (T,N) · después de 16:00 → 1 (N)
+  //   Días 2 y 3: 3 intentos por día. Máximo 1 intento válido por (día, franja).
+  // Devuelve estado: 'no_exigible' | 'cumplido' (logró contacto) | 'al_dia' | 'atrasado'
+  //   | 'vencido_ok' (pasaron los 3 días, SÍ registró toda la cuota → descartable como ilocalizable)
+  //   | 'vencido_incumplido' (pasaron los 3 días SIN la cuota completa → NO descartable: debe registrar los intentos que faltan)
+  // Los intentos registrados DESPUÉS del día 3 sí cuentan para completar la cuota pendiente.
   function estado3x3(sol, gestiones) {
     if (!esExigible3x3(sol)) return { exigible: false, estado: 'no_exigible', puedeDescartar: true };
     const gs = gestiones || db.prepare('SELECT * FROM b2b_gestiones WHERE codigoSolicitud=? ORDER BY fecha ASC').all(sol.codigo);
@@ -73,40 +78,47 @@ module.exports = function (deps) {
 
     // ¿Ya hubo contacto efectivo (en cualquier momento)?
     const gContacto = gs.find(g => esContactoEfectivo(g.resultado));
-    if (gContacto) return { exigible: true, contactoEfectivo: true, estado: 'cumplido', dia: null, esperados: 0, cumplidos: 0, alDia: true, puedeDescartar: true };
+    if (gContacto) return { exigible: true, contactoEfectivo: true, estado: 'cumplido', dia: null, esperados: 0, esperadosTotales: 0, cumplidos: 0, alDia: true, puedeDescartar: true };
 
-    // Franjas-slot esperadas desde el ancla (máx 3 días × 3 franjas = 9),
-    // contando solo franjas ya transcurridas o en curso.
     const d0 = diaLima(ancla), hoy = hoyLima();
     const frAncla = franjaDe(ancla), frAhora = franjaDe(new Date().toISOString());
-    let esperados = 0;
-    let dia = 0; // 1..3 (o >3 si venció)
+
+    // Cuota TOTAL de la ventana (día 1 prorrateado por hora de llegada + 3+3)
+    const esperadosTotales = (FRANJAS_DIA - frAncla) + (DIAS_3X3 - 1) * FRANJAS_DIA;
+    // Cuota exigible HASTA AHORA (franjas ya transcurridas o en curso)
+    let esperados = 0, dia = 0;
     for (let i = 0; i < DIAS_3X3; i++) {
       const d = diaMas(d0, i);
       if (d > hoy) break;
       dia = i + 1;
-      const desde = (i === 0) ? frAncla : 0;                 // el día 1 solo exige desde la franja en que llegó
-      const hasta = (d === hoy) ? frAhora : FRANJAS_DIA - 1; // hoy solo exige hasta la franja actual
+      const desde = (i === 0) ? frAncla : 0;
+      const hasta = (d === hoy) ? frAhora : FRANJAS_DIA - 1;
       if (hasta >= desde) esperados += (hasta - desde + 1);
     }
-    const vencio = diaMas(d0, DIAS_3X3 - 1) < hoy; // ya pasaron los 3 días completos
+    const vencio = diaMas(d0, DIAS_3X3 - 1) < hoy;
+    if (vencio) { esperados = esperadosTotales; dia = DIAS_3X3; }
 
-    // Franjas-slot cumplidas: 1 intento (Llamada/WhatsApp) por (día, franja), dentro de la ventana.
+    // Intentos registrados (SOLO gestiones del modal con canal de contacto), desde el ancla
+    // en adelante y SIN tope de día: los intentos tardíos cuentan para completar la cuota,
+    // pero máximo 1 por (día, franja).
     const slots = new Set();
     gs.forEach(g => {
       if (!esIntento(g)) return;
       const d = diaLima(g.fecha);
-      if (d < d0 || d > diaMas(d0, DIAS_3X3 - 1)) return;
+      if (d < d0) return;
       slots.add(d + '|' + franjaDe(g.fecha));
     });
-    const cumplidos = slots.size;
+    const cumplidos = Math.min(slots.size, esperadosTotales);
     const alDia = !vencio && cumplidos >= esperados;
-    const estado = vencio ? 'vencido' : (alDia ? 'al_dia' : 'atrasado');
-    // Compuerta de descarte: sin contacto efectivo solo se puede descartar cuando el 3x3 venció.
-    const puedeDescartar = vencio;
+    const cuotaCompleta = cumplidos >= esperadosTotales;
+    const estado = vencio ? (cuotaCompleta ? 'vencido_ok' : 'vencido_incumplido') : (alDia ? 'al_dia' : 'atrasado');
+    // Compuerta: sin contacto efectivo solo se descarta con la CUOTA COMPLETA de intentos registrados.
+    const puedeDescartar = vencio && cuotaCompleta;
+    const motivoBloqueo = puedeDescartar ? null : (vencio
+      ? `3x3 vencido SIN los intentos registrados (${cumplidos}/${esperadosTotales}): registra los intentos de contacto que faltan antes de descartar`
+      : `Sin contacto efectivo: debe cumplir el 3x3 (día ${dia} de ${DIAS_3X3}, ${cumplidos}/${esperados} intentos registrados) antes de descartar`);
     return { exigible: true, contactoEfectivo: false, estado, dia: vencio ? DIAS_3X3 : dia,
-      esperados, cumplidos, alDia, puedeDescartar,
-      motivoBloqueo: puedeDescartar ? null : `Sin contacto efectivo: debe cumplir el 3x3 (día ${dia} de ${DIAS_3X3}, ${cumplidos}/${esperados} intentos) antes de descartar` };
+      esperados, esperadosTotales, cumplidos, alDia, puedeDescartar, motivoBloqueo };
   }
 
   // Para la compuerta de descarte (fase 3) y consultas puntuales.
@@ -136,7 +148,9 @@ module.exports = function (deps) {
     'b2b_guardar_garantia', 'b2b_credito_link', 'b2b_credito_agregar_sujeto', 'b2b_garantia_agregar_inmueble'];
 
   function construirDashboard(opts = {}) {
-    const hoy = hoyLima();
+    // Día de referencia para las métricas "del día" (nuevos, gestionados, movimiento,
+    // avances, primer contacto). El estado VIVO (3x3, pipeline, cuellos) es siempre actual.
+    const hoy = /^\d{4}-\d{2}-\d{2}$/.test(opts.fecha || '') ? opts.fecha : hoyLima();
     const ayer = diaMas(hoy, -1);
     const [iniH, finH] = rangoDia(hoy);
     const [iniA, finA] = rangoDia(ayer);
@@ -146,6 +160,7 @@ module.exports = function (deps) {
     let vivas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
     if (asesorFiltro) vivas = vivas.filter(s => s.responsableActual === asesorFiltro);
     const codigos = vivas.map(s => s.codigo);
+    const enScope = new Set(codigos);
     const gestPorCod = {};
     if (codigos.length) {
       const ph = codigos.map(() => '?').join(',');
@@ -175,9 +190,12 @@ module.exports = function (deps) {
         idxEtapa: ETAPAS.indexOf(etapa) };
     });
 
-    // --- KPI: nuevos hoy / ayer ---
-    const nuevosHoy = db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').get(iniH, finH).n;
-    const nuevosAyer = db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').get(iniA, finA).n;
+    // --- KPI: nuevos hoy / ayer (respeta el filtro de asesor) ---
+    const qNuevos = asesorFiltro
+      ? (i, f) => db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<? AND responsableActual=?').get(i, f, asesorFiltro).n
+      : (i, f) => db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?').get(i, f).n;
+    const nuevosHoy = qNuevos(iniH, finH);
+    const nuevosAyer = qNuevos(iniA, finA);
 
     // --- KPI: gestionados hoy/ayer (leads únicos: gestión formal O trabajo de filtros) ---
     const phT = ACCIONES_TRABAJO.map(() => '?').join(',');
@@ -188,29 +206,40 @@ module.exports = function (deps) {
       return set;
     };
     let gestHoySet = codsGestionados(iniH, finH), gestAyerSet = codsGestionados(iniA, finA);
-    if (asesorFiltro) { const mios = new Set(codigos); gestHoySet = new Set([...gestHoySet].filter(c => mios.has(c))); gestAyerSet = new Set([...gestAyerSet].filter(c => mios.has(c))); }
+    if (asesorFiltro) { gestHoySet = new Set([...gestHoySet].filter(c => enScope.has(c))); gestAyerSet = new Set([...gestAyerSet].filter(c => enScope.has(c))); }
 
-    // --- KPI: movimiento de etapa hoy (auditoría 'X → Y') ---
-    const movs = db.prepare("SELECT objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_avanzar_etapa')").all(iniH, finH);
+    // --- KPI: movimiento de etapa del día (auditoría 'X → Y'), limitado al alcance del filtro ---
+    const movs = db.prepare("SELECT objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_avanzar_etapa')").all(iniH, finH)
+      .filter(m => !asesorFiltro || enScope.has(m.objetivo));
     const movPorLead = {}; // codigo -> delta acumulado del día
+    const maxDestino = {}; // codigo -> índice de la etapa MÁS AVANZADA que alcanzó hoy
     movs.forEach(m => {
       const mm = String(m.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
       if (!mm) return;
       const de = ETAPAS.indexOf(mm[1].trim()), a = ETAPAS.indexOf(mm[2].trim());
       if (de < 0 || a < 0) return;
       movPorLead[m.objetivo] = (movPorLead[m.objetivo] || 0) + (a - de);
+      if (a > de) maxDestino[m.objetivo] = Math.max(maxDestino[m.objetivo] || 0, a);
     });
     let avanzaron = 0, retrocedieron = 0;
-    const avanzaronCods = [];
-    Object.entries(movPorLead).forEach(([cod, d]) => { if (d > 0) { avanzaron++; avanzaronCods.push(cod); } else if (d < 0) retrocedieron++; });
+    Object.entries(movPorLead).forEach(([cod, d]) => { if (d > 0) avanzaron++; else if (d < 0) retrocedieron++; });
     const sinCambio = Math.max(0, gestHoySet.size - avanzaron - retrocedieron);
+
+    // --- AVANCES DEL DÍA POR ETAPA DESTINO (sin duplicar: cada lead cuenta UNA vez,
+    //     en la etapa MÁS AVANZADA que alcanzó hoy) ---
+    const avancesPorEtapa = ETAPAS.slice(1).map((e, i) => ({ etapa: e, n: 0, idx: i + 1 }));
+    Object.entries(maxDestino).forEach(([cod, idx]) => {
+      if (movPorLead[cod] > 0) { const slot = avancesPorEtapa.find(x => x.idx === idx); if (slot) slot.n++; }
+    });
 
     // --- 3x3 y contactabilidad ---
     const exigibles = L.filter(l => l.t33.exigible);
     const contactados = exigibles.filter(l => l.t33.contactoEfectivo);
     const alDia = exigibles.filter(l => l.t33.estado === 'al_dia');
     const atrasados = exigibles.filter(l => l.t33.estado === 'atrasado');
-    const vencidos = exigibles.filter(l => l.t33.estado === 'vencido');
+    const vencidosOk = exigibles.filter(l => l.t33.estado === 'vencido_ok');
+    const vencidosIncumplidos = exigibles.filter(l => l.t33.estado === 'vencido_incumplido');
+    const vencidos = vencidosOk.concat(vencidosIncumplidos);
     const cumpl3x3 = exigibles.length ? Math.round((contactados.length + alDia.length) / exigibles.length * 100) : 100;
     const contactabilidad = exigibles.length ? Math.round(contactados.length / exigibles.length * 100) : 100;
     const noRespondenN = exigibles.filter(l => !l.t33.contactoEfectivo && l.gs.some(esIntento)).length;
@@ -225,10 +254,11 @@ module.exports = function (deps) {
     const criticas = L.filter(l => l.ps.nivel === 'critica');
 
     // --- Primer contacto promedio (leads ingresados hoy / ayer con toque) ---
-    const pcDe = (ini, fin) => prom(db.prepare('SELECT fechaIngreso, fechaPrimerToque FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<? AND fechaPrimerToque IS NOT NULL').all(ini, fin)
+    const filtroAsesorSQL = asesorFiltro ? ' AND responsableActual=?' : '';
+    const pcDe = (ini, fin) => prom(db.prepare('SELECT fechaIngreso, fechaPrimerToque FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<? AND fechaPrimerToque IS NOT NULL' + filtroAsesorSQL).all(...(asesorFiltro ? [ini, fin, asesorFiltro] : [ini, fin]))
       .map(r => Math.max(0, (new Date(r.fechaPrimerToque) - new Date(r.fechaIngreso)) / 60000)));
     const pcHoy = pcDe(iniH, finH), pcAyer = pcDe(iniA, finA);
-    const nuevosHoySinToque = db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<? AND fechaPrimerToque IS NULL').get(iniH, finH).n;
+    const nuevosHoySinToque = db.prepare('SELECT COUNT(*) n FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<? AND fechaPrimerToque IS NULL' + filtroAsesorSQL).get(...(asesorFiltro ? [iniH, finH, asesorFiltro] : [iniH, finH])).n;
 
     // --- Agenda (última próxima acción de cada lead vivo) ---
     let reunionesHoy = 0, seguimientosHoy = 0, vencenHoy = 0, accionesVencidas = 0;
@@ -348,8 +378,14 @@ module.exports = function (deps) {
       { codigos: rucSinHoy.map(l => l.s.codigo), tipo: 'ruc_sin_intentos' });
     if (nuevosHoy > 0 && nuevosHoySinToque > 0) A(nuevosHoySinToque / nuevosHoy > 0.4 ? 'alta' : 'media',
       `Hoy llegaron ${nuevosHoy} leads y ${nuevosHoy - nuevosHoySinToque} tienen primer contacto — ${nuevosHoySinToque} esperando`, { tipo: 'nuevos_sin_toque' });
-    if (vencidos.length) A('info', `${vencidos.length} lead(s) cumplieron el 3x3 sin lograr contacto — ya son descartables como ilocalizables (decisión del funcionario)`,
-      { codigos: vencidos.map(l => l.s.codigo), tipo: 'descartables_3x3' });
+    if (vencidosIncumplidos.length) {
+      const porRespVI = {};
+      vencidosIncumplidos.forEach(l => { porRespVI[primerNombre(l.responsable)] = (porRespVI[primerNombre(l.responsable)] || 0) + 1; });
+      A('critica', `${vencidosIncumplidos.length} lead(s) pasaron los 3 días SIN registrar los intentos del 3x3 — ${Object.entries(porRespVI).map(([n, c]) => `${n} (${c})`).join(', ')} · deben registrar los intentos que faltan (descarte bloqueado)`,
+        { codigos: vencidosIncumplidos.map(l => l.s.codigo), tipo: 'vencidos_incumplidos' });
+    }
+    if (vencidosOk.length) A('info', `${vencidosOk.length} lead(s) completaron los intentos del 3x3 sin lograr contacto — ya son descartables como ilocalizables (decisión del funcionario)`,
+      { codigos: vencidosOk.map(l => l.s.codigo), tipo: 'descartables_3x3' });
     // Logros: llegaron a Business case hoy
     const bcHoy = movs.filter(m => /→\s*Business case/i.test(m.detalle || ''));
     bcHoy.forEach(m => {
@@ -360,11 +396,12 @@ module.exports = function (deps) {
     const ordenP = { critica: 0, alta: 1, media: 2, info: 3, logro: 4 };
     alertas.sort((a, b) => ordenP[a.prioridad] - ordenP[b.prioridad]);
 
-    // --- DESESTIMADOS: análisis de descartes (hoy / 7d / 30d, motivos, prematuros) ---
-    const descartados = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").all();
+    // --- DESESTIMADOS: horizonte único de 30 días, respeta el filtro de asesor ---
+    let descartados = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=1 OR estado='No elegible'").all();
     const auditDesc = {}; // codigo -> { fecha, por }
     db.prepare("SELECT objetivo, fecha, nombre FROM auditoria WHERE accion IN ('b2b_descartar','b2b_descartar_duplicado') ORDER BY fecha ASC").all()
       .forEach(a => { auditDesc[a.objetivo] = { fecha: a.fecha, por: a.nombre || '' }; });
+    if (asesorFiltro) descartados = descartados.filter(s => s.responsableActual === asesorFiltro || (auditDesc[s.codigo] || {}).por === asesorFiltro);
     const d30 = diaMas(hoy, -30), d7 = diaMas(hoy, -7);
     const codsDesc = descartados.map(s => s.codigo);
     const gestDesc = {}; // gestiones de los descartados (para saber si hubo contacto antes del descarte)
@@ -406,12 +443,38 @@ module.exports = function (deps) {
       prematurosCodigos: prematuros30.map(x => x.codigo),
       motivos: Object.entries(motivosMap).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 8),
       porQuien: Object.entries(porQuienMap).map(([por, n]) => ({ por, n })).sort((a, b) => b.n - a.n),
-      recientes: enriquecidosDesc.filter(x => x.fecha).sort((a, b) => (b.fecha > a.fecha ? 1 : -1)).slice(0, 12)
+      recientes: desc30.filter(x => x.fecha).sort((a, b) => (b.fecha > a.fecha ? 1 : -1)).slice(0, 12)
         .map(x => ({ codigo: x.codigo, empresa: x.empresa, monto: x.monto, montoFmt: fmtMM(x.monto), motivo: x.motivo, por: primerNombre(x.por), fecha: x.fecha, tuvoContacto: x.tuvoContacto, prematuro: x.prematuro }))
     };
     if (prematuros30.length >= 2) A('alta', `${prematuros30.length} descartes PREMATUROS en 30 días (sin contacto y antes de cumplir el 3x3) — ${fmtMM(desestimados.prematuros30Monto)}`,
       { codigos: prematuros30.map(x => x.codigo), tipo: 'descartes_prematuros' });
     alertas.sort((a, b) => ordenP[a.prioridad] - ordenP[b.prioridad]);
+
+    // --- META DEL MES (equipo, siempre global): monto que LLEGA a Business case en el mes.
+    //     La meta se guarda en app_config 'b2b_meta_mes' (la edita jefatura desde el dashboard).
+    let metaMonto = 0;
+    try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_meta_mes'").get(); if (r && r.valor) metaMonto = Number(r.valor) || 0; } catch (e) { }
+    const mesIni = hoy.slice(0, 7) + '-01';
+    const [iniMes] = rangoDia(mesIni);
+    const codsBC = new Set();
+    // a) movimientos a Business case registrados en auditoría este mes
+    db.prepare("SELECT objetivo, detalle FROM auditoria WHERE fecha>=? AND accion IN ('b2b_kanban_mover','b2b_avanzar_etapa')").all(iniMes)
+      .forEach(m => { if (/→\s*Business case/i.test(m.detalle || '')) codsBC.add(m.objetivo); });
+    // b) respaldo: solicitudes actualmente en Business case cuya fechaEtapa cae en el mes
+    db.prepare("SELECT codigo, fechaEtapa FROM b2b_solicitudes WHERE estado IN ('Expediente','Traspasado B2B','Reunion agendada')").all()
+      .forEach(s => { if (s.fechaEtapa && diaLima(s.fechaEtapa) >= mesIni) codsBC.add(s.codigo); });
+    let metaLogrado = 0;
+    if (codsBC.size) {
+      const phB = [...codsBC].map(() => '?').join(',');
+      db.prepare('SELECT montoSolicitado, montoRango FROM b2b_solicitudes WHERE codigo IN (' + phB + ')').all(...codsBC)
+        .forEach(s => { metaLogrado += s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0); });
+    }
+    const finMes = new Date(new Date(mesIni + 'T12:00:00Z')); finMes.setUTCMonth(finMes.getUTCMonth() + 1); finMes.setUTCDate(0);
+    const diasRestantes = Math.max(0, finMes.getUTCDate() - Number(hoy.slice(8, 10)));
+    const meta = { monto: metaMonto, montoFmt: fmtMM(metaMonto), logrado: metaLogrado, logradoFmt: fmtMM(metaLogrado),
+      falta: Math.max(0, metaMonto - metaLogrado), faltaFmt: fmtMM(Math.max(0, metaMonto - metaLogrado)),
+      pct: metaMonto > 0 ? Math.min(100, Math.round(metaLogrado / metaMonto * 100)) : null,
+      operacionesBC: codsBC.size, diasRestantes, mes: hoy.slice(0, 7) };
 
     // --- Payload final ---
     return {
@@ -420,7 +483,8 @@ module.exports = function (deps) {
         nuevos: { hoy: nuevosHoy, ayer: nuevosAyer, delta: nuevosHoy - nuevosAyer },
         gestionados: { hoy: gestHoySet.size, ayer: gestAyerSet.size, delta: gestHoySet.size - gestAyerSet.size },
         movimiento: { avanzaron, retrocedieron, sinCambio },
-        cumpl3x3: { pct: cumpl3x3, exigibles: exigibles.length, alDia: alDia.length + contactados.length, atrasados: atrasados.length, vencidos: vencidos.length },
+        avancesPorEtapa,
+        cumpl3x3: { pct: cumpl3x3, exigibles: exigibles.length, alDia: alDia.length + contactados.length, atrasados: atrasados.length, vencidos: vencidos.length, vencidosOk: vencidosOk.length, vencidosIncumplidos: vencidosIncumplidos.length },
         contactabilidad: { pct: contactabilidad, efectivos: contactados.length, sinContacto: sinContactoN, noResponden: noRespondenN },
         avanzaronSinContacto: { n: sinContactoAvanzados.length, monto: sinContactoAvanzados.reduce((a, l) => a + l.monto, 0), montoFmt: fmtMM(sinContactoAvanzados.reduce((a, l) => a + l.monto, 0)) },
         pipeline: { monto: pipelineMonto, montoFmt: fmtMM(pipelineMonto), n: L.length },
@@ -433,6 +497,7 @@ module.exports = function (deps) {
       cuellos,
       embudo,
       desestimados,
+      meta,
       agenda: { reunionesHoy, seguimientosHoy, vencenHoy, accionesVencidas }
     };
   }
