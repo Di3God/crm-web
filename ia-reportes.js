@@ -165,9 +165,12 @@ async function interpretarPerformance(panel, fechaTxt) {
   return await llamar(instruccion, 1000);
 }
 // Análisis ejecutivo del comité B2C: recibe las métricas del periodo y da lectura + acciones.
-async function interpretarComite(d) {
+async function interpretarComite(d, asesor) {
   if (!configurado()) return null;
   const R = d.resumen || {}, V = d.velocidad || {};
+  const foco = asesor && String(asesor).trim()
+    ? `\\n\\nIMPORTANTE: este análisis es SOLO de la gestora "${asesor}" (filtrada). Enfoca el análisis en su desempeño individual, no del equipo completo.`
+    : '';
   const emb = (d.embudo || []).map(e => `  ${e.etapa}: ${e.enEtapa} en etapa, ${e.alcanzaron} alcanzaron (${e.pctDelTotal}% del total)`).join('\n');
   const tpe = (d.tiempoPorEtapa || []).map(t => `  ${t.etapa}: ${t.horasProm}h promedio (n=${t.n})`).join('\n');
   const des = (d.desestimados || []).map(x => `  ${x.motivo}: ${x.n}`).join('\n') || '  (sin desestimados)';
@@ -182,7 +185,7 @@ async function interpretarComite(d) {
     `*⚡ DISCIPLINA* — velocidad al primer contacto, uso del 3x5, qué tan rápido y consistente es el equipo.\n` +
     `*🏆 EQUIPO* — quién destaca y quién necesita apoyo (sin exponer, tono constructivo).\n` +
     `*🎯 ACCIONES* — 3 acciones concretas y priorizadas para la próxima quincena.\n` +
-    `Sé ejecutivo y directo, con cifras clave pero sin saturar. Formato WhatsApp/texto, negritas con un asterisco. No inventes datos.`;
+    `Sé ejecutivo y directo, con cifras clave pero sin saturar. Formato WhatsApp/texto, negritas con un asterisco. No inventes datos.` + foco;
   return await llamar(instruccion, 1100);
 }
 

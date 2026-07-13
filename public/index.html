@@ -5,8 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiTasatop</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="apple-touch-icon" href="favicon.svg">
-<link rel="stylesheet" href="styles.css?v=1367">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1D4289">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MiTasaTop">
+<link rel="stylesheet" href="styles.css?v=1402">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
@@ -50,6 +56,9 @@
     </div>
   </nav>
   <div class="top-user">
+    <button class="wa-estado wa-estado-desc oculto" id="waEstadoChip" onclick="verEstadoWA()" title="Estado del bot de WhatsApp">
+      <span class="wa-dot" id="waDot"></span><span id="waEstadoTxt">WhatsApp</span>
+    </button>
     <button class="tu-btn" id="tuBtn" onclick="toggleMenuUsuario(event)">
       <span class="tu-info"><b id="rolNombre"></b><span id="rolTipo"></span></span>
       <span class="tu-caret">▾</span>
@@ -104,6 +113,7 @@
         <button class="btn accion asignador oculto" id="btnAsignarSel" onclick="abrirAsignarSeleccion()">Asignar</button>
         <button class="btn accion soloAdmin oculto" onclick="abrirImport()">Importar</button>
         <div class="vista-toggle" style="margin-left:auto">
+          <button id="tg-cola" onclick="setVista('cola')" title="Cola priorizada">⚡ Mi Cola</button>
           <button id="tg-tabla" class="act" onclick="setVista('tabla')" title="Vista tabla">☰ Tabla</button>
           <button id="tg-kanban" onclick="setVista('kanban')" title="Vista kanban">▦ Kanban</button>
         </div>
@@ -131,6 +141,7 @@
     </table>
     </div>
     <div id="contKanban" style="display:none"></div>
+    <div id="contCola" style="display:none"></div>
     <div class="paginacion" id="paginacion">
       <span id="pagInfo" class="pag-info"></span>
       <div class="pag-nav">
@@ -199,24 +210,25 @@
 
   <!-- ===== DASHBOARD ===== -->
   <section id="v-comite" class="vista">
-    <div class="barra">
+    <div class="barra com-barra">
       <h2>📊 Resultados del comité · B2C</h2>
-      <input type="date" id="comDesde" value="2026-06-23" onchange="cargarComite()">
-      <span style="color:#94a3b8">→</span>
-      <input type="date" id="comHasta" onchange="cargarComite()">
-      <button class="btn sec" onclick="cargarComite()">⟳ Actualizar</button>
-      <button class="btn" id="comIaBtn" onclick="analizarComiteIA()" style="margin-left:auto">🤖 Análisis IA</button>
+      <div class="com-filtros">
+        <input type="date" id="comDesde" value="2026-06-23" onchange="cargarComite()" class="com-fecha">
+        <span class="com-flecha">→</span>
+        <input type="date" id="comHasta" onchange="cargarComite()" class="com-fecha">
+        <select id="comGP" onchange="cargarComite()" class="com-gp-sel"><option value="">Todas las GP</option></select>
+        <button class="btn sec" onclick="cargarComite()">⟳</button>
+      </div>
+      <div class="com-botones">
+        <button class="btn sec soloAdminJefa oculto" id="comPulsoBtn" onclick="abrirPulsoMetas()">🎯 Pulso del día</button>
+        <button class="btn sec" id="comAnunBtn" onclick="verRendimientoAnuncios()" style="display:none">📣 Anuncios</button>
+        <button class="btn sec" id="comDesestBtn" onclick="verAnalisisMotivos()" style="display:none">🔍 Ver desestimados</button>
+        <button class="btn" id="comIaBtn" onclick="analizarComiteIA()">🤖 Análisis IA</button>
+      </div>
     </div>
     <div id="comCards" class="com-cards"></div>
     <div id="comIaBox" class="com-ia oculto"></div>
-    <div class="com-grid">
-      <div class="com-panel"><div class="com-panel-tit">Embudo de conversión</div><div id="comEmbudo"></div></div>
-      <div class="com-panel"><div class="com-panel-tit">Tiempo promedio por etapa</div><div id="comTiempo"></div></div>
-    </div>
-    <div class="com-grid">
-      <div class="com-panel"><div class="com-panel-tit">Ranking por gestor</div><div id="comRanking"></div></div>
-      <div class="com-panel"><div class="com-panel-tit">Desestimados por motivo</div><div id="comDesest"></div></div>
-    </div>
+    <div class="com-panel com-panel-full"><div class="com-panel-tit">Embudo de conversión <span style="font-weight:400;color:#94a3b8;font-size:11px">· por fecha de asignación</span></div><div id="comEmbudo"></div></div>
   </section>
   <section id="v-dash" class="vista">
     <div class="barra">
@@ -1328,7 +1340,7 @@
   </div>
 </div>
 
-<script src="app.js?v=1367"></script>
+<script src="app.js?v=1402"></script>
 
 <!-- Softphone Aircall embebido (persistente en toda la app) -->
 <button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>
@@ -1352,5 +1364,13 @@
   } catch (e) { console.error('No se pudo cargar Aircall Everywhere:', e); }
 </script>
 <button id="btnArriba" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Subir">↑</button>
+<script>
+// Registro del service worker (PWA). Silencioso si el navegador no lo soporta.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+</script>
 </body>
 </html>

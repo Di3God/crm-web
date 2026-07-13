@@ -10,7 +10,7 @@
 //  - Cadencia: autocalculo de fecha proxima accion (9am-18, dias habiles)
 // =============================================================
 
-const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto', 'Cristian Povis'];
+const ASESORES = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto', 'Cristian Povis', 'Henry Guerrero'];
 
 const CANALES = ['Llamada', 'WhatsApp', 'Correo'];
 const FUENTES = ['Meta Ads', 'Google Ads', 'Referido', 'Organico', 'LinkedIn', 'Otro'];
@@ -202,6 +202,26 @@ function grupoLimpio(resultado) {
 // Score de CALIFICACION inicial (0-100) con 5 variables.
 // Pesos: monto 30, interes 25, tiempo 20, decision 15, experiencia 10.
 // Se mantienen labels viejos por compatibilidad con datos historicos.
+// CALIFICACIÓN COMPLETA (criterio único y estricto, v1.381): un lead está "Calificado"
+// solo si respondió las 5 preguntas — los 5 campos con valor:
+//   1 ticket · 2 nivelInteres · 3 tiempo · 4 decisión(avance) · 5 experienciaInv
+// Antes se exigían 4 y había un atajo con 1 campo suelto; ambos eliminados.
+function calificacionCompleta(g) {
+  const decision = g.decision || g.avance || g.experiencia; // "¿Puede decidir?" (histórico usó varios nombres)
+  return !!(g.ticket && g.nivelInteres && g.tiempo && decision && g.experienciaInv);
+}
+// Cuáles de las 5 faltan (para el mensaje de bloqueo).
+function calificacionFaltantes(g) {
+  const decision = g.decision || g.avance || g.experiencia;
+  const faltan = [];
+  if (!g.ticket) faltan.push('monto/ticket');
+  if (!g.nivelInteres) faltan.push('interés');
+  if (!g.tiempo) faltan.push('tiempo');
+  if (!decision) faltan.push('decisión');
+  if (!g.experienciaInv) faltan.push('experiencia');
+  return faltan;
+}
+
 function calcularScore({ nivelInteres, ticket, tiempo, avance, experiencia, decision, experienciaInv }) {
   const dec = decision || avance || experiencia; // ¿Puede decidir? (antes "avance")
   let p = 0;
@@ -320,6 +340,85 @@ function esMismoDia(a, b) {
 
 const ORDEN_PRIORIDAD = { 'Muy alta': 1, 'Alta': 2, 'Media': 3, 'Baja': 4, 'Muy baja': 5 };
 
+// ===== PRIORITY SCORE B2C (motor de priorización, misma filosofía que el B2B) =====
+// Score 0..100 = suma ponderada de 7 sub-scores normalizados 0..1. Pesos configurables
+// (llegan por parámetro; si no, usa PScoreDefaultB2C). Devuelve score, nivel y detalle.
+const PScoreDefaultB2C = {
+  urgencia: 26,       // próxima acción vencida/inminente, reunión próxima, cierre pendiente
+  etapa: 18,          // qué tan avanzado (más avanzado = más caro perderlo)
+  monto: 16,          // ticket potencial (raíz para no aplastar medianos)
+  estancamiento: 14,  // días en la etapa actual sin avanzar
+  probabilidad: 12,   // score/probabilidad de cierre ya calculado
+  cumpl3x5: 8,        // lead nuevo sin sus intentos mínimos del día → empujar el 3x5
+  contactabilidad: 6  // ya respondió alguna vez → vale más perseguir
+};
+
+// sol: { etapa, probabilidad, monto, fechaProxAccion, fechaReunion, fechaEntradaEtapa,
+//        intentos, intentosEsperados, respondioAlgunaVez, ahora }
+// montoMax: mayor monto del cohorte (para normalizar). pesos: objeto opcional.
+function priorityScoreB2C(sol, montoMax, pesos) {
+  const W = Object.assign({}, PScoreDefaultB2C, pesos || {});
+  const now = sol.ahora ? new Date(sol.ahora) : new Date();
+  const etapa = sol.etapa || 'Contactabilidad 3x5';
+  // Terminales: prioridad mínima.
+  if (etapa === 'Cerrado ganado' || etapa === 'Cerrado perdido') {
+    return { score: 0, nivel: 'Muy baja', detalle: {} };
+  }
+  // --- Sub-scores 0..1 ---
+  // 1. Urgencia operativa: próxima acción vencida (1) / <=1h (0.9) / <=2h (0.7);
+  //    cierre pendiente (0.85); reunión <=24h (0.8). Se toma el mayor.
+  let sUrg = 0;
+  const minProx = sol.fechaProxAccion ? (new Date(sol.fechaProxAccion) - now) / 60000 : null;
+  if (minProx !== null) {
+    if (minProx <= 0) sUrg = Math.max(sUrg, 1);
+    else if (minProx <= 60) sUrg = Math.max(sUrg, 0.9);
+    else if (minProx <= 120) sUrg = Math.max(sUrg, 0.7);
+    else if (minProx <= 24 * 60) sUrg = Math.max(sUrg, 0.4);
+  }
+  if (etapa === 'Cierre pendiente') sUrg = Math.max(sUrg, 0.85);
+  if (sol.fechaReunion) {
+    const minReu = (new Date(sol.fechaReunion) - now) / 60000;
+    if (minReu >= 0 && minReu <= 24 * 60) sUrg = Math.max(sUrg, 0.8);
+    else if (minReu < 0 && minReu >= -24 * 60) sUrg = Math.max(sUrg, 0.75); // reunión recién pasada: dar seguimiento
+  }
+  // 2. Etapa: rank normalizado (0..5 útiles → 0..1). Cierre pendiente = lo más avanzado vivo.
+  const rank = RANK_ETAPA[etapa] || 0;
+  const sEtapa = Math.min(1, rank / 5);
+  // 3. Monto: raíz cuadrada contra el máximo (mantiene jerarquía sin aplastar medianos).
+  const monto = Number(sol.monto || 0) || 0;
+  const sMonto = montoMax > 0 ? Math.sqrt(monto) / Math.sqrt(montoMax) : 0;
+  // 4. Estancamiento: días en la etapa actual, satura a los 5 días.
+  const baseEt = sol.fechaEntradaEtapa || null;
+  const diasEtapa = baseEt ? Math.floor((now - new Date(baseEt).getTime()) / 86400000) : 0;
+  const sEstanc = Math.min(1, diasEtapa / 5);
+  // 5. Probabilidad de cierre (0..100 → 0..1).
+  const sProb = Math.min(1, Math.max(0, (Number(sol.probabilidad || 0) || 0) / 100));
+  // 6. Cumplimiento 3x5: cuánto le falta de sus intentos esperados (solo si aún no contacta útil).
+  let sCumpl = 0;
+  if (sol.intentosEsperados > 0) {
+    const faltan = Math.max(0, sol.intentosEsperados - (sol.intentos || 0));
+    sCumpl = Math.min(1, faltan / sol.intentosEsperados);
+  }
+  // 7. Contactabilidad demostrada: ya respondió alguna vez → 1; nunca → 0.3 (aún vale intentar).
+  const sCont = sol.respondioAlgunaVez ? 1 : 0.3;
+  // --- Score ponderado 0..100 ---
+  const score = Math.round(
+    W.urgencia * sUrg + W.etapa * sEtapa + W.monto * sMonto + W.estancamiento * sEstanc +
+    W.probabilidad * sProb + W.cumpl3x5 * sCumpl + W.contactabilidad * sCont
+  );
+  // --- Nivel (mismos cortes de sensación que el B2B) ---
+  let nivel;
+  if (sUrg >= 1 || score >= 70) nivel = 'Muy alta';
+  else if (score >= 50) nivel = 'Alta';
+  else if (score >= 30) nivel = 'Media';
+  else nivel = 'Baja';
+  return {
+    score, nivel, diasEnEtapa: diasEtapa,
+    detalle: { sUrg: +sUrg.toFixed(2), sEtapa: +sEtapa.toFixed(2), sMonto: +sMonto.toFixed(2),
+      sEstanc: +sEstanc.toFixed(2), sProb: +sProb.toFixed(2), sCumpl: +sCumpl.toFixed(2), sCont: +sCont.toFixed(2) }
+  };
+}
+
 // ---------- Validacion de gestion ----------
 // Factores (ticket/tiempo/interes/experiencia) SOLO se exigen en la fase
 // "respondio y se converso": pidio informacion / interesado.
@@ -329,13 +428,16 @@ function validarGestion(g) {
   if (!g.canal) return 'Falta canal';
   if (!g.resultado) return 'Falta resultado';
 
-  // La calificacion (4 factores) se exige cuando el resultado es "Respondio - calificado"
-  // y al "Agendo reunion" si el lead aun no fue calificado. En "no pudo hablar" y
-  // "sin calificar" NO se exige (el lead conversó pero todavia no califica).
-  const exigeSiempre = ['Respondio - calificado', 'Respondio - interesado', 'Respondio - pidio informacion'].includes(g.resultado);
-  const exigeEnAgenda = g.resultado === 'Agendo reunion' && !g.yaCalificado;
-  if ((exigeSiempre || exigeEnAgenda) && (!g.ticket || !g.tiempo || !g.nivelInteres || !g.experiencia)) {
-    return 'Falta calificacion (ticket, tiempo, interes y experiencia)';
+  // BLOQUEO ESTRICTO (v1.381): para avanzar a Calificado o más adelante (Agendado,
+  // Reunión), el lead DEBE tener las 5 preguntas de calificación completas. Sin atajos.
+  const exigeCalificacion = [
+    'Respondio - calificado', 'Respondio - interesado', 'Respondio - pidio informacion',
+    'Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion', 'Reunion efectiva',
+    'Confirmo reunion', 'Seguimiento post reunion', 'Evaluando'
+  ].includes(g.resultado);
+  if (exigeCalificacion && !calificacionCompleta(g)) {
+    const faltan = calificacionFaltantes(g);
+    return 'No puedes avanzar sin completar las 5 preguntas de calificación. Falta: ' + faltan.join(', ') + '.';
   }
   if (['Agendo reunion', 'Confirmo reunion', 'Reprogramo reunion'].includes(g.resultado) && !g.fechaReunion) {
     return 'Falta fecha de reunion';
@@ -519,10 +621,23 @@ function consolidarLead(lead, gestiones) {
   for (let i = gestiones.length - 1; i >= 0; i--) {
     if (!RESULTADOS_SIN_CONTACTO.includes(gestiones[i].resultado)) { ultSignificativo = gestiones[i]; break; }
   }
-  const etapa = calcularEtapa({
+  let etapa = calcularEtapa({
     ultimoResultado: ultSignificativo ? ultSignificativo.resultado : (ult ? ult.resultado : 'Sin gestion'),
     estadoReunion, tieneCalificacion
   });
+  // ANTI-RETROCESO (v1.385): un lead no puede retroceder de etapa. Solo sale de su avance
+  // máximo si se GANA o se PIERDE. Si la última gestión mapea a una etapa inferior a la
+  // máxima alcanzada (p.ej. registran "seguimiento" estando en Negociación), se mantiene
+  // en la etapa máxima. Las etapas terminales (Cerrado ganado/perdido) sí se respetan.
+  if (etapa !== 'Cerrado ganado' && etapa !== 'Cerrado perdido') {
+    const rankActual = RANK_ETAPA[etapa] || 0;
+    const rankMax = etapaMaximaAlcanzada(gestiones, etapa);
+    if (rankMax > rankActual) {
+      // Buscar el nombre de etapa correspondiente al rank máximo.
+      const etapaMax = Object.keys(RANK_ETAPA).find(k => RANK_ETAPA[k] === rankMax && k !== 'Cerrado perdido');
+      if (etapaMax) etapa = etapaMax;
+    }
+  }
   const probabilidad = calcularProbabilidad({ etapa, score, intentos });
   let fechaProxAccion = ult ? ult.fechaProxAccion : null;
   const prioridad = calcularPrioridad({ etapa, probabilidad, intentos, fechaProxAccion, fechaReunion, fechaAsignacion: lead.fechaAsignacion });
@@ -606,15 +721,23 @@ const RANK_ETAPA = {
 // Etapa maxima alcanzada por un lead segun su historial de gestiones.
 function etapaMaximaAlcanzada(gestiones, etapaActual) {
   let maxRank = RANK_ETAPA[etapaActual] || 0;
-  let tuvoCalificacion = false;
+  const califCompleta = (gestiones || []).some(g => calificacionCompleta(g));
   gestiones.forEach(g => {
-    const e = etapaDeGestion(g.resultado);
-    if ((RANK_ETAPA[e] || 0) > maxRank) maxRank = RANK_ETAPA[e];
-    if (g.ticket || g.tiempo || g.nivelInteres || g.experiencia) tuvoCalificacion = true;
+    let e = etapaDeGestion(g.resultado);
+    // "Calificado" (rank 2) solo es válido si además tiene las 5 preguntas; si no, tope Contactado (1).
+    let r = RANK_ETAPA[e] || 0;
+    if (r === 2 && !califCompleta) r = 1;
+    if (r > maxRank) maxRank = r;
   });
-  // Si fue calificado en algun momento, asegurar al menos rank 2
-  if (tuvoCalificacion && maxRank < 2) maxRank = 2;
+  // Refuerzo: si completó las 5 en algún momento, al menos rank 2.
+  if (califCompleta && maxRank < 2) maxRank = 2;
+  // Sin calificación completa, no puede superar Contactado por la vía de "calificado".
+  if (!califCompleta && maxRank === 2) maxRank = 1;
   return maxRank;
+}
+// ¿El lead tiene calificación COMPLETA (5 preguntas) en alguna de sus gestiones?
+function tieneCalificacionCompleta(gestiones) {
+  return (gestiones || []).some(g => calificacionCompleta(g));
 }
 
 // leadsConGestiones: [{ lead, gestiones, consolidado }]
@@ -667,8 +790,8 @@ function etapaDeGestion(resultado) {
   if (resultado === 'Cierre pendiente' || resultado === 'En negociacion') return 'Cierre pendiente';
   if (resultado === 'Reunion efectiva' || resultado === 'Confirmo reunion' || resultado === 'Seguimiento post reunion' || resultado === 'Evaluando') return 'Reunion efectiva - seguimiento';
   if (['Agendo reunion', 'Reprogramo reunion', 'No asistio a reunion'].includes(resultado)) return 'Agendado - pendiente reunion';
-  if (['Respondio - calificado', 'Respondio - interesado'].includes(resultado)) return 'Calificado - pendiente agendar';
-  if (['Respondio - no pudo hablar', 'Respondio - sin calificar',
+  if (['Respondio - calificado'].includes(resultado)) return 'Calificado - pendiente agendar';
+  if (['Respondio - no pudo hablar', 'Respondio - sin calificar', 'Respondio - interesado',
        'Respondio - pidio informacion'].includes(resultado)) return 'Contactado - por calificar';
   return 'Contactabilidad 3x5';
 }
@@ -722,7 +845,7 @@ module.exports = {
   obtenerResultadosPermitidos,
   obtenerAccionesPermitidas,
   KANBAN_COLUMNAS, KANBAN_RESULTADO_DESTINO, columnaDeEtapa, transicionKanbanValida,
-  analizarCohortes, etapaMaximaAlcanzada,
+  analizarCohortes, etapaMaximaAlcanzada, calificacionCompleta, calificacionFaltantes, tieneCalificacionCompleta,
   montoTicket, consolidarLead, trazabilidad, formatoDuracion, etapaDeGestion
 };
 
@@ -911,3 +1034,5 @@ module.exports.esDiaHabil = esDiaHabil;
 module.exports.contarDiasHabiles = contarDiasHabiles;
 module.exports.diasHabilesMes = diasHabilesMes;
 module.exports.diasHabilesTranscurridos = diasHabilesTranscurridos;
+module.exports.priorityScoreB2C = priorityScoreB2C;
+module.exports.PScoreDefaultB2C = PScoreDefaultB2C;

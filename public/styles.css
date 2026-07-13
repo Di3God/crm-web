@@ -2264,11 +2264,19 @@ body:has(#v-b2b.vista.act) .content { max-width:none; }
 .rf-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
 
 /* ===== Dashboard Comité B2C ===== */
-.com-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:14px 0; }
-.com-card { background:#fff; border:1px solid #E4EAF2; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(20,40,80,.05); }
-.com-card-v { font-size:26px; font-weight:800; color:#0F2E5A; line-height:1.1; }
-.com-card-l { font-size:12.5px; color:#5A6B80; margin-top:4px; font-weight:600; }
-.com-card-s { font-size:11px; color:#94A3B8; margin-top:2px; }
+.com-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:14px 0; }
+.com-card { background:#fff; border:1px solid #E7EDF4; border-radius:12px; padding:11px 13px; box-shadow:0 1px 3px rgba(20,40,80,.05); display:flex; align-items:center; gap:10px; }
+.com-card-ico { font-size:18px; width:34px; height:34px; flex:none; display:flex; align-items:center; justify-content:center; background:#F1F6FD; border-radius:9px; }
+.com-card-body { min-width:0; }
+.com-card-v { font-size:21px; font-weight:800; color:#0F2E5A; line-height:1.1; }
+.com-card-l { font-size:11.5px; color:#5A6B80; margin-top:2px; font-weight:600; }
+.com-card-s { font-size:10.5px; color:#94A3B8; margin-top:1px; }
+.com-barra { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.com-filtros { display:flex; align-items:center; gap:7px; }
+.com-fecha { font-size:12px; padding:5px 7px; border:1px solid var(--line); border-radius:7px; width:135px; }
+.com-flecha { color:#94a3b8; }
+.com-gp-sel { font-size:12px; padding:5px 8px; border:1px solid var(--line); border-radius:7px; max-width:130px; }
+.com-panel-full { grid-column:1/-1; }
 .com-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
 @media (max-width:900px){ .com-grid { grid-template-columns:1fr; } }
 .com-panel { background:#fff; border:1px solid #E4EAF2; border-radius:12px; padding:16px; }
@@ -2739,3 +2747,370 @@ body.night #fbContactabilidad .g35-vacio { border-color:#33465C; }
 .ops-trab-tabla th { text-align:left; font-weight:500; color:#6b7686; font-size:11px; padding:6px; border-bottom:1px solid #E4EAF2; position:sticky; top:0; background:#fff; }
 .ops-est { font-size:11px; background:#eef3fa; color:#4a5568; padding:2px 8px; border-radius:10px; }
 .ops-est-act { background:#E6F1FB; color:#0C447C; }
+
+/* ============================================================
+   RESPONSIVE MÓVIL (v1.374) — arranque por B2C
+   Kanban en carrusel (columna a columna con snap), barra
+   superior compacta, modales a pantalla completa, tablas con
+   scroll. Se activa en pantallas ≤ 640px.
+   ============================================================ */
+@media (max-width: 640px) {
+
+  /* ---- Barra superior compacta: no encimar botones ---- */
+  .topbar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; height: auto; }
+  .top-logo { font-size: 16px; }
+  .top-nav { flex-wrap: wrap; gap: 6px; width: 100%; order: 3; }
+  .mundo-btn { font-size: 13px; padding: 7px 10px; }
+  .top-user { margin-left: auto; }
+  .top-user .tu-nombre, .top-user b { font-size: 13px; }
+
+  /* ---- KANBAN como carrusel: una columna casi completa, snap ---- */
+  .kanban, .kb-board {
+    grid-auto-flow: column;
+    grid-auto-columns: 86%;          /* cada columna ocupa casi toda la pantalla */
+    gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;    /* se detiene columna por columna */
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 12px;
+  }
+  .kcol, .kb-col {
+    scroll-snap-align: center;
+    min-width: 0;                     /* deja que grid-auto-columns mande */
+    max-height: none;
+  }
+  /* Textos completos dentro de las tarjetas (ya no se cortan) */
+  .kcol-head .ktit, .kb-colhead span { font-size: 13px; white-space: normal; }
+  .kcol-body, .kb-colbody { max-height: 62vh; }
+
+  /* Pista visual de que hay más columnas al lado */
+  .kanban::after, .kb-board::after { content: ""; flex: 0 0 8px; }
+
+  /* ---- Modales a pantalla completa ---- */
+  .overlay > .modal, .overlay > .gm-card, .overlay .tl-card {
+    max-width: 100vw !important;
+    width: 100vw !important;
+    max-height: 100dvh !important;
+    height: auto;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  .overlay { padding: 0 !important; align-items: stretch !important; }
+  /* El modal de gestión en 2 columnas se apila */
+  .gm-2col { grid-template-columns: 1fr !important; }
+  .gm-col { padding: 12px 14px; }
+
+  /* ---- Ranking del día: pantalla completa y ordenado en móvil ---- */
+  .rk-overlay { padding: 0 !important; align-items: stretch !important; }
+  .rk-modal {
+    width: 100vw !important; max-width: 100vw !important;
+    max-height: 100dvh !important; height: 100dvh;
+    border-radius: 0 !important; margin: 0 !important;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: flex; flex-direction: column;
+  }
+  /* Hero: apilar título y botón actualizar */
+  .rk-hero { flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 16px 12px; }
+  .rk-hero-r { width: 100%; display: flex; align-items: center; justify-content: space-between; }
+  .rk-hero h2 { font-size: 18px; }
+  .rk-close { top: 10px; right: 12px; }
+  /* Meta + podio + racha: apilar en una columna, no lado a lado */
+  .rk-top3 { display: flex; flex-direction: column; gap: 10px; padding: 0 14px; }
+  .rk-side, .rk-podio { width: 100%; }
+  .rk-podio { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  /* Tabla de puntos: scroll horizontal para no cortar columnas */
+  .rk-tabla { font-size: 12.5px; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 4px 0; }
+  .rk-tabla table { min-width: 460px; }
+  .rk-foot { font-size: 11px; padding: 12px 14px; line-height: 1.5; }
+
+  /* ---- Tablas anchas con scroll (reuniones, etc.) ---- */
+  .tabla-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
+  .tabla-scroll table { min-width: 640px; }
+
+  /* ---- Tablas anchas: scroll horizontal en su contenedor ---- */
+  .tabla-wrap, .tbl-scroll, .reuniones-tabla, .tabla-scroll {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  table { font-size: 12.5px; }
+
+  /* ---- Filtros y controles: apilar y ocupar ancho ---- */
+  .filtros-row, .toolbar, .md-filtros { flex-wrap: wrap; gap: 8px; }
+  .filtros-row > *, .md-filtros > * { flex: 1 1 auto; min-width: 130px; }
+
+  /* ---- Botón flotante de llamar (Aircall): que no tape contenido ---- */
+  .ac-fab { bottom: 80px; right: 14px; width: 50px; height: 50px; }
+}
+
+/* Indicador de estado del bot de WhatsApp (header) */
+.wa-estado { display:inline-flex; align-items:center; gap:6px; background:#fff; border:1px solid var(--line); border-radius:16px; padding:5px 11px; font-size:11.5px; font-weight:600; cursor:pointer; margin-right:10px; color:var(--navy-2); }
+.wa-estado:hover { background:#F4F8FD; }
+.wa-dot { width:8px; height:8px; border-radius:50%; background:#B3BDC9; flex:none; }
+.wa-estado.wa-ok .wa-dot { background:#16A34A; box-shadow:0 0 0 3px rgba(22,163,74,.15); }
+.wa-estado.wa-warn .wa-dot { background:#F59E0B; box-shadow:0 0 0 3px rgba(245,158,11,.15); }
+.wa-estado.wa-bad .wa-dot { background:#DC2626; box-shadow:0 0 0 3px rgba(220,38,38,.18); animation:waPulse 1.4s infinite; }
+.wa-estado.wa-ok { color:#15803D; } .wa-estado.wa-warn { color:#B45309; } .wa-estado.wa-bad { color:#B91C1C; border-color:#F0B4B4; }
+@keyframes waPulse { 0%,100%{opacity:1;} 50%{opacity:.45;} }
+
+/* Embudo de conversión enriquecido (Comité B2C) */
+.emb-resumen { background:#F4F8FD; border-radius:10px; padding:11px 13px; margin-bottom:14px; font-size:12.5px; color:#334155; }
+.emb-resumen > div { margin:2px 0; }
+.emb-diag { font-size:12px; }
+.emb-fila { margin-bottom:15px; }
+.emb-fila.emb-cuello { background:#FEF3F2; border-radius:10px; padding:9px 11px; margin-left:-11px; margin-right:-11px; }
+.emb-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+.emb-lbl { font-size:12.5px; font-weight:600; color:#1e293b; }
+.emb-conv { font-size:11px; font-weight:700; padding:1px 8px; border-radius:10px; }
+.emb-conv.ok { background:#DCFCE7; color:#166534; }
+.emb-conv.med { background:#FEF9C3; color:#854D0E; }
+.emb-conv.bad { background:#FEE2E2; color:#991B1B; }
+.emb-row2 { display:flex; align-items:center; gap:12px; }
+.emb-track { position:relative; background:#EEF2F7; border-radius:7px; height:26px; flex:1; min-width:0; }
+.emb-fill { position:absolute; left:0; top:0; height:100%; background:linear-gradient(90deg,#2563EB,#3B82F6); border-radius:7px; min-width:4px; }
+.emb-cuello .emb-fill { background:linear-gradient(90deg,#DC2626,#EF4444); }
+/* El número va ARRIBA de la barra, alineado a la izquierda con padding, color oscuro con halo blanco
+   para ser legible tanto sobre la barra de color como sobre el track gris cuando la barra es corta. */
+.emb-n { position:absolute; left:8px; top:50%; transform:translateY(-50%); z-index:2; display:inline-flex; align-items:center; padding:2px 9px; background:rgba(255,255,255,.92); border-radius:6px; font-size:12px; font-weight:800; color:#0f172a; white-space:nowrap; box-shadow:0 1px 2px rgba(0,0,0,.12); }
+.emb-n small { font-weight:600; color:#475569; margin-left:3px; }
+.emb-side { display:flex; flex-direction:column; gap:3px; min-width:150px; font-size:11px; }
+.emb-vivos { color:#166534; font-weight:600; cursor:pointer; }
+.emb-vivos small { color:#15803D; font-weight:500; opacity:.85; }
+.emb-vivos:hover { text-decoration:underline; }
+.emb-fuga { color:#B91C1C; font-weight:600; cursor:pointer; }
+.emb-fuga small { color:#DC2626; font-weight:500; opacity:.85; }
+.emb-fuga:hover { text-decoration:underline; }
+.emb-estanca { color:#DC2626; }
+.emb-td-c { text-align:center; }
+.rev-head-vivos { background:#16A34A; }
+.rev-head-desest { background:#DC2626; }
+.emb-cuello-tag { display:block; font-size:11px; font-weight:700; color:#B91C1C; margin-top:4px; }
+.emb-revisar, .emb-riesgo { cursor:pointer; }
+.emb-revisar { color:#92400E; } .emb-riesgo { color:#9A3412; }
+.emb-revisar:hover, .emb-riesgo:hover { text-decoration:underline; }
+.emb-rev-link { color:#B45309; font-weight:600; }
+.emb-falta { color:#B91C1C; }
+.rev-modal { position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; }
+.rev-modal-box { background:#fff; border-radius:14px; max-width:680px; width:100%; max-height:82vh; overflow:hidden; display:flex; flex-direction:column; }
+.rev-modal-head { background:#F59E0B; color:#fff; padding:14px 20px; font-size:15px; font-weight:700; }
+.rev-head-riesgo { background:#EA580C; }
+.rev-modal-head span { font-weight:400; font-size:12px; opacity:.95; }
+.rev-modal-body { padding:16px 20px; overflow-y:auto; }
+.rev-modal-body tr { cursor:pointer; }
+.rev-modal-body tr:hover { background:#FEF9F3; }
+.rev-modal-foot { padding:12px 20px; border-top:1px solid #eef1f5; text-align:right; }
+.rev-modal-wide { max-width:920px; }
+/* Encabezado de tabla dentro del modal: fondo claro, texto oscuro legible (antes se perdía en azul) */
+.rev-modal-body .com-tabla thead th { background:#F1F5F9; color:#334155; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.02em; padding:8px 6px; position:sticky; top:0; }
+.rev-modal-body .com-tabla { border-collapse:collapse; width:100%; }
+.rev-modal-body .com-tabla td { padding:7px 6px; border-bottom:1px solid #F1F5F9; font-size:12.5px; vertical-align:top; }
+.mot-anun-nom { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
+
+/* Fila de contactabilidad (transversal) en el embudo */
+.emb-fila-cont { background:#F0F7FF; border:1px dashed #B5D3F0; border-radius:10px; padding:10px 12px; margin:6px 0 15px; }
+.emb-lbl-cont { color:#1E5A9E; }
+.emb-lbl-cont small { font-weight:400; color:#7BA5CF; font-size:11px; }
+.emb-track-cont { background:#DEEBF8; }
+.emb-fill-cont { background:linear-gradient(90deg,#0EA5E9,#38BDF8) !important; }
+.emb-cont-actions { display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; }
+.emb-csv-btn { font-size:11px; font-weight:600; padding:5px 11px; border:1px solid #B5D3F0; background:#fff; color:#1E5A9E; border-radius:7px; cursor:pointer; }
+.emb-csv-btn:hover { background:#E8F3FF; }
+/* Modal de contactabilidad: anuncios con preview */
+.cont-sec-tit { font-size:12px; font-weight:700; color:#334155; margin:14px 0 8px; text-transform:uppercase; letter-spacing:.02em; }
+.cont-sec-tit:first-child { margin-top:0; }
+.cont-anuncios { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-bottom:6px; }
+.cont-anuncio { display:flex; gap:9px; align-items:center; border:1px solid #E7EDF4; border-radius:10px; padding:8px; background:#fff; }
+.cont-anun-thumb { width:46px; height:46px; flex:none; border-radius:8px; overflow:hidden; background:#F1F5F9; display:flex; align-items:center; justify-content:center; font-size:18px; }
+.cont-anun-thumb img { width:100%; height:100%; object-fit:cover; }
+.cont-anun-info { min-width:0; }
+.cont-anun-nom { font-size:11.5px; font-weight:600; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cont-anun-meta { font-size:11px; color:#64748b; margin-top:2px; }
+.cont-csv-row { margin-top:14px; text-align:right; }
+
+/* Botón y modal de análisis de motivos de desestimación */
+.emb-motivos-btn { margin-top:10px; }
+.emb-diag-btn { font-size:12px; font-weight:600; padding:8px 14px; border:1px solid #C7B5E8; background:#F5F0FC; color:#6D28D9; border-radius:8px; cursor:pointer; width:100%; text-align:left; }
+.emb-diag-btn:hover { background:#EDE4FA; }
+.rev-head-motivos { background:#7C3AED; }
+.mot-veredicto { background:#F8FAFC; border-left:4px solid #7C3AED; border-radius:6px; padding:12px 14px; font-size:13px; font-weight:600; color:#334155; margin-bottom:14px; }
+.mot-barra { display:flex; height:28px; border-radius:8px; overflow:hidden; background:#EEF2F7; }
+.mot-seg { display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:700; min-width:2px; }
+.mot-cal { background:#EA580C; } .mot-com { background:#2563EB; } .mot-otr { background:#94A3B8; }
+.mot-leyenda { display:flex; gap:16px; margin-top:8px; font-size:11.5px; color:#475569; }
+.mot-dot { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:middle; }
+.mot-tag { font-size:10px; font-weight:700; padding:1px 7px; border-radius:9px; margin-left:6px; }
+.mot-cal-tag { background:#FEE2CE; color:#9A3412; }
+.mot-com-tag { background:#DBEAFE; color:#1E40AF; }
+.mot-otr-tag { background:#F1F5F9; color:#64748B; }
+.mot-anuncios-cell { max-width:280px; }
+.mot-anuncios-cell { display:flex; flex-direction:column; gap:3px; align-items:flex-start; padding:8px 6px; }
+.mot-anun { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; background:#F8FAFC; border:1px solid #E7EDF4; border-radius:6px; padding:3px 7px; margin:0; max-width:100%; }
+.mot-anun img { width:20px; height:20px; border-radius:4px; object-fit:cover; flex:none; }
+.mot-anun b { margin-left:auto; padding-left:6px; }
+
+/* Nota de criterio y tag mixto en el modal de motivos */
+.mot-criterio { background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px; font-size:11.5px; color:#78350F; line-height:1.5; margin-top:12px; }
+.mot-cal-txt { color:#9A3412; font-weight:700; }
+.mot-com-txt { color:#1E40AF; font-weight:700; }
+.mot-mix-tag { background:linear-gradient(90deg,#FEE2CE 55%,#DBEAFE 55%); color:#334155; white-space:nowrap; }
+
+/* Botones de la barra del comité alineados a la derecha */
+.com-botones { display:flex; gap:8px; margin-left:auto; }
+
+/* Encabezados de sección en el desglose de motivos (separado por tipo) */
+.mot-sec-head td { font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; padding:9px 8px !important; }
+.mot-sec-cal td { background:#FFF3EB; color:#9A3412; border-top:2px solid #FDBA74; }
+.mot-sec-com td { background:#EFF5FF; color:#1E40AF; border-top:2px solid #93C5FD; }
+.mot-sec-otr td { background:#F8FAFC; color:#64748B; border-top:2px solid #E2E8F0; }
+
+/* Radar de anuncios (cuadrante volumen × desperdicio) */
+.rev-head-rend { background:#0F766E; }
+.rend-chart-box { position:relative; height:360px; background:#fff; border:1px solid #E7EDF4; border-radius:10px; padding:8px; }
+.rend-leyenda { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:11px; color:#475569; }
+.rend-leyenda i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+.rend-nom-cell { display:flex; align-items:center; gap:7px; max-width:190px; }
+.rend-thumb { width:30px; height:30px; border-radius:7px; object-fit:cover; flex:none; }
+.rend-thumb-ph { display:inline-flex; align-items:center; justify-content:center; background:#F1F5F9; font-size:14px; }
+.rend-compo { display:flex; height:12px; border-radius:5px; overflow:hidden; background:#F1F5F9; min-width:110px; }
+.rend-compo i { display:block; height:100%; }
+.rend-compo-lbl { display:block; font-size:9.5px; color:#94A3B8; margin-top:3px; white-space:nowrap; }
+.rend-rec { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:9px; white-space:nowrap; }
+.rec-esc { background:#DCFCE7; color:#166534; }
+.rec-aj { background:#FEE2E2; color:#991B1B; }
+.rec-pot { background:#DBEAFE; color:#1E40AF; }
+.rec-pau { background:#F1F5F9; color:#64748B; }
+
+/* Controles del radar de anuncios (ejes y cortes) */
+.rend-controles { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; background:#F8FAFC; border:1px solid #E7EDF4; border-radius:9px; padding:9px 12px; }
+.rend-controles label { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; color:#475569; }
+.rend-controles select, .rend-controles input { font-size:12px; padding:4px 7px; border:1px solid var(--line); border-radius:6px; }
+.rend-controles input { width:75px; }
+.rend-excl { color:#B45309; font-weight:600; }
+
+/* Botón de actualización desde Meta en el radar */
+.rend-meta-btn { font-size:11.5px; padding:5px 11px; margin-left:auto; }
+
+/* Timeline B2B con visual tz (v1.397): ajuste del contenedor dentro del modal tl */
+.tz-list-b2b { padding: 4px 10px 8px; }
+.tz-list-b2b .tz-ev-card { margin-bottom: 4px; }
+
+/* ===== Cola priorizada B2C (Centro de operaciones) ===== */
+.cola-wrap { padding: 4px 0; }
+.cola-loading { padding: 40px; text-align: center; color: #64748b; }
+.cola-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.cola-head-t { font-size: 15px; font-weight: 800; color: #1e293b; }
+.cola-head-n { font-size: 12px; color: #94a3b8; }
+.cola-resumen { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.cola-res-pill { font-size: 11.5px; font-weight: 700; padding: 4px 11px; border-radius: 20px; }
+.cola-res-pill.nv-critica { background: #FEE2E2; color: #991B1B; }
+.cola-res-pill.nv-alta { background: #FFEDD5; color: #9A3412; }
+.cola-res-pill.nv-media { background: #FEF9C3; color: #854D0E; }
+.cola-res-pill.nv-baja { background: #F1F5F9; color: #64748B; }
+.cola-pesos-btn { margin-left: auto; font-size: 12px; padding: 5px 12px; }
+.cola-fila { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid #E7EDF4; border-radius: 11px; margin-bottom: 7px; cursor: pointer; background: #fff; transition: box-shadow .12s; }
+.cola-fila:hover { box-shadow: 0 2px 10px rgba(20,40,80,.09); }
+.cola-num { font-size: 12px; font-weight: 700; color: #94a3b8; width: 22px; text-align: center; flex: none; }
+.cola-score { font-size: 15px; font-weight: 800; width: 42px; height: 42px; border-radius: 11px; display: flex; align-items: center; justify-content: center; flex: none; }
+.cola-score.nv-critica { background: #FEE2E2; color: #B91C1C; }
+.cola-score.nv-alta { background: #FFEDD5; color: #C2410C; }
+.cola-score.nv-media { background: #FEF9C3; color: #A16207; }
+.cola-score.nv-baja { background: #F1F5F9; color: #64748B; }
+.cola-main { flex: 1; min-width: 0; }
+.cola-nom { font-size: 13.5px; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cola-meta { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 3px; font-size: 11px; }
+.cola-etapa { background: #EEF2F7; color: #475569; padding: 1px 8px; border-radius: 8px; font-weight: 600; }
+.cola-prox { color: #475569; }
+.cola-venc { color: #B91C1C; font-weight: 700; }
+.cola-estanc { color: #C2410C; font-weight: 600; }
+.cola-right { text-align: right; flex: none; }
+.cola-monto { font-size: 13px; font-weight: 800; color: #0F2E5A; }
+.cola-sub { font-size: 10.5px; color: #94a3b8; margin-top: 2px; }
+.cola-acciones { flex: none; }
+.cola-ll { width: 34px; height: 34px; border-radius: 9px; border: 1px solid #C7D9EE; background: #F0F7FF; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.cola-ll:hover { background: #E0EEFC; }
+.cola-ll svg { width: 16px; height: 16px; }
+/* Panel de pesos */
+.pw-nota { font-size: 12px; color: #64748b; margin: 0 0 14px; line-height: 1.5; }
+.pw-row { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
+.pw-row label { font-size: 12.5px; font-weight: 600; color: #334155; width: 200px; flex: none; }
+.pw-row input[type=range] { flex: 1; }
+.pw-val { font-size: 13px; font-weight: 800; color: #2563EB; width: 30px; text-align: right; }
+.pw-foot { margin-top: 16px; display: flex; gap: 8px; }
+
+/* ===== MODO NOCHE B2C completo (v1.399): kanban, miDia, filtros, cola, modales ===== */
+/* Bloque "Mi día" del GP (las tarjetas superiores) */
+body.night .md-card, body.night .md-card2 { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .md-num, body.night .md-v { color:#EAF1FA !important; }
+body.night .md-et, body.night .md-sub, body.night .md-txt { color:#9DB0C6 !important; }
+body.night .md-card.md-rojo { background:#2A1A1E !important; border-color:#5B2B2B !important; }
+body.night .md-card.md-rojo .md-num { color:#F49B93 !important; }
+body.night .md-card.md-azul { background:#16243B !important; border-color:#2E3A56 !important; }
+body.night .md-card.md-azul .md-num { color:#7FB0FF !important; }
+body.night .reparto, body.night .reu-bloque, body.night .tira-rank { background:#1A2534 !important; border-color:#2A3849 !important; color:#D8E0EC !important; }
+/* Kanban B2C (kcol / kcard) */
+body.night .kcol { background:#151E2B !important; border-color:#2A3849 !important; }
+body.night .kcol-head { background:#22303F !important; }
+body.night .kcol-metricas { border-color:#2A3849 !important; }
+body.night .kcol-metricas .km-v { color:#EAF1FA !important; }
+body.night .kcol-body.drop { background:#16243B !important; outline-color:#3B5BDB !important; }
+body.night .kcard { background:#1A2534 !important; border-color:#2A3849 !important; color:#D8E0EC !important; }
+body.night .kcard b, body.night .knombre, body.night .kmonto { color:#EAF1FA !important; }
+body.night .kchip, body.night .kestado, body.night .kestado-sc { background:#22303F !important; color:#9DB0C6 !important; border-color:#33465C !important; }
+body.night .kbtns .kbtn, body.night .kacc { background:#22303F !important; color:#CFE0F5 !important; border-color:#33465C !important; }
+body.night .kvacio { color:#5F718A !important; }
+/* Barra de filtros y toggles de la vista leads */
+body.night .fechas, body.night .leads-buscar, body.night .filtros-row > select, body.night .vista-toggle { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .vista-toggle button { background:transparent !important; color:#9DB0C6 !important; }
+body.night .vista-toggle button.act { background:#22303F !important; color:#EAF1FA !important; }
+body.night .fechas-x, body.night .cal-ico, body.night .leads-buscar-ic { color:#9DB0C6 !important; }
+/* Cola priorizada B2C */
+body.night .cola-fila { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .cola-nom { color:#EAF1FA !important; }
+body.night .cola-etapa { background:#22303F !important; color:#9DB0C6 !important; }
+body.night .cola-prox { color:#9DB0C6 !important; }
+body.night .cola-ll { background:#16243B !important; border-color:#2E3A56 !important; }
+body.night .cola-res-pill.nv-baja { background:#22303F !important; color:#9DB0C6 !important; }
+/* Modales rev (embudo, motivos, radar, contactabilidad, pesos) */
+body.night .rev-modal-box { background:#151E2B !important; color:#D8E0EC !important; }
+body.night .rev-modal-body .com-tabla thead th { background:#22303F !important; color:#CFE0F5 !important; }
+body.night .rev-modal-body .com-tabla td { border-color:#2A3849 !important; }
+body.night .rev-modal-body tr:hover { background:#1E2A3B !important; }
+body.night .rev-modal-foot { border-color:#2A3849 !important; }
+body.night .mot-veredicto { background:#1A2534 !important; color:#D8E0EC !important; }
+body.night .mot-criterio { background:#241F14 !important; border-color:#5B472B !important; color:#E5C88F !important; }
+body.night .cont-anuncio, body.night .rend-chart-box, body.night .rend-controles { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .cont-anun-nom, body.night .cont-sec-tit { color:#CFE0F5 !important; }
+body.night .mot-anun { background:#22303F !important; border-color:#33465C !important; color:#D8E0EC !important; }
+body.night .emb-fila-cont { background:#16243B !important; border-color:#2E3A56 !important; }
+body.night .emb-track, body.night .emb-track-cont { background:#22303F !important; }
+body.night .emb-n { background:rgba(26,37,52,.94) !important; color:#EAF1FA !important; }
+body.night .emb-n small { color:#9DB0C6 !important; }
+body.night .emb-lbl { color:#CFE0F5 !important; }
+body.night .emb-csv-btn { background:#16243B !important; border-color:#2E3A56 !important; color:#9FC0FF !important; }
+body.night .emb-fila.emb-cuello { background:#2A1A1E !important; }
+/* Paginación y tablas de la vista leads */
+body.night .pag-btn, body.night .paginador button { background:#1A2534 !important; color:#D8E0EC !important; border-color:#2A3849 !important; }
+body.night th { background:#1A2534 !important; color:#9DB0C6 !important; }
+body.night tr:hover td { background:#1E2A3B !important; }
+/* Comité: scorecards con ícono */
+body.night .com-card { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .com-card-ico { background:#22303F !important; }
+
+/* Pulso del día: panel de metas y preview */
+.pm-tabla input.pm-in { width: 64px; font-size: 12.5px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; text-align: center; }
+.pm-nom { font-weight: 700; font-size: 12.5px; }
+.pm-b2b { margin-top: 12px; font-size: 12.5px; font-weight: 600; color: #334155; display: flex; align-items: center; gap: 8px; }
+.pm-prevs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.pm-enviar { margin-left: auto; }
+.pm-preview { background: #0B1220; color: #D7E4F7; border-radius: 10px; padding: 14px; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; max-height: 380px; overflow: auto; font-family: ui-monospace, Menlo, Consolas, monospace; }
+body.night .pm-preview { background: #0B1220 !important; }
+body.night .pm-b2b label { color: #9DB0C6 !important; }
+
+/* Línea de correo en la tarjeta kanban B2C (con copiar) */
+.kmail { display:flex; align-items:center; gap:6px; font-size:11px; color:#5B7290; margin:2px 0 3px; cursor:pointer; max-width:100%; border-radius:6px; padding:1px 4px; transition:background .12s; }
+.kmail:hover { background:#F0F6FD; color:#2563EB; }
+.kmail-txt { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.kmail-copy { flex:none; font-size:12px; opacity:.65; }
+.kmail:hover .kmail-copy { opacity:1; }
+.kmail.kmail-ok { background:#DCFCE7; color:#166534; }
+body.night .kmail { color:#9DB0C6 !important; }
+body.night .kmail:hover { background:#16243B !important; color:#7FB0FF !important; }
+body.night .kmail.kmail-ok { background:#143223 !important; color:#7CD9A5 !important; }

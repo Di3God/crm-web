@@ -527,6 +527,7 @@ try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='cpo
 try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE llamadas ADD COLUMN codigoB2B TEXT"); } catch (e) { } // v1.397: match B2B del webhook Aircall
 try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
@@ -629,6 +630,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS marketing_gasto (
 })();
 // Estado del round-robin (clave/valor).
 db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT);");
+// Cola de alertas WhatsApp que fallaron el envío inmediato (microcaídas del bot/Baileys).
+// Un worker de fondo las reintenta hasta que el bot vuelva. Cero mensajes perdidos.
+db.exec(`CREATE TABLE IF NOT EXISTS wa_cola (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  texto TEXT NOT NULL,
+  jid TEXT,
+  intentos INTEGER DEFAULT 0,
+  creado TEXT NOT NULL,
+  ultimoIntento TEXT,
+  ultimoError TEXT,
+  estado TEXT DEFAULT 'pendiente'
+);`);
 // Leads históricos de campañas anteriores (CRM viejo). Separados del pipeline operativo;
 // solo alimentan el análisis de marketing (embudo + CPL por campaña).
 db.exec(`CREATE TABLE IF NOT EXISTS leads_historicos (
@@ -809,6 +822,15 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       lead = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND replace(replace(telefono,' ',''),'-','') LIKE ?")
         .get('%' + cel9);
     }
+    // v1.397: match TAMBIÉN contra solicitudes B2B (mismo criterio: últimos 9 dígitos).
+    // Un número puede coincidir con un lead B2C y/o una empresa B2B; se guardan ambos.
+    let solB2B = null;
+    if (cel9) {
+      try {
+        solB2B = db.prepare("SELECT codigo FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND replace(replace(COALESCE(telefono,''),' ',''),'-','') LIKE ?")
+          .get('%' + cel9);
+      } catch (e) { }
+    }
     // Contestada SOLO si la otra parte respondió (answered_at)... y NO fue buzón de voz.
     // OJO: c.duration incluye la timbrada; y Aircall marca answered_at al caer al buzón aunque nadie humano contestó.
     const aa = Number(c.answered_at || 0);
@@ -843,14 +865,15 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     const aircallId = String(c.id || ('ac-' + Date.now()));
 
     db.prepare(`INSERT OR IGNORE INTO llamadas
-      (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo)
-      VALUES (?,?,?,?,?,?,?,?,?)`)
+      (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo, codigoB2B)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(aircallId, lead ? lead.codigo : null, numeroLead || null, direccion,
-           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 16000));
+           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 16000),
+           solB2B ? solB2B.codigo : null);
 
     console.log('[aircall] Llamada', direccion, contestada ? 'contestada' : 'no contestada',
-      duracion + 's', '->', lead ? lead.codigo : 'sin match', numeroLead);
-    res.json({ ok: true, lead: lead ? lead.codigo : null });
+      duracion + 's', '->', lead ? lead.codigo : 'sin match B2C', solB2B ? ('· B2B ' + solB2B.codigo) : '', numeroLead);
+    res.json({ ok: true, lead: lead ? lead.codigo : null, b2b: solB2B ? solB2B.codigo : null });
   } catch (e) {
     console.error('[aircall] Error procesando webhook:', e.message);
     res.json({ ok: false, error: e.message }); // 200 igual, para que Aircall no reintente en bucle
@@ -1327,18 +1350,50 @@ function notificarAsignacion(lead, asesorNombre) {
   if (correo) mailer.correoLeadAsignado(lead, correo).catch(() => {});
 }
 
-// Alerta one-way a WhatsApp vía microservicio (Di3God/whatsapp-bot). Falla en silencio:
-// si el bot está caído o faltan envs, no rompe nada del CRM. Reutilizable por todas las alertas.
+// Envío HTTP crudo al bot. Devuelve true SOLO si el POST llegó y el bot respondió 2xx.
+// (El bot no confirma el envío real de WhatsApp, pero un 2xx descarta las microcaídas de
+//  red/conexión que son la causa de las alertas perdidas.) Timeout corto para no colgar.
+async function _postAlertaBot(texto, jid) {
+  const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
+  if (!url || !token || !texto) return { ok: false, error: 'faltan envs o texto' };
+  const destino = jid || process.env.WA_GRUPO_PRUEBAS_JID || undefined;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(url.replace(/\/$/, '') + '/alerta', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, texto, ...(destino ? { jid: destino } : {}) }),
+      signal: ctrl.signal
+    });
+    clearTimeout(t);
+    if (!r.ok) return { ok: false, error: 'HTTP ' + r.status };
+    return { ok: true };
+  } catch (e) { clearTimeout(t); return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message }; }
+}
+
+// Encola una alerta pendiente para que el worker la reintente hasta que el bot vuelva.
+function _encolarAlertaWA(texto, jid, error) {
+  try {
+    db.prepare("INSERT INTO wa_cola (texto, jid, intentos, creado, ultimoIntento, ultimoError, estado) VALUES (?,?,?,?,?,?, 'pendiente')")
+      .run(texto, jid || null, 1, new Date().toISOString(), new Date().toISOString(), error || null);
+    console.error('[WA] alerta ENCOLADA (bot no disponible):', error || '');
+  } catch (e) { console.error('[WA] no se pudo encolar:', e.message); }
+}
+
+// Alerta one-way a WhatsApp vía microservicio (Di3God/whatsapp-bot). Robusta:
+// intenta 2 veces de inmediato (por si cae en una microcaída de Baileys de ~10s);
+// si aún falla, la encola para reenvío en segundo plano. Nunca rompe el flujo del CRM.
 async function enviarAlertaWA(texto, jid) {
   const url = process.env.WA_BOT_URL, token = process.env.WA_BOT_TOKEN;
-  if (!url || !token || !texto) return;
-  const destino = jid || process.env.WA_GRUPO_PRUEBAS_JID || undefined; // en prod sin jid → grupo por defecto del bot
-  try {
-    await fetch(url.replace(/\/$/, '') + '/alerta', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, texto, ...(destino ? { jid: destino } : {}) })
-    });
-  } catch (e) { console.error('[WA] alerta falló:', e.message); }
+  if (!url || !token || !texto) return false;
+  // 2 intentos inmediatos con 3s de espera entre ellos.
+  for (let i = 0; i < 2; i++) {
+    const r = await _postAlertaBot(texto, jid);
+    if (r.ok) return true;
+    if (i === 0) await new Promise(res => setTimeout(res, 3000));
+    else _encolarAlertaWA(texto, jid, r.error);
+  }
+  return false;
 }
 
 // ===== Planes de accion por WhatsApp (cortes 9am/1pm/6pm, estado vivo) =====
@@ -1351,10 +1406,59 @@ const dashB2B = require('./dashboard-b2b.js')({ db, etapaKanbanB2B, priorityScor
 // alertasWAB2B.iniciarCortes(); // DESACTIVADO temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos. Los 3 cortes se pueden enviar manualmente con /api/b2b/alertas-wa/enviar o reactivar aquí.
 // Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
 const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
+// v1.401: Pulso del día (reemplaza los cortes anteriores de alertas-wa: un bloque por grupo, 3 cortes).
+const pulsoDia = require('./pulso-dia.js')({ db, enviarAlertaWA, peruFecha, construirRankingDia, consolidarLead: leadConsolidado, L, etapaKanbanB2B, slaEtapaB2B });
 // Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
 const metaInsights = require('./meta-insights.js')({ db });
 watchdogLeads.iniciar();
-alertasWA.iniciarCortes();
+// alertasWA.iniciarCortes(); // v1.401: APAGADO — reemplazado por el Pulso del día (un bloque por grupo). El envío manual sigue disponible.
+pulsoDia.iniciarCortes();
+// ===== PULSO DEL DÍA (v1.401): preview, envío manual y metas configurables =====
+// Vista previa del mensaje de un corte, sin enviar (admin/jefa).
+app.get('/api/pulso/preview', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const corte = ['9am', '1pm', '6pm'].includes(req.query.corte) ? req.query.corte : '9am';
+  res.json({ corte, b2c: pulsoDia.msgB2C(corte), b2b: pulsoDia.msgB2B(corte) });
+});
+// Envío manual de un corte AHORA a los grupos.
+app.post('/api/pulso/enviar', async (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const corte = ['9am', '1pm', '6pm'].includes(req.body && req.body.corte) ? req.body.corte : '9am';
+  const r = await pulsoDia.enviarPulso(corte);
+  auditar(req, 'pulso_manual', corte, JSON.stringify(r));
+  res.json({ ok: true, corte, enviado: r });
+});
+// Metas del día: por GP (B2C) y global B2B.
+app.get('/api/pulso/metas', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const gestoras = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol='gestora'").all().map(g => g.nombre);
+  const M = pulsoDia.getMetasB2C();
+  res.json({
+    default: pulsoDia.META_GP_DEF,
+    gps: gestoras.map(n => ({ nombre: n, meta: Object.assign({}, pulsoDia.META_GP_DEF, M[n] || {}) })),
+    b2b: pulsoDia.getMetaB2B()
+  });
+});
+app.put('/api/pulso/metas', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const b = req.body || {};
+  if (b.gps && typeof b.gps === 'object') {
+    const limpio = {};
+    Object.keys(b.gps).forEach(n => {
+      const m = b.gps[n]; if (!m || typeof m !== 'object') return;
+      const fila = {};
+      ['intentos', 'calificados', 'agendados', 'reuniones', 'cierres'].forEach(k => { const v = Number(m[k]); if (isFinite(v) && v >= 0) fila[k] = v; });
+      if (Object.keys(fila).length) limpio[n] = fila;
+    });
+    db.prepare("INSERT INTO app_config (clave,valor) VALUES ('pulso_metas_b2c',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(JSON.stringify(limpio));
+  }
+  if (b.b2b && isFinite(Number(b.b2b.gestiones))) {
+    db.prepare("INSERT INTO app_config (clave,valor) VALUES ('pulso_meta_b2b',?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(JSON.stringify({ gestiones: Number(b.b2b.gestiones) }));
+  }
+  auditar(req, 'pulso_metas', null, 'actualizadas');
+  res.json({ ok: true });
+});
+
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
 app.get('/api/wa/plan', soloAdminOJefa, async (req, res) => {
   const corte = ['9am', '1pm', '6pm'].includes(req.query.corte) ? req.query.corte : '9am';
@@ -1669,8 +1773,18 @@ app.post('/api/marketing/ingresos/:id/asociar', soloAdminOJefa, (req, res) => {
 
 // ---------- Catalogos ----------
 app.get('/api/catalogos', (req, res) => {
+  // Asesores dinámicos: gestoras activas de la BD (así una gestora nueva aparece sin tocar código).
+  // Se unen con la lista base para conservar orden/históricos; sin duplicar.
+  let asesoresDin = L.ASESORES;
+  try {
+    const gpBD = db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND activo=1 ORDER BY id").all().map(r => r.nombre);
+    const set = new Set(L.ASESORES);
+    gpBD.forEach(n => set.add(n));
+    // Mantener las de la lista base primero (orden histórico) y añadir las nuevas al final.
+    asesoresDin = [...L.ASESORES.filter(a => gpBD.includes(a) || true), ...gpBD.filter(n => !L.ASESORES.includes(n))];
+  } catch (e) { asesoresDin = L.ASESORES; }
   res.json({
-    asesores: L.ASESORES, canales: L.CANALES, fuentes: L.FUENTES,
+    asesores: asesoresDin, canales: L.CANALES, fuentes: L.FUENTES,
     resultados: L.RESULTADOS, proximasAcciones: L.PROXIMAS_ACCIONES,
     nivelInteres: L.NIVEL_INTERES, ticketRango: L.TICKET_RANGO,
     tiempo: L.TIEMPO, experiencia: L.EXPERIENCIA, avance: L.AVANCE,
@@ -1892,6 +2006,568 @@ app.get('/api/distribucion', (req, res) => {
   const totalMonto = items.reduce((s, i) => s + i.monto, 0);
   const totalLeads = items.reduce((s, i) => s + i.cantidad, 0);
   res.json({ items, totalMonto, totalLeads });
+});
+
+// ===== EMBUDO DE CONVERSIÓN B2C (por fecha de ASIGNACIÓN) =====
+// Para cada lead asignado en el rango, calcula la etapa MÁXIMA que alcanzó (histórico),
+// cuenta cuántos superaron cada nivel (acumulado) y el % de conversión etapa→etapa.
+// Señala el CUELLO: la transición con mayor caída (donde se pierden más leads).
+// GET /api/b2c/embudo?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&asesor=Nombre
+app.get('/api/b2c/embudo', async (req, res) => {
+  try {
+    const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : null;
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : null;
+
+    // Solo leads asignados (con GP) en el rango de fecha de asignación.
+    let leads = db.prepare("SELECT * FROM leads WHERE asesor IS NOT NULL AND asesor <> ''").all();
+    if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
+    else if (req.query.asesor) leads = leads.filter(l => l.asesor === req.query.asesor);
+    leads = filtrarPorAsignacion(leads, desde, hasta);
+
+    // Gestiones agrupadas (para la etapa alcanzada de cada lead).
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+
+    // --- Helpers 3x5 con días hábiles (domingos NO cuentan) ---
+    const LIMA = -5 * 3600000;
+    const diaL = iso => new Date(new Date(iso).getTime() + LIMA).toISOString().slice(0, 10);
+    const horaL = iso => new Date(new Date(iso).getTime() + LIMA).getUTCHours();
+    const dowL = iso => new Date(diaL(iso) + 'T12:00:00Z').getUTCDay(); // 0=domingo
+    const franja = iso => { const h = horaL(iso); return h < 12 ? 0 : h < 16 ? 1 : 2; }; // 0:mañana 1:tarde 2:noche
+    // Intentos mínimos del día de llegada según la franja (mañana=3, tarde=2, noche=1).
+    const cuotaDia1 = fr => (fr === 0 ? 3 : fr === 1 ? 2 : 1);
+    // Ancla del 3x5: si llega domingo, arranca el lunes en franja mañana (0).
+    function anclaje3x5(fechaAsig) {
+      let d = diaL(fechaAsig), fr = franja(fechaAsig);
+      if (dowL(fechaAsig) === 0) { // domingo → lunes primera franja
+        const dl = new Date(d + 'T12:00:00Z'); dl.setUTCDate(dl.getUTCDate() + 1);
+        d = dl.toISOString().slice(0, 10); fr = 0;
+      }
+      return { dia: d, franja: fr };
+    }
+    // Intentos ESPERADOS hasta hoy: cuota del día 1 (según franja) + 3 por cada día hábil
+    // (lunes-sábado) transcurrido después, sin contar domingos, hasta 5 días hábiles (3x5).
+    function intentosEsperados(fechaAsig) {
+      const anc = anclaje3x5(fechaAsig);
+      const hoy = diaL(new Date().toISOString());
+      let esperados = cuotaDia1(anc.franja), diasHabiles = 1;
+      let cursor = new Date(anc.dia + 'T12:00:00Z');
+      while (diasHabiles < 5) {
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        const ds = cursor.toISOString().slice(0, 10);
+        if (ds > hoy) break;            // aún no llega ese día
+        if (cursor.getUTCDay() === 0) continue; // domingo no cuenta (extiende)
+        esperados += 3; diasHabiles++;
+      }
+      return { esperados, diaAncla: anc.dia };
+    }
+    // Días hábiles transcurridos desde el ancla (para el criterio "5+ días").
+    function diasHabilesDesde(fechaAsig) {
+      const anc = anclaje3x5(fechaAsig);
+      const hoy = diaL(new Date().toISOString());
+      let n = 0, cursor = new Date(anc.dia + 'T12:00:00Z');
+      const fin = new Date(hoy + 'T12:00:00Z');
+      while (cursor <= fin) { if (cursor.getUTCDay() !== 0) n++; cursor.setUTCDate(cursor.getUTCDate() + 1); }
+      return n;
+    }
+    // Días CORRIDOS entre una fecha ISO y hoy (calendario).
+    function diasCorridosDesde(iso) {
+      if (!iso) return 0;
+      return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+    }
+    // Días HÁBILES (sin domingos) entre una fecha ISO y hoy.
+    function diasHabilesEntre(iso) {
+      if (!iso) return 0;
+      let n = 0, cursor = new Date(diaL(iso) + 'T12:00:00Z');
+      const fin = new Date(diaL(new Date().toISOString()) + 'T12:00:00Z');
+      while (cursor < fin) { cursor.setUTCDate(cursor.getUTCDate() + 1); if (cursor.getUTCDay() !== 0) n++; }
+      return n;
+    }
+    // Fecha en que el lead ENTRÓ a su etapa actual: la última gestión cuyo resultado
+    // mapea a la etapa vigente y que representa la transición hacia ella. Si no hay
+    // gestiones en esa etapa, cae a la fecha de asignación.
+    function fechaEntradaEtapa(gs, etapaActual) {
+      let entrada = null;
+      // Recorremos en orden; la etapa "actual" empieza en la última vez que se ENTRÓ a ella.
+      let etapaPrev = null;
+      gs.forEach(g => {
+        const e = L.etapaDeGestion ? L.etapaDeGestion(g.resultado) : null;
+        if (e === etapaActual && etapaPrev !== etapaActual) entrada = g.fecha; // transición hacia la etapa
+        etapaPrev = e;
+      });
+      // Si nunca hubo transición explícita (p.ej. sigue en 3x5), usa la última gestión o nada.
+      return entrada;
+    }
+
+    // Formato de duración: horas si <1 día; días + horas si ≥1 día.
+    function fmtDur(ms) {
+      if (ms == null || ms < 0) return '—';
+      const h = Math.floor(ms / 3600000);
+      if (h < 24) return h + ' h';
+      const d = Math.floor(h / 24), hr = h % 24;
+      return d + ' d' + (hr ? ' ' + hr + ' h' : '');
+    }
+    // Métricas específicas de Agendado para un lead: tiempo hasta agendar, tiempo en la
+    // etapa Agendado, e intentos antes/después de agendar.
+    function metricasAgendado(l, gs) {
+      let idxAgenda = -1;
+      for (let k = 0; k < gs.length; k++) {
+        if (L.etapaDeGestion(gs[k].resultado) === 'Agendado - pendiente reunion') { idxAgenda = k; break; }
+      }
+      if (idxAgenda < 0) return { tiempoHastaAgendar: '—', tiempoEnEtapa: '—', intentosHastaAgendar: gs.length, intentosPostAgendar: 0 };
+      const fAgenda = gs[idxAgenda].fecha;
+      const base = l.fechaAsignacion || (gs[0] && gs[0].fecha);
+      const tiempoHasta = base ? (new Date(fAgenda) - new Date(base)) : null;
+      const tiempoEnEtapa = Date.now() - new Date(fAgenda).getTime();
+      return {
+        tiempoHastaAgendar: fmtDur(tiempoHasta),
+        tiempoEnEtapa: fmtDur(tiempoEnEtapa),
+        intentosHastaAgendar: idxAgenda + 1,
+        intentosPostAgendar: gs.length - (idxAgenda + 1)
+      };
+    }
+
+    // Etapas del embudo, en orden. "Cerrado ganado" es el fondo (cierre).
+    const NIVELES = [
+      { id: 'asignados', titulo: 'Asignados', ord: 0 },
+      { id: 'contactado', titulo: 'Contactado', ord: 1 },
+      { id: 'calificado', titulo: 'Calificado', ord: 2 },
+      { id: 'agendado', titulo: 'Agendado', ord: 3 },
+      { id: 'reunion', titulo: 'Reunión efectiva', ord: 4 },
+      { id: 'negociacion', titulo: 'Negociación', ord: 5 },
+      { id: 'cierre', titulo: 'Cierre ganado', ord: 6 }
+    ];
+    const conteo = {}; NIVELES.forEach(n => conteo[n.id] = 0);
+    const fugaPorNivel = {}; NIVELES.forEach(n => fugaPorNivel[n.id] = 0);  // perdidos que MÁXIMO llegaron a ese nivel
+    const vivosPorNivel = {}; NIVELES.forEach(n => vivosPorNivel[n.id] = []);   // detalle de los que siguen vivos AQUÍ
+    const desestPorNivel = {}; NIVELES.forEach(n => desestPorNivel[n.id] = []); // detalle de los desestimados AQUÍ
+    let perdidos = 0, montoTotal = 0;
+    const montoPorNivel = {}; NIVELES.forEach(n => montoPorNivel[n.id] = 0);
+    const enRiesgo = []; // 5+ días hábiles, sin desestimar, con menos intentos de los esperados
+    // Contadores para las scorecards (misma base y fecha que el embudo: asignación).
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    let scContactados = 0, scGanados = 0, scMontoGanado = 0, scHicieron3x5 = 0;
+    const tiemposPrimerContacto = [], intentosPrimerContacto = [];
+    // Mapa anuncio → creativeUrl (para el preview de origen). Una sola consulta.
+    const creativoPorAnuncio = {};
+    try {
+      db.prepare("SELECT anuncio, creativeUrl FROM marketing_gasto WHERE creativeUrl IS NOT NULL AND anuncio IS NOT NULL").all()
+        .forEach(r => { if (!creativoPorAnuncio[r.anuncio]) creativoPorAnuncio[r.anuncio] = r.creativeUrl; });
+    } catch (e) {}
+    // Listas de contactabilidad (transversal, NO altera las etapas del embudo).
+    const contactables = [], noContactables = [];
+    // Análisis de MOTIVOS de desestimación (para el modal de diagnóstico).
+    const motivosDesest = {}; // clave motivo||tipo → { motivo, tipo, n, monto, porEtapa, porAnuncio }
+    let gCalidad = 0, gComercial = 0, gOtro = 0; // clasificación afinada por motivo+etapa
+    // Rendimiento por ANUNCIO: cuánto trae cada uno y en qué termina (para el radar).
+    const rendAnuncio = {}; // anuncio → { total, vivos, ganados, dCal, dCom, dOtro, monto, camp, conj }
+    const rendDe = anun => {
+      if (!rendAnuncio[anun]) rendAnuncio[anun] = { anuncio: anun, total: 0, vivos: 0, ganados: 0, dCal: 0, dCom: 0, dOtro: 0, monto: 0, camp: {}, conj: {} };
+      return rendAnuncio[anun];
+    };
+    // Mapa etapa vigente → id de nivel del embudo (para ubicar "vivos aquí").
+    const ETAPA_A_NIVEL = {
+      'Contactabilidad 3x5': 'asignados', 'Contactado - por calificar': 'contactado',
+      'Calificado - pendiente agendar': 'calificado', 'Agendado - pendiente reunion': 'agendado',
+      'Reunion efectiva - seguimiento': 'reunion', 'Cierre pendiente': 'negociacion', 'Cerrado ganado': 'cierre'
+    };
+
+    const anomalias = []; // avanzaron a Agendado+ sin las 5 preguntas completas
+    leads.forEach(l => {
+      const gs = gPorCod[l.codigo] || [];
+      const cons = leadConsolidado(l, gs);
+      const ordMax = L.etapaMaximaAlcanzada(gs, cons.etapa);
+      const monto = Number(l.montoReal || l.montoPotencial || 0) || 0;
+      montoTotal += monto;
+      NIVELES.forEach(n => { if (ordMax >= n.ord) { conteo[n.id]++; montoPorNivel[n.id] += monto; } });
+      const ultGest = gs.length ? gs[gs.length - 1] : null;
+      const esPerdido = cons.etapa === 'Cerrado perdido';
+      const esGanado = cons.etapa === 'Cerrado ganado';
+      // Scorecards (misma base del embudo): contactado efectivo, ganados, 3x5, tiempos.
+      const respondioAlgunaVez = gs.some(g => !SIN.includes(g.resultado));
+      if (respondioAlgunaVez) scContactados++;
+      // Contactabilidad transversal: ¿respondió al menos una vez? (independiente de etapa).
+      const registro = {
+        codigo: l.codigo, nombre: l.nombre || l.codigo, telefono: l.telefono || '',
+        asesor: l.asesor || '—', etapa: cons.etapa, intentos: gs.length, monto,
+        anuncio: l.anuncio || '(sin anuncio)', adId: l.adId || '',
+        creativeUrl: l.anuncio && creativoPorAnuncio[l.anuncio] ? creativoPorAnuncio[l.anuncio] : null,
+        vivo: !esPerdido && !esGanado
+      };
+      if (respondioAlgunaVez) contactables.push(registro); else noContactables.push(registro);
+      // Rendimiento por anuncio: total del cohorte y destino vivo/ganado.
+      const RAt = rendDe(l.anuncio || '(sin anuncio)');
+      RAt.total++; RAt.monto += monto;
+      const cN = l.campana || '(sin campaña)', jN = l.conjunto || '(sin conjunto)';
+      RAt.camp[cN] = (RAt.camp[cN] || 0) + 1;
+      RAt.conj[jN] = (RAt.conj[jN] || 0) + 1;
+      if (esGanado) RAt.ganados++;
+      else if (!esPerdido) RAt.vivos++;
+      if (esGanado) { scGanados++; scMontoGanado += monto; }
+      if (gs.length >= 15) scHicieron3x5++;
+      if (l.fechaAsignacion && gs.length) {
+        let n = 0, logradoIdx = -1;
+        for (let k = 0; k < gs.length; k++) { n++; if (!SIN.includes(gs[k].resultado)) { logradoIdx = k; break; } }
+        if (logradoIdx >= 0) {
+          const mins = Math.round((new Date(gs[logradoIdx].fecha) - new Date(l.fechaAsignacion)) / 60000);
+          if (mins >= 0) tiemposPrimerContacto.push(mins);
+          intentosPrimerContacto.push(n);
+        }
+      }
+      if (esPerdido) {
+        perdidos++;
+        const nivelFuga = NIVELES.find(n => n.ord === ordMax);
+        if (nivelFuga) {
+          fugaPorNivel[nivelFuga.id]++;
+          const mAgD = nivelFuga.id === 'agendado' ? metricasAgendado(l, gs) : null;
+          desestPorNivel[nivelFuga.id].push({
+            codigo: l.codigo, nombre: l.nombre || l.codigo, asesor: l.asesor || '—',
+            motivo: ultGest ? ultGest.resultado : '—', intentos: gs.length,
+            diasTotales: diasCorridosDesde(l.fechaAsignacion),
+            fechaCierre: ultGest ? ultGest.fecha : null, monto,
+            ...(mAgD || {})
+          });
+          // Clasificación AFINADA (v1.389): motivo + etapa donde se cayó.
+          // "No interesado"/"Desistió" ANTES de calificar (ord < 2) = calidad de lead
+          // (nunca supimos si tenía perfil). DESPUÉS de calificar = comercial (el vendedor
+          // tuvo la oportunidad). Motivos técnicos (número, no califica) siempre son calidad.
+          const mot = ultGest ? ultGest.resultado : '(sin gestión)';
+          const CALIDAD_FIJO = ['Respondio - no califica', 'Numero invalido', 'Numero equivocado', 'Pidio no contactar'];
+          const AMBIGUO = ['Respondio - no interesado', 'Desistio']; // depende de la etapa
+          let tipoLead;
+          if (CALIDAD_FIJO.includes(mot)) tipoLead = 'calidad';
+          else if (AMBIGUO.includes(mot)) tipoLead = ordMax >= 2 ? 'comercial' : 'calidad'; // corte en Calificado (ord 2)
+          else tipoLead = 'otro';
+          // Clave por MOTIVO + TIPO: así un mismo motivo se separa en filas de calidad y
+          // comercial (Diego necesita verlos separados, no como "mixto").
+          const claveMT = mot + '||' + tipoLead;
+          if (!motivosDesest[claveMT]) motivosDesest[claveMT] = { motivo: mot, tipo: tipoLead, n: 0, monto: 0, porEtapa: {}, porAnuncio: {} };
+          const M = motivosDesest[claveMT];
+          M.n++; M.monto += monto;
+          M.porEtapa[nivelFuga.titulo] = (M.porEtapa[nivelFuga.titulo] || 0) + 1;
+          const anun = l.anuncio || '(sin anuncio)';
+          M.porAnuncio[anun] = (M.porAnuncio[anun] || 0) + 1;
+          // Rendimiento por anuncio: este lead terminó desestimado (con su tipo).
+          const RA = rendDe(anun);
+          if (tipoLead === 'calidad') RA.dCal++; else if (tipoLead === 'comercial') RA.dCom++; else RA.dOtro++;
+          // Acumular el tipo a nivel global (para el veredicto).
+          if (tipoLead === 'calidad') gCalidad++;
+          else if (tipoLead === 'comercial') gComercial++;
+          else gOtro++;
+        }
+      } else if (!esGanado) {
+        // Sigue VIVO: lo ubicamos en el nivel de su etapa vigente.
+        const nivelId = ETAPA_A_NIVEL[cons.etapa];
+        if (nivelId && vivosPorNivel[nivelId]) {
+          const fEnt = fechaEntradaEtapa(gs, cons.etapa) || l.fechaAsignacion;
+          const mAgV = nivelId === 'agendado' ? metricasAgendado(l, gs) : null;
+          vivosPorNivel[nivelId].push({
+            codigo: l.codigo, nombre: l.nombre || l.codigo, asesor: l.asesor || '—',
+            intentos: gs.length,
+            diasEnEtapaHab: diasHabilesEntre(fEnt), diasEnEtapaCorr: diasCorridosDesde(fEnt),
+            diasTotales: diasCorridosDesde(l.fechaAsignacion),
+            ultResultado: ultGest ? ultGest.resultado : 'sin gestión',
+            ultFecha: ultGest ? ultGest.fecha : null, monto,
+            ...(mAgV || {})
+          });
+        }
+      }
+      // ANOMALÍA: su etapa vigente es Agendado o más, pero NUNCA completó las 5 preguntas.
+      const ordVigente = ORD_ETAPA_ATRIB[cons.etapa] != null ? ORD_ETAPA_ATRIB[cons.etapa] : 0;
+      if (ordVigente >= 3 && !L.tieneCalificacionCompleta(gs)) {
+        anomalias.push({ codigo: l.codigo, nombre: l.nombre || l.codigo, etapa: cons.etapa, asesor: l.asesor || '—', monto });
+      }
+      // EN RIESGO: sigue vivo (no perdido ni ganado), 5+ días hábiles, e intentos < esperados.
+      if (!esPerdido && !esGanado && l.fechaAsignacion) {
+        const dh = diasHabilesDesde(l.fechaAsignacion);
+        if (dh >= 5) {
+          const { esperados } = intentosEsperados(l.fechaAsignacion);
+          const realizados = gs.length; // un intento = cualquier gestión registrada
+          if (realizados < esperados) {
+            enRiesgo.push({ codigo: l.codigo, nombre: l.nombre || l.codigo, asesor: l.asesor || '—',
+              etapa: cons.etapa, diasHabiles: dh, intentos: realizados, esperados, faltan: esperados - realizados, monto });
+          }
+        }
+      }
+    });
+    const fmtS = m => 'S/ ' + (Number(m) || 0).toLocaleString('es-PE');
+
+    // Armar el embudo con % de conversión etapa→etapa y % del total.
+    const base = conteo.asignados || 0;
+    const filas = NIVELES.map((n, i) => {
+      const prev = i > 0 ? conteo[NIVELES[i - 1].id] : conteo[n.id];
+      const convDesdeAnterior = i === 0 ? 100 : (prev > 0 ? Math.round((conteo[n.id] / prev) * 100) : 0);
+      const pctDelTotal = base > 0 ? Math.round((conteo[n.id] / base) * 100) : 0;
+      const caida = i === 0 ? 0 : (prev - conteo[n.id]);
+      const fuga = fugaPorNivel[n.id] || 0;              // se perdieron habiendo llegado como máx a esta etapa
+      const listaVivos = vivosPorNivel[n.id] || [];
+      const listaDesest = desestPorNivel[n.id] || [];
+      const vivos = listaVivos.length;
+      const montoVivos = listaVivos.reduce((a, x) => a + x.monto, 0);
+      const montoDesest = listaDesest.reduce((a, x) => a + x.monto, 0);
+      return { id: n.id, titulo: n.titulo, n: conteo[n.id], convDesdeAnterior, pctDelTotal, fuga, vivos,
+        montoVivosFmt: fmtS(montoVivos), montoDesestFmt: fmtS(montoDesest),
+        vivosLista: listaVivos.sort((a, b) => b.diasEnEtapaHab - a.diasEnEtapaHab),
+        desestLista: listaDesest.sort((a, b) => (new Date(b.fechaCierre || 0)) - (new Date(a.fechaCierre || 0))),
+        caida, montoFmt: fmtS(montoPorNivel[n.id]), monto: montoPorNivel[n.id] };
+    });
+
+    // CUELLO: la transición (i-1 → i) con mayor caída absoluta de leads (excluye el paso 0).
+    let cuello = null, maxCaida = -1;
+    for (let i = 1; i < filas.length; i++) {
+      if (filas[i].caida > maxCaida) { maxCaida = filas[i].caida; cuello = { de: filas[i - 1].titulo, a: filas[i].titulo, perdidos: filas[i].caida, convPct: filas[i].convDesdeAnterior, idx: i }; }
+    }
+    // También el cuello por PEOR tasa de conversión (a veces la caída chica en % es el problema).
+    let cuelloPct = null, peorPct = 101;
+    for (let i = 1; i < filas.length; i++) {
+      if (filas[i].n > 0 || filas[i - 1].n > 0) {
+        if (filas[i].convDesdeAnterior < peorPct) { peorPct = filas[i].convDesdeAnterior; cuelloPct = { de: filas[i - 1].titulo, a: filas[i].titulo, convPct: filas[i].convDesdeAnterior, idx: i }; }
+      }
+    }
+
+    // Scorecards derivadas del mismo cohorte del embudo (base = asignados, fecha = asignación).
+    const mediana = arr => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+    const promedio = arr => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : null;
+    const scorecards = {
+      totalLeads: base,
+      contactados: scContactados,
+      contactabilidad: base > 0 ? Math.round((scContactados / base) * 100) : 0,
+      ganados: scGanados,
+      montoGanadoFmt: fmtS(scMontoGanado),
+      tasaCierre: base > 0 ? Math.round((scGanados / base) * 100 * 10) / 10 : 0,
+      hicieron3x5: scHicieron3x5,
+      perdidos,
+      medianaMinPrimerContacto: mediana(tiemposPrimerContacto),
+      promIntentosPrimerContacto: promedio(intentosPrimerContacto)
+    };
+
+    // Bloque de CONTACTABILIDAD (transversal). No es una etapa del embudo: es un atributo.
+    const sumMonto = arr => arr.reduce((a, x) => a + x.monto, 0);
+    const contVivos = contactables.filter(x => x.vivo);
+    const contDesest = contactables.filter(x => !x.vivo);
+    const agrupaPorAnuncio = arr => {
+      const m = {};
+      arr.forEach(x => {
+        const k = x.anuncio || '(sin anuncio)';
+        if (!m[k]) m[k] = { anuncio: k, creativeUrl: x.creativeUrl, n: 0, monto: 0 };
+        m[k].n++; m[k].monto += x.monto;
+      });
+      return Object.values(m).sort((a, b) => b.n - a.n).map(a => ({ ...a, montoFmt: fmtS(a.monto) }));
+    };
+    const contactabilidad = {
+      total: contactables.length,
+      pct: base > 0 ? Math.round((contactables.length / base) * 100) : 0,
+      montoFmt: fmtS(sumMonto(contactables)),
+      vivos: contVivos.length, vivosMontoFmt: fmtS(sumMonto(contVivos)),
+      desestimados: contDesest.length, desestMontoFmt: fmtS(sumMonto(contDesest)),
+      noContactables: noContactables.length, noContMontoFmt: fmtS(sumMonto(noContactables)),
+      noContVivos: noContactables.filter(x => x.vivo).length,
+      listaContactables: contactables.slice(0, 100),
+      listaNoContactables: noContactables.slice(0, 100),
+      anunciosContactables: agrupaPorAnuncio(contactables),
+      anunciosNoContactables: agrupaPorAnuncio(noContactables)
+    };
+
+    // Análisis de motivos con clasificación AFINADA (motivo + etapa donde se cayó).
+    // Cada entrada ya viene separada por tipo (calidad/comercial/otro).
+    const totalDesest = Object.values(motivosDesest).reduce((a, m) => a + m.n, 0);
+    const ordenTipo = { calidad: 0, comercial: 1, otro: 2 };
+    const motivosLista = Object.values(motivosDesest)
+      .sort((a, b) => (ordenTipo[a.tipo] - ordenTipo[b.tipo]) || (b.n - a.n))
+      .map(m => ({
+        motivo: m.motivo, tipo: m.tipo, n: m.n, montoFmt: fmtS(m.monto),
+        pct: totalDesest ? Math.round((m.n / totalDesest) * 100) : 0,
+        etapas: Object.entries(m.porEtapa).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ etapa: k, n: v })),
+        anuncios: Object.entries(m.porAnuncio).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => ({ anuncio: k, n: v, creativeUrl: creativoPorAnuncio[k] || null }))
+      }));
+    const analisisMotivos = {
+      total: totalDesest, lista: motivosLista,
+      calidad: gCalidad, comercial: gComercial, otro: gOtro,
+      pctCalidad: totalDesest ? Math.round((gCalidad / totalDesest) * 100) : 0,
+      pctComercial: totalDesest ? Math.round((gComercial / totalDesest) * 100) : 0,
+      pctOtro: totalDesest ? Math.round((gOtro / totalDesest) * 100) : 0,
+      veredicto: gCalidad > gComercial ? 'calidad' : gComercial > gCalidad ? 'comercial' : 'mixto'
+    };
+
+    // RENDIMIENTO POR ANUNCIO (para el radar de cuadrantes): volumen vs desperdicio,
+    // con el tipo de desperdicio dominante (calidad→Marketing, comercial→gestión).
+    // Gasto de Meta por anuncio en el periodo (para el modo CPL del radar).
+    // FUENTE PRINCIPAL: el API de Meta (misma fuente que Tendencias/Costo x Lead), en DÓLARES.
+    // Fallback: la tabla marketing_gasto (Excel, obsoleta) solo si el API no está configurado.
+    const normAn = s => String(s || '').trim().toLowerCase();
+    const gastoPorAnuncio = {}; // clave normalizada → USD
+    let fuenteGasto = 'ninguna';
+    if (metaInsights.configurado()) {
+      try {
+        const hoyPm = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+        const ad = await metaInsights.insightsAd(desde || '2026-06-23', hasta || hoyPm, req.query.metaForce === '1');
+        (ad.filas || []).forEach(g => {
+          const k = normAn(g.anuncio);
+          if (k) gastoPorAnuncio[k] = (gastoPorAnuncio[k] || 0) + (Number(g.spend) || 0);
+        });
+        fuenteGasto = 'meta_api_usd';
+      } catch (e) { console.error('[embudo gasto Meta]', e.message); }
+    }
+    if (fuenteGasto === 'ninguna') {
+      try {
+        let gRows = db.prepare("SELECT anuncio, fecha, costo FROM marketing_gasto WHERE anuncio IS NOT NULL AND costo IS NOT NULL").all();
+        if (desde) gRows = gRows.filter(g => g.fecha >= desde);
+        if (hasta) gRows = gRows.filter(g => g.fecha <= hasta);
+        gRows.forEach(g => { const k = normAn(g.anuncio); gastoPorAnuncio[k] = (gastoPorAnuncio[k] || 0) + (Number(g.costo) || 0); });
+        if (gRows.length) fuenteGasto = 'excel_gasto';
+      } catch (e) {}
+    }
+    const rendimientoAnuncios = Object.values(rendAnuncio)
+      .filter(a => a.total > 0)
+      .map(a => {
+        const desest = a.dCal + a.dCom + a.dOtro;
+        const pctDesp = a.total ? Math.round((desest / a.total) * 100) : 0;
+        const gasto = Math.round((gastoPorAnuncio[normAn(a.anuncio)] || 0) * 100) / 100;
+        return {
+          anuncio: a.anuncio, creativeUrl: creativoPorAnuncio[a.anuncio] || null,
+          total: a.total, vivos: a.vivos, ganados: a.ganados,
+          dCal: a.dCal, dCom: a.dCom, dOtro: a.dOtro, desest,
+          pctDesp,
+          pctVivos: a.total ? Math.round((a.vivos / a.total) * 100) : 0,
+          pctCal: desest ? Math.round((a.dCal / desest) * 100) : 0,
+          pctCom: desest ? Math.round((a.dCom / desest) * 100) : 0,
+          gasto, cpl: a.total && gasto ? Math.round((gasto / a.total) * 100) / 100 : null,
+          campanas: Object.entries(a.camp).sort((x, y) => y[1] - x[1]).map(([k, v]) => ({ nombre: k, n: v })),
+          conjuntos: Object.entries(a.conj).sort((x, y) => y[1] - x[1]).map(([k, v]) => ({ nombre: k, n: v })),
+          montoFmt: fmtS(a.monto)
+        };
+      })
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 25);
+    // Tasa promedio de desperdicio del cohorte (corte Y del radar: peor/mejor que tu promedio).
+    const pctDespPromedio = base > 0 ? Math.round((perdidos / base) * 100) : 0;
+
+    res.json({
+      desde, hasta, fechaBase: 'asignacion',
+      totalLeads: base, perdidos, montoTotal: fmtS(montoTotal),
+      conversionGlobal: base > 0 ? Math.round((conteo.cierre / base) * 100 * 10) / 10 : 0,
+      scorecards, contactabilidad, analisisMotivos,
+      rendimientoAnuncios, pctDespPromedio, fuenteGasto,
+      filas, cuello, cuelloPct,
+      anomalias: { total: anomalias.length, montoFmt: fmtS(anomalias.reduce((a, x) => a + x.monto, 0)), lista: anomalias.slice(0, 30) },
+      enRiesgo: { total: enRiesgo.length, montoFmt: fmtS(enRiesgo.reduce((a, x) => a + x.monto, 0)),
+        lista: enRiesgo.sort((a, b) => b.faltan - a.faltan).slice(0, 50) }
+    });
+  } catch (e) {
+    console.error('[b2c/embudo]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Descarga CSV de leads contactables o no-contactables (para remarketing en Meta).
+// GET /api/b2c/embudo/csv?tipo=contactables|nocontactables&desde&hasta&asesor
+app.get('/api/b2c/embudo/csv', (req, res) => {
+  try {
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde) ? req.query.desde : null;
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta) ? req.query.hasta : null;
+    const tipo = req.query.tipo === 'nocontactables' ? 'nocontactables' : 'contactables';
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    let leads = db.prepare("SELECT * FROM leads WHERE asesor IS NOT NULL AND asesor <> ''").all();
+    if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
+    else if (req.query.asesor) leads = leads.filter(l => l.asesor === req.query.asesor);
+    leads = filtrarPorAsignacion(leads, desde, hasta);
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+    const filas = [];
+    leads.forEach(l => {
+      const gs = gPorCod[l.codigo] || [];
+      const respondio = gs.some(g => !SIN.includes(g.resultado));
+      if ((tipo === 'contactables') === respondio) {
+        const cons = leadConsolidado(l, gs);
+        filas.push({ nombre: l.nombre || '', telefono: l.telefono || '', email: l.email || '',
+          etapa: cons.etapa, intentos: gs.length, anuncio: l.anuncio || '', asesor: l.asesor || '' });
+      }
+    });
+    // CSV con BOM para que Excel abra bien los acentos.
+    const esc = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+    const head = ['Nombre', 'Telefono', 'Email', 'Etapa', 'Intentos', 'Anuncio', 'GP'];
+    const csv = '\uFEFF' + [head.join(','), ...filas.map(f => [f.nombre, f.telefono, f.email, f.etapa, f.intentos, f.anuncio, f.asesor].map(esc).join(','))].join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + tipo + '_' + (desde || 'todo') + '_' + (hasta || 'hoy') + '.csv"');
+    res.send(csv);
+  } catch (e) {
+    console.error('[embudo/csv]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ===== COLA PRIORIZADA B2C (Centro de operaciones) =====
+// Devuelve los leads VIVOS del asesor (o todos, si supervisa) ordenados por priority score.
+// GET /api/b2c/cola?asesor=&limit=
+app.get('/api/b2c/cola', (req, res) => {
+  try {
+    const SIN = L.RESULTADOS_SIN_CONTACTO || [];
+    const pesos = getPScorePesosB2C();
+    let leads = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND asesor IS NOT NULL AND asesor <> ''").all();
+    // Alcance: una GP ve solo lo suyo; supervisores ven todo (o filtran por asesor).
+    if (!veTodo(req.user)) leads = leads.filter(l => l.asesor === req.user.nombre);
+    else if (req.query.asesor) leads = leads.filter(l => l.asesor === req.query.asesor);
+    const gPorCod = {};
+    db.prepare('SELECT * FROM gestiones ORDER BY fecha').all().forEach(x => { (gPorCod[x.codigo] = gPorCod[x.codigo] || []).push(x); });
+    // Helpers de fecha (mismos que el embudo).
+    const LIMA = -5 * 3600000;
+    const diaL = iso => new Date(new Date(iso).getTime() + LIMA).toISOString().slice(0, 10);
+    const horaL = iso => new Date(new Date(iso).getTime() + LIMA).getUTCHours();
+    const dowL = iso => new Date(diaL(iso) + 'T12:00:00Z').getUTCDay();
+    const franja = iso => { const h = horaL(iso); return h < 12 ? 0 : h < 16 ? 1 : 2; };
+    const cuotaDia1 = fr => (fr === 0 ? 3 : fr === 1 ? 2 : 1);
+    function anclaje3x5(f) { let d = diaL(f), fr = franja(f); if (dowL(f) === 0) { const dl = new Date(d + 'T12:00:00Z'); dl.setUTCDate(dl.getUTCDate() + 1); d = dl.toISOString().slice(0, 10); fr = 0; } return { dia: d, franja: fr }; }
+    function intentosEsperados(f) { if (!f) return 0; const a = anclaje3x5(f); const hoy = diaL(new Date().toISOString()); let e = cuotaDia1(a.franja), dh = 1, c = new Date(a.dia + 'T12:00:00Z'); while (dh < 5) { c.setUTCDate(c.getUTCDate() + 1); const ds = c.toISOString().slice(0, 10); if (ds > hoy) break; if (c.getUTCDay() === 0) continue; e += 3; dh++; } return e; }
+    function fechaEntradaEtapa(gs, etapaActual) { let entrada = null, prev = null; (gs || []).forEach(g => { const e = L.etapaDeGestion ? L.etapaDeGestion(g.resultado) : null; if (e === etapaActual && prev !== etapaActual) entrada = g.fecha; prev = e; }); return entrada; }
+    // Monto máximo (para normalizar el score).
+    const montoMax = Math.max(1, ...leads.map(l => Number(l.montoReal || l.montoPotencial || 0) || 0));
+    const cola = [];
+    leads.forEach(l => {
+      const gs = gPorCod[l.codigo] || [];
+      const cons = leadConsolidado(l, gs);
+      if (cons.etapa === 'Cerrado ganado' || cons.etapa === 'Cerrado perdido') return; // solo vivos
+      const monto = Number(l.montoReal || l.montoPotencial || 0) || 0;
+      const fEnt = fechaEntradaEtapa(gs, cons.etapa) || l.fechaAsignacion;
+      const ps = L.priorityScoreB2C({
+        etapa: cons.etapa, probabilidad: cons.probabilidad, monto,
+        fechaProxAccion: cons.fechaProxAccion, fechaReunion: l.fechaReunion || null,
+        fechaEntradaEtapa: fEnt, intentos: gs.length,
+        intentosEsperados: intentosEsperados(l.fechaAsignacion),
+        respondioAlgunaVez: gs.some(g => !SIN.includes(g.resultado))
+      }, montoMax, pesos);
+      cola.push({
+        codigo: l.codigo, nombre: l.nombre || l.codigo, asesor: l.asesor || '—',
+        etapa: cons.etapa, monto, montoFmt: 'S/ ' + monto.toLocaleString('es-PE'),
+        score: ps.score, nivel: ps.nivel, diasEnEtapa: ps.diasEnEtapa,
+        proximaAccion: cons.proximaAccion || null, fechaProxAccion: cons.fechaProxAccion || null,
+        intentos: gs.length, probabilidad: cons.probabilidad, detalle: ps.detalle
+      });
+    });
+    cola.sort((a, b) => b.score - a.score || b.monto - a.monto);
+    const limit = Math.min(200, Number(req.query.limit) || 100);
+    // Resumen por nivel.
+    const resumen = { 'Muy alta': 0, 'Alta': 0, 'Media': 0, 'Baja': 0, 'Muy baja': 0 };
+    cola.forEach(c => { resumen[c.nivel] = (resumen[c.nivel] || 0) + 1; });
+    res.json({ total: cola.length, resumen, pesos, cola: cola.slice(0, limit) });
+  } catch (e) {
+    console.error('[b2c/cola]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Pesos del priority score B2C (ver / guardar). Solo supervisores pueden cambiarlos.
+app.get('/api/b2c/pscore/pesos', (req, res) => res.json({ pesos: getPScorePesosB2C(), default: L.PScoreDefaultB2C }));
+app.put('/api/b2c/pscore/pesos', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión puede ajustar los pesos.' });
+  const p = req.body && req.body.pesos;
+  if (!p || typeof p !== 'object') return res.status(400).json({ error: 'Pesos inválidos' });
+  const limpio = {};
+  Object.keys(L.PScoreDefaultB2C).forEach(k => { const v = Number(p[k]); if (isFinite(v) && v >= 0) limpio[k] = v; });
+  db.prepare("INSERT INTO app_config (clave, valor) VALUES ('b2c_pscore_pesos', ?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor")
+    .run(JSON.stringify(limpio));
+  auditar(req, 'b2c_pscore_pesos', null, JSON.stringify(limpio));
+  res.json({ ok: true, pesos: Object.assign({}, L.PScoreDefaultB2C, limpio) });
 });
 
 app.get('/api/leads', (req, res) => {
@@ -3476,16 +4152,18 @@ const ORD_ETAPA_ATRIB = {
 };
 // ===== DASHBOARD COMITÉ B2C: métricas de gestión de un periodo =====
 // GET /api/b2c/comite?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  (admin/jefa)
-function calcularComiteB2C(desdeIn, hastaIn) {
+function calcularComiteB2C(desdeIn, hastaIn, asesorIn) {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const desde = /^\d{4}-\d{2}-\d{2}$/.test(desdeIn) ? desdeIn : '2026-06-23';
   const hasta = /^\d{4}-\d{2}-\d{2}$/.test(hastaIn) ? hastaIn : hoyP;
+  const asesorF = asesorIn && String(asesorIn).trim() ? String(asesorIn).trim() : null;
   const SIN = L.RESULTADOS_SIN_CONTACTO || [];
   const enRango = pf => pf && pf >= desde && pf <= hasta;
 
-  // Leads del periodo (por fecha de carga), no archivados
+  // Leads del periodo (por fecha de carga), no archivados; opcionalmente filtrados por GP.
   const leads = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0").all()
-    .filter(l => enRango(peruFecha(l.fechaCarga)));
+    .filter(l => enRango(peruFecha(l.fechaCarga)))
+    .filter(l => !asesorF || l.asesor === asesorF);
   const cods = leads.map(l => l.codigo);
   const gPorCod = {};
   db.prepare('SELECT * FROM gestiones ORDER BY fecha ASC, id ASC').all().forEach(g => { (gPorCod[g.codigo] = gPorCod[g.codigo] || []).push(g); });
@@ -4459,6 +5137,11 @@ const PScoreDefault = { monto: 35, temperatura: 28, sla: 22, sinGestion: 15 };
 function getPScorePesos() {
   try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_pscore_pesos'").get(); if (r && r.valor) return Object.assign({}, PScoreDefault, JSON.parse(r.valor)); } catch (e) {}
   return PScoreDefault;
+}
+// Pesos configurables del priority score B2C (mismo patrón que el B2B).
+function getPScorePesosB2C() {
+  try { const r = db.prepare("SELECT valor FROM app_config WHERE clave='b2c_pscore_pesos'").get(); if (r && r.valor) return Object.assign({}, L.PScoreDefaultB2C, JSON.parse(r.valor)); } catch (e) {}
+  return L.PScoreDefaultB2C;
 }
 // Semáforo consolidado de la solicitud (el peor de los evaluados; refleja probabilidad/temperatura).
 function semGlobalB2B(sol) {
@@ -6677,7 +7360,7 @@ app.post('/api/marketing/corregir-conjunto-anuncio', (req, res) => {
 // PILOTO IA: genera un reporte interpretado por Claude y opcionalmente lo envía al grupo de PRUEBA.
 // GET  /api/ia/reporte/preview?tipo=gestion|planes|marketing&corte=1pm   → solo texto (no envía)
 // POST /api/ia/reporte/enviar   body {tipo, corte}                        → envía al WA_GRUPO_IA_TEST_JID
-async function generarReporteIA(tipo, corte) {
+async function generarReporteIA(tipo, corte, asesor) {
   const fechaTxt = new Date(Date.now() - 5 * 3600000).toLocaleDateString('es-PE', { weekday: 'short', day: 'numeric', month: 'short' });
   if (tipo === 'gestion') {
     const rd = construirRankingDia();
@@ -6693,9 +7376,9 @@ async function generarReporteIA(tipo, corte) {
     let desde = '2026-06-23', hasta = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
     if (corte && /^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$/.test(corte)) { const p = corte.split(':'); desde = p[0]; hasta = p[1]; }
     let datos;
-    try { datos = calcularComiteB2C(desde, hasta); }
+    try { datos = calcularComiteB2C(desde, hasta, asesor); }
     catch (e) { console.error('[ia comite]', e.message); return null; }
-    return await iaReportes.interpretarComite(datos);
+    return await iaReportes.interpretarComite(datos, asesor);
   }
   if (tipo === 'performance') {
     // Análisis del rendimiento de marketing. Acepta rango 'YYYY-MM-DD:YYYY-MM-DD' o un día suelto; por defecto AYER.
@@ -6737,7 +7420,7 @@ app.get('/api/ia/reporte/preview', async (req, res) => {
   if (!iaReportes.configurado()) return res.status(422).json({ error: 'Falta ANTHROPIC_API_KEY en Railway' });
   const tipo = ['gestion', 'planes', 'marketing', 'performance', 'comite'].includes(req.query.tipo) ? req.query.tipo : 'gestion';
   try {
-    const texto = await generarReporteIA(tipo, req.query.corte);
+    const texto = await generarReporteIA(tipo, req.query.corte, req.query.asesor);
     res.json({ tipo, corte: req.query.corte || null, texto: texto || '(la IA no devolvió texto; en producción se usaría la plantilla clásica)', usoIA: !!texto });
   } catch (e) { console.error('[ia preview] error:', e.stack || e.message); res.json({ tipo, error: e.message, texto: '(error al generar; fallback a plantilla)', usoIA: false }); }
 });
@@ -6843,6 +7526,41 @@ app.post('/api/marketing/reporte/enviar', async (req, res) => {
   res.json({ ok, corte });
 });
 
+// Estado del bot WhatsApp + cola de alertas. Para el indicador en el header y diagnóstico.
+// GET /api/wa/estado -> { bot: 'activo'|'caido'|'sin_config', pendientes, fallidas, ultimaFallida }
+app.get('/api/wa/estado', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u) return res.status(401).json({ error: 'Sin sesión' });
+  let bot = 'sin_config';
+  if (process.env.WA_BOT_URL && process.env.WA_BOT_TOKEN) {
+    // Ping ligero: intentamos el root del bot con timeout corto.
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      const r = await fetch(process.env.WA_BOT_URL.replace(/\/$/, '') + '/', { signal: ctrl.signal });
+      clearTimeout(t);
+      bot = r.ok ? 'activo' : 'caido';
+    } catch (e) { clearTimeout(t); bot = 'caido'; }
+  }
+  let pendientes = 0, fallidas = 0, ultimaFallida = null;
+  try {
+    pendientes = db.prepare("SELECT COUNT(*) n FROM wa_cola WHERE estado='pendiente'").get().n;
+    fallidas = db.prepare("SELECT COUNT(*) n FROM wa_cola WHERE estado='fallida'").get().n;
+    const uf = db.prepare("SELECT creado, ultimoError FROM wa_cola WHERE estado IN ('pendiente','fallida') ORDER BY id DESC LIMIT 1").get();
+    if (uf) ultimaFallida = { fecha: uf.creado, error: uf.ultimoError };
+  } catch (e) {}
+  res.json({ bot, pendientes, fallidas, ultimaFallida });
+});
+
+// Reintenta AHORA todas las pendientes de la cola (botón manual). Solo admin/jefes.
+app.post('/api/wa/cola/reintentar', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(u.rol)) return res.status(403).json({ error: 'Sin permiso' });
+  try { db.prepare("UPDATE wa_cola SET estado='pendiente' WHERE estado='fallida'").run(); } catch (e) {}
+  await procesarColaWA();
+  const pendientes = db.prepare("SELECT COUNT(*) n FROM wa_cola WHERE estado='pendiente'").get().n;
+  res.json({ ok: true, pendientes });
+});
+
 app.get('/api/b2b/alertas-wa/preview', soloB2B, (req, res) => {
   if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
   const corte = ['6pm', '1pm', '9am'].includes(req.query.corte) ? req.query.corte : '9am';
@@ -6890,7 +7608,12 @@ app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
   const s = db.prepare('SELECT codigo FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const filas = db.prepare("SELECT fecha, nombre, usuario, accion, detalle FROM auditoria WHERE objetivo=? AND accion LIKE 'b2b\\_%' ESCAPE '\\' ORDER BY fecha DESC LIMIT 200").all(s.codigo);
-  res.json({ eventos: filas });
+  // v1.397: llamadas Aircall matcheadas a esta solicitud (mismo loop que B2C).
+  let llamadas = [];
+  try {
+    llamadas = db.prepare('SELECT fecha, direccion, contestada, duracion, agente FROM llamadas WHERE codigoB2B = ? ORDER BY fecha ASC').all(s.codigo);
+  } catch (e) { }
+  res.json({ eventos: filas, llamadas });
 });
 
 app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
@@ -7653,7 +8376,37 @@ app.post('/api/admin/wa-prueba', soloAdmin, async (req, res) => {
   res.json({ ok: true, enviadoA: 'grupo de pruebas', tipo });
 });
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.368 (FIX CRITICO: al agregar el Centro de Operaciones B2B (v1.365) quedo DUPLICADO el tag <section id=v-b2b-audit> en la misma linea del index.html, dejando el DOM roto: por eso dejaron de abrirse las tarjetas del Kanban/cola/codigo en B2B y el modal de ranking B2C. Se elimino la etiqueta section duplicada; ahora 15 aperturas = 15 cierres, sin IDs duplicados. Frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+// ===== Worker de la cola de alertas WhatsApp =====
+// Cada 60s intenta reenviar las alertas pendientes (que fallaron por microcaídas del bot).
+// Backoff: no reintenta una alerta más de 1 vez por ciclo; la marca 'fallida' tras 15 intentos
+// (≈15 min) para no acumular basura, pero deja registro para inspección.
+const WA_COLA_MAX_INTENTOS = 15;
+async function procesarColaWA() {
+  let pendientes;
+  try { pendientes = db.prepare("SELECT * FROM wa_cola WHERE estado='pendiente' ORDER BY id ASC LIMIT 20").all(); }
+  catch (e) { return; }
+  if (!pendientes.length) return;
+  for (const p of pendientes) {
+    const r = await _postAlertaBot(p.texto, p.jid || undefined);
+    if (r.ok) {
+      db.prepare("UPDATE wa_cola SET estado='enviada', ultimoIntento=?, intentos=intentos+1 WHERE id=?")
+        .run(new Date().toISOString(), p.id);
+      console.log('[WA] alerta de la cola reenviada OK (id ' + p.id + ', tras ' + (p.intentos + 1) + ' intentos)');
+    } else {
+      const nuevoEstado = (p.intentos + 1) >= WA_COLA_MAX_INTENTOS ? 'fallida' : 'pendiente';
+      db.prepare("UPDATE wa_cola SET intentos=intentos+1, ultimoIntento=?, ultimoError=?, estado=? WHERE id=?")
+        .run(new Date().toISOString(), r.error || null, nuevoEstado, p.id);
+      if (nuevoEstado === 'fallida') console.error('[WA] alerta id ' + p.id + ' marcada FALLIDA tras ' + WA_COLA_MAX_INTENTOS + ' intentos');
+    }
+  }
+}
+setInterval(procesarColaWA, 60 * 1000); // cada 60s
+// Limpieza: borra las enviadas de más de 7 días una vez al día.
+setInterval(() => {
+  try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
+}, 24 * 60 * 60 * 1000);
+
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.402 (2 mejoras UX: (1) B2B: el ADMIN puede cambiar y re-validar el RUC indefinidamente en cualquier etapa (input + boton Validar siempre visibles para rol admin; funcionarios mantienen la regla de una sola vez: solo editable en etapa Solicitud). El endpoint /sunat ya soportaba re-validacion; era solo bloqueo de frontend. (2) B2C kanban: linea de correo electronico debajo del telefono en cada tarjeta, con click-para-copiar (icono cambia a check verde 1.2s, fallback execCommand, estilos dia y noche). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

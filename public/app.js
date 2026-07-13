@@ -510,9 +510,15 @@ async function arrancar() {
   if ($('acFab')) $('acFab').classList.remove('oculto'); // mostrar teléfono Aircall tras login
   iniciarTira(); // tira de ranking en Mis Leads
   iniciarHeartbeat(); // latido de presencia (Modo Supervisor)
+  iniciarMonitorWA(); // indicador de estado del bot de WhatsApp (jefes/admin)
   const etiquetaRol = { admin: 'Administrador', jefa: 'Jefa de Ventas', gestora: 'GP', asistente_creditos: 'Asistente de Créditos', funcionario_b2b: 'Funcionario B2B', jefe_creditos: 'Jefe de Créditos', jefe_b2b: 'Jefe B2B' };
   $('rolNombre').textContent = YO.nombre;
   $('rolTipo').textContent = etiquetaRol[YO.rol] || YO.rol;
+  // GP (gestora): sin vista Tabla; su vista por defecto es el Kanban, con Mi Cola al lado.
+  if (YO.rol === 'gestora') {
+    const tgT = $('tg-tabla'); if (tgT) tgT.style.display = 'none';
+    setVista('kanban');
+  }
   // Admin ve todo (incluye los elementos .soloAdmin y .asignador).
   if (YO.rol === 'admin') {
     document.querySelectorAll('.soloAdmin, .asignador').forEach(e => e.classList.remove('oculto'));
@@ -579,10 +585,10 @@ async function arrancar() {
   sel.add(new Option('Todas las GP', ''));
   CAT.asesores.forEach(a => sel.add(new Option(a, a)));
   llenarSelect('gCanal', CAT.canales);
-  llenarSelect('gTiempo', CAT.tiempo, true);
-  llenarSelect('gInteres', CAT.nivelInteres, true);
-  llenarSelect('gExperiencia', CAT.avance || CAT.experiencia, true);
-  llenarSelect('gExperienciaInv', CAT.experienciaInv, true);
+  llenarSelect('gTiempo', CAT.tiempo, false);
+  llenarSelect('gInteres', CAT.nivelInteres, false);
+  llenarSelect('gExperiencia', CAT.avance || CAT.experiencia, false);
+  llenarSelect('gExperienciaInv', CAT.experienciaInv, false);
   llenarSelect('cFondos', CAT.cFondos, false, 'Seleccionar…');
   llenarSelect('cPrioriza', CAT.cPrioriza, false, 'Seleccionar…');
   llenarSelect('cPlazo', CAT.cPlazo, false, 'Seleccionar…');
@@ -928,14 +934,139 @@ function cambiarPagina(d) { PAG_ACTUAL += d; render(); }
 function cambiarPagSize() { PAG_SIZE = parseInt($('pagSize').value); PAG_ACTUAL = 1; render(); }
 function setVista(v) {
   VISTA_LEADS = v;
+  const tgCola = $('tg-cola'); if (tgCola) tgCola.classList.toggle('act', v === 'cola');
   $('tg-tabla').classList.toggle('act', v === 'tabla');
   $('tg-kanban').classList.toggle('act', v === 'kanban');
   $('contTabla').style.display = v === 'tabla' ? 'block' : 'none';
   $('contKanban').style.display = v === 'kanban' ? 'block' : 'none';
+  const cc = $('contCola'); if (cc) cc.style.display = v === 'cola' ? 'block' : 'none';
+  if (v === 'cola') { cargarColaB2C(); return; }
   render();
 }
 
+// ===== Cola priorizada B2C (Centro de operaciones) =====
+async function cargarColaB2C() {
+  const cont = $('contCola'); if (!cont) return;
+  cont.innerHTML = '<div class="cola-loading">⚡ Calculando prioridades…</div>';
+  try {
+    const gp = (typeof veTodoJS === 'function' && veTodoJS() && $('selAsesor')) ? $('selAsesor').value : '';
+    const d = await api('/api/b2c/cola' + (gp ? '?asesor=' + encodeURIComponent(gp) : ''));
+    renderColaB2C(d);
+  } catch (e) { cont.innerHTML = '<div class="vacio">No se pudo cargar la cola: ' + e.message + '</div>'; }
+}
+
+function renderColaB2C(d) {
+  const cont = $('contCola'); if (!cont) return;
+  const nivelColor = { 'Muy alta': 'nv-critica', 'Alta': 'nv-alta', 'Media': 'nv-media', 'Baja': 'nv-baja', 'Muy baja': 'nv-baja' };
+  const R = d.resumen || {};
+  const resumen = '<div class="cola-resumen">' +
+    ['Muy alta', 'Alta', 'Media', 'Baja'].map(n => '<span class="cola-res-pill ' + nivelColor[n] + '">' + (R[n] || 0) + ' ' + n + '</span>').join('') +
+    (veTodoJS && veTodoJS() ? '<button class="btn sec cola-pesos-btn" onclick="abrirPesosB2C()">⚙ Ajustar prioridad</button>' : '') +
+    '</div>';
+  const etLbl = { 'Contactabilidad 3x5': '3x5', 'Contactado - por calificar': 'Contactado', 'Calificado - pendiente agendar': 'Calificado', 'Agendado - pendiente reunion': 'Agendado', 'Reunion efectiva - seguimiento': 'Reunión', 'Cierre pendiente': 'Negociación' };
+  const filas = (d.cola || []).map((c, i) => {
+    const venc = c.fechaProxAccion && new Date(c.fechaProxAccion) < new Date();
+    const prox = c.proximaAccion ? '<span class="cola-prox">🎯 ' + tr(c.proximaAccion) + (venc ? ' <span class="cola-venc">vencida</span>' : '') + '</span>' : '';
+    const estanc = c.diasEnEtapa >= 3 ? '<span class="cola-estanc">⏳ ' + c.diasEnEtapa + 'd en etapa</span>' : '';
+    return '<div class="cola-fila" onclick="abrirGestion(\'' + c.codigo + '\')">' +
+      '<span class="cola-num">' + (i + 1) + '</span>' +
+      '<span class="cola-score ' + nivelColor[c.nivel] + '" title="Priority score">' + c.score + '</span>' +
+      '<div class="cola-main"><div class="cola-nom">' + (c.nombre || c.codigo) + '</div>' +
+        '<div class="cola-meta"><span class="cola-etapa">' + (etLbl[c.etapa] || c.etapa) + '</span>' + prox + estanc + '</div></div>' +
+      '<div class="cola-right"><div class="cola-monto">' + c.montoFmt + '</div>' +
+        '<div class="cola-sub">' + c.intentos + ' int · ' + c.probabilidad + '%</div></div>' +
+      '<div class="cola-acciones"><button class="cola-ll" onclick="event.stopPropagation();accionLlamar(\'' + c.codigo + '\')" title="Llamar">' + (typeof ICO_TEL !== 'undefined' ? ICO_TEL : '📞') + '</button></div>' +
+      '</div>';
+  }).join('');
+  cont.innerHTML = '<div class="cola-wrap">' +
+    '<div class="cola-head"><span class="cola-head-t">⚡ Mi Cola Inteligente</span><span class="cola-head-n">' + d.total + ' leads · ordenados por prioridad</span></div>' +
+    resumen +
+    (filas || '<div class="vacio">No tienes leads vivos en cola.</div>') +
+    '</div>';
+}
+
+async function abrirPesosB2C() {
+  let d; try { d = await api('/api/b2c/pscore/pesos'); } catch (e) { alert('Error: ' + e.message); return; }
+  const P = d.pesos, DEF = d.default;
+  const labels = { urgencia: '🚨 Urgencia operativa', etapa: '📊 Etapa alcanzada', monto: '💰 Monto', estancamiento: '⏳ Estancamiento en etapa', probabilidad: '🎯 Probabilidad de cierre', cumpl3x5: '📞 Cumplimiento 3x5', contactabilidad: '✓ Contactabilidad' };
+  const filas = Object.keys(DEF).map(k =>
+    '<div class="pw-row"><label>' + (labels[k] || k) + '</label>' +
+    '<input type="range" min="0" max="40" value="' + (P[k] != null ? P[k] : DEF[k]) + '" id="pw_' + k + '" oninput="document.getElementById(\'pwv_' + k + '\').textContent=this.value">' +
+    '<span class="pw-val" id="pwv_' + k + '">' + (P[k] != null ? P[k] : DEF[k]) + '</span></div>').join('');
+  const html = '<div class="rev-modal-head" style="background:#2563EB">⚙ Ajustar prioridad B2C <span>· cómo se ordena tu cola de trabajo</span></div>' +
+    '<div class="rev-modal-body"><p class="pw-nota">Los pesos definen cuánto influye cada factor en el orden de la cola. No tienen que sumar 100 — es su proporción relativa lo que cuenta.</p>' +
+    filas +
+    '<div class="pw-foot"><button class="btn" onclick="guardarPesosB2C()">Guardar</button> <button class="btn sec" onclick="restaurarPesosB2C()">Restaurar por defecto</button></div></div>';
+  mostrarRevModal(html, false);
+  window._pwDefaults = DEF;
+}
+async function guardarPesosB2C() {
+  const pesos = {};
+  Object.keys(window._pwDefaults || {}).forEach(k => { const el = $('pw_' + k); if (el) pesos[k] = Number(el.value); });
+  try { await api('/api/b2c/pscore/pesos', { method: 'PUT', body: JSON.stringify({ pesos }) }); } catch (e) { alert('Error: ' + e.message); return; }
+  const m = document.getElementById('revEmbudoModal'); if (m) m.remove();
+  cargarColaB2C();
+}
+function restaurarPesosB2C() {
+  const DEF = window._pwDefaults || {};
+  Object.keys(DEF).forEach(k => { const el = $('pw_' + k), v = $('pwv_' + k); if (el) el.value = DEF[k]; if (v) v.textContent = DEF[k]; });
+}
+
+// ===== Pulso del día (v1.401): metas por GP + preview de los cortes + envío manual =====
+async function abrirPulsoMetas() {
+  let d; try { d = await api('/api/pulso/metas'); } catch (e) { alert('Error: ' + e.message); return; }
+  const cab = '<tr><th>GP</th><th>Intentos</th><th>Calif.</th><th>Agend.</th><th>Reun.</th><th>Cierres</th></tr>';
+  const filas = d.gps.map((g, i) =>
+    '<tr data-gp="' + g.nombre.replace(/"/g, '&quot;') + '"><td class="pm-nom">' + g.nombre + '</td>' +
+    ['intentos', 'calificados', 'agendados', 'reuniones', 'cierres'].map(k =>
+      '<td><input type="number" min="0" class="pm-in" id="pm_' + i + '_' + k + '" value="' + g.meta[k] + '"></td>').join('') + '</tr>').join('');
+  const html = '<div class="rev-modal-head" style="background:#0F766E">🎯 Pulso del día <span>· metas y cortes de WhatsApp (9am · 1pm · 6pm)</span></div>' +
+    '<div class="rev-modal-body">' +
+    '<div class="cont-sec-tit">Metas diarias por GP (B2C)</div>' +
+    '<table class="com-tabla pm-tabla"><thead>' + cab + '</thead><tbody>' + filas + '</tbody></table>' +
+    '<div class="pm-b2b"><label>Meta B2B (gestiones/día por funcionario)</label> <input type="number" min="0" class="pm-in" id="pm_b2b" value="' + (d.b2b.gestiones || 10) + '"></div>' +
+    '<div class="pw-foot"><button class="btn" onclick="guardarPulsoMetas()">💾 Guardar metas</button></div>' +
+    '<div class="cont-sec-tit" style="margin-top:18px">Vista previa de los cortes</div>' +
+    '<div class="pm-prevs">' +
+      ['9am', '1pm', '6pm'].map(c => '<button class="btn sec" onclick="previewPulso(\'' + c + '\')">👁 ' + c + '</button>').join('') +
+      '<button class="btn sec pm-enviar" onclick="enviarPulsoAhora()">📤 Enviar corte ahora…</button>' +
+    '</div>' +
+    '<pre class="pm-preview" id="pmPreview">Elige un corte para ver cómo saldría el mensaje ahora mismo.</pre>' +
+    '</div>';
+  mostrarRevModal(html, true);
+  window._pmGPs = d.gps.map(g => g.nombre);
+}
+async function guardarPulsoMetas() {
+  const gps = {};
+  (window._pmGPs || []).forEach((n, i) => {
+    const fila = {};
+    ['intentos', 'calificados', 'agendados', 'reuniones', 'cierres'].forEach(k => { const el = $('pm_' + i + '_' + k); if (el) fila[k] = Number(el.value) || 0; });
+    gps[n] = fila;
+  });
+  const b2bEl = $('pm_b2b');
+  try {
+    await api('/api/pulso/metas', { method: 'PUT', body: JSON.stringify({ gps, b2b: { gestiones: b2bEl ? Number(b2bEl.value) || 10 : 10 } }) });
+    const pv = $('pmPreview'); if (pv) pv.textContent = '✅ Metas guardadas. Los próximos cortes usarán estos valores.';
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function previewPulso(corte) {
+  const pv = $('pmPreview'); if (pv) pv.textContent = 'Generando vista previa…';
+  try {
+    const d = await api('/api/pulso/preview?corte=' + corte);
+    pv.textContent = '── B2C ──\n' + (d.b2c || '(sin datos B2C)') + '\n\n── B2B ──\n' + (d.b2b || '(sin datos B2B)');
+  } catch (e) { pv.textContent = 'Error: ' + e.message; }
+}
+async function enviarPulsoAhora() {
+  const corte = prompt('¿Qué corte envío a los grupos AHORA? (9am / 1pm / 6pm)', '1pm');
+  if (!corte || !['9am', '1pm', '6pm'].includes(corte.trim())) return;
+  try {
+    const r = await api('/api/pulso/enviar', { method: 'POST', body: JSON.stringify({ corte: corte.trim() }) });
+    const pv = $('pmPreview'); if (pv) pv.textContent = '📤 Corte ' + r.corte + ' enviado · B2C: ' + (r.enviado.b2c ? '✓' : 'sin datos') + ' · B2B: ' + (r.enviado.b2b ? '✓' : 'sin datos');
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 function renderKanban() {
+  if (!CAT || !CAT.kanbanColumnas) return; // catálogos aún cargando (arranque): se pinta al llegar los leads
   const lista = leadsVisibles(false).filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido');
   const cols = CAT.kanbanColumnas;
   const cont = $('contKanban');
@@ -999,6 +1130,27 @@ function esLeadNuevo(l) {
   return hoy && (l.intentos || 0) === 0 && l.etapa === 'Contactabilidad 3x5';
 }
 
+// Copia el correo del lead al portapapeles con feedback visual (✓ por 1.2s).
+function copiarCorreo(el, correo) {
+  const listo = () => {
+    const ic = el.querySelector('.kmail-copy');
+    if (ic) { const orig = ic.textContent; ic.textContent = '✓'; el.classList.add('kmail-ok'); setTimeout(() => { ic.textContent = orig; el.classList.remove('kmail-ok'); }, 1200); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(correo).then(listo).catch(() => copiarCorreoFallback(correo, listo));
+  } else copiarCorreoFallback(correo, listo);
+}
+function copiarCorreoFallback(texto, cb) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (cb) cb();
+  } catch (e) { }
+}
+
 function kanbanCard(l) {
   const vencida = l.fechaProxAccion && new Date(l.fechaProxAccion) < new Date();
   const calif = (l.ticket || l.tiempo || l.nivelInteres || l.avance || l.experiencia);
@@ -1044,6 +1196,7 @@ function kanbanCard(l) {
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
       (l.telefono ? ' · <span class="ktel">' + l.telefono + '</span>' : '') + '</div>' +
+    (l.email ? '<div class="kmail" title="Copiar correo" onclick="event.stopPropagation();copiarCorreo(this,\'' + String(l.email).replace(/'/g, "\\'") + '\')"><span class="kmail-txt">✉ ' + l.email + '</span><span class="kmail-copy">⧉</span></div>' : '') +
     lineaAccion +
     (chips ? '<div class="kchips">' + chips + '</div>' : (estadoCalif ? '<div class="kchips">' + estadoCalif + '</div>' : '')) +
     '<div class="kbtns">' +
@@ -1166,6 +1319,7 @@ function transicionValidaJS(etapaActual, colDestino) {
 }
 
 function render() {
+  if (VISTA_LEADS === 'cola') return; // la cola se pinta con cargarColaB2C()
   if (VISTA_LEADS === 'kanban') { renderKanban(); $('paginacion').style.display = 'none'; return; }
   $('paginacion').style.display = 'flex';
   const listaFull = leadsVisibles();
@@ -1530,6 +1684,7 @@ function accionLlamar(codigo) {
   const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
   if (l && l.telefono) {
     AC_LEAD_EN_CURSO = codigo;     // recordamos el lead para abrir su gestión al colgar
+    AC_ES_B2B = false;             // este es B2C → al colgar abre la gestión B2C
     AC_HUBO_LLAMADA = false;
     acDial(telE164(l.telefono));   // solo abre Aircall con el número marcado
   } else {
@@ -3161,7 +3316,9 @@ async function cargarReuniones() {
   const resumen = rs.length + ' reunión(es)' + (hoyN ? ' · ' + hoyN + ' hoy' : '') + (pasadas ? ' · ' + pasadas + ' por actualizar' : '');
   cont.innerHTML =
     '<div class="barra barra-leads" style="margin-bottom:8px"><h2>Reuniones agendadas</h2><span class="sub" style="color:var(--muted)">' + resumen + '</span></div>' +
-    '<table class="tabla"><thead><tr><th>Fecha y hora</th>' + thReprog + '<th>Lead</th><th>GP</th><th>Estado</th><th>Teléfono</th></tr></thead><tbody>' + filas + '</tbody></table>';
+    '<div class="tabla-scroll">' +
+    '<table class="tabla"><thead><tr><th>Fecha y hora</th>' + thReprog + '<th>Lead</th><th>GP</th><th>Estado</th><th>Teléfono</th></tr></thead><tbody>' + filas + '</tbody></table>' +
+    '</div>';
 }
 
 // ---- Tiempo real del chat: SSE (escucha webhooks de Chatwoot) ----
@@ -3563,7 +3720,7 @@ function cadPag(dir) {
 }
 
 // ---- Softphone Aircall embebido (Etapa C) + click-to-call (Etapa B) ----
-let AC_PHONE = null, AC_LOGGED = false, AC_PENDING = null, AC_LEAD_EN_CURSO = null, AC_HUBO_LLAMADA = false;
+let AC_PHONE = null, AC_LOGGED = false, AC_PENDING = null, AC_LEAD_EN_CURSO = null, AC_HUBO_LLAMADA = false, AC_ES_B2B = false;
 function acEnsure() {
   if (AC_PHONE) return AC_PHONE;
   if (!window.AircallWorkspace) return null;
@@ -3594,13 +3751,22 @@ function acEnsure() {
 function acAlColgar() {
   const codigo = AC_LEAD_EN_CURSO;
   const hubo = AC_HUBO_LLAMADA;
-  AC_LEAD_EN_CURSO = null; AC_HUBO_LLAMADA = false;
+  const esB2B = AC_ES_B2B;
+  AC_LEAD_EN_CURSO = null; AC_HUBO_LLAMADA = false; AC_ES_B2B = false;
   if (!hubo || !codigo) return;
   // Minimizar el teléfono al botón flotante (mantiene la sesión viva).
   const p = $('acPhonePanel'); if (p) p.classList.add('oculto');
   if ($('acFab')) $('acFab').classList.remove('oculto');
   // Pequeño respiro para que Aircall cierre su vista de llamada antes de abrir la gestión.
-  setTimeout(() => abrirGestion(codigo, null, 'Llamada'), 400);
+  if (esB2B) {
+    // B2B: carga la ficha y abre el modal "Registrar gestión" con canal Llamada preseleccionado.
+    setTimeout(async () => {
+      await abrirFichaB2B(codigo);
+      if (FICHA && FICHA.solicitud) abrirModalGestion(FICHA.etapaKanban || 'Solicitud', 'Llamada');
+    }, 400);
+  } else {
+    setTimeout(() => abrirGestion(codigo, null, 'Llamada'), 400);
+  }
 }
 // Detecta si ya hay sesion de Aircall (por si onLogin no se disparo, p.ej. login en otra pestaña).
 function acVerificarSesion() {
@@ -4464,6 +4630,26 @@ function renderKanbanFiltrado() {
   } catch (e) { console.error('[kanban filtro]', e); }
 }
 
+// --- Acciones rápidas de la tarjeta B2B (mismo patrón que B2C: Gestionar / Llamar / WhatsApp) ---
+function b2bAccionGestionar(codigo) { abrirFichaB2B(codigo); }
+function b2bAccionLlamar(codigo) {
+  const c = (B2B_KANBAN_CARDS || []).find(x => x.codigo === codigo);
+  if (c && c.telefono) {
+    AC_LEAD_EN_CURSO = codigo;    // recordamos el lead para abrir su gestión al colgar
+    AC_ES_B2B = true;             // marca que es B2B → al colgar abre el modal de gestión B2B
+    AC_HUBO_LLAMADA = false;
+    acDial(telE164(c.telefono));  // abre Aircall con el número marcado
+  } else {
+    abrirFichaB2B(codigo);        // sin teléfono: abre la ficha para registrar manual
+  }
+}
+async function b2bAccionWhatsApp(codigo) {
+  // Abre la ficha y luego el modal "Registrar gestión" con el canal WhatsApp ya marcado.
+  await abrirFichaB2B(codigo);
+  if (!FICHA || !FICHA.solicitud) return;
+  abrirModalGestion(FICHA.etapaKanban || 'Solicitud', 'WhatsApp');
+}
+
 function b2bKanbanCard(c) {
   const nombre = c.razonSocial || c.nombreComercial || c.contacto || c.ruc || c.codigo;
   const montoNum = c.montoEfectivo != null ? c.montoEfectivo : (c.montoSolicitado != null ? Number(c.montoSolicitado) : null);
@@ -4540,6 +4726,11 @@ function b2bKanbanCard(c) {
     obsHtml + rescate + alertas +
     slaHtml +
     oxHtml +
+    '<div class="kbtns">' +
+      '<button class="kbtn rg" onclick="event.stopPropagation();b2bAccionGestionar(\'' + c.codigo + '\')">Gestionar</button>' +
+      '<button class="kbtn-ic ll" title="Llamar (Aircall)" onclick="event.stopPropagation();b2bAccionLlamar(\'' + c.codigo + '\')">' + ICO_TEL + '</button>' +
+      '<button class="kbtn-ic wa" title="WhatsApp" onclick="event.stopPropagation();b2bAccionWhatsApp(\'' + c.codigo + '\')">' + ICO_WA + '</button>' +
+    '</div>' +
     '</div>';
 }
 // Texto de las etiquetas de observación del kanban (RUC unificado a "Validar RUC").
@@ -5576,11 +5767,13 @@ function pedirGestionTrasAvance(etapaOrigen) {
     }, 350); // deja que la ficha se re-renderice tras el avance
   } catch (e) {}
 }
-function abrirModalGestion(col) {
+function abrirModalGestion(col, canalDefault) {
   GESTION_COL = col;
   const acciones = (FICHA.accionesPorEtapa && FICHA.accionesPorEtapa[col]) || FICHA.accionesEtapa || [];
   const resultados = FICHA.resultadosGestion || ['Contactado', 'No contestó', 'Volver a llamar', 'Pidió información', 'Envió documentos', 'No interesado'];
   const canales = FICHA.canalesGestion || ['Llamada', 'WhatsApp'];
+  // Canal a preseleccionar (p.ej. al entrar por el botón WhatsApp de la tarjeta). Si no coincide, cae al primero.
+  const canalIdx = canalDefault ? Math.max(0, canales.findIndex(c => c.toLowerCase() === String(canalDefault).toLowerCase())) : 0;
   const etLabel = trEstadoB2B(col);
   const manana = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
   const atajos = [['Hoy 9am', 0, 9], ['Hoy 1pm', 0, 13], ['Hoy 6pm', 0, 18], ['Mañ 9am', 1, 9], ['Mañ 1pm', 1, 13], ['Mañ 6pm', 1, 18], ['+1 día', 1, null], ['+2 días', 2, null]]
@@ -5593,7 +5786,7 @@ function abrirModalGestion(col) {
     '<div class="gm-2col">' +
     // Paso 1: Gestión realizada
     '<div class="gm-col gm-col-1"><div class="gm-col-tit"><span class="gm-num gm-num-1">1</span> Gestión realizada</div>' +
-    '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map((c, i) => '<option' + (i === 0 ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>' +
+    '<div class="gm-row"><label>Canal</label><select id="gmCanal" class="mtr-in">' + canales.map((c, i) => '<option' + (i === canalIdx ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Resultado</label><select id="gmResultado" class="mtr-in">' + resultados.map((r, i) => '<option' + (i === 0 ? ' selected' : '') + '>' + r + '</option>').join('') + '</select></div>' +
     '<div class="gm-row"><label>Comentario</label><textarea id="gmComentario" class="mtr-in gm-ta" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea></div></div>' +
     // Paso 2: Próximo paso
@@ -5677,40 +5870,88 @@ function trDetalleEtapa(det) {
 async function toggleTimelineB2B() {
   let h = $('tlHost');
   if (h) { h.remove(); return; }
-  // Cambios GUARDADOS (auditoría del código) + gestiones, en una sola línea de tiempo.
-  let traza = [];
-  try { const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/trazabilidad'); traza = d.eventos || []; } catch (e) {}
+  // v1.397: mismo visual que la trazabilidad B2C (tz-*), con llamadas Aircall y verificación.
+  let traza = [], llamadas = [];
+  try {
+    const d = await api('/api/b2b/solicitudes/' + encodeURIComponent(FICHA.solicitud.codigo) + '/trazabilidad');
+    traza = d.eventos || []; llamadas = d.llamadas || [];
+  } catch (e) {}
   const items = [];
-  (FICHA._gestiones || []).forEach(x => items.push({
-    fecha: x.fecha, tipo: 'gestion',
-    titulo: trEstadoB2B(x.etapa || ''), quien: primerNombre(x.responsable || ''),
-    linea: (x.canal || '') + (x.resultado ? ' · ' + x.resultado : ''),
-    comentario: x.comentario || '', prox: x.proximaAccion || '', fechaProx: x.fechaProxAccion || null
-  }));
-  // Solo cambios de ETAPA (avances). Se ocultan los técnicos (guardó sujeto/filtro/link/monto) para que la trazabilidad sea legible como historial.
+  // Ingreso de la solicitud (evento de sistema, como en B2C).
+  const sol = FICHA.solicitud || {};
+  if (sol.fechaIngreso) items.push({
+    fecha: sol.fechaIngreso, tipo: 'creado', titulo: 'Ingreso de solicitud',
+    sub: sol.responsableActual ? 'Asignado a ' + sol.responsableActual : (sol.funcionario ? 'Funcionario: ' + sol.funcionario : 'Sin asignar'),
+    actor: 'Sistema', badge: 'Nuevo', badgeColor: 'verde'
+  });
+  // Gestiones del funcionario, con verificación Aircall (canal Llamada + llamada real ±5 min).
+  (FICHA._gestiones || []).forEach(x => {
+    const gt = new Date(x.fecha).getTime();
+    const verificada = (x.canal === 'Llamada') && llamadas.some(ll => Math.abs(new Date(ll.fecha).getTime() - gt) <= 5 * 60 * 1000);
+    items.push({
+      fecha: x.fecha, tipo: 'gestion',
+      titulo: (x.resultado || 'Gestión'), canal: x.canal || '', verificada,
+      sub: (x.comentario || '') || (x.canal ? 'Canal: ' + x.canal : ''),
+      actor: primerNombre(x.responsable || ''),
+      prox: x.proximaAccion || '', fechaProx: x.fechaProxAccion || null,
+      etapa: trEstadoB2B(x.etapa || '')
+    });
+  });
+  // Cambios de etapa (auditoría filtrada, como antes).
   const ACCIONES_ETAPA = ['b2b_avanzar_etapa', 'b2b_kanban_mover', 'b2b_kanban_forzar', 'b2b_descartar', 'b2b_descartar_duplicado', 'b2b_reactivar', 'b2b_reasignar'];
   traza.filter(t => ACCIONES_ETAPA.includes(t.accion)).forEach(t => items.push({
     fecha: t.fecha, tipo: 'cambio',
-    titulo: t.accion === 'b2b_avanzar_etapa' || t.accion === 'b2b_kanban_mover' || t.accion === 'b2b_kanban_forzar' ? '↗ Cambio de etapa' : (TRAZA_ACCION_TXT[t.accion] || '💾 Cambio'),
-    quien: primerNombre(t.nombre || t.usuario || ''), linea: trDetalleEtapa(t.detalle || ''), comentario: '', prox: '', fechaProx: null
+    titulo: t.accion === 'b2b_avanzar_etapa' || t.accion === 'b2b_kanban_mover' || t.accion === 'b2b_kanban_forzar' ? 'Cambio de etapa' : ((TRAZA_ACCION_TXT[t.accion] || '💾 Cambio').replace(/^[^\w]+\s*/, '')),
+    sub: trDetalleEtapa(t.detalle || ''), actor: primerNombre(t.nombre || t.usuario || '')
   }));
+  // Llamadas Aircall automáticas (mismo formato que B2C: dirección + contestada/timbró).
+  llamadas.forEach(ll => {
+    const mmss = ll.duracion ? (Math.floor(ll.duracion / 60) + ':' + String(ll.duracion % 60).padStart(2, '0')) : '';
+    items.push({
+      fecha: ll.fecha, tipo: 'llamada', via: 'Aircall',
+      titulo: 'Llamada ' + (ll.direccion || 'saliente'),
+      sub: ll.contestada ? ('Contestada' + (mmss ? ' · ' + mmss : '')) : ('No contestada' + (mmss ? ' · timbró ' + mmss : '')),
+      actor: primerNombre(ll.agente || '')
+    });
+  });
+  // Próxima acción pendiente (de la última gestión), como evento futuro.
+  const ults = (FICHA._gestiones || []).slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const ult = ults[ults.length - 1];
+  if (ult && ult.proximaAccion && ult.fechaProxAccion) {
+    const venc = new Date(ult.fechaProxAccion) < new Date();
+    items.push({
+      fecha: ult.fechaProxAccion, tipo: 'proxima', titulo: ult.proximaAccion,
+      sub: venc ? 'Acción vencida' : 'Pendiente', actor: primerNombre(ult.responsable || ''),
+      badge: venc ? 'Vencido' : 'Pendiente', badgeColor: venc ? 'rojo' : 'naranja'
+    });
+  }
+  // Orden: más reciente arriba (igual que la trazabilidad B2C).
   items.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
-  const filas = items.length ? items.map(x => {
-    const f = new Date(x.fecha);
-    const fFmt = isNaN(f) ? '' : f.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const fp = x.fechaProx ? new Date(x.fechaProx).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
-    return '<div class="tl-item' + (x.tipo === 'cambio' ? ' tl-item-cambio' : '') + '"><div class="tl-dot' + (x.tipo === 'cambio' ? ' tl-dot-cambio' : '') + '"></div><div class="tl-body">' +
-      '<div class="tl-top"><b>' + x.titulo + '</b> <span class="sub">' + fFmt + (x.quien ? ' · ' + x.quien : '') + '</span></div>' +
-      (x.linea ? '<div class="tl-res">' + String(x.linea).replace(/</g, '&lt;') + '</div>' : '') +
-      (x.comentario ? '<div class="tl-com">' + String(x.comentario).replace(/</g, '&lt;') + '</div>' : '') +
-      (x.prox ? '<div class="tl-prox">➡ <b>' + x.prox + '</b>' + (fp ? ' · 📅 ' + fp : '') + '</div>' : '') +
+  // Render con las MISMAS clases tz-* del timeline B2C.
+  const colorTipo = { creado: 'verde', gestion: 'azul', cambio: 'verde', proxima: 'naranja', llamada: 'azul' };
+  const tipoLbl = { creado: 'Lead creado', gestion: 'Gestión', cambio: 'Cambio de etapa', proxima: 'Próxima acción', llamada: 'Llamada' };
+  const filas = items.length ? items.map((e, i) => {
+    const last = i === items.length - 1;
+    let derecha = '';
+    if (e.badge) derecha = '<span class="tz-pill ' + e.badgeColor + '">' + e.badge + '</span>';
+    if (e.etapa) derecha += ' <span class="tz-pill gris">' + e.etapa + '</span>';
+    const esc = s => String(s || '').replace(/</g, '&lt;');
+    return '<div class="tz-ev">' +
+      '<div class="tz-ev-fecha">' + fmtFechaDos(e.fecha) + '</div>' +
+      '<div class="tz-ev-linea"><span class="tz-dot ' + (colorTipo[e.tipo] || 'azul') + '"></span>' + (last ? '' : '<span class="tz-rail"></span>') + '</div>' +
+      '<div class="tz-ev-card">' +
+        '<div class="tz-ev-head"><span class="tz-ev-tipo ' + (colorTipo[e.tipo] || '') + '">' + (tipoLbl[e.tipo] || e.tipo) + '</span><span class="tz-ev-actor">' + esc(e.actor) + '</span></div>' +
+        '<div class="tz-ev-tit">' + esc(e.titulo) + (e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : '') + (e.verificada ? ' <span class="tz-verif" title="Llamada verificada por Aircall">✓ verificada</span>' : '') + '</div>' +
+        (e.sub ? '<div class="tz-ev-sub">' + esc(e.sub) + '</div>' : '') +
+        (e.prox ? '<div class="tz-ev-sub">➡ <b>' + esc(e.prox) + '</b>' + (e.fechaProx ? ' · 📅 ' + fmtFechaDos(e.fechaProx) : '') + '</div>' : '') +
+        (derecha ? '<div class="tz-ev-badges">' + derecha + '</div>' : '') +
       '</div></div>';
   }).join('') : '<div class="sub" style="padding:8px">Sin gestiones ni cambios guardados todavía.</div>';
   const puedeLimpiar = puedeReasignarB2B();
   const footer = (puedeLimpiar && (FICHA._gestiones || []).length) ? '<div class="tl-foot"><button class="btn sec tl-limpiar" onclick="limpiarHistorialB2B()">🗑 Limpiar historial</button></div>' : '';
   const html = '<div class="tl-back" onclick="if(event.target===this)toggleTimelineB2B()">' +
-    '<div class="tl-card"><div class="tl-head"><b>Historial del lead</b> <span class="sub" style="font-weight:400">gestiones y cambios de etapa</span><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
-    '<div class="tl-list">' + filas + '</div>' + footer + '</div></div>';
+    '<div class="tl-card"><div class="tl-head"><b>Historial del lead</b> <span class="sub" style="font-weight:400">gestiones, llamadas y cambios de etapa</span><button class="gm-x" onclick="toggleTimelineB2B()">✕</button></div>' +
+    '<div class="tl-list tz-list-b2b">' + filas + '</div>' + footer + '</div></div>';
   const host = document.createElement('div'); host.id = 'tlHost'; host.innerHTML = html;
   document.body.appendChild(host);
 }
@@ -6322,7 +6563,9 @@ function panelSolicitud(s) {
     const rucBadge = s.sunatEstado === 'ok' ? '<span class="sol-badge sol-badge-ok">✓ Validado</span>'
       : (s.sunatEstado === 'error' ? '<span class="sol-badge sol-badge-err">⚠ No valida</span>'
         : (rucVal && !/^(10|15|17|20)\d{9}$/.test(String(rucVal).trim()) ? '<span class="sol-badge sol-badge-err">⚠ Inválido</span>' : '<span class="sol-badge">pendiente</span>'));
-    const rucCtrl = enSolicitud
+    // Admin puede cambiar y re-validar el RUC INDEFINIDAMENTE, en cualquier etapa.
+    // Funcionarios: solo mientras la solicitud está en Solicitud (al validar, avanza y se fija).
+    const rucCtrl = (enSolicitud || YO.rol === 'admin')
       ? '<input id="fbRucEdit" class="mtr-in" style="width:130px" value="' + rucVal + '" maxlength="11" onkeypress="return b2bSoloNumero(event,false)"> <button class="btn-sunat" style="padding:2px 10px;font-size:11px" onclick="validarRucB2B()">🔎 Validar</button> ' + rucBadge
       : '<b>' + (rucVal || '—') + '</b> ' + rucBadge;
     const filaSol = (ico, k, v) => '<div class="sol-fila"><span class="sol-ic">' + ico + '</span><span class="sol-k">' + k + '</span><span class="sol-v">' + v + '</span></div>';
@@ -8254,7 +8497,30 @@ async function cargarTendSeries() {
 
 function destruirChartTend(id) { const el = document.getElementById(id); if (el) { const p = Chart.getChart(el); if (p) p.destroy(); } }
 const fmtU2 = v => v == null ? '—' : '$ ' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const lblPeriodo = p => TEND_AGRUP === 'mes' || TEND_VISTA === 'perf' ? p : (p.length === 7 ? p : p.slice(5));
+const MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Set', 'Oct', 'Nov', 'Dic'];
+// Formatea la etiqueta del período según la agrupación, para lectura clara:
+//   mes    "2026-07"    → "Jul 26"
+//   semana "2026-08-04" → "Sem 1 Ago" (semana del mes)
+//   día    "2026-07-01" → "01 Jul"
+function lblPeriodo(p) {
+  const esMes = TEND_AGRUP === 'mes' || TEND_VISTA === 'perf';
+  if (esMes) {
+    // p = "YYYY-MM"
+    const [y, m] = p.split('-');
+    if (!m) return p;
+    return MESES_ES[(+m) - 1] + ' ' + String(y).slice(2);
+  }
+  if (TEND_AGRUP === 'semana') {
+    // p = fecha del lunes "YYYY-MM-DD" → "Sem N Mes" (N = semana dentro del mes)
+    const parts = p.split('-'); if (parts.length < 3) return p;
+    const dia = +parts[2], mesIx = (+parts[1]) - 1;
+    const semMes = Math.floor((dia - 1) / 7) + 1;
+    return 'Sem ' + semMes + ' ' + MESES_ES[mesIx];
+  }
+  // día: p = "YYYY-MM-DD" → "01 Jul"
+  const parts = p.split('-'); if (parts.length < 3) return p;
+  return parts[2] + ' ' + MESES_ES[(+parts[1]) - 1];
+}
 
 // ===== Vista LEADS: barras (leads + orgánicos) + línea CPL, con KPI de CPL promedio =====
 // Plugin: etiquetas de datos (total sobre la pila, CPL sobre cada punto) + línea horizontal del CPL promedio.
@@ -8272,6 +8538,29 @@ const pluginLeadsLabels = {
       ctx.save(); ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
       ctx.fillText(total, bar.x, y - 4); ctx.restore();
     });
+    // Gasto de pauta por período (leads de pauta × CPL) en la BASE de cada barra, con sombreado.
+    const gastos = (opts && opts.gastos) || [];
+    if (metaBase) {
+      metaBase.data.forEach((bar, i) => {
+        const g = gastos[i];
+        if (g == null || g === 0) return;
+        const txt = '$' + Number(g).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        ctx.save(); ctx.font = 'bold 9.5px system-ui'; ctx.textAlign = 'center';
+        const w = ctx.measureText(txt).width;
+        const yBase = chart.scales.y.getPixelForValue(0); // línea base del eje (donde empiezan las barras)
+        const boxY = yBase - 17, boxH = 14, padX = 5;
+        // Sombreado de fondo (pill) para que no se pierda sobre la barra
+        ctx.fillStyle = 'rgba(15,46,90,.82)';
+        const rx = bar.x - w / 2 - padX, rw = w + padX * 2, ry = boxY, rh = boxH, r = 4;
+        ctx.beginPath();
+        ctx.moveTo(rx + r, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, r); ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, r);
+        ctx.arcTo(rx, ry + rh, rx, ry, r); ctx.arcTo(rx, ry, rx + rw, ry, r); ctx.closePath(); ctx.fill();
+        // Texto del gasto
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(txt, bar.x, boxY + 10);
+        ctx.restore();
+      });
+    }
     // Valor CPL sobre cada punto de la línea
     const li = dsets.findIndex(d => d.type === 'line');
     if (li >= 0) {
@@ -8288,10 +8577,24 @@ const pluginLeadsLabels = {
       const y = chart.scales.y2.getPixelForValue(prom);
       const { left, right, top, bottom } = chart.chartArea;
       if (y >= top && y <= bottom) {
-        ctx.save(); ctx.strokeStyle = '#B45309'; ctx.setLineDash([7, 5]); ctx.lineWidth = 1.6;
+        ctx.save();
+        // Línea de promedio más suave: fina, dash corto, semitransparente.
+        ctx.strokeStyle = 'rgba(180,83,9,.55)'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.setLineDash([]);
-        ctx.font = 'bold 10.5px system-ui'; ctx.fillStyle = '#B45309'; ctx.textAlign = 'right';
-        ctx.fillText('prom $' + prom, right - 4, y - 5); ctx.restore();
+        // Etiqueta "prom $x.xx" sobre un fondo ligero para que no se pierda.
+        const txt = 'prom $' + prom;
+        ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'right';
+        const w = ctx.measureText(txt).width, padX = 6, padY = 3, boxH = 15;
+        const rx = right - 2 - w - padX * 2, ry = y - boxH / 2, rw = w + padX * 2, rr = 4;
+        ctx.fillStyle = 'rgba(254,243,224,.95)'; // crema muy claro
+        ctx.strokeStyle = 'rgba(180,83,9,.35)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(rx + rr, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + boxH, rr); ctx.arcTo(rx + rw, ry + boxH, rx, ry + boxH, rr);
+        ctx.arcTo(rx, ry + boxH, rx, ry, rr); ctx.arcTo(rx, ry, rx + rw, ry, rr); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#B45309';
+        ctx.fillText(txt, right - 2 - padX, y + 3.5);
+        ctx.restore();
       }
     }
   }
@@ -8312,7 +8615,7 @@ function renderLeadsTend() {
     if (per.some(x => x.cpl != null)) dsets.push({ type: 'line', label: 'CPL ($)', data: per.map(x => x.cpl), borderColor: '#EF9F27', backgroundColor: '#EF9F27', tension: .3, yAxisID: 'y2', spanGaps: true, order: 1 });
     new Chart(ctx, { data: { labels: per.map(x => lblPeriodo(x.p)), datasets: dsets },
       options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 16 } },
-        plugins: { legend: { position: 'top' }, leadsLabels: { prom: serie.cplPromedio } },
+        plugins: { legend: { position: 'top' }, leadsLabels: { prom: serie.cplPromedio, gastos: per.map(x => x.gasto) } },
         scales: { y: { beginAtZero: true, stacked: true, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
           x: { stacked: true },
           y2: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'CPL $' } } } },
@@ -8389,7 +8692,7 @@ function renderPerfTend() {
       dsets.push({ label: 'Reuniones', data: per.map(x => x.reuniones), backgroundColor: 'rgba(29,158,117,.8)', costos: per.map(x => x.costoReunion), yAxisID: 'y', order: 1 });
       dsets.push({ label: 'Cierres', data: per.map(x => x.cierres), backgroundColor: 'rgba(220,38,38,.8)', costos: per.map(x => x.costoCierre), yAxisID: 'y', order: 1 });
     }
-    new Chart(ctx, { type: 'bar', data: { labels: per.map(x => x.p), datasets: dsets },
+    new Chart(ctx, { type: 'bar', data: { labels: per.map(x => lblPeriodo(x.p)), datasets: dsets },
       options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 22 } },
         plugins: { legend: { position: 'top' }, tooltip: { callbacks: { afterLabel: (c) => { const co = c.dataset.costos && c.dataset.costos[c.dataIndex]; return co != null ? 'Costo por unidad: ' + fmtU2(co) : ''; } } } },
         scales: {
@@ -8685,67 +8988,509 @@ async function cargarComite() {
     const d = await api('/api/b2c/comite?desde=' + desde + '&hasta=' + hasta);
     COMITE_DATA = d;
     renderComite(d);
+    // Poblar el selector de GP una vez, con los del ranking.
+    const sel = $('comGP');
+    if (sel && sel.options.length <= 1 && d.ranking) {
+      d.ranking.forEach(g => sel.add(new Option(primerNombre(g.gestor), g.gestor)));
+    }
+    const gp = sel ? sel.value : '';
+    // Embudo de conversión real (por fecha de asignación) con tasas etapa→etapa, cuello, fuga y riesgo.
+    try { const emb = await api('/api/b2c/embudo?desde=' + desde + '&hasta=' + hasta + (gp ? '&asesor=' + encodeURIComponent(gp) : '')); renderEmbudoConversion(emb); } catch (e) {}
   } catch (e) { if ($('comCards')) $('comCards').innerHTML = '<div class="vacio">No se pudo cargar: ' + e.message + '</div>'; }
 }
 
 function renderComite(d) {
   const R = d.resumen || {}, V = d.velocidad || {};
   const soles = n => 'S/ ' + (Number(n || 0)).toLocaleString('es-PE');
-  // Cards
-  const cards = [
-    ['Leads trabajados', R.totalLeads, ''],
-    ['Contactabilidad', R.contactabilidad + '%', R.contactados + ' contactados'],
-    ['Cerrados ganados', R.ganados, soles(R.montoGanado)],
-    ['Tasa de cierre', R.tasaCierre + '%', ''],
-    ['Completaron 3x5', R.hicieron3x5, 'de ' + R.totalLeads],
-    ['1er contacto (mediana)', V.medianaMinPrimerContacto != null ? V.medianaMinPrimerContacto + ' min' : '—', V.promIntentosPrimerContacto != null ? V.promIntentosPrimerContacto + ' intentos prom.' : ''],
-    ['Desestimados', R.perdidos, '']
-  ];
-  $('comCards').innerHTML = cards.map(c =>
-    '<div class="com-card"><div class="com-card-v">' + c[1] + '</div><div class="com-card-l">' + c[0] + '</div>' + (c[2] ? '<div class="com-card-s">' + c[2] + '</div>' : '') + '</div>').join('');
+  // Las scorecards ahora las pinta renderEmbudoConversion() con datos alineados al embudo
+  // (misma base = asignados, misma fecha = asignación). Aquí ya no se pintan para evitar
+  // la inconsistencia que había (contactabilidad por fecha de carga vs asignación).
 
   // Embudo
   const emb = d.embudo || [];
   const maxE = Math.max(1, ...emb.map(e => e.alcanzaron));
   const etLabel = { 'Contactabilidad 3x5': 'En 3x5', 'Contactado - por calificar': 'Contactado', 'Calificado - pendiente agendar': 'Calificado', 'Agendado - pendiente reunion': 'Agendado', 'Reunion efectiva - seguimiento': 'Reunión', 'Cierre pendiente': 'Cierre pend.', 'Cerrado ganado': 'Ganado' };
-  $('comEmbudo').innerHTML = emb.map(e =>
-    '<div class="com-bar-row"><span class="com-bar-lbl">' + (etLabel[e.etapa] || e.etapa) + '</span>' +
-    '<div class="com-bar-track"><div class="com-bar-fill" style="width:' + Math.round((e.alcanzaron / maxE) * 100) + '%"></div></div>' +
-    '<span class="com-bar-val">' + e.alcanzaron + ' <small>(' + e.pctDelTotal + '%)</small></span></div>').join('');
+  // El embudo de conversión lo pinta renderEmbudoConversion() con el endpoint /api/b2c/embudo.
+  // (Paneles Tiempo por etapa / Ranking / Desestimados removidos por decisión de producto.)
+}
 
-  // Tiempo por etapa
-  const tpe = d.tiempoPorEtapa || [];
-  $('comTiempo').innerHTML = tpe.length ? tpe.map(t => {
-    const h = t.horasProm;
-    const txt = h >= 24 ? (Math.round(h / 24 * 10) / 10) + ' días' : h + ' h';
-    return '<div class="com-line"><span>' + (etLabel[t.etapa] || t.etapa) + '</span><b>' + txt + '</b><small>n=' + t.n + '</small></div>';
-  }).join('') : '<div class="vacio">Sin transiciones registradas en el periodo.</div>';
+// Embudo de conversión REAL (por fecha de asignación): cada barra es cuántos leads
+// ALCANZARON esa etapa (aunque luego se perdieran), con el % que convierte de la etapa
+// anterior. Resalta el CUELLO (mayor caída) y el de peor tasa.
+function renderEmbudoConversion(d) {
+  const cont = $('comEmbudo'); if (!cont) return;
+  // Scorecards alineadas con el embudo (misma base = asignados, misma fecha = asignación).
+  const S = d.scorecards;
+  if (S && $('comCards')) {
+    const soles = m => (typeof m === 'string' ? m : 'S/ ' + (Number(m || 0)).toLocaleString('es-PE'));
+    const cards = [
+      ['👥', 'Leads asignados', S.totalLeads, ''],
+      ['📞', 'Contactabilidad', S.contactabilidad + '%', S.contactados + ' contactados'],
+      ['🏆', 'Cerrados ganados', S.ganados, S.montoGanadoFmt],
+      ['🎯', 'Tasa de cierre', S.tasaCierre + '%', ''],
+      ['✅', 'Completaron 3x5', S.hicieron3x5, 'de ' + S.totalLeads],
+      ['⏱️', '1er contacto', S.medianaMinPrimerContacto != null ? S.medianaMinPrimerContacto + ' min' : '—', S.promIntentosPrimerContacto != null ? S.promIntentosPrimerContacto + ' int. prom.' : ''],
+      ['✕', 'Desestimados', S.perdidos, '']
+    ];
+    $('comCards').innerHTML = cards.map(c =>
+      '<div class="com-card"><div class="com-card-ico">' + c[0] + '</div><div class="com-card-body"><div class="com-card-v">' + c[2] + '</div><div class="com-card-l">' + c[1] + '</div>' + (c[3] ? '<div class="com-card-s">' + c[3] + '</div>' : '') + '</div></div>').join('');
+  }
+  if (!d || !d.filas || !d.totalLeads) { cont.innerHTML = '<div class="vacio">Sin leads asignados en el periodo.</div>'; return; }
+  const cuelloIdx = d.cuello ? d.cuello.idx : -1;
+  const filas = d.filas.map((f, i) => {
+    const ancho = Math.max(4, f.pctDelTotal);
+    const esCuello = i === cuelloIdx;
+    const conv = i === 0 ? '' : '<span class="emb-conv ' + (f.convDesdeAnterior >= 60 ? 'ok' : f.convDesdeAnterior >= 35 ? 'med' : 'bad') + '">' + f.convDesdeAnterior + '%</span>';
+    // Desglose a la derecha: vivos (verde, con monto) y desestimados aquí, ambos clickeables.
+    const desglose = '<span class="emb-side">' +
+      (f.vivos > 0 ? '<span class="emb-vivos" onclick="verLeadsEtapa(\'' + f.id + '\',\'vivos\')">' + f.vivos + ' vivos <small>(' + f.montoVivosFmt + ')</small></span>' : '') +
+      (f.fuga > 0 ? '<span class="emb-fuga" onclick="verLeadsEtapa(\'' + f.id + '\',\'desest\')">✕ ' + f.fuga + ' desestimados <small>(' + f.montoDesestFmt + ')</small></span>' : '') +
+      '</span>';
+    return '<div class="emb-fila' + (esCuello ? ' emb-cuello' : '') + '">' +
+      '<div class="emb-top"><span class="emb-lbl">' + f.titulo + '</span>' + conv + '</div>' +
+      '<div class="emb-row2">' +
+        '<div class="emb-track"><div class="emb-fill" style="width:' + ancho + '%"></div>' +
+          '<span class="emb-n">' + f.n + ' <small>· ' + f.pctDelTotal + '% · ' + f.montoFmt + '</small></span></div>' +
+        desglose +
+      '</div>' +
+      (esCuello ? '<span class="emb-cuello-tag">⚠ Cuello: aquí se pierden más leads</span>' : '') +
+      '</div>' +
+      // Tras "Asignados" (i=0), insertar la fila transversal de CONTACTABILIDAD.
+      (i === 0 && d.contactabilidad ? filaContactabilidad(d.contactabilidad) : '');
+  }).join('');
+  const resumen = '<div class="emb-resumen">' +
+    '<div><b>' + d.totalLeads + '</b> asignados · <b>' + d.conversionGlobal + '%</b> conversión global a cierre · <b>' + d.perdidos + '</b> perdidos</div>' +
+    (d.cuello ? '<div class="emb-diag">🔴 Mayor fuga: <b>' + d.cuello.de + ' → ' + d.cuello.a + '</b> (solo pasa el ' + d.cuello.convPct + '%, se caen ' + d.cuello.perdidos + ' leads)</div>' : '') +
+    (d.cuelloPct && (!d.cuello || d.cuelloPct.idx !== d.cuello.idx) ? '<div class="emb-diag">🟠 Peor tasa: <b>' + d.cuelloPct.de + ' → ' + d.cuelloPct.a + '</b> (' + d.cuelloPct.convPct + '%)</div>' : '') +
+    (d.anomalias && d.anomalias.total ? '<div class="emb-diag emb-revisar" onclick="verAnomaliasEmbudo()">🏷️ <b>' + d.anomalias.total + ' leads</b> avanzaron sin completar las 5 preguntas (' + d.anomalias.montoFmt + ') — <span class="emb-rev-link">ver para revisar</span></div>' : '') +
+    (d.enRiesgo && d.enRiesgo.total ? '<div class="emb-diag emb-riesgo" onclick="verEnRiesgo()">⏰ <b>' + d.enRiesgo.total + ' leads</b> con 5+ días hábiles y menos intentos de los esperados, sin desestimar (' + d.enRiesgo.montoFmt + ') — <span class="emb-rev-link">ver para empujar</span></div>' : '') +
+    '</div>';
+  cont.innerHTML = resumen + filas;
+  EMBUDO_MOTIVOS = d.analisisMotivos || null;
+  EMBUDO_REND = d.rendimientoAnuncios || [];
+  EMBUDO_DESP_PROM = d.pctDespPromedio || 0;
+  // Mostrar/ocultar los botones de la barra superior según haya datos.
+  const btnDes = document.getElementById('comDesestBtn');
+  if (btnDes) btnDes.style.display = (EMBUDO_MOTIVOS && EMBUDO_MOTIVOS.total) ? '' : 'none';
+  const btnAnun = document.getElementById('comAnunBtn');
+  if (btnAnun) btnAnun.style.display = EMBUDO_REND.length ? '' : 'none';
+  EMBUDO_CONTACT = d.contactabilidad || null;
+  EMBUDO_ANOMALIAS = (d.anomalias && d.anomalias.lista) || [];
+  EMBUDO_RIESGO = (d.enRiesgo && d.enRiesgo.lista) || [];
+  EMBUDO_FILAS = d.filas || [];
+}
+let EMBUDO_ANOMALIAS = [], EMBUDO_RIESGO = [], EMBUDO_FILAS = [], EMBUDO_CONTACT = null, EMBUDO_MOTIVOS = null;
+let EMBUDO_REND = [], EMBUDO_DESP_PROM = 0, REND_CHART = null; const REND_IMGS = {};
 
-  // Ranking
-  const rk = d.ranking || [];
-  $('comRanking').innerHTML = '<table class="com-tabla"><thead><tr><th>Gestor</th><th>Asig.</th><th>Cont.</th><th>%</th><th>Calif.</th><th>Agend.</th><th>Gan.</th><th>1er (min)</th></tr></thead><tbody>' +
-    rk.map(g => '<tr><td>' + primerNombre(g.gestor) + '</td><td>' + g.asignados + '</td><td>' + g.contactados + '</td><td>' + g.pctContacto + '%</td><td>' + g.calificados + '</td><td>' + g.agendados + '</td><td>' + g.ganados + '</td><td>' + (g.t1erMed != null ? g.t1erMed : '—') + '</td></tr>').join('') +
-    '</tbody></table>';
+// Fila transversal de CONTACTABILIDAD (no es etapa del embudo): cuántos respondieron
+// al menos una vez, con desglose vivos/desestimados y los que nunca respondieron.
+function filaContactabilidad(c) {
+  return '<div class="emb-fila emb-fila-cont">' +
+    '<div class="emb-top"><span class="emb-lbl emb-lbl-cont">📞 Contactabilidad <small>· respondieron al menos una vez</small></span>' +
+      '<span class="emb-conv ' + (c.pct >= 60 ? 'ok' : c.pct >= 35 ? 'med' : 'bad') + '">' + c.pct + '%</span></div>' +
+    '<div class="emb-row2">' +
+      '<div class="emb-track emb-track-cont"><div class="emb-fill emb-fill-cont" style="width:' + Math.max(4, c.pct) + '%"></div>' +
+        '<span class="emb-n">' + c.total + ' <small>· respondieron · ' + c.montoFmt + '</small></span></div>' +
+      '<span class="emb-side">' +
+        (c.total > 0 ? '<span class="emb-vivos" onclick="verContactabilidad(\'contactables\')">✓ ' + c.total + ' contactables <small>(' + c.vivos + ' vivos · ' + c.desestimados + ' desest.)</small></span>' : '') +
+        (c.noContactables > 0 ? '<span class="emb-fuga" onclick="verContactabilidad(\'nocontactables\')">🔕 ' + c.noContactables + ' nunca respondieron <small>(' + c.noContVivos + ' aún en 3x5)</small></span>' : '') +
+      '</span>' +
+    '</div>' +
+    '<div class="emb-cont-actions">' +
+      '<button class="emb-csv-btn" onclick="descargarContactabilidad(\'contactables\')">⬇ CSV contactables (remarketing)</button>' +
+      '<button class="emb-csv-btn" onclick="descargarContactabilidad(\'nocontactables\')">⬇ CSV no contactables</button>' +
+    '</div>' +
+    '</div>';
+}
+function verAnomaliasEmbudo() {
+  if (!EMBUDO_ANOMALIAS.length) return;
+  const etLbl = { 'Agendado - pendiente reunion': 'Agendado', 'Reunion efectiva - seguimiento': 'Reunión', 'Cierre pendiente': 'Negociación', 'Cerrado ganado': 'Cerrado ganado' };
+  const filas = EMBUDO_ANOMALIAS.map(a => '<tr onclick="abrirGestionDesdeCodigo(\'' + a.codigo + '\')"><td><b>' + (a.nombre || a.codigo) + '</b></td><td>' + (etLbl[a.etapa] || a.etapa) + '</td><td>' + primerNombre(a.asesor) + '</td><td>S/ ' + (Number(a.monto) || 0).toLocaleString('es-PE') + '</td></tr>').join('');
+  const html = '<div class="rev-modal-head">🏷️ Leads a revisar <span>· avanzaron sin las 5 preguntas de calificación</span></div>' +
+    '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Lead</th><th>Etapa</th><th>GP</th><th>Monto</th></tr></thead><tbody>' + filas + '</tbody></table></div>';
+  mostrarRevModal(html);
+}
+function abrirGestionDesdeCodigo(cod) { const m = document.getElementById('revEmbudoModal'); if (m) m.remove(); if (typeof abrirGestion === 'function') abrirGestion(cod); }
 
-  // Desestimados
-  const des = d.desestimados || [];
-  const maxD = Math.max(1, ...des.map(x => x.n));
-  $('comDesest').innerHTML = des.length ? des.map(x =>
-    '<div class="com-bar-row"><span class="com-bar-lbl com-bar-lbl-w">' + x.motivo + '</span>' +
-    '<div class="com-bar-track"><div class="com-bar-fill com-bar-fill-r" style="width:' + Math.round((x.n / maxD) * 100) + '%"></div></div>' +
-    '<span class="com-bar-val">' + x.n + '</span></div>').join('') : '<div class="vacio">Sin desestimados en el periodo.</div>';
+function verEnRiesgo() {
+  if (!EMBUDO_RIESGO.length) return;
+  const etLbl = { 'Contactabilidad 3x5': 'Por contactar', 'Contactado - por calificar': 'Contactado', 'Calificado - pendiente agendar': 'Calificado', 'Agendado - pendiente reunion': 'Agendado', 'Reunion efectiva - seguimiento': 'Reunión' };
+  const filas = EMBUDO_RIESGO.map(a => '<tr onclick="abrirGestionDesdeCodigo(\'' + a.codigo + '\')"><td><b>' + (a.nombre || a.codigo) + '</b></td><td>' + (etLbl[a.etapa] || a.etapa) + '</td><td>' + primerNombre(a.asesor) + '</td><td>' + a.diasHabiles + ' d</td><td><b class="emb-falta">' + a.intentos + '/' + a.esperados + '</b></td><td>S/ ' + (Number(a.monto) || 0).toLocaleString('es-PE') + '</td></tr>').join('');
+  const html = '<div class="rev-modal-head rev-head-riesgo">⏰ Leads a empujar <span>· 5+ días hábiles y menos intentos de los esperados (3x5), sin desestimar</span></div>' +
+    '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Lead</th><th>Etapa</th><th>GP</th><th>Días háb.</th><th>Intentos</th><th>Monto</th></tr></thead><tbody>' + filas + '</tbody></table></div>';
+  mostrarRevModal(html);
+}
+
+function verLeadsEtapa(id, tipo) {
+  const f = EMBUDO_FILAS.find(x => x.id === id);
+  if (!f) return;
+  const soles = m => 'S/ ' + (Number(m) || 0).toLocaleString('es-PE');
+  const dias = (h, c) => '<b class="' + (h >= 3 ? 'emb-estanca' : '') + '">' + h + '</b> háb · ' + c + ' corr';
+  const esAgendado = id === 'agendado';
+  if (tipo === 'vivos') {
+    const lista = f.vivosLista || [];
+    if (!lista.length) return;
+    // Columnas extra solo para Agendado.
+    const colsAg = esAgendado ? '<th>T. hasta agendar</th><th>T. en etapa</th><th>Int. hasta</th><th>Int. después</th>' : '';
+    const filas = lista.map(a => '<tr onclick="abrirGestionDesdeCodigo(\'' + a.codigo + '\')">' +
+      '<td><b>' + (a.nombre || a.codigo) + '</b></td>' +
+      '<td>' + primerNombre(a.asesor) + '</td>' +
+      '<td class="emb-td-c">' + a.intentos + '</td>' +
+      '<td>' + dias(a.diasEnEtapaHab, a.diasEnEtapaCorr) + '</td>' +
+      '<td class="emb-td-c">' + a.diasTotales + '</td>' +
+      (esAgendado ? '<td class="emb-td-c">' + (a.tiempoHastaAgendar || '—') + '</td><td class="emb-td-c">' + (a.tiempoEnEtapa || '—') + '</td><td class="emb-td-c">' + (a.intentosHastaAgendar != null ? a.intentosHastaAgendar : '—') + '</td><td class="emb-td-c">' + (a.intentosPostAgendar != null ? a.intentosPostAgendar : '—') + '</td>' : '') +
+      '<td>' + soles(a.monto) + '</td></tr>').join('');
+    const html = '<div class="rev-modal-head rev-head-vivos">🟢 Vivos en ' + f.titulo + ' <span>· ordenados por antigüedad · rojo = 3+ días hábiles estancado</span></div>' +
+      '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Lead</th><th>GP</th><th>Int.</th><th>En etapa</th><th>Días tot.</th>' + colsAg + '<th>Monto</th></tr></thead><tbody>' + filas + '</tbody></table></div>';
+    mostrarRevModal(html, esAgendado);
+  } else {
+    const lista = f.desestLista || [];
+    if (!lista.length) return;
+    const colsAg = esAgendado ? '<th>T. hasta agendar</th><th>T. en etapa</th><th>Int. hasta</th><th>Int. después</th>' : '';
+    const filas = lista.map(a => '<tr onclick="abrirGestionDesdeCodigo(\'' + a.codigo + '\')">' +
+      '<td><b>' + (a.nombre || a.codigo) + '</b></td>' +
+      '<td>' + primerNombre(a.asesor) + '</td>' +
+      '<td><small>' + tr(a.motivo) + '</small></td>' +
+      '<td class="emb-td-c">' + a.intentos + '</td>' +
+      '<td class="emb-td-c">' + a.diasTotales + '</td>' +
+      (esAgendado ? '<td class="emb-td-c">' + (a.tiempoHastaAgendar || '—') + '</td><td class="emb-td-c">' + (a.tiempoEnEtapa || '—') + '</td><td class="emb-td-c">' + (a.intentosHastaAgendar != null ? a.intentosHastaAgendar : '—') + '</td><td class="emb-td-c">' + (a.intentosPostAgendar != null ? a.intentosPostAgendar : '—') + '</td>' : '') +
+      '<td><small>' + (a.fechaCierre ? fmtFecha(a.fechaCierre) : '—') + '</small></td>' +
+      '<td>' + soles(a.monto) + '</td></tr>').join('');
+    const html = '<div class="rev-modal-head rev-head-desest">✕ Desestimados en ' + f.titulo + ' <span>· motivo y tiempo antes de perderse</span></div>' +
+      '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Lead</th><th>GP</th><th>Motivo</th><th>Int.</th><th>Días tot.</th>' + colsAg + '<th>Cerrado</th><th>Monto</th></tr></thead><tbody>' + filas + '</tbody></table></div>';
+    mostrarRevModal(html, esAgendado);
+  }
+}
+
+// Modal de contactabilidad: lista de leads + agrupación por anuncio con preview de imagen.
+function verContactabilidad(tipo) {
+  const c = EMBUDO_CONTACT; if (!c) return;
+  const esCont = tipo === 'contactables';
+  const anuncios = esCont ? c.anunciosContactables : c.anunciosNoContactables;
+  const lista = esCont ? c.listaContactables : c.listaNoContactables;
+  const titulo = esCont ? '✓ Contactables (respondieron al menos una vez)' : '🔕 No contactables (nunca respondieron)';
+  const sub = esCont ? 'audiencia caliente para remarketing' : 'revisar número/campaña o excluir';
+  // Bloque de anuncios de origen con preview.
+  const anunHtml = (anuncios || []).map(a =>
+    '<div class="cont-anuncio">' +
+      '<div class="cont-anun-thumb">' + (a.creativeUrl ? '<img src="' + a.creativeUrl + '" onerror="this.style.display=\'none\';this.parentNode.innerHTML=\'📷\'">' : '📷') + '</div>' +
+      '<div class="cont-anun-info"><div class="cont-anun-nom">' + (a.anuncio || '(sin anuncio)') + '</div>' +
+        '<div class="cont-anun-meta"><b>' + a.n + '</b> leads · ' + a.montoFmt + '</div></div>' +
+    '</div>').join('') || '<div class="vacio">Sin datos de anuncios.</div>';
+  const filas = (lista || []).map(l =>
+    '<tr onclick="abrirGestionDesdeCodigo(\'' + l.codigo + '\')"><td><b>' + (l.nombre || l.codigo) + '</b></td><td>' + (l.telefono || '—') + '</td><td>' + primerNombre(l.asesor) + '</td><td><small>' + tr(l.etapa) + '</small></td><td><small>' + (l.anuncio || '—') + '</small></td></tr>').join('');
+  const html = '<div class="rev-modal-head ' + (esCont ? 'rev-head-vivos' : 'rev-head-desest') + '">' + titulo + ' <span>· ' + sub + '</span></div>' +
+    '<div class="rev-modal-body">' +
+      '<div class="cont-sec-tit">📣 Anuncios de origen</div>' +
+      '<div class="cont-anuncios">' + anunHtml + '</div>' +
+      '<div class="cont-sec-tit">📋 Leads</div>' +
+      '<table class="com-tabla"><thead><tr><th>Lead</th><th>Teléfono</th><th>GP</th><th>Etapa</th><th>Anuncio</th></tr></thead><tbody>' + filas + '</tbody></table>' +
+      '<div class="cont-csv-row"><button class="emb-csv-btn" onclick="descargarContactabilidad(\'' + tipo + '\')">⬇ Descargar CSV completo</button></div>' +
+    '</div>';
+  mostrarRevModal(html, true);
+}
+
+// Modal de diagnóstico: por qué se desestiman (motivos, calidad de lead vs comercial).
+function verAnalisisMotivos() {
+  const m = EMBUDO_MOTIVOS; if (!m || !m.total) return;
+  const veredictoTxt = m.veredicto === 'calidad'
+    ? '🎯 Predomina CALIDAD DE LEAD — el problema está en la campaña/segmentación (traen gente que no califica). Acción: Marketing.'
+    : m.veredicto === 'comercial'
+    ? '💬 Predomina lo COMERCIAL — contestan pero no se convencen. El problema está en la gestión/pitch. Acción: coaching comercial.'
+    : '⚖️ MIXTO — hay de los dos. Revisa el desglose por motivo abajo.';
+  const barra = '<div class="mot-barra">' +
+    (m.pctCalidad ? '<div class="mot-seg mot-cal" style="width:' + m.pctCalidad + '%" title="Calidad de lead">' + (m.pctCalidad >= 10 ? m.pctCalidad + '%' : '') + '</div>' : '') +
+    (m.pctComercial ? '<div class="mot-seg mot-com" style="width:' + m.pctComercial + '%" title="Comercial">' + (m.pctComercial >= 10 ? m.pctComercial + '%' : '') + '</div>' : '') +
+    (m.pctOtro ? '<div class="mot-seg mot-otr" style="width:' + m.pctOtro + '%" title="Otro">' + (m.pctOtro >= 10 ? m.pctOtro + '%' : '') + '</div>' : '') +
+    '</div>' +
+    '<div class="mot-leyenda"><span><i class="mot-dot mot-cal"></i>Calidad de lead (' + m.calidad + ')</span>' +
+      '<span><i class="mot-dot mot-com"></i>Comercial (' + m.comercial + ')</span>' +
+      '<span><i class="mot-dot mot-otr"></i>Otro (' + m.otro + ')</span></div>';
+  // Agrupar las filas por tipo (calidad, comercial, otro) con encabezado de sección.
+  const grupos = { calidad: [], comercial: [], otro: [] };
+  m.lista.forEach(x => { (grupos[x.tipo] || grupos.otro).push(x); });
+  const filaMotivo = x => {
+    const etapas = x.etapas.map(e => e.etapa + ' (' + e.n + ')').join(', ');
+    const anuncios = x.anuncios.map(a =>
+      '<span class="mot-anun">' + (a.creativeUrl ? '<img src="' + a.creativeUrl + '" onerror="this.style.display=\'none\'">' : '') + '<span class="mot-anun-nom">' + a.anuncio + '</span> <b>' + a.n + '</b></span>').join('');
+    return '<tr><td><b>' + tr(x.motivo) + '</b></td><td class="emb-td-c">' + x.n + ' <small>(' + x.pct + '%)</small></td><td><small>' + etapas + '</small></td><td class="mot-anuncios-cell">' + anuncios + '</td></tr>';
+  };
+  const seccion = (titulo, clase, arr, subtotal) => {
+    if (!arr.length) return '';
+    return '<tr class="mot-sec-head ' + clase + '"><td colspan="4">' + titulo + ' · <b>' + subtotal + ' leads</b></td></tr>' + arr.map(filaMotivo).join('');
+  };
+  const cuerpo =
+    seccion('🎯 CALIDAD DE LEAD (Marketing / segmentación)', 'mot-sec-cal', grupos.calidad, m.calidad) +
+    seccion('💬 COMERCIAL (gestión / pitch)', 'mot-sec-com', grupos.comercial, m.comercial) +
+    seccion('· Otros', 'mot-sec-otr', grupos.otro, m.otro);
+  const html = '<div class="rev-modal-head rev-head-motivos">🔍 ¿Por qué se desestiman? <span>· ' + m.total + ' leads perdidos analizados</span></div>' +
+    '<div class="rev-modal-body">' +
+      '<div class="mot-veredicto">' + veredictoTxt + '</div>' +
+      barra +
+      '<div class="mot-criterio">📖 <b>Criterio:</b> "No interesado" / "Desistió" <b>antes</b> de calificar = <span class="mot-cal-txt">calidad de lead</span> (nunca supimos si tenía perfil). <b>Después</b> de calificar = <span class="mot-com-txt">comercial</span> (el vendedor tuvo la oportunidad). Motivos técnicos (no califica, número errado) = siempre calidad.</div>' +
+      '<div class="cont-sec-tit" style="margin-top:16px">Desglose por motivo (separado por tipo)</div>' +
+      '<table class="com-tabla"><thead><tr><th>Motivo</th><th>Cantidad</th><th>Dónde se cae</th><th>Anuncios de origen</th></tr></thead><tbody>' + cuerpo + '</tbody></table>' +
+    '</div>';
+  mostrarRevModal(html, true);
+}
+
+function descargarContactabilidad(tipo) {
+  const desde = $('comDesde') ? $('comDesde').value : '';
+  const hasta = $('comHasta') ? $('comHasta').value : '';
+  const gp = $('comGP') ? $('comGP').value : '';
+  const url = '/api/b2c/embudo/csv?tipo=' + tipo + '&desde=' + desde + '&hasta=' + hasta + (gp ? '&asesor=' + encodeURIComponent(gp) : '');
+  window.open(url, '_blank');
+}
+
+// ===== Radar de Anuncios (v1.394): ejes configurables + cortes manuales =====
+// X: 'vol' (leads que trajo) o 'cpl' (costo por lead, gasto Meta / traídos).
+// Y: 'desp' (% desperdicio) o 'vivos' (% vivos = vivos/traídos, el complemento).
+// Cortes editables (para domar outliers) + máx X para recortar el eje.
+let REND_CFG = { x: 'vol', y: 'desp', corteX: null, corteY: null, maxX: null };
+
+function verRendimientoAnuncios() {
+  if (!EMBUDO_REND || !EMBUDO_REND.length) return;
+  REND_CFG = { x: 'vol', y: 'desp', corteX: null, corteY: null, maxX: null };
+  const html = '<div class="rev-modal-head rev-head-rend">📣 Radar de anuncios <span id="rendSub">· volumen vs desperdicio</span></div>' +
+    '<div class="rev-modal-body">' +
+      '<div class="rend-controles">' +
+        '<label>Eje X <select id="rendEjeX" onchange="rendCambiaEje()"><option value="vol">Leads que trajo</option><option value="cpl">Costo por lead ($)</option></select></label>' +
+        '<label>Eje Y <select id="rendEjeY" onchange="rendCambiaEje()"><option value="desp">% desperdicio</option><option value="vivos">% vivos</option></select></label>' +
+        '<label>Corte X <input type="number" id="rendCorteX" step="0.1" min="0" onchange="rendAplicar()"></label>' +
+        '<label>Corte Y <input type="number" id="rendCorteY" step="1" min="0" max="100" onchange="rendAplicar()"></label>' +
+        '<label>Máx X <input type="number" id="rendMaxX" step="0.1" min="0" placeholder="auto" onchange="rendAplicar()"></label>' +
+        '<button class="btn sec rend-meta-btn" id="rendMetaBtn" onclick="rendActualizarMeta()" title="Vuelve a jalar el gasto del API de Meta">⟳ Meta</button>' +
+      '</div>' +
+      '<div id="rendCont"></div>' +
+    '</div>';
+  mostrarRevModal(html, true);
+  // Precarga de imágenes.
+  EMBUDO_REND.forEach(a => {
+    if (a.creativeUrl && !REND_IMGS[a.creativeUrl]) {
+      const im = new Image();
+      im.onload = () => { try { if (REND_CHART) REND_CHART.draw(); } catch (e) {} };
+      im.onerror = () => {};
+      im.src = a.creativeUrl; REND_IMGS[a.creativeUrl] = im;
+    }
+  });
+  renderRadarContenido(true);
+}
+
+function rendCambiaEje() {
+  REND_CFG.x = $('rendEjeX').value; REND_CFG.y = $('rendEjeY').value;
+  REND_CFG.corteX = null; REND_CFG.corteY = null; REND_CFG.maxX = null; // reset a auto al cambiar de eje
+  renderRadarContenido(true);
+}
+
+// Vuelve a jalar el gasto del API de Meta (force) y redibuja el radar con el CPL fresco.
+async function rendActualizarMeta() {
+  const btn = $('rendMetaBtn'); if (btn) { btn.disabled = true; btn.textContent = '⟳ Jalando…'; }
+  try {
+    const desde = $('comDesde') ? $('comDesde').value : '';
+    const hasta = $('comHasta') ? $('comHasta').value : '';
+    const gp = $('comGP') ? $('comGP').value : '';
+    const emb = await api('/api/b2c/embudo?desde=' + desde + '&hasta=' + hasta + (gp ? '&asesor=' + encodeURIComponent(gp) : '') + '&metaForce=1');
+    EMBUDO_REND = emb.rendimientoAnuncios || [];
+    EMBUDO_DESP_PROM = emb.pctDespPromedio || 0;
+    renderRadarContenido(true);
+  } catch (e) { alert('No se pudo actualizar desde Meta: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '⟳ Meta'; }
+}
+function rendAplicar() {
+  const cx = parseFloat($('rendCorteX').value), cy = parseFloat($('rendCorteY').value), mx = parseFloat($('rendMaxX').value);
+  REND_CFG.corteX = isFinite(cx) && cx > 0 ? cx : null;
+  REND_CFG.corteY = isFinite(cy) && cy >= 0 ? cy : null;
+  REND_CFG.maxX = isFinite(mx) && mx > 0 ? mx : null;
+  renderRadarContenido(false);
+}
+
+function renderRadarContenido(resetInputs) {
+  const cont = document.getElementById('rendCont'); if (!cont) return;
+  const cfg = REND_CFG;
+  // Dataset según el eje X: en modo CPL se excluyen anuncios sin gasto registrado.
+  let ans = EMBUDO_REND.slice();
+  let excluidos = 0;
+  if (cfg.x === 'cpl') { const antes = ans.length; ans = ans.filter(a => a.cpl != null && a.cpl > 0); excluidos = antes - ans.length; }
+  if (!ans.length) { cont.innerHTML = '<div class="vacio">Sin anuncios con gasto registrado en el periodo para el modo CPL.</div>'; return; }
+  const xDe = a => cfg.x === 'cpl' ? a.cpl : a.total;
+  const yDe = a => cfg.y === 'vivos' ? a.pctVivos : a.pctDesp;
+  // Cortes automáticos: X = mediana; Y = promedio ponderado del cohorte.
+  const xs = ans.map(xDe).sort((a, b) => a - b);
+  const autoX = xs[Math.floor(xs.length / 2)] || 1;
+  const sumTot = ans.reduce((s, a) => s + a.total, 0);
+  const autoY = cfg.y === 'vivos'
+    ? Math.round(ans.reduce((s, a) => s + a.vivos, 0) / Math.max(1, sumTot) * 100)
+    : (EMBUDO_DESP_PROM || Math.round(ans.reduce((s, a) => s + a.desest, 0) / Math.max(1, sumTot) * 100));
+  const corteX = cfg.corteX != null ? cfg.corteX : autoX;
+  const corteY = cfg.corteY != null ? cfg.corteY : autoY;
+  if (resetInputs) { $('rendCorteX').value = corteX; $('rendCorteY').value = corteY; $('rendMaxX').value = ''; }
+  const sub = document.getElementById('rendSub');
+  if (sub) sub.textContent = '· ' + (cfg.x === 'cpl' ? 'CPL' : 'volumen') + ' vs ' + (cfg.y === 'vivos' ? '% vivos' : '% desperdicio') + ' · corte Y = ' + corteY + '%';
+  // Semántica de cuadrantes: qué lado de cada eje es "bueno".
+  const goodX = v => cfg.x === 'vol' ? v >= corteX : v < corteX;   // volumen alto bueno · CPL barato bueno
+  const goodY = v => cfg.y === 'desp' ? v <= corteY : v >= corteY; // desperdicio bajo bueno · vivos alto bueno
+  const etiquetaDe = (gx, gy) => gx && gy ? { t: '🚀 Escalar', c: 'rec-esc', col: '#0F6E56' }
+    : (!gx && gy) ? (cfg.x === 'vol' ? { t: '💎 Potenciar', c: 'rec-pot', col: '#185FA5' } : { t: '💰 Optimizar costo', c: 'rec-pot', col: '#185FA5' })
+    : (gx && !gy) ? { t: '🔧 Ajustar mensaje', c: 'rec-aj', col: '#A32D2D' }
+    : { t: '⏸ Pausar', c: 'rec-pau', col: '#5F5E5A' };
+  // Recomendación por anuncio (misma semántica del cuadrante + tipo dominante).
+  const recom = a => {
+    const gx = goodX(xDe(a)), gy = goodY(yDe(a));
+    const base = etiquetaDe(gx, gy);
+    if (base.c === 'rec-aj') return a.dCal >= a.dCom ? { t: '🔧 Ajustar segmentación/copy', c: 'rec-aj' } : { t: '🗣 Alinear expectativa + coaching', c: 'rec-aj' };
+    return base;
+  };
+  const fmtX = v => cfg.x === 'cpl' ? '$ ' + v : v;
+  const filas = ans.map(a => {
+    const seg = (n, col) => a.total ? '<i style="width:' + Math.round((n / a.total) * 100) + '%;background:' + col + '"></i>' : '';
+    const compo = '<span class="rend-compo">' + seg(a.ganados, '#16A34A') + seg(a.vivos, '#38BDF8') + seg(a.dCom, '#2563EB') + seg(a.dCal, '#EA580C') + '</span>';
+    const r = recom(a);
+    const desg = a.desest ? a.pctCal + '% calidad · ' + a.pctCom + '% comercial' : '—';
+    const titleInfo = a.anuncio + '\n' + (a.campanas || []).map(c => '📣 ' + c.nombre + ' (' + c.n + ')').join('\n') + '\n' + (a.conjuntos || []).map(c => '📁 ' + c.nombre + ' (' + c.n + ')').join('\n');
+    return '<tr><td class="rend-nom-cell">' + (a.creativeUrl ? '<img class="rend-thumb" src="' + a.creativeUrl + '" onerror="this.style.display=\'none\'">' : '<span class="rend-thumb rend-thumb-ph">📷</span>') + '<span class="mot-anun-nom" title="' + titleInfo.replace(/"/g, '&quot;') + '">' + a.anuncio + '</span></td>' +
+      '<td class="emb-td-c"><b>' + a.total + '</b></td>' +
+      '<td class="emb-td-c">' + (a.cpl != null ? '$ ' + a.cpl : '—') + '</td>' +
+      '<td>' + compo + '<small class="rend-compo-lbl">' + a.ganados + ' gan · ' + a.vivos + ' vivos · ' + a.dCom + ' com · ' + a.dCal + ' cal</small></td>' +
+      '<td class="emb-td-c"><b class="' + (!goodY(yDe(a)) ? 'emb-estanca' : '') + '">' + yDe(a) + '%</b></td>' +
+      '<td><small>' + desg + '</small></td>' +
+      '<td><span class="rend-rec ' + r.c + '">' + r.t + '</span></td></tr>';
+  }).join('');
+  cont.innerHTML = '<div class="rend-chart-box"><canvas id="rendChart"></canvas></div>' +
+    '<div class="rend-leyenda"><span><i style="background:#EA580C"></i>anillo naranja: domina calidad (Marketing)</span><span><i style="background:#2563EB"></i>azul: domina comercial (gestión)</span><span><i style="background:#16A34A"></i>verde: buen resultado</span>' + (excluidos ? '<span class="rend-excl">' + excluidos + ' anuncio(s) sin gasto no se muestran en modo CPL</span>' : '') + '</div>' +
+    '<div class="cont-sec-tit" style="margin-top:14px">Detalle y recomendación por anuncio</div>' +
+    '<table class="com-tabla"><thead><tr><th>Anuncio</th><th>Trajo</th><th>CPL</th><th>Composición</th><th>' + (cfg.y === 'vivos' ? '% vivos' : '% desp.') + '</th><th>De lo perdido</th><th>Recomendación</th></tr></thead><tbody>' + filas + '</tbody></table>' +
+    '<div class="mot-criterio" style="margin-top:12px">📖 <b>Cómo leerlo:</b> el corte X es la mediana (' + fmtX(autoX) + ' auto) y el corte Y tu promedio (' + autoY + '% auto); edítalos arriba si un outlier deforma el gráfico. "Máx X" recorta el eje (los que exceden se fijan al borde). Composición: <span style="color:#16A34A;font-weight:700">ganados</span> · <span style="color:#0EA5E9;font-weight:700">vivos</span> · <span style="color:#2563EB;font-weight:700">desest. comercial</span> · <span style="color:#EA580C;font-weight:700">desest. calidad</span>.</div>';
+  dibujarRadarAnuncios(ans, corteX, corteY, { xDe, yDe, goodX, goodY, etiquetaDe, cfg });
+}
+
+function dibujarRadarAnuncios(ans, corteX, corteY, ctx2) {
+  const cv = document.getElementById('rendChart'); if (!cv || typeof Chart === 'undefined') return;
+  if (REND_CHART) { try { REND_CHART.destroy(); } catch (e) {} REND_CHART = null; }
+  const { xDe, yDe, goodX, goodY, etiquetaDe, cfg } = ctx2;
+  const maxDato = Math.max(...ans.map(xDe));
+  const maxX = REND_CFG.maxX != null ? REND_CFG.maxX : maxDato * 1.15;
+  const clampX = v => Math.min(v, maxX);           // outliers se fijan al borde del eje
+  // Radio PROPORCIONAL al volumen relativo del dataset (sqrt para que el ÁREA refleje
+  // los leads): el anuncio más grande mide 26px y el resto escala contra él.
+  const maxTot = Math.max(1, ...ans.map(a => a.total));
+  const rDe = a => Math.round(8 + Math.sqrt(a.total / maxTot) * 18); // 8px → 26px
+  const anillo = a => goodY(yDe(a)) ? '#16A34A' : (a.dCal >= a.dCom ? '#EA580C' : '#2563EB');
+  const quadBg = {
+    id: 'rendQuad',
+    beforeDraw(ch) {
+      try {
+        const { ctx: c, chartArea: ar, scales: { x, y } } = ch; if (!ar) return;
+        const px = x.getPixelForValue(Math.min(corteX, maxX)), py = y.getPixelForValue(corteY);
+        // Colores por SEMÁNTICA de cada esquina (derecha = X alto, arriba = Y alto).
+        const colorDe = (gx, gy) => gx && gy ? 'rgba(27,175,122,.07)' : (!gx && !gy) ? 'rgba(136,135,128,.06)'
+          : (gx && !gy) ? 'rgba(227,73,72,.08)' : 'rgba(42,120,214,.06)';
+        const gxDer = cfg.x === 'vol', gxIzq = !gxDer;               // volumen: derecha bueno · CPL: izquierda bueno
+        const gyArr = cfg.y === 'vivos', gyAba = !gyArr;             // vivos: arriba bueno · desperdicio: abajo bueno
+        const fill = (x0, y0, x1, y1, col) => { c.fillStyle = col; c.fillRect(x0, y0, x1 - x0, y1 - y0); };
+        fill(ar.left, ar.top, px, py, colorDe(gxIzq, gyArr));   // arriba-izquierda
+        fill(px, ar.top, ar.right, py, colorDe(gxDer, gyArr));  // arriba-derecha
+        fill(ar.left, py, px, ar.bottom, colorDe(gxIzq, gyAba));// abajo-izquierda
+        fill(px, py, ar.right, ar.bottom, colorDe(gxDer, gyAba));// abajo-derecha
+        c.save(); c.strokeStyle = '#c3c2b7'; c.setLineDash([5, 4]); c.lineWidth = 1;
+        c.beginPath(); c.moveTo(px, ar.top); c.lineTo(px, ar.bottom); c.stroke();
+        c.beginPath(); c.moveTo(ar.left, py); c.lineTo(ar.right, py); c.stroke();
+        c.setLineDash([]); c.font = '600 11px sans-serif';
+        const lbl = (gx, gy) => etiquetaDe(gx, gy);
+        const eAI = lbl(gxIzq, gyArr), eAD = lbl(gxDer, gyArr), eBI = lbl(gxIzq, gyAba), eBD = lbl(gxDer, gyAba);
+        c.fillStyle = eAI.col; c.textAlign = 'left'; c.fillText(eAI.t, ar.left + 6, ar.top + 14);
+        c.fillStyle = eAD.col; c.textAlign = 'right'; c.fillText(eAD.t, ar.right - 6, ar.top + 14);
+        c.fillStyle = eBI.col; c.textAlign = 'left'; c.fillText(eBI.t, ar.left + 6, ar.bottom - 8);
+        c.fillStyle = eBD.col; c.textAlign = 'right'; c.fillText(eBD.t, ar.right - 6, ar.bottom - 8);
+        c.restore();
+      } catch (e) {}
+    }
+  };
+  const fotos = {
+    id: 'rendFotos',
+    afterDatasetsDraw(ch) {
+      const c = ch.ctx;
+      ch.data.datasets.forEach((ds, i) => {
+        try {
+          const pt = ch.getDatasetMeta(i).data[0]; if (!pt) return;
+          const a = ans[i]; const img = a && a.creativeUrl ? REND_IMGS[a.creativeUrl] : null;
+          const r = (pt.options && pt.options.radius) || 12;
+          if (img && img.complete && img.naturalWidth > 0) {
+            const s = Math.min(img.naturalWidth, img.naturalHeight);
+            const sc = s > 0 ? (r * 2) / s : 0;
+            const w = img.naturalWidth * sc, h = img.naturalHeight * sc;
+            if (isFinite(w) && w > 0) {
+              c.save();
+              c.beginPath(); c.arc(pt.x, pt.y, r - 1.5, 0, Math.PI * 2); c.closePath(); c.clip();
+              c.drawImage(img, pt.x - w / 2, pt.y - h / 2, w, h);
+              c.restore();
+            }
+          }
+          c.save(); c.beginPath(); c.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          c.lineWidth = 3; c.strokeStyle = anillo(a); c.stroke(); c.restore();
+        } catch (e) {}
+      });
+    }
+  };
+  REND_CHART = new Chart(cv.getContext('2d'), {
+    type: 'scatter',
+    data: {
+      datasets: ans.map(a => ({
+        label: a.anuncio,
+        data: [{ x: clampX(xDe(a)), y: yDe(a) }],
+        pointRadius: rDe(a), pointHoverRadius: rDe(a) + 2,
+        backgroundColor: 'rgba(255,255,255,.85)', borderColor: anillo(a), borderWidth: 2
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: c2 => {
+            const a = ans[c2.datasetIndex];
+            const extra = xDe(a) > maxX ? ' (fuera de rango, fijado al borde)' : '';
+            return [a.anuncio,
+              'Trajo ' + a.total + ' leads' + (a.cpl != null ? ' · CPL $ ' + a.cpl : '') + extra,
+              (cfg.y === 'vivos' ? '% vivos ' + a.pctVivos + '%' : 'desperdicio ' + a.pctDesp + '%') + ' · ' + a.ganados + ' ganados · ' + a.vivos + ' vivos',
+              a.desest + ' desestimados: ' + a.dCal + ' calidad / ' + a.dCom + ' comercial'];
+          },
+          // Franjas de campaña y conjunto: si el anuncio pertenece a varios, se listan
+          // todos con su conteo de leads.
+          afterLabel: c2 => {
+            const a = ans[c2.datasetIndex];
+            const li = [];
+            (a.campanas || []).forEach(c => li.push('📣 ' + c.nombre + ((a.campanas.length > 1) ? ' (' + c.n + ')' : '')));
+            (a.conjuntos || []).forEach(c => li.push('📁 ' + c.nombre + ((a.conjuntos.length > 1) ? ' (' + c.n + ')' : '')));
+            return li;
+          }
+        } }
+      },
+      scales: {
+        x: { title: { display: true, text: cfg.x === 'cpl' ? 'Costo por lead ($ USD)' : 'Leads que trajo', color: '#94a3b8', font: { size: 11 } }, beginAtZero: true, max: maxX, ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => cfg.x === 'cpl' ? '$ ' + v : v }, grid: { color: '#F1F5F9' } },
+        y: { title: { display: true, text: cfg.y === 'vivos' ? '% vivos (vivos / traídos)' : '% desperdicio (desestimados / traídos)', color: '#94a3b8', font: { size: 11 } }, min: 0, max: 100, ticks: { color: '#94a3b8', font: { size: 11 }, callback: v => v + '%' }, grid: { color: '#F1F5F9' } }
+      }
+    },
+    plugins: [quadBg, fotos]
+  });
+}
+
+function mostrarRevModal(html, ancho) {
+  let ov = document.getElementById('revEmbudoModal');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'revEmbudoModal'; ov.className = 'rev-modal'; ov.onclick = e => { if (e.target === ov) ov.remove(); }; document.body.appendChild(ov); }
+  ov.innerHTML = '<div class="rev-modal-box' + (ancho ? ' rev-modal-wide' : '') + '">' + html + '<div class="rev-modal-foot"><button class="btn sec" onclick="document.getElementById(\'revEmbudoModal\').remove()">Cerrar</button></div></div>';
 }
 
 async function analizarComiteIA() {
   const btn = $('comIaBtn'); const box = $('comIaBox');
   const desde = $('comDesde').value, hasta = $('comHasta').value;
+  const gp = $('comGP') ? $('comGP').value : '';
   if (btn) { btn.disabled = true; btn.textContent = '🤖 Analizando…'; }
   box.classList.remove('oculto');
-  box.innerHTML = '<div class="com-ia-load">Generando análisis ejecutivo…</div>';
+  box.innerHTML = '<div class="com-ia-load">Generando análisis ejecutivo…' + (gp ? ' (' + primerNombre(gp) + ')' : '') + '</div>';
   try {
-    const r = await api('/api/ia/reporte/preview?tipo=comite&corte=' + desde + ':' + hasta);
+    const r = await api('/api/ia/reporte/preview?tipo=comite&corte=' + desde + ':' + hasta + (gp ? '&asesor=' + encodeURIComponent(gp) : ''));
     const txt = (r.texto || 'No se pudo generar el análisis.').replace(/\*(.+?)\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
-    box.innerHTML = '<div class="com-ia-head">🤖 Análisis ejecutivo (IA)</div><div class="com-ia-body">' + txt + '</div>';
+    box.innerHTML = '<div class="com-ia-head">🤖 Análisis ejecutivo (IA)' + (gp ? ' · ' + primerNombre(gp) : '') + '</div><div class="com-ia-body">' + txt + '</div>';
   } catch (e) { box.innerHTML = '<div class="com-ia-load">Error: ' + e.message + '</div>'; }
   if (btn) { btn.disabled = false; btn.textContent = '🤖 Análisis IA'; }
 }
@@ -9221,3 +9966,45 @@ function abrirModalIA() {
   }).catch(e => { el.innerHTML = '<div class="vacio">Error: ' + esc(e.message) + '</div>'; });
 }
 function cerrarModalIA() { $('opsIAModal').classList.add('oculto'); }
+
+// ===== Monitor del bot de WhatsApp (indicador en el header, solo jefes/admin) =====
+let _waMonTimer = null;
+function iniciarMonitorWA() {
+  if (!YO || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(YO.rol)) return; // solo jefatura
+  const chip = document.getElementById('waEstadoChip');
+  if (chip) chip.classList.remove('oculto');
+  refrescarEstadoWA();
+  if (_waMonTimer) clearInterval(_waMonTimer);
+  _waMonTimer = setInterval(refrescarEstadoWA, 120000); // cada 2 min
+}
+async function refrescarEstadoWA() {
+  const dot = document.getElementById('waDot'), txt = document.getElementById('waEstadoTxt'), chip = document.getElementById('waEstadoChip');
+  if (!dot || !txt || !chip) return;
+  try {
+    const s = await api('/api/wa/estado');
+    chip.classList.remove('wa-ok', 'wa-warn', 'wa-bad');
+    if (s.bot === 'activo' && !s.pendientes) { chip.classList.add('wa-ok'); txt.textContent = 'Bot activo'; }
+    else if (s.bot === 'activo' && s.pendientes) { chip.classList.add('wa-warn'); txt.textContent = 'Bot activo · ' + s.pendientes + ' en cola'; }
+    else if (s.bot === 'caido') { chip.classList.add('wa-bad'); txt.textContent = 'Bot caído' + (s.pendientes ? ' · ' + s.pendientes + ' en cola' : ''); }
+    else { chip.classList.add('wa-warn'); txt.textContent = 'WA sin configurar'; }
+    chip._estado = s;
+  } catch (e) { /* silencioso: no romper el header */ }
+}
+async function verEstadoWA() {
+  const s = (document.getElementById('waEstadoChip') || {})._estado;
+  if (!s) { refrescarEstadoWA(); return; }
+  const estadoTxt = s.bot === 'activo' ? '🟢 Bot activo (responde)' : s.bot === 'caido' ? '🔴 Bot no responde' : '🟡 Bot sin configurar';
+  let msg = 'Estado del bot de WhatsApp\n\n' + estadoTxt + '\n';
+  msg += '\nAlertas en cola (pendientes de reenvío): ' + (s.pendientes || 0);
+  msg += '\nAlertas fallidas (agotaron reintentos): ' + (s.fallidas || 0);
+  if (s.ultimaFallida) msg += '\n\nÚltimo problema: ' + (s.ultimaFallida.error || '—') + '\n(' + fmtFecha(s.ultimaFallida.fecha) + ')';
+  if (s.pendientes || s.fallidas) {
+    msg += '\n\n¿Reintentar el envío de todas las pendientes ahora?';
+    if (confirm(msg)) {
+      try { const r = await api('/api/wa/cola/reintentar', { method: 'POST' }); alert(r.pendientes ? 'Quedan ' + r.pendientes + ' en cola (el bot sigue sin responder).' : '✅ Cola vaciada, todas reenviadas.'); refrescarEstadoWA(); }
+      catch (e) { alert('No se pudo reintentar: ' + e.message); }
+    }
+  } else {
+    alert(msg + '\n\nTodo en orden ✅');
+  }
+}
