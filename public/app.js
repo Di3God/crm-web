@@ -84,6 +84,15 @@ function trEtapa(v) { return ETAPA_VISIBLE[v] || tr(v); }
 function tr(v) { return ES[v] || v || ''; }
 
 async function api(url, opts) {
+  opts = opts || {};
+  // FIX v1.407: si hay body (y no es FormData), garantizar el envío como JSON.
+  // - Si el body es un objeto, se stringifica.
+  // - Si falta el Content-Type, se agrega application/json (sin pisar headers ya definidos).
+  // Sin esto, fetch envía text/plain y Express deja req.body vacío (guardados silenciosamente perdidos).
+  if (opts.body != null && !(opts.body instanceof FormData)) {
+    if (typeof opts.body !== 'string') opts.body = JSON.stringify(opts.body);
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+  }
   const r = await fetch(url, opts);
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'Error de servidor');
