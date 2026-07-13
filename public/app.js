@@ -4436,24 +4436,39 @@ const SEM_COL = { Verde: '#2E8B57', Amarillo: '#E0A800', Rojo: '#CC0000' };
 async function descargarB2BCsv() {
   try {
     const d = await api('/api/b2b/solicitudes');
-    const rows = Array.isArray(d) ? d : (d.solicitudes || d.filas || []);
+    let rows = Array.isArray(d) ? d : (d.solicitudes || d.filas || []);
     if (!rows.length) { alert('No hay solicitudes para exportar.'); return; }
+    // SIN DUPLICADOS: dedup por teléfono (últimos 9 dígitos) → RUC → email.
+    // Se queda la más reciente (las filas ya vienen ordenadas por ingreso DESC).
+    const vistos = new Set(); const unicos = [];
+    rows.forEach(r => {
+      const tel9 = String(r.telefono || '').replace(/[^0-9]/g, '').slice(-9);
+      const k = tel9 || String(r.ruc || '').trim() || String(r.email || '').trim().toLowerCase() || ('cod:' + r.codigo);
+      if (vistos.has(k)) return;
+      vistos.add(k); unicos.push(r);
+    });
+    const dups = rows.length - unicos.length;
+    rows = unicos;
     const cols = [
-      ['codigo', 'Código'], ['ruc', 'RUC'], ['razonSocial', 'Razón social'], ['contacto', 'Contacto'],
-      ['telefono', 'Teléfono'], ['email', 'Email'], ['estado', 'Etapa'], ['ticket', 'Ticket'],
-      ['montoSolicitado', 'Monto'], ['sector', 'Sector'], ['responsable', 'Responsable'],
+      ['codigo', 'Código'], ['contacto', 'Nombre y apellidos'], ['ruc', 'RUC'], ['razonSocial', 'Razón social / Empresa'],
+      ['telefono', 'Celular'], ['email', 'Correo electrónico'],
+      ['montoSolicitado', 'Monto solicitado'], ['montoRango', 'Rango de monto'], ['destinoFondos', 'Necesidad / Destino de fondos'],
+      ['origen', 'Origen del contacto'], ['campana', 'Campaña'],
+      ['responsableActual', 'Funcionario responsable'],
+      ['estado', 'Etapa'], ['ticket', 'Ticket'], ['sector', 'Sector'],
       ['resultadoCredito', 'Crédito'], ['resultadoGarantia', 'Garantía'], ['resultadoFinanzas', 'Finanzas'],
-      ['origen', 'Origen'], ['campana', 'Campaña'], ['fechaIngreso', 'Ingreso']
+      ['sunatEstado', 'SUNAT'], ['fechaIngreso', 'Ingreso']
     ];
     const esc = v => { const t = (v == null ? '' : String(v)).replace(/"/g, '""'); return /[",\n;]/.test(t) ? '"' + t + '"' : t; };
     const head = cols.map(c => c[1]).join(';');
-    const body = rows.map(r => cols.map(c => esc(r[c[0]])).join(';')).join('\n');
-    const csv = '\ufeff' + head + '\n' + body; // BOM para Excel
+    const body = rows.map(r => cols.map(c => esc(r[c[0]] != null ? r[c[0]] : r[c[0] === 'responsableActual' ? 'responsable' : c[0]])).join(';')).join('\n');
+    const csv = '\ufeff' + head + '\n' + body; // BOM para Excel/Sheets
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'solicitudes_b2b_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.href = url; a.download = 'contactos_b2b_' + new Date().toISOString().slice(0, 10) + '.csv';
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    if (dups > 0) setTimeout(() => alert('Exportado sin duplicados: ' + rows.length + ' contactos únicos (' + dups + ' duplicados removidos por teléfono/RUC/email).'), 150);
   } catch (e) { alert('No se pudo descargar: ' + (e.message || e)); }
 }
 function b2bVista(v) {

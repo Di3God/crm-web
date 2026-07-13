@@ -8406,7 +8406,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.402 (2 mejoras UX: (1) B2B: el ADMIN puede cambiar y re-validar el RUC indefinidamente en cualquier etapa (input + boton Validar siempre visibles para rol admin; funcionarios mantienen la regla de una sola vez: solo editable en etapa Solicitud). El endpoint /sunat ya soportaba re-validacion; era solo bloqueo de frontend. (2) B2C kanban: linea de correo electronico debajo del telefono en cada tarjeta, con click-para-copiar (icono cambia a check verde 1.2s, fallback execCommand, estilos dia y noche). Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.403 (Export CSV B2B mejorado para convocatorias/eventos: columnas completas con cabeceras claras (Nombre y apellidos, RUC, Razon social/Empresa, Celular, Correo, Monto solicitado, Rango, Necesidad/Destino de fondos, Origen del contacto, Campana, Funcionario responsable, Etapa, Ticket, Sector, filtros C/G/F, SUNAT, Ingreso). FIX: la columna Responsable apuntaba al campo inexistente responsable (salia vacia) - ahora usa responsableActual. DEDUP automatico por telefono (9 digitos) -> RUC -> email, se queda la mas reciente; alerta con el conteo de duplicados removidos. Archivo: contactos_b2b_FECHA.csv con BOM. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
