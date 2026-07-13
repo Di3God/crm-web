@@ -1065,6 +1065,46 @@ async function enviarPulsoAhora() {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
+// ===== Bienvenida automática (v1.405) =====
+async function abrirBienvenida() {
+  let d; try { d = await api('/api/bienvenida/config'); } catch (e) { alert('Error: ' + e.message); return; }
+  const c = d.config, R = d.resumen || {};
+  const cwWarn = d.chatwoot ? '' : '<div class="mot-criterio" style="background:#FEF2F2;border-color:#FCA5A5;color:#991B1B">⚠ Chatwoot no está configurado (faltan variables CHATWOOT_* en Railway). La bienvenida no podrá enviarse hasta configurarlo.</div>';
+  const chip = (k, txt, col) => '<span class="cola-res-pill ' + col + '">' + (R[k] || 0) + ' ' + txt + '</span>';
+  const html = '<div class="rev-modal-head" style="background:#7C3AED">💬 Bienvenida automática <span>· primer WhatsApp a cada lead nuevo (B2C y B2B)</span></div>' +
+    '<div class="rev-modal-body">' + cwWarn +
+    '<div class="bv-toggles">' +
+      '<label class="bv-sw"><input type="checkbox" id="bvActiva" ' + (c.activa ? 'checked' : '') + '> <b>Activar bienvenida automática</b></label>' +
+      '<label class="bv-sw"><input type="checkbox" id="bvPrueba" ' + (c.prueba ? 'checked' : '') + '> Modo prueba <span class="sub">(registra lo que enviaría, sin enviar)</span></label>' +
+    '</div>' +
+    '<div class="bv-horario">Horario de envío: de <input type="number" id="bvHoraIni" min="0" max="23" value="' + c.horaIni + '"> a <input type="number" id="bvHoraFin" min="1" max="24" value="' + c.horaFin + '"> h (fuera de horario se encola hasta la mañana)</div>' +
+    '<div class="cont-sec-tit" style="margin-top:14px">Plantilla B2C <span class="sub">variables: {nombre} {fuente}</span></div>' +
+    '<textarea id="bvB2C" class="bv-ta" rows="4">' + (c.b2c || '').replace(/</g, '&lt;') + '</textarea>' +
+    '<div class="cont-sec-tit" style="margin-top:12px">Plantilla B2B <span class="sub">variables: {nombre} {empresa} {fuente}</span></div>' +
+    '<textarea id="bvB2B" class="bv-ta" rows="4">' + (c.b2b || '').replace(/</g, '&lt;') + '</textarea>' +
+    '<div class="pw-foot"><button class="btn" onclick="guardarBienvenida()">💾 Guardar</button></div>' +
+    '<div class="cont-sec-tit" style="margin-top:16px">Estado de envíos</div>' +
+    '<div class="cola-resumen">' + chip('enviado', 'enviados', 'nv-baja') + chip('encolado', 'en cola', 'nv-media') + chip('prueba', 'en prueba', 'nv-baja') + chip('sin_conversacion', 'sin conversación', 'nv-alta') + chip('error', 'con error', 'nv-critica') + '</div>' +
+    '<div class="mot-criterio" style="margin-top:12px">ℹ️ <b>Sobre "sin conversación":</b> WhatsApp no permite iniciar un chat libre con quien no te ha escrito antes. Los leads de formulario Meta/landing que aún no escribieron caen aquí — para saludarlos automáticamente se necesita una <b>plantilla aprobada por Meta</b> en Chatwoot. Los que sí te escribieron (click-to-WhatsApp) reciben la bienvenida al instante.</div>' +
+    '</div>';
+  mostrarRevModal(html, true);
+}
+async function guardarBienvenida() {
+  const body = {
+    activa: $('bvActiva').checked,
+    prueba: $('bvPrueba').checked,
+    b2c: $('bvB2C').value,
+    b2b: $('bvB2B').value,
+    horaIni: Number($('bvHoraIni').value),
+    horaFin: Number($('bvHoraFin').value)
+  };
+  try {
+    await api('/api/bienvenida/config', { method: 'PUT', body: JSON.stringify(body) });
+    const m = document.getElementById('revEmbudoModal'); if (m) m.remove();
+    alert('✅ Configuración de bienvenida guardada.');
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 function renderKanban() {
   if (!CAT || !CAT.kanbanColumnas) return; // catálogos aún cargando (arranque): se pinta al llegar los leads
   const lista = leadsVisibles(false).filter(l => l.etapa !== 'Cerrado ganado' && l.etapa !== 'Cerrado perdido');
@@ -4452,16 +4492,16 @@ async function descargarB2BCsv() {
     const cols = [
       ['codigo', 'Código'], ['contacto', 'Nombre y apellidos'], ['ruc', 'RUC'], ['razonSocial', 'Razón social / Empresa'],
       ['telefono', 'Celular'], ['email', 'Correo electrónico'],
-      ['montoSolicitado', 'Monto solicitado'], ['montoRango', 'Rango de monto'], ['destinoFondos', 'Necesidad / Destino de fondos'],
-      ['origen', 'Origen del contacto'], ['campana', 'Campaña'],
+      ['montoSolicitado', 'Monto solicitado'], ['destinoFondos', 'Necesidad / Destino de fondos'], ['fuenteRepago', 'Fuente de repago'],
+      ['fuente', 'Origen del contacto'], ['campana', 'Campaña'],
       ['responsableActual', 'Funcionario responsable'],
-      ['estado', 'Etapa'], ['ticket', 'Ticket'], ['sector', 'Sector'],
+      ['estado', 'Etapa'], ['ticket', 'Ticket'], ['sector', 'Sector'], ['actividad', 'Actividad'],
       ['resultadoCredito', 'Crédito'], ['resultadoGarantia', 'Garantía'], ['resultadoFinanzas', 'Finanzas'],
       ['sunatEstado', 'SUNAT'], ['fechaIngreso', 'Ingreso']
     ];
     const esc = v => { const t = (v == null ? '' : String(v)).replace(/"/g, '""'); return /[",\n;]/.test(t) ? '"' + t + '"' : t; };
     const head = cols.map(c => c[1]).join(';');
-    const body = rows.map(r => cols.map(c => esc(r[c[0]] != null ? r[c[0]] : r[c[0] === 'responsableActual' ? 'responsable' : c[0]])).join(';')).join('\n');
+    const body = rows.map(r => cols.map(c => esc(r[c[0]])).join(';')).join('\n');
     const csv = '\ufeff' + head + '\n' + body; // BOM para Excel/Sheets
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

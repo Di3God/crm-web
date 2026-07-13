@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MiTasaTop">
-<link rel="stylesheet" href="styles.css?v=1403">
+<link rel="stylesheet" href="styles.css?v=1405">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
@@ -220,6 +220,7 @@
         <button class="btn sec" onclick="cargarComite()">⟳</button>
       </div>
       <div class="com-botones">
+        <button class="btn sec soloAdminJefa oculto" id="comBienvBtn" onclick="abrirBienvenida()">💬 Bienvenida auto</button>
         <button class="btn sec soloAdminJefa oculto" id="comPulsoBtn" onclick="abrirPulsoMetas()">🎯 Pulso del día</button>
         <button class="btn sec" id="comAnunBtn" onclick="verRendimientoAnuncios()" style="display:none">📣 Anuncios</button>
         <button class="btn sec" id="comDesestBtn" onclick="verAnalisisMotivos()" style="display:none">🔍 Ver desestimados</button>
@@ -1340,7 +1341,7 @@
   </div>
 </div>
 
-<script src="app.js?v=1403"></script>
+<script src="app.js?v=1405"></script>
 
 <!-- Softphone Aircall embebido (persistente en toda la app) -->
 <button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>

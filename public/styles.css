@@ -3114,3 +3114,13 @@ body.night .pm-b2b label { color: #9DB0C6 !important; }
 body.night .kmail { color:#9DB0C6 !important; }
 body.night .kmail:hover { background:#16243B !important; color:#7FB0FF !important; }
 body.night .kmail.kmail-ok { background:#143223 !important; color:#7CD9A5 !important; }
+
+/* Panel de bienvenida automática */
+.bv-toggles { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.bv-sw { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.bv-horario { font-size: 12.5px; color: #475569; margin-bottom: 6px; }
+.bv-horario input { width: 52px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; text-align: center; }
+.bv-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; font-family: inherit; resize: vertical; line-height: 1.5; }
+body.night .bv-ta { background: #1A2534 !important; border-color: #2A3849 !important; color: #EAF1FA !important; }
+body.night .bv-horario, body.night .bv-sw { color: #9DB0C6 !important; }
+body.night .bv-horario input { background: #1A2534 !important; border-color: #2A3849 !important; color: #EAF1FA !important; }

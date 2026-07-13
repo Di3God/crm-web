@@ -1317,6 +1317,8 @@ function procesarSolicitudB2B(norm, opts = {}) {
     enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
   }
   try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
+  // Bienvenida automática B2B (todo lead creado recibe el saludo, sin importar foco/asignación).
+  bienvenida.saludar({ codigo, nombre: norm.contacto, telefono: norm.telefono, fuente: norm.origen, razonSocial: norm.razonSocial }, 'b2b');
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
 }
 
@@ -1406,6 +1408,8 @@ const dashB2B = require('./dashboard-b2b.js')({ db, etapaKanbanB2B, priorityScor
 // alertasWAB2B.iniciarCortes(); // DESACTIVADO temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos. Los 3 cortes se pueden enviar manualmente con /api/b2b/alertas-wa/enviar o reactivar aquí.
 // Watchdog de leads: avisa al grupo de marketing (WA_GRUPO_MKT_JID) cuando dejan de llegar leads.
 const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
+const cw = require('./chatwoot');
+const bienvenida = require('./bienvenida-auto.js')({ db, cw, normalizarCelular: L.normalizarCelular });
 // v1.401: Pulso del día (reemplaza los cortes anteriores de alertas-wa: un bloque por grupo, 3 cortes).
 const pulsoDia = require('./pulso-dia.js')({ db, enviarAlertaWA, peruFecha, construirRankingDia, consolidarLead: leadConsolidado, L, etapaKanbanB2B, slaEtapaB2B });
 // Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
@@ -1413,6 +1417,7 @@ const metaInsights = require('./meta-insights.js')({ db });
 watchdogLeads.iniciar();
 // alertasWA.iniciarCortes(); // v1.401: APAGADO — reemplazado por el Pulso del día (un bloque por grupo). El envío manual sigue disponible.
 pulsoDia.iniciarCortes();
+bienvenida.iniciarWorker(); // reintenta bienvenidas encoladas (fuera de horario) cada 5 min
 // ===== PULSO DEL DÍA (v1.401): preview, envío manual y metas configurables =====
 // Vista previa del mensaje de un corte, sin enviar (admin/jefa).
 app.get('/api/pulso/preview', (req, res) => {
@@ -1457,6 +1462,25 @@ app.put('/api/pulso/metas', (req, res) => {
   }
   auditar(req, 'pulso_metas', null, 'actualizadas');
   res.json({ ok: true });
+});
+
+// ===== BIENVENIDA AUTOMÁTICA: configuración (solo supervisión) =====
+app.get('/api/bienvenida/config', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  res.json({ config: bienvenida.getConfig(), resumen: bienvenida.resumen(), default: bienvenida.PLANTILLA_DEF, chatwoot: cw.cwConfigurado() });
+});
+app.put('/api/bienvenida/config', (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const b = req.body || {};
+  const set = (clave, valor) => db.prepare("INSERT INTO app_config (clave,valor) VALUES (?,?) ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor").run(clave, String(valor));
+  if (b.activa != null) set('bienvenida_activa', b.activa ? '1' : '0');
+  if (b.prueba != null) set('bienvenida_prueba', b.prueba ? '1' : '0');
+  if (typeof b.b2c === 'string') set('bienvenida_b2c', b.b2c.slice(0, 1500));
+  if (typeof b.b2b === 'string') set('bienvenida_b2b', b.b2b.slice(0, 1500));
+  if (b.horaIni != null && isFinite(Number(b.horaIni))) set('bienvenida_hora_ini', Math.max(0, Math.min(23, Number(b.horaIni))));
+  if (b.horaFin != null && isFinite(Number(b.horaFin))) set('bienvenida_hora_fin', Math.max(1, Math.min(24, Number(b.horaFin))));
+  auditar(req, 'bienvenida_config', null, JSON.stringify({ activa: b.activa, prueba: b.prueba }));
+  res.json({ ok: true, config: bienvenida.getConfig() });
 });
 
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
@@ -1572,6 +1596,8 @@ function procesarLeadMarketing(norm, opts = {}) {
          norm.fuente || null, norm.campana || null, norm.conjunto || null, norm.anuncio || null, norm.adId || null,
          gp || null, monto, monto, rango, ahora, gp ? ahora : null);
   registrarAnuncioCatalogo(norm.campana, norm.conjunto, norm.anuncio, norm.adId);
+  // Bienvenida automática (solo leads gestionables; nunca bloquea el flujo).
+  bienvenida.saludar({ codigo, nombre: norm.nombre, telefono: norm.telefonoNormalizado, fuente: norm.fuente }, 'b2c');
   if (gp) {
     notificarAsignacion(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo), gp);
     const gpCorto = String(gp).trim().split(/\s+/)[0] || gp;
@@ -3486,7 +3512,6 @@ app.get('/api/reparto', (req, res) => {
   res.json({ filas, equipo, sinAsignar: sinAsig, tiles, alertas });
 });
 // ===== Mensajería (Chatwoot) — bandeja de WhatsApp embebida (Nivel 2) =====
-const cw = require('./chatwoot');
 
 // Índice de leads por teléfono (últimos 9 dígitos) para casar conversación <-> lead.
 function indiceLeadsPorTelefono() {
@@ -8406,7 +8431,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.403 (Export CSV B2B mejorado para convocatorias/eventos: columnas completas con cabeceras claras (Nombre y apellidos, RUC, Razon social/Empresa, Celular, Correo, Monto solicitado, Rango, Necesidad/Destino de fondos, Origen del contacto, Campana, Funcionario responsable, Etapa, Ticket, Sector, filtros C/G/F, SUNAT, Ingreso). FIX: la columna Responsable apuntaba al campo inexistente responsable (salia vacia) - ahora usa responsableActual. DEDUP automatico por telefono (9 digitos) -> RUC -> email, se queda la mas reciente; alerta con el conteo de duplicados removidos. Archivo: contactos_b2b_FECHA.csv con BOM. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.405 (BIENVENIDA AUTOMATICA via Chatwoot: nuevo modulo bienvenida-auto.js que envia un WhatsApp de bienvenida a cada lead NUEVO gestionable (B2C y B2B) al momento de su creacion. ANTI-DUPLICADO por telefono (9 digitos): cada numero recibe UNA sola bienvenida - los duplicados activos/perdidos/releads no repiten (tabla wa_bienvenida). Plantillas configurables por mundo con variables {nombre}{fuente}{empresa} (app_config). Horario 8-20h Peru (fuera de hora encola, worker reintenta c/5min). Toggle maestro + modo prueba (registra sin enviar). Panel Bienvenida auto en el comite (admin/jefa). Envia via conversacion Chatwoot existente; leads que aun no escribieron quedan sin_conversacion (WhatsApp no permite chat libre sin plantilla Meta aprobada). NO bloquea la creacion del lead. Endpoints /api/bienvenida/config. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
