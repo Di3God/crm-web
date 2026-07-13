@@ -81,7 +81,6 @@ module.exports = function ({ db, cw, normalizarCelular }) {
     try {
       const cfg = getConfig();
       if (!cfg.activa) return;
-      if (!cw || !cw.cwConfigurado || !cw.cwConfigurado()) return;
       const tel = normalizarCelular ? (normalizarCelular(lead.telefono) || lead.telefono) : lead.telefono;
       if (!tel) return;
       const clave = tel9(tel);
@@ -94,11 +93,18 @@ module.exports = function ({ db, cw, normalizarCelular }) {
       const texto = render(mundo === 'b2b' ? cfg.b2b : cfg.b2c, lead);
       const ahora = new Date().toISOString();
 
-      // MODO PRUEBA: no envía, solo registra qué habría enviado.
+      // MODO PRUEBA: no envía, solo registra qué habría enviado (no requiere Chatwoot).
       if (cfg.prueba) {
         db.prepare("INSERT INTO wa_bienvenida (telefono,mundo,codigo,estado,detalle,creado) VALUES (?,?,?,?,?,?)")
           .run(clave, mundo, lead.codigo || null, 'prueba', texto.slice(0, 300), ahora);
         console.log('[Bienvenida][PRUEBA]', mundo, lead.codigo, '→', clave, ':', texto.slice(0, 60));
+        return;
+      }
+
+      // Envío real: requiere Chatwoot configurado (se registra el error para que sea visible).
+      if (!cw || !cw.cwConfigurado || !cw.cwConfigurado()) {
+        db.prepare("INSERT INTO wa_bienvenida (telefono,mundo,codigo,estado,detalle,creado) VALUES (?,?,?,?,?,?)")
+          .run(clave, mundo, lead.codigo || null, 'error', 'Chatwoot no configurado (faltan variables CHATWOOT_* en Railway)', ahora);
         return;
       }
 

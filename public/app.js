@@ -1065,34 +1065,57 @@ async function enviarPulsoAhora() {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
-// ===== Bienvenida automática (v1.405) =====
+// ===== Bienvenida automática (v1.406: interfaz clara con selector de modo) =====
 async function abrirBienvenida() {
   let d; try { d = await api('/api/bienvenida/config'); } catch (e) { alert('Error: ' + e.message); return; }
   const c = d.config, R = d.resumen || {};
-  const cwWarn = d.chatwoot ? '' : '<div class="mot-criterio" style="background:#FEF2F2;border-color:#FCA5A5;color:#991B1B">⚠ Chatwoot no está configurado (faltan variables CHATWOOT_* en Railway). La bienvenida no podrá enviarse hasta configurarlo.</div>';
+  const modo = !c.activa ? 'off' : (c.prueba ? 'prueba' : 'on');
+  const cwWarn = d.chatwoot ? '' : '<div class="bv-alerta">⚠ <b>Chatwoot no está configurado</b> (faltan variables CHATWOOT_* en Railway). Puedes usar el modo prueba, pero no se enviará nada real hasta configurarlo.</div>';
   const chip = (k, txt, col) => '<span class="cola-res-pill ' + col + '">' + (R[k] || 0) + ' ' + txt + '</span>';
   const html = '<div class="rev-modal-head" style="background:#7C3AED">💬 Bienvenida automática <span>· primer WhatsApp a cada lead nuevo (B2C y B2B)</span></div>' +
     '<div class="rev-modal-body">' + cwWarn +
-    '<div class="bv-toggles">' +
-      '<label class="bv-sw"><input type="checkbox" id="bvActiva" ' + (c.activa ? 'checked' : '') + '> <b>Activar bienvenida automática</b></label>' +
-      '<label class="bv-sw"><input type="checkbox" id="bvPrueba" ' + (c.prueba ? 'checked' : '') + '> Modo prueba <span class="sub">(registra lo que enviaría, sin enviar)</span></label>' +
+    '<div class="bv-banner" id="bvBanner"></div>' +
+    '<div class="bv-sec-tit">¿En qué modo trabaja?</div>' +
+    '<div class="bv-modos" id="bvModos">' +
+      '<div class="bv-modo" data-m="off" onclick="bvSetModo(\'off\')"><div class="bv-modo-ico">⏹</div><b>Apagado</b><small>No hace nada</small></div>' +
+      '<div class="bv-modo" data-m="prueba" onclick="bvSetModo(\'prueba\')"><div class="bv-modo-ico">🧪</div><b>Modo prueba</b><small>Registra a quién saludaría, sin enviar nada</small></div>' +
+      '<div class="bv-modo" data-m="on" onclick="bvSetModo(\'on\')"><div class="bv-modo-ico">🚀</div><b>Activo</b><small>Envía la bienvenida real por WhatsApp</small></div>' +
     '</div>' +
-    '<div class="bv-horario">Horario de envío: de <input type="number" id="bvHoraIni" min="0" max="23" value="' + c.horaIni + '"> a <input type="number" id="bvHoraFin" min="1" max="24" value="' + c.horaFin + '"> h (fuera de horario se encola hasta la mañana)</div>' +
-    '<div class="cont-sec-tit" style="margin-top:14px">Plantilla B2C <span class="sub">variables: {nombre} {fuente}</span></div>' +
+    '<div class="bv-sec-tit">Horario de envío</div>' +
+    '<div class="bv-horario">De <input type="number" id="bvHoraIni" min="0" max="23" value="' + c.horaIni + '"> h a <input type="number" id="bvHoraFin" min="1" max="24" value="' + c.horaFin + '"> h · fuera de este horario el saludo espera hasta la mañana siguiente</div>' +
+    '<div class="bv-sec-tit">Mensaje para leads B2C <small>· puedes usar {nombre} y {fuente}</small></div>' +
     '<textarea id="bvB2C" class="bv-ta" rows="4">' + (c.b2c || '').replace(/</g, '&lt;') + '</textarea>' +
-    '<div class="cont-sec-tit" style="margin-top:12px">Plantilla B2B <span class="sub">variables: {nombre} {empresa} {fuente}</span></div>' +
+    '<div class="bv-sec-tit">Mensaje para leads B2B <small>· puedes usar {nombre}, {empresa} y {fuente}</small></div>' +
     '<textarea id="bvB2B" class="bv-ta" rows="4">' + (c.b2b || '').replace(/</g, '&lt;') + '</textarea>' +
-    '<div class="pw-foot"><button class="btn" onclick="guardarBienvenida()">💾 Guardar</button></div>' +
-    '<div class="cont-sec-tit" style="margin-top:16px">Estado de envíos</div>' +
-    '<div class="cola-resumen">' + chip('enviado', 'enviados', 'nv-baja') + chip('encolado', 'en cola', 'nv-media') + chip('prueba', 'en prueba', 'nv-baja') + chip('sin_conversacion', 'sin conversación', 'nv-alta') + chip('error', 'con error', 'nv-critica') + '</div>' +
-    '<div class="mot-criterio" style="margin-top:12px">ℹ️ <b>Sobre "sin conversación":</b> WhatsApp no permite iniciar un chat libre con quien no te ha escrito antes. Los leads de formulario Meta/landing que aún no escribieron caen aquí — para saludarlos automáticamente se necesita una <b>plantilla aprobada por Meta</b> en Chatwoot. Los que sí te escribieron (click-to-WhatsApp) reciben la bienvenida al instante.</div>' +
+    '<div class="bv-acciones">' +
+      '<button class="btn" onclick="guardarBienvenida()">💾 Guardar cambios</button>' +
+      '<button class="btn sec" onclick="probarBienvenida()">🧪 Probar ahora con un lead ficticio</button>' +
+    '</div>' +
+    '<div id="bvProbarRes"></div>' +
+    '<div class="bv-sec-tit" style="margin-top:16px">Contadores de la bienvenida</div>' +
+    '<div class="cola-resumen">' + chip('enviado', 'enviados', 'nv-baja') + chip('encolado', 'esperando horario', 'nv-media') + chip('prueba', 'registrados en prueba', 'nv-baja') + chip('sin_conversacion', 'sin conversación previa', 'nv-alta') + chip('error', 'con error', 'nv-critica') + '</div>' +
+    '<div class="mot-criterio" style="margin-top:12px">ℹ️ <b>"Sin conversación previa"</b>: WhatsApp no permite escribirle a alguien que nunca te escribió. Los leads de formulario Meta/landing que aún no mandaron mensaje caen aquí — para saludarlos se necesita una <b>plantilla aprobada por Meta</b> en Chatwoot. Los que sí te escribieron (click-to-WhatsApp) reciben la bienvenida al instante.</div>' +
     '</div>';
   mostrarRevModal(html, true);
+  window._bvModo = modo;
+  bvSetModo(modo, true);
+}
+function bvSetModo(m, soloVisual) {
+  window._bvModo = m;
+  document.querySelectorAll('#bvModos .bv-modo').forEach(el => el.classList.toggle('bv-modo-act', el.dataset.m === m));
+  const B = $('bvBanner');
+  if (B) {
+    if (m === 'off') { B.className = 'bv-banner bv-b-off'; B.innerHTML = '🔴 <b>APAGADA</b> — no se registra ni se envía nada'; }
+    else if (m === 'prueba') { B.className = 'bv-banner bv-b-prueba'; B.innerHTML = '🟡 <b>EN MODO PRUEBA</b> — registra a quién saludaría (mira los contadores), sin enviar mensajes'; }
+    else { B.className = 'bv-banner bv-b-on'; B.innerHTML = '🟢 <b>ACTIVA</b> — cada lead nuevo recibe su bienvenida por WhatsApp'; }
+    if (!soloVisual) B.innerHTML += ' · <i>recuerda Guardar</i>';
+  }
 }
 async function guardarBienvenida() {
+  const m = window._bvModo || 'off';
   const body = {
-    activa: $('bvActiva').checked,
-    prueba: $('bvPrueba').checked,
+    activa: m !== 'off',
+    prueba: m === 'prueba',
     b2c: $('bvB2C').value,
     b2b: $('bvB2B').value,
     horaIni: Number($('bvHoraIni').value),
@@ -1100,9 +1123,18 @@ async function guardarBienvenida() {
   };
   try {
     await api('/api/bienvenida/config', { method: 'PUT', body: JSON.stringify(body) });
-    const m = document.getElementById('revEmbudoModal'); if (m) m.remove();
-    alert('✅ Configuración de bienvenida guardada.');
+    bvSetModo(m, true);
+    const B = $('bvBanner'); if (B) B.innerHTML += ' · ✅ <b>guardado</b>';
   } catch (e) { alert('Error: ' + e.message); }
+}
+async function probarBienvenida() {
+  const cont = $('bvProbarRes'); if (cont) cont.innerHTML = '<div class="bv-probando">Simulando un lead entrante…</div>';
+  try {
+    const r = await api('/api/bienvenida/probar', { method: 'POST', body: JSON.stringify({}) });
+    const res = r.resultado || {};
+    const txt = { prueba: '🧪 Registrado en modo prueba (no se envió nada) — el circuito funciona ✓', enviado: '✅ ¡Enviado de verdad por Chatwoot!', encolado: '🕐 Encolado (fuera de horario) — se enviará en la mañana', sin_conversacion: '📵 Sin conversación previa en Chatwoot (esperado para un número ficticio) — el circuito funciona ✓', error: '❌ Error: ' + (res.detalle || '') };
+    if (cont) cont.innerHTML = '<div class="bv-probar-res">' + (txt[res.estado] || (res.estado ? 'Estado: ' + res.estado : '⚠ No se registró nada — ¿la bienvenida está APAGADA? Elige un modo y guarda primero.')) + '</div>';
+  } catch (e) { if (cont) cont.innerHTML = '<div class="bv-probar-res">Error: ' + e.message + '</div>'; }
 }
 
 function renderKanban() {

@@ -1483,6 +1483,15 @@ app.put('/api/bienvenida/config', (req, res) => {
   res.json({ ok: true, config: bienvenida.getConfig() });
 });
 
+// Simula un lead entrante para verificar el circuito completo (respeta el modo actual).
+app.post('/api/bienvenida/probar', async (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  const tel = (req.body && req.body.telefono) ? String(req.body.telefono) : ('9000' + String(Date.now()).slice(-5));
+  await bienvenida.saludar({ codigo: 'TEST-' + Date.now(), nombre: 'Lead De Prueba', telefono: tel, fuente: 'prueba manual' }, 'b2c');
+  const ultimo = db.prepare('SELECT telefono, estado, detalle FROM wa_bienvenida ORDER BY id DESC LIMIT 1').get();
+  res.json({ ok: true, resultado: ultimo || null, resumen: bienvenida.resumen() });
+});
+
 // Vista previa de un corte sin enviar (admin/jefa): /api/wa/plan?corte=9am|1pm|6pm
 app.get('/api/wa/plan', soloAdminOJefa, async (req, res) => {
   const corte = ['9am', '1pm', '6pm'].includes(req.query.corte) ? req.query.corte : '9am';
@@ -1848,6 +1857,8 @@ app.post('/api/leads', soloAdmin, (req, res) => {
          fuente || null, campana || null, conjunto || null, anuncio || null, adId || null,
          asesor || null, monto, monto, rango, fechaCarga, asesor ? fechaCarga : null, origen);
   if (campana || anuncio) { try { registrarAnuncioCatalogo(campana, conjunto, anuncio, adId); } catch (e) { } }
+  // Bienvenida automática también para leads creados manualmente.
+  bienvenida.saludar({ codigo, nombre, telefono: L.normalizarCelular(telefono) || telefono, fuente }, 'b2c');
   auditar(req, 'crear lead manual', codigo, `${nombre} · ${fechaCarga.slice(0, 10)} · ${origen}`);
   res.json(leadConsolidado(db.prepare('SELECT * FROM leads WHERE codigo = ?').get(codigo)));
 });
@@ -8431,7 +8442,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.405 (BIENVENIDA AUTOMATICA via Chatwoot: nuevo modulo bienvenida-auto.js que envia un WhatsApp de bienvenida a cada lead NUEVO gestionable (B2C y B2B) al momento de su creacion. ANTI-DUPLICADO por telefono (9 digitos): cada numero recibe UNA sola bienvenida - los duplicados activos/perdidos/releads no repiten (tabla wa_bienvenida). Plantillas configurables por mundo con variables {nombre}{fuente}{empresa} (app_config). Horario 8-20h Peru (fuera de hora encola, worker reintenta c/5min). Toggle maestro + modo prueba (registra sin enviar). Panel Bienvenida auto en el comite (admin/jefa). Envia via conversacion Chatwoot existente; leads que aun no escribieron quedan sin_conversacion (WhatsApp no permite chat libre sin plantilla Meta aprobada). NO bloquea la creacion del lead. Endpoints /api/bienvenida/config. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.406 (Bienvenida automatica v2 - UX clara + fixes: (1) INTERFAZ REDISENADA: selector de 3 modos imposible de confundir (Apagado / Modo prueba / Activo, tarjetas clicables) + banner de estado gigante (roja/amarilla/verde) + boton Probar ahora con lead ficticio que verifica el circuito y muestra el resultado. (2) FIX: el modo prueba ya NO depende de Chatwoot (el chequeo estaba antes de la rama de prueba y bloqueaba el registro); si Chatwoot falta en modo real, se registra como error visible. (3) Enganchada tambien la creacion MANUAL de leads B2C. (4) Endpoint POST /api/bienvenida/probar. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

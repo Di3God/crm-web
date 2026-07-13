@@ -3124,3 +3124,29 @@ body.night .kmail.kmail-ok { background:#143223 !important; color:#7CD9A5 !impor
 body.night .bv-ta { background: #1A2534 !important; border-color: #2A3849 !important; color: #EAF1FA !important; }
 body.night .bv-horario, body.night .bv-sw { color: #9DB0C6 !important; }
 body.night .bv-horario input { background: #1A2534 !important; border-color: #2A3849 !important; color: #EAF1FA !important; }
+
+/* Bienvenida v1.406: interfaz clara */
+.bv-alerta { background:#FEF2F2; border:1px solid #FCA5A5; color:#991B1B; border-radius:9px; padding:10px 13px; font-size:12.5px; margin-bottom:12px; }
+.bv-banner { border-radius:10px; padding:12px 15px; font-size:13.5px; margin-bottom:14px; }
+.bv-b-off { background:#F1F5F9; color:#475569; border:1px solid #CBD5E1; }
+.bv-b-prueba { background:#FEF9C3; color:#854D0E; border:1px solid #FDE047; }
+.bv-b-on { background:#DCFCE7; color:#166534; border:1px solid #86EFAC; }
+.bv-sec-tit { font-size:12px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:.4px; margin:14px 0 8px; }
+.bv-sec-tit small { font-weight:600; text-transform:none; color:#94A3B8; letter-spacing:0; }
+.bv-modos { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.bv-modo { border:2px solid #E2E8F0; border-radius:12px; padding:14px 12px; text-align:center; cursor:pointer; transition:all .13s; background:#fff; }
+.bv-modo:hover { border-color:#A5B4FC; }
+.bv-modo b { display:block; font-size:13px; color:#1E293B; margin:4px 0 3px; }
+.bv-modo small { font-size:10.5px; color:#94A3B8; line-height:1.35; display:block; }
+.bv-modo-ico { font-size:20px; }
+.bv-modo-act { border-color:#7C3AED; background:#F5F3FF; box-shadow:0 2px 8px rgba(124,58,237,.15); }
+.bv-modo-act b { color:#6D28D9; }
+.bv-acciones { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+.bv-probando { font-size:12.5px; color:#64748B; padding:8px 2px; }
+.bv-probar-res { background:#F8FAFC; border:1px solid #E2E8F0; border-radius:9px; padding:10px 13px; font-size:12.5px; margin-top:10px; }
+body.night .bv-modo { background:#1A2534 !important; border-color:#2A3849 !important; }
+body.night .bv-modo b { color:#EAF1FA !important; }
+body.night .bv-modo-act { border-color:#8B5CF6 !important; background:#241B3A !important; }
+body.night .bv-sec-tit { color:#9DB0C6 !important; }
+body.night .bv-probar-res { background:#1A2534 !important; border-color:#2A3849 !important; color:#D8E0EC !important; }
+body.night .bv-b-off { background:#22303F !important; color:#9DB0C6 !important; border-color:#33465C !important; }
