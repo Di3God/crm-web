@@ -27,12 +27,24 @@ async function cwFetch(path, opts = {}) {
 }
 
 // Lista de conversaciones del inbox (las abiertas). Chatwoot pagina en data.payload.
+// Robusto: si el filtro por inbox falla (p. ej. inbox mal fijado tras un update),
+// reintenta sin el filtro antes de rendirse.
 async function listarConversaciones() {
-  const q = CW_INBOX ? ('?inbox_id=' + encodeURIComponent(CW_INBOX) + '&status=open') : '?status=open';
-  const data = await cwFetch('/conversations' + q);
-  if (data && data.data && Array.isArray(data.data.payload)) return data.data.payload;
-  if (data && Array.isArray(data.payload)) return data.payload;
-  return [];
+  const traer = async (conInbox) => {
+    let q = '?status=open&page=1';
+    if (conInbox && CW_INBOX) q += '&inbox_id=' + encodeURIComponent(CW_INBOX);
+    const data = await cwFetch('/conversations' + q);
+    if (data && data.data && Array.isArray(data.data.payload)) return data.data.payload;
+    if (data && Array.isArray(data.payload)) return data.payload;
+    return [];
+  };
+  try {
+    return await traer(true);
+  } catch (e) {
+    // Si el filtro por inbox provocó el error, reintentar sin él (el inbox pudo cambiar de id).
+    if (CW_INBOX) { try { return await traer(false); } catch (e2) { throw e2; } }
+    throw e;
+  }
 }
 
 // Trae una conversación puntual (para validar pertenencia por teléfono).
@@ -62,7 +74,34 @@ function telefonoDeConversacion(c) {
   return s.phone_number || s.identifier || '';
 }
 
+// Diagnóstico: prueba la conexión paso a paso y devuelve dónde falla exactamente.
+async function diagnostico() {
+  const out = { url: CW_URL, account: CW_ACCOUNT, inbox: CW_INBOX || '(no fijado)', tokenPresente: !!CW_TOKEN, pasos: [] };
+  if (!cwConfigurado()) { out.pasos.push({ paso: 'config', ok: false, detalle: 'Faltan CHATWOOT_URL o CHATWOOT_API_TOKEN' }); return out; }
+  // 1. ¿Responde el perfil (token válido)?
+  try {
+    const r = await fetch(CW_URL + '/api/v1/profile', { headers: { 'api_access_token': CW_TOKEN } });
+    const t = await r.text().catch(() => '');
+    out.pasos.push({ paso: 'perfil (token)', ok: r.ok, status: r.status, detalle: r.ok ? 'token válido' : t.slice(0, 150) });
+  } catch (e) { out.pasos.push({ paso: 'perfil (token)', ok: false, detalle: e.message }); }
+  // 2. ¿Existe la cuenta?
+  try {
+    const r = await fetch(CW_URL + '/api/v1/accounts/' + CW_ACCOUNT + '/conversations?status=open', { headers: { 'api_access_token': CW_TOKEN } });
+    const t = await r.text().catch(() => '');
+    out.pasos.push({ paso: 'conversaciones (cuenta ' + CW_ACCOUNT + ')', ok: r.ok, status: r.status, detalle: r.ok ? 'OK' : t.slice(0, 250) });
+  } catch (e) { out.pasos.push({ paso: 'conversaciones', ok: false, detalle: e.message }); }
+  // 3. ¿El inbox fijado existe? (si está fijado)
+  if (CW_INBOX) {
+    try {
+      const r = await fetch(CW_URL + '/api/v1/accounts/' + CW_ACCOUNT + '/conversations?inbox_id=' + encodeURIComponent(CW_INBOX) + '&status=open', { headers: { 'api_access_token': CW_TOKEN } });
+      const t = await r.text().catch(() => '');
+      out.pasos.push({ paso: 'inbox ' + CW_INBOX, ok: r.ok, status: r.status, detalle: r.ok ? 'OK' : t.slice(0, 250) });
+    } catch (e) { out.pasos.push({ paso: 'inbox', ok: false, detalle: e.message }); }
+  }
+  return out;
+}
+
 module.exports = {
   cwConfigurado, listarConversaciones, obtenerConversacion, mensajesDe, enviarMensaje,
-  telefonoDeConversacion, CW_URL,
+  telefonoDeConversacion, diagnostico, CW_URL,
 };

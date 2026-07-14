@@ -3535,6 +3535,12 @@ function indiceLeadsPorTelefono() {
 }
 
 // Lista de conversaciones, filtrada por rol: la GP solo ve las de SUS leads; admin/jefa ven todo.
+app.get('/api/chat/diagnostico', async (req, res) => {
+  if (!veTodo(req.user)) return res.status(403).json({ error: 'Solo supervisión' });
+  try { res.json(await cw.diagnostico()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/chat/conversaciones', async (req, res) => {
   if (!cw.cwConfigurado()) return res.json({ configurado: false, conversaciones: [] });
   try {
@@ -8468,7 +8474,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.408 (Ajuste alertas B2B: (1) el grupo B2B YA NO recibe los cortes automaticos 9am/1pm/6pm (enviarPulso ahora solo manda el B2C; el corte B2B sigue disponible manual desde el panel). (2) NUEVA alerta B2B sin atender a los 30 min: al crear un lead B2B asignado, si el funcionario no registra gestion en 30 min, llega al grupo B2B el mensaje formato B2C: Sin atender (30 min) - EMPRESA / funcionario no lo dejes enfriar. Respeta horario laboral, no repite si ya hubo gestion, ignora archivados/No elegible. Al grupo B2B ahora solo llegan: leads nuevos + esta alerta de 30 min. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.409 (Diagnostico Chatwoot: (1) nuevo endpoint /api/chat/diagnostico (admin) que prueba la conexion paso a paso: token valido (perfil), cuenta, e inbox - devuelve el status y detalle de CADA paso para saber EXACTO por que falla el 500. (2) listarConversaciones mas robusto: si el filtro por inbox_id falla (p.ej. el inbox cambio de id tras un update de Chatwoot), reintenta sin filtro antes de rendirse; agrega page=1. El 500 viene de Chatwoot, no del CRM (Chatwoot directo funciona) - probable token expirado, cambio de account/inbox id, o update de version. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
