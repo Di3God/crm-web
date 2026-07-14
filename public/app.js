@@ -3247,13 +3247,13 @@ document.addEventListener('mouseout', e => { const t = e.target.closest && e.tar
 document.addEventListener('click', tipHide, true);
 
 // ---------- Mensajería (Chatwoot embebido, Nivel 2) ----------
-let CHAT_CONVS = [], CHAT_ACTIVA = null, CHAT_TIMER = null;
+let CHAT_CONVS = [], CHAT_ACTIVA = null, CHAT_TIMER = null, CHAT_REINTENTO = null;
 async function cargarChat() {
   const bloq = $('chatBloqueo');
   if (!veTodoJS()) { if (bloq) bloq.classList.remove('oculto'); return; } // GPs: en construcción
   if (bloq) bloq.classList.add('oculto');
   const cont = $('chatLista'); if (!cont) return;
-  cont.innerHTML = '<div class="chat-cargando">Cargando…</div>';
+  if (!CHAT_CONVS.length) cont.innerHTML = '<div class="chat-cargando">Cargando…</div>';
   try {
     const d = await api('/api/chat/conversaciones');
     if (!d.configurado) {
@@ -3262,7 +3262,21 @@ async function cargarChat() {
     }
     CHAT_CONVS = d.conversaciones || [];
     renderChatLista();
+    // Si vienen del caché (Chatwoot con hipo), avisar suave y reintentar en 20s.
+    if (d.desactualizado) {
+      const min = Math.max(1, Math.round((d.antiguedadSeg || 0) / 60));
+      cont.insertAdjacentHTML('afterbegin', '<div class="chat-cache-aviso">📶 Chatwoot está inestable — mostrando la bandeja de hace ' + min + ' min · reintentando…</div>');
+      clearTimeout(CHAT_REINTENTO); CHAT_REINTENTO = setTimeout(cargarChat, 20000);
+    }
     iniciarChatSSE();
+    // Polling de respaldo (además del SSE): la lista se refresca sola cada 15s
+    // mientras la vista de mensajería esté abierta. Si el webhook de Chatwoot
+    // falla o no está configurado, igual llega todo sin tocar nada.
+    clearInterval(window.CHAT_POLL);
+    window.CHAT_POLL = setInterval(() => {
+      const vista = document.getElementById('v-chat');
+      if (vista && vista.classList.contains('act')) refrescarListaChat();
+    }, 15000);
     if (CHAT_ABRIR_LEAD) {
       const c = CHAT_CONVS.find(x => x.codigoLead === CHAT_ABRIR_LEAD);
       const cod = CHAT_ABRIR_LEAD; CHAT_ABRIR_LEAD = null;
@@ -3270,8 +3284,25 @@ async function cargarChat() {
       else chatSinConversacion(cod);
     }
   } catch (e) {
-    cont.innerHTML = '<div class="chat-aviso">No se pudo cargar la bandeja: ' + e.message + '</div>';
+    // Sin caché disponible: mostrar el error PERO reintentar solo cada 20s (no quedarse muerto).
+    cont.innerHTML = '<div class="chat-aviso">Chatwoot no responde en este momento (suele recuperarse solo). Reintentando en 20 segundos…<br><small>' + e.message + '</small></div>';
+    clearTimeout(CHAT_REINTENTO); CHAT_REINTENTO = setTimeout(cargarChat, 20000);
   }
+}
+// Color de avatar estable por nombre (paleta Tasatop).
+function chatAvaColor(n) {
+  const cols = ['#0B72E8', '#7C3AED', '#0F766E', '#C2410C', '#BE185D', '#4338CA', '#15803D', '#B45309'];
+  let h = 0; const s = String(n || '?'); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return cols[h % cols.length];
+}
+// Tiempo relativo corto (para "sin respuesta").
+function chatRel(ts) {
+  if (!ts) return '';
+  const ms = Date.now() - (typeof ts === 'number' ? ts * 1000 : new Date(ts).getTime());
+  if (!isFinite(ms) || ms < 0) return '';
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return m + ' min'; const h = Math.floor(m / 60);
+  if (h < 24) return h + ' h'; return Math.floor(h / 24) + ' d';
 }
 function renderChatLista() {
   const cont = $('chatLista');
@@ -3282,20 +3313,25 @@ function renderChatLista() {
     const act = CHAT_ACTIVA && CHAT_ACTIVA.id === c.id ? ' chat-it-act' : '';
     const et = etapaDeLead(c.codigoLead);
     const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa === 'function' ? trEtapa(et) : et) + '</span>' : '';
+    // Prioridad del lead (si está en memoria) + tiempo sin responder cuando hay no-leídos.
+    const lead = c.codigoLead && typeof LEADS !== 'undefined' ? LEADS.find(x => x.codigo === c.codigoLead) : null;
+    const prio = lead && lead.prioridad ? '<span class="chat-prio chat-prio-' + String(lead.prioridad).toLowerCase().replace(/\s+/g, '') + '">' + lead.prioridad + '</span>' : '';
+    const sinResp = (c.noLeidos > 0 && c.ts) ? '<span class="chat-sinresp">⏱ ' + chatRel(c.ts) + ' sin responder</span>' : '';
     return '<div class="chat-it' + act + '" onclick="abrirChat(' + c.id + ')">' +
-      '<div class="chat-ava">' + ini + '</div>' +
+      '<div class="chat-ava" style="background:' + chatAvaColor(c.nombre) + '">' + ini + '</div>' +
       '<div class="chat-it-txt">' +
         '<div class="chat-it-top"><span class="chat-it-nom">' + chatEsc(c.nombre || '—') + '</span>' +
-          '<span class="chat-it-hora">' + chatHora(c.ts) + '</span></div>' +
-        (c.asesor ? '<div class="chat-it-emp">' + chatEsc(c.asesor) + '</div>' : '') +
+          '<span class="chat-it-hora' + (c.noLeidos > 0 ? ' chat-hora-verde' : '') + '">' + chatHora(c.ts) + '</span></div>' +
+        (c.asesor ? '<div class="chat-it-emp">👤 ' + chatEsc(c.asesor) + '</div>' : '') +
         '<div class="chat-it-bot"><span class="chat-it-last">' + chatEsc(c.ultimo || '') + '</span>' +
           (c.noLeidos > 0 ? '<span class="chat-badge">' + c.noLeidos + '</span>' : '') + '</div>' +
-        tag +
+        '<div class="chat-it-chips">' + tag + prio + sinResp + '</div>' +
       '</div></div>';
   }).join('');
 }
 async function abrirChat(id) {
   CHAT_ACTIVA = CHAT_CONVS.find(c => c.id === id) || { id };
+  CHAT_BUSCA_MSJ = '';
   renderChatLista();
   $('chatVacio').classList.add('oculto');
   $('chatConv').classList.remove('oculto');
@@ -3304,27 +3340,85 @@ async function abrirChat(id) {
   const et = etapaDeLead(c.codigoLead);
   const tag = et ? '<span class="chat-tag" style="' + estiloEtapaChip(et) + '">' + (typeof trEtapa === 'function' ? trEtapa(et) : et) + '</span>' : '';
   $('chatCab').innerHTML =
-    '<div class="chat-cab-l"><div class="chat-cab-ava">' + ini + '</div>' +
-      '<div><div class="chat-cab-nom">' + chatEsc(c.nombre || '—') + ' ' + tag + '</div>' +
-      '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · ' + chatEsc(c.asesor) : '') + '</div></div></div>' +
+    '<div class="chat-cab-l"><div class="chat-cab-ava" style="background:' + chatAvaColor(c.nombre) + '">' + ini + '</div>' +
+      '<div><div class="chat-cab-nom">' + chatEsc(c.nombre || '—') + ' ' + tag + '<span id="cabScore"></span></div>' +
+      '<div class="chat-cab-sub">' + (c.telefono || '') + (c.asesor ? ' · 👤 ' + chatEsc(c.asesor) : '') + '<span id="cabPipe"></span></div></div></div>' +
     '<div class="chat-cab-r">' +
-      (c.codigoLead
-        ? '<button class="btn sec" onclick="irALead(\'' + c.codigoLead + '\')">Ver lead</button>'
-        : (veTodoJS() ? '<button class="btn" onclick="crearLeadDesdeChat()">+ Crear lead</button>' : '')) +
+      '<button class="cab-ic" title="Llamar" onclick="chatLlamar()">📞</button>' +
+      '<button class="cab-ic cab-off" title="Videollamada (próximamente)">🎥</button>' +
+      '<button class="cab-ic" title="Buscar en la conversación" onclick="toggleBuscaMsj()">🔍</button>' +
+      '<div class="cab-menu-wrap"><button class="cab-ic" title="Más" onclick="toggleCabMenu(event)">⋮</button>' +
+        '<div class="cab-menu oculto" id="cabMenu">' +
+          (c.codigoLead ? '<div class="cab-menu-it" onclick="irALead(\'' + c.codigoLead + '\')">📂 Ver lead completo</div>' : '') +
+          (!c.codigoLead && veTodoJS() ? '<div class="cab-menu-it" onclick="crearLeadDesdeChat()">➕ Crear lead</div>' : '') +
+          '<div class="cab-menu-it" onclick="cargarMensajes()">⟳ Actualizar mensajes</div>' +
+        '</div></div>' +
     '</div>';
+  const hilo = $('chatHilo');
+  hilo.innerHTML = '<div class="chat-skel"><div class="sk-b sk-in"></div><div class="sk-b sk-out"></div><div class="sk-b sk-in sk-w60"></div><div class="sk-b sk-out sk-w40"></div></div>';
   await cargarMensajes();
   renderPlantillas();
   renderFicha();
+  chatInputEstado();
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
-  CHAT_TIMER = setInterval(cargarMensajes, 20000);
+  CHAT_TIMER = setInterval(cargarMensajes, 15000);
   iniciarChatSSE();
+}
+// Barra de búsqueda dentro de la conversación (filtra y resalta client-side).
+let CHAT_BUSCA_MSJ = '';
+function toggleBuscaMsj() {
+  const cab = $('chatCab');
+  let bar = document.getElementById('cabBuscaBar');
+  if (bar) { bar.remove(); CHAT_BUSCA_MSJ = ''; cargarMensajes(); return; }
+  cab.insertAdjacentHTML('afterend', '<div class="cab-busca-bar" id="cabBuscaBar"><input type="text" id="cabBuscaIn" placeholder="Buscar en esta conversación…" oninput="CHAT_BUSCA_MSJ=this.value;cargarMensajes()"><button class="cab-ic" onclick="toggleBuscaMsj()">✕</button></div>');
+  const inp = document.getElementById('cabBuscaIn'); if (inp) inp.focus();
+}
+function toggleCabMenu(ev) {
+  ev.stopPropagation();
+  const m = $('cabMenu'); if (m) m.classList.toggle('oculto');
+  document.addEventListener('click', () => { const mm = $('cabMenu'); if (mm) mm.classList.add('oculto'); }, { once: true });
+}
+function chatLlamar() {
+  const c = CHAT_ACTIVA; if (!c) return;
+  if (c.codigoLead && typeof accionLlamar === 'function') { accionLlamar(c.codigoLead); return; }
+  if (c.telefono) window.open('tel:' + String(c.telefono).replace(/[^0-9+]/g, ''), '_self');
+}
+// Botón de enviar: verde y activo solo cuando hay texto.
+function chatInputEstado() {
+  const inp = $('chatTexto'), btn = $('ciSend');
+  if (btn && inp) btn.classList.toggle('ci-send-on', !!inp.value.trim());
+}
+// Popover de emojis.
+const CHAT_EMOJIS = ['😊', '👍', '🙏', '💪', '🎉', '🔥', '💰', '🏠', '📈', '✅', '❤️', '😄', '🤝', '📞', '⏰', '👋', '💡', '🚀', '⭐', '😉', '🙌', '📅', '✍️', '💬'];
+function toggleEmojiPop() {
+  const pop = $('chatEmojiPop'); if (!pop) return;
+  if (pop.classList.contains('oculto')) {
+    pop.innerHTML = CHAT_EMOJIS.map(e => '<span class="emj" onclick="insertarEmoji(\'' + e + '\')">' + e + '</span>').join('');
+    pop.classList.remove('oculto');
+  } else pop.classList.add('oculto');
+}
+function insertarEmoji(e) {
+  const inp = $('chatTexto'); if (!inp) return;
+  inp.value += e; inp.focus(); chatInputEstado();
 }
 async function cargarMensajes() {
   if (!CHAT_ACTIVA) return;
   try {
     const d = await api('/api/chat/mensajes?id=' + CHAT_ACTIVA.id);
     const hilo = $('chatHilo');
-    hilo.innerHTML = (d.mensajes || []).map(m => burbujaHTML(m.entrante, m.texto, m.ts)).join('');
+    let msgs = d.mensajes || [];
+    // Filtro de búsqueda dentro de la conversación.
+    const q = (CHAT_BUSCA_MSJ || '').trim().toLowerCase();
+    if (q) msgs = msgs.filter(m => String(m.texto || '').toLowerCase().includes(q));
+    // Separadores de día (estilo WhatsApp).
+    let html = '', diaPrev = '';
+    msgs.forEach(m => {
+      const dt = typeof m.ts === 'number' ? new Date(m.ts * 1000) : new Date(m.ts);
+      const dia = isNaN(dt) ? '' : dt.toLocaleDateString('es-PE', { day: 'numeric', month: 'short', year: 'numeric' });
+      if (dia && dia !== diaPrev) { html += '<div class="chat-dia"><span>' + dia + '</span></div>'; diaPrev = dia; }
+      html += burbujaHTML(m.entrante, m.texto, m.ts, q);
+    });
+    hilo.innerHTML = html || (q ? '<div class="chat-aviso">Sin coincidencias para "' + chatEsc(q) + '"</div>' : '');
     hilo.scrollTop = hilo.scrollHeight; // siempre mostrar el último mensaje
   } catch (e) {}
 }
@@ -3334,10 +3428,14 @@ function chatHoraHM(ts) {
   const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
   return isNaN(d) ? '' : d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 }
-function burbujaHTML(entrante, texto, ts) {
+function burbujaHTML(entrante, texto, ts, resaltar) {
   const check = entrante ? '' : ' <span class="chat-ck">✓✓</span>';
+  let cuerpo = chatEsc(texto || '');
+  if (resaltar) {
+    try { cuerpo = cuerpo.replace(new RegExp('(' + resaltar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); } catch (e) {}
+  }
   return '<div class="chat-msg ' + (entrante ? 'chat-in' : 'chat-out') + '">' +
-    '<div class="chat-burb">' + chatEsc(texto || '') +
+    '<div class="chat-burb">' + cuerpo +
     '<span class="chat-meta">' + chatHoraHM(ts) + check + '</span></div></div>';
 }
 function chatBurbuja(entrante, texto) {
@@ -3553,14 +3651,36 @@ function estiloEtapaChip(et) {
 async function renderFicha() {
   const cont = $('chatFicha'); if (!cont) return;
   if (!CHAT_ACTIVA || !CHAT_ACTIVA.codigoLead) {
-    cont.innerHTML = '<div class="ficha-vacia"><i>Sin lead vinculado</i><br>Crea el lead desde la cabecera para ver su ficha comercial.</div>';
+    cont.innerHTML = '<div class="ficha-vacia"><div class="fv-ico">👤</div><i>Sin lead vinculado</i><br><small>Crea el lead desde el menú ⋮ para ver su ficha comercial.</small></div>';
     return;
   }
-  cont.innerHTML = '<div class="ficha-vacia">Cargando ficha…</div>';
+  cont.innerHTML = '<div class="f-skel"><div class="sk-line sk-w60"></div><div class="sk-line"></div><div class="sk-line sk-w40"></div><div class="sk-line sk-w80"></div></div>';
   try {
     const f = await api('/api/chat/ficha?codigo=' + CHAT_ACTIVA.codigoLead);
     cont.innerHTML = fichaHTML(f);
+    // Chips de score y pipeline en la CABECERA del chat.
+    const sc = document.getElementById('cabScore'), pp = document.getElementById('cabPipe');
+    if (sc && f.score != null) sc.innerHTML = ' <span class="cab-chip cab-chip-score">⚡ ' + Math.round(f.score) + '</span>';
+    if (pp && f.probabilidad != null) pp.innerHTML = ' · 🎯 ' + Math.round(f.probabilidad) + '% cierre';
+    // Timeline (últimos eventos de la trazabilidad, solo lectura).
+    cargarTimelineFicha(CHAT_ACTIVA.codigoLead);
   } catch (e) { cont.innerHTML = '<div class="ficha-vacia">No se pudo cargar la ficha.</div>'; }
+}
+async function cargarTimelineFicha(codigo) {
+  const box = document.getElementById('fTimeline'); if (!box) return;
+  try {
+    const d = await api('/api/leads/' + encodeURIComponent(codigo) + '/trazabilidad');
+    const evs = (d.eventos || []).slice(-8).reverse(); // últimos 8, el más reciente arriba
+    if (!evs.length) { box.innerHTML = '<div class="f-tl-vacio">Sin eventos aún.</div>'; return; }
+    box.innerHTML = evs.map((e, i) => {
+      const col = e.tipo === 'gestion' ? '#0B72E8' : e.tipo === 'llamada' ? '#7C3AED' : e.tipo === 'proxima' ? '#EF9F27' : '#1D9E75';
+      return '<div class="f-tl-it"><span class="f-tl-dot" style="background:' + col + '"></span>' +
+        (i < evs.length - 1 ? '<span class="f-tl-rail"></span>' : '') +
+        '<div class="f-tl-txt"><b>' + chatEsc(e.titulo || e.tipo || '') + '</b>' +
+        (e.sub ? '<div class="f-tl-sub">' + chatEsc(String(e.sub).slice(0, 70)) + '</div>' : '') +
+        '<div class="f-tl-fecha">' + chatHora(e.fecha) + '</div></div></div>';
+    }).join('');
+  } catch (e) { box.innerHTML = '<div class="f-tl-vacio">Timeline no disponible.</div>'; }
 }
 function fBar(lbl, val, col) {
   const v = Math.max(0, Math.min(100, Math.round(val || 0)));
@@ -3573,7 +3693,7 @@ function fichaHTML(f) {
   const etLabel = typeof trEtapa === 'function' ? trEtapa(f.etapa) : f.etapa;
   const monto = f.monto != null ? (typeof fmtSoles === 'function' ? fmtSoles(f.monto) : ('S/ ' + f.monto)) : '—';
   let bars = fBar('Avance del proceso', f.avance, '#0B72E8');
-  if (f.probabilidad != null) bars += fBar('Probabilidad de cierre', f.probabilidad, '#1FA06A');
+  if (f.probabilidad != null) bars += fBar('Probabilidad de cierre', f.probabilidad, '#25D366');
   if (f.score != null) bars += fBar('Lead score', f.score, '#123A63');
   const kpis = [
     ['Interacciones', f.interacciones != null ? f.interacciones : '—'],
@@ -3583,27 +3703,33 @@ function fichaHTML(f) {
     ['Días en etapa', f.diasEnEtapa != null ? f.diasEnEtapa : '—'],
     ['Origen', f.origen || '—'],
   ].map(k => fKpi(k[0], k[1])).join('');
+  const etiquetas = ['<span class="chat-tag" style="' + estiloEtapaChip(f.etapa) + '">' + etLabel + '</span>']
+    .concat(f.ticket ? ['<span class="f-et">🎫 ' + chatEsc(f.ticket) + '</span>'] : [])
+    .concat(f.origen ? ['<span class="f-et">📣 ' + chatEsc(f.origen) + '</span>'] : [])
+    .join(' ');
   const prox = f.proximaAccion
-    ? '<div class="f-row"><span><i class="hl">▸</i> Próxima tarea</span><b>' + (f.fechaProxAccion ? chatHora(f.fechaProxAccion) : '') + '</b></div>' +
-      '<div class="f-sub">' + chatEsc(f.proximaAccion) + '</div>'
+    ? '<div class="f-prox"><div class="f-prox-ico">📌</div><div><b>' + chatEsc(f.proximaAccion) + '</b>' +
+      (f.fechaProxAccion ? '<div class="f-tl-fecha">' + chatHora(f.fechaProxAccion) + '</div>' : '') + '</div></div>'
     : '';
   return '<div class="f-head">' +
-      '<div class="chat-cab-ava">' + ini + '</div>' +
+      '<div class="chat-cab-ava" style="background:' + chatAvaColor(f.nombre) + '">' + ini + '</div>' +
       '<div><div class="f-nom">' + chatEsc(f.nombre || '—') + '</div>' +
-      (f.asesor ? '<div class="f-emp">' + chatEsc(f.asesor) + '</div>' : '') + '</div>' +
+      (f.asesor ? '<div class="f-emp">👤 ' + chatEsc(f.asesor) + '</div>' : '') + '</div>' +
     '</div>' +
     '<div class="f-contact">' +
-      (f.telefono ? '<div><i class="ti ti-phone"></i> ' + f.telefono + '</div>' : '') +
-      (f.email ? '<div><i class="ti ti-mail"></i> ' + chatEsc(f.email) + '</div>' : '') +
+      (f.telefono ? '<div>📱 ' + f.telefono + '</div>' : '') +
+      (f.email ? '<div>✉ ' + chatEsc(f.email) + '</div>' : '') +
     '</div>' +
-    '<div class="f-sec"><div class="f-line"><span>Etapa</span><span class="chat-tag" style="' + estiloEtapaChip(f.etapa) + '">' + etLabel + '</span></div></div>' +
+    '<div class="f-etiquetas">' + etiquetas + '</div>' +
     '<div class="f-resumen">' + fKpi('Monto', monto) + fKpi('Ticket', f.ticket || '—') + fKpi('Ejecutivo', f.asesor || '—') + '</div>' +
     '<div class="f-titulo">Métricas del lead</div>' +
     bars +
     '<div class="f-kpis">' + kpis + '</div>' +
-    (prox ? '<div class="f-titulo">Seguimiento</div>' + prox : '') +
+    (prox ? '<div class="f-titulo">Próxima tarea</div>' + prox : '') +
+    '<div class="f-titulo">Timeline comercial</div>' +
+    '<div class="f-timeline" id="fTimeline"><div class="f-tl-vacio">Cargando…</div></div>' +
     '<div class="f-acciones">' +
-      (f.codigoLead || CHAT_ACTIVA.codigoLead ? '<button class="btn" onclick="irALead(\'' + (CHAT_ACTIVA.codigoLead) + '\')">Ver lead completo</button>' : '') +
+      (f.codigoLead || CHAT_ACTIVA.codigoLead ? '<button class="btn" onclick="irALead(\'' + (CHAT_ACTIVA.codigoLead) + '\')">📂 Ver lead completo</button>' : '') +
     '</div>';
 }
 

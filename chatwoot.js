@@ -14,16 +14,29 @@ function cwConfigurado() { return !!(CW_URL && CW_TOKEN); }
 
 async function cwFetch(path, opts = {}) {
   const url = CW_URL + '/api/v1/accounts/' + CW_ACCOUNT + path;
-  const res = await fetch(url, {
-    method: opts.method || 'GET',
-    headers: Object.assign({ 'Content-Type': 'application/json', 'api_access_token': CW_TOKEN }, opts.headers || {}),
-    body: opts.body || undefined,
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error('Chatwoot ' + res.status + ': ' + String(t).slice(0, 200));
+  // Reintentos ante errores 5xx intermitentes de Chatwoot (Rails ahogado en Railway):
+  // hasta 3 intentos con espera corta. Los 4xx no se reintentan (son errores reales).
+  let ultimoError = null;
+  for (let intento = 1; intento <= 3; intento++) {
+    try {
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ 'Content-Type': 'application/json', 'api_access_token': CW_TOKEN }, opts.headers || {}),
+        body: opts.body || undefined,
+      });
+      if (res.ok) return res.json();
+      const t = await res.text().catch(() => '');
+      ultimoError = new Error('Chatwoot ' + res.status + ': ' + String(t).slice(0, 200));
+      if (res.status < 500) throw ultimoError;      // 4xx: no reintentar
+      // 5xx: esperar y reintentar
+      if (intento < 3) await new Promise(r => setTimeout(r, 900 * intento));
+    } catch (e) {
+      ultimoError = e;
+      if (String(e.message || '').includes('Chatwoot 4')) throw e;
+      if (intento < 3) await new Promise(r => setTimeout(r, 900 * intento));
+    }
   }
-  return res.json();
+  throw ultimoError || new Error('Chatwoot no respondió');
 }
 
 // Lista de conversaciones del inbox (las abiertas). Chatwoot pagina en data.payload.
@@ -97,6 +110,28 @@ async function diagnostico() {
       const t = await r.text().catch(() => '');
       out.pasos.push({ paso: 'inbox ' + CW_INBOX, ok: r.ok, status: r.status, detalle: r.ok ? 'OK' : t.slice(0, 250) });
     } catch (e) { out.pasos.push({ paso: 'inbox', ok: false, detalle: e.message }); }
+  }
+  // 4. Replicar EXACTAMENTE lo que hace la bandeja: traer y procesar.
+  try {
+    const convs = await listarConversaciones();
+    out.pasos.push({ paso: 'listarConversaciones()', ok: true, detalle: 'devolvió ' + convs.length + ' conversaciones' });
+    // Probar el acceso a los campos que usa el endpoint, sobre cada conversación.
+    let errAt = null;
+    for (let i = 0; i < convs.length; i++) {
+      const c = convs[i];
+      try {
+        const phone = telefonoDeConversacion(c);
+        const sender = (c.meta && c.meta.sender) ? c.meta.sender : {};
+        const ult = c.last_non_activity_message || (c.messages && c.messages[c.messages.length - 1]);
+        void (ult ? (ult.content || '') : '');
+        void (c.unread_count || 0);
+        void (c.last_activity_at || c.timestamp || null);
+        void phone; void sender;
+      } catch (ce) { errAt = { indice: i, id: c && c.id, error: ce.message }; break; }
+    }
+    out.pasos.push({ paso: 'procesar conversaciones', ok: !errAt, detalle: errAt ? ('falla en conv #' + errAt.indice + ' (id ' + errAt.id + '): ' + errAt.error) : 'todas procesables' });
+  } catch (e) {
+    out.pasos.push({ paso: 'listarConversaciones()', ok: false, detalle: e.message });
   }
   return out;
 }

@@ -3541,10 +3541,27 @@ app.get('/api/chat/diagnostico', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Caché de resiliencia: última lista de conversaciones que Chatwoot devolvió bien.
+// Si Chatwoot tiene un hipo (5xx intermitente), se sirve esta copia con aviso de antigüedad.
+let CW_CACHE_CONVS = { convs: null, ts: 0 };
+
 app.get('/api/chat/conversaciones', async (req, res) => {
   if (!cw.cwConfigurado()) return res.json({ configurado: false, conversaciones: [] });
+  let convs = null, desactualizado = false, antiguedadSeg = 0;
   try {
-    const convs = await cw.listarConversaciones();
+    convs = await cw.listarConversaciones();
+    CW_CACHE_CONVS = { convs, ts: Date.now() };
+  } catch (e) {
+    // Chatwoot falló incluso con reintentos: usar la última copia buena (hasta 15 min).
+    if (CW_CACHE_CONVS.convs && (Date.now() - CW_CACHE_CONVS.ts) < 15 * 60 * 1000) {
+      convs = CW_CACHE_CONVS.convs;
+      desactualizado = true;
+      antiguedadSeg = Math.round((Date.now() - CW_CACHE_CONVS.ts) / 1000);
+    } else {
+      return res.status(502).json({ configurado: true, error: e.message, conversaciones: [] });
+    }
+  }
+  try {
     const idx = indiceLeadsPorTelefono();
     const esGP = !veTodo(req.user);
     const out = [];
@@ -3567,7 +3584,7 @@ app.get('/api/chat/conversaciones', async (req, res) => {
       });
     });
     out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    res.json({ configurado: true, conversaciones: out });
+    res.json({ configurado: true, conversaciones: out, desactualizado, antiguedadSeg });
   } catch (e) {
     res.status(502).json({ configurado: true, error: e.message, conversaciones: [] });
   }
@@ -8474,7 +8491,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.409 (Diagnostico Chatwoot: (1) nuevo endpoint /api/chat/diagnostico (admin) que prueba la conexion paso a paso: token valido (perfil), cuenta, e inbox - devuelve el status y detalle de CADA paso para saber EXACTO por que falla el 500. (2) listarConversaciones mas robusto: si el filtro por inbox_id falla (p.ej. el inbox cambio de id tras un update de Chatwoot), reintenta sin filtro antes de rendirse; agrega page=1. El 500 viene de Chatwoot, no del CRM (Chatwoot directo funciona) - probable token expirado, cambio de account/inbox id, o update de version. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.411 (REDISENO COMPLETO de Mensajeria estilo WhatsApp Web x Intercom manteniendo la logica Chatwoot intacta: (1) Lista con tarjetas modernas: avatar de color estable, asesor, hora verde con no-leidos, chips de etapa + prioridad del lead + tiempo sin responder. (2) Conversacion central: cabecera con Lead Score y % cierre, acciones rapidas (llamar via Aircall, buscar EN la conversacion con resaltado, menu), fondo con patron sutil tipo WhatsApp, separadores de dia, burbujas diferenciadas (blanco/verde) con fade-in y checks, skeleton loaders. (3) Panel CRM derecho: etiquetas, monto/ticket/ejecutivo, barras de avance/probabilidad/score, KPIs, proxima tarea y TIMELINE comercial (ultimos 8 eventos de la trazabilidad). (4) Input estilo WhatsApp: pildora redondeada, popover de 24 emojis, adjuntos/voz como proximamente, boton enviar circular que se pinta verde con texto. (5) TIEMPO REAL: polling de respaldo cada 15s de lista y mensajes ademas del SSE (los mensajes llegan sin dar actualizar; para instantaneo configurar webhook de Chatwoot al CRM). Modo noche completo. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

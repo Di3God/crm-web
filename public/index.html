@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MiTasaTop">
-<link rel="stylesheet" href="styles.css?v=1409">
+<link rel="stylesheet" href="styles.css?v=1411">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
@@ -195,9 +195,15 @@
           <div class="chat-cab" id="chatCab"></div>
           <div class="chat-hilo" id="chatHilo"></div>
           <div class="chat-plantillas" id="chatPlantillas"></div>
-          <div class="chat-input">
-            <input type="text" id="chatTexto" placeholder="Escribe un mensaje…" onkeydown="if(event.key==='Enter')enviarChat()">
-            <button class="btn chat-enviar" onclick="enviarChat()">Enviar</button>
+          <div class="chat-input-bar">
+            <div class="chat-emoji-pop oculto" id="chatEmojiPop"></div>
+            <button class="ci-btn" id="ciEmoji" title="Emojis" onclick="toggleEmojiPop()">😊</button>
+            <button class="ci-btn ci-off" title="Adjuntar (próximamente)">📎</button>
+            <div class="chat-input-pill">
+              <input type="text" id="chatTexto" placeholder="Escribe un mensaje…" onkeydown="if(event.key==='Enter')enviarChat()" oninput="chatInputEstado()">
+            </div>
+            <button class="ci-btn ci-off" id="ciMic" title="Nota de voz (próximamente)">🎤</button>
+            <button class="ci-send" id="ciSend" onclick="enviarChat()" title="Enviar">➤</button>
           </div>
         </div>
       </div>
@@ -1341,7 +1347,7 @@
   </div>
 </div>
 
-<script src="app.js?v=1409"></script>
+<script src="app.js?v=1411"></script>
 
 <!-- Softphone Aircall embebido (persistente en toda la app) -->
 <button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>
