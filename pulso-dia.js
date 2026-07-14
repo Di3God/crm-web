@@ -223,9 +223,10 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, construirRankingDia,
   async function enviarPulso(corte) {
     const b2c = msgB2C(corte);
     if (b2c) await enviarAlertaWA(b2c); // grupo B2C por defecto del bot
-    const b2b = msgB2B(corte);
-    if (b2b) await enviarAlertaWA(b2b, process.env.WA_GRUPO_B2B_JID || undefined);
-    return { b2c: !!b2c, b2b: !!b2b };
+    // v1.408: el grupo B2B YA NO recibe los cortes 9am/1pm/6pm automáticos.
+    //   Solo recibe alertas de leads nuevos + la alerta de "sin atender 30 min".
+    //   El corte B2B se puede seguir enviando manualmente desde el panel.
+    return { b2c: !!b2c, b2b: false };
   }
 
   const CORTES = { '09:00': '9am', '13:00': '1pm', '18:00': '6pm' };

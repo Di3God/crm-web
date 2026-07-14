@@ -1317,6 +1317,8 @@ function procesarSolicitudB2B(norm, opts = {}) {
     enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
   }
   try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
+  // v1.408: si el lead quedó asignado a un funcionario, verificar a los 30 min que lo atienda.
+  if (op) { try { enColaVerificacionB2B(codigo, op, norm.razonSocial || norm.contacto); } catch (e) { } }
   // Bienvenida automática B2B (todo lead creado recibe el saludo, sin importar foco/asignación).
   bienvenida.saludar({ codigo, nombre: norm.contacto, telefono: norm.telefono, fuente: norm.origen, razonSocial: norm.razonSocial }, 'b2b');
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
@@ -8350,6 +8352,11 @@ const WA_PENDIENTES = []; // { codigo, asesor, nombre, ts }
 function enColaVerificacion(codigo, asesor, nombre) {
   if (codigo && asesor) WA_PENDIENTES.push({ codigo, asesor, nombre: nombre || 'el lead', ts: Date.now() });
 }
+// v1.408: cola de verificación B2B — si a los 30 min no hay gestión, alerta al grupo B2B.
+const WA_PENDIENTES_B2B = [];
+function enColaVerificacionB2B(codigo, responsable, nombre) {
+  if (codigo && responsable) WA_PENDIENTES_B2B.push({ codigo, responsable, nombre: nombre || 'la empresa', ts: Date.now() });
+}
 function esHorarioLaboralWA() {
   const a = peruAhora(), d = a.getUTCDay(), h = a.getUTCHours();
   return d >= 1 && d <= 6 && h >= 9 && h < 18; // Lunes a Sábado, 9am-6pm Perú
@@ -8368,6 +8375,25 @@ setInterval(() => {
       if (!lead || lead.archivado) continue;         // lead ya no aplica
       const gpCorto = String(p.asesor).trim().split(/\s+/)[0] || p.asesor;
       enviarAlertaWA(`⚠️ *Sin atender (10 min)* — ${p.nombre}\n👤 ${gpCorto}, ¡no lo dejes enfriar! ⏱`);
+    } catch (e) { /* silencioso */ }
+  }
+}, 60 * 1000);
+
+// v1.408: verificación B2B — a los 30 min sin gestión, alerta al grupo B2B (mismo formato B2C).
+setInterval(() => {
+  const ahora = Date.now();
+  for (let i = WA_PENDIENTES_B2B.length - 1; i >= 0; i--) {
+    const p = WA_PENDIENTES_B2B[i];
+    if (ahora - p.ts < 30 * 60 * 1000) continue;   // aún no cumple 30 min
+    WA_PENDIENTES_B2B.splice(i, 1);                  // procesar una sola vez
+    try {
+      const tocado = db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud = ? LIMIT 1').get(p.codigo);
+      if (tocado) continue;                          // ya fue gestionado -> silencio
+      if (!esHorarioLaboralWA()) continue;           // fuera de horario -> nada
+      const sol = db.prepare('SELECT archivado, estado FROM b2b_solicitudes WHERE codigo = ?').get(p.codigo);
+      if (!sol || sol.archivado || sol.estado === 'No elegible') continue; // ya no aplica
+      const fCorto = String(p.responsable).trim().split(/\s+/)[0] || p.responsable;
+      enviarAlertaWA(`⚠️ *Sin atender (30 min)* — ${p.nombre}\n👤 ${fCorto}, ¡no lo dejes enfriar! ⏱`, process.env.WA_GRUPO_B2B_JID || undefined);
     } catch (e) { /* silencioso */ }
   }
 }, 60 * 1000);
@@ -8442,7 +8468,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.407 (FIX RAIZ del helper api() en app.js: cuando hay body (y no es FormData) ahora stringifica objetos y agrega Content-Type application/json si falta, sin pisar headers explicitos. Antes fetch enviaba text/plain y Express dejaba req.body VACIO: los guardados de Bienvenida, pesos Mi Cola B2C, metas del Pulso y el corte elegido en envio manual se PERDIAN en silencio (el server respondia ok sin guardar). Tambien repara bug preexistente del comentario B2B (enviaba objeto sin stringificar). Validado con 6 casos (viejas con header intactas, FormData intacto, GET intacto) + E2E de la secuencia guardar->reabrir->probar: PERSISTE y REGISTRA. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.408 (Ajuste alertas B2B: (1) el grupo B2B YA NO recibe los cortes automaticos 9am/1pm/6pm (enviarPulso ahora solo manda el B2C; el corte B2B sigue disponible manual desde el panel). (2) NUEVA alerta B2B sin atender a los 30 min: al crear un lead B2B asignado, si el funcionario no registra gestion en 30 min, llega al grupo B2B el mensaje formato B2C: Sin atender (30 min) - EMPRESA / funcionario no lo dejes enfriar. Respeta horario laboral, no repite si ya hubo gestion, ignora archivados/No elegible. Al grupo B2B ahora solo llegan: leads nuevos + esta alerta de 30 min. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
