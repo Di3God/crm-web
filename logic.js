@@ -960,6 +960,12 @@ function normalizarLeadMarketing(origen, payload) {
   const telefonoRaw = _pick(p, 'telefono', 'phone', 'phone_number', 'celular', 'mobile', 'telefono_celular');
   const email = _pick(p, 'email', 'correo', 'mail', 'e-mail');
 
+  // Campos nuevos del formulario B2C (Meta): DNI + 2 preguntas iniciales de calificación.
+  // Solo aplican a B2C; el B2B usa su propia normalización (normalizarB2B).
+  const dni = _pick(p, 'dni', 'DNI', 'documento', 'nro_documento', 'numero_documento');
+  const interesInvertir = _pick(p, 'interes_al_Invertir', 'interes_al_invertir', 'interesInvertir', 'interes', 'que_te_interesa');
+  const listo7dias = _pick(p, 'invertir_en_7dias', 'invertir_en_7_dias', 'listo7dias', 'listo_7_dias', 'invertir7dias');
+
   // monto: se guarda el TEXTO original (trazabilidad en Leads Brutos) y se
   // deriva un numero (etiqueta de rango -> limite inferior, o numero suelto).
   const monto = _pick(p, 'monto', 'amount', 'monto_inversion', 'inversion', 'presupuesto', 'monto disponible', 'monto_disponible');
@@ -989,6 +995,7 @@ function normalizarLeadMarketing(origen, payload) {
   return {
     origen: o,
     nombre, telefonoRecibido: telefonoRaw, telefonoNormalizado, email,
+    dni, interesInvertir, listo7dias,
     fuente, campana, conjunto, anuncio, formulario,
     campaignId, adsetId, adId, leadIdExterno,
     utmSource, utmMedium, utmCampaign, utmTerm, utmContent,

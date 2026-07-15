@@ -529,6 +529,10 @@ try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE llamadas ADD COLUMN codigoB2B TEXT"); } catch (e) { } // v1.397: match B2B del webhook Aircall
 try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
+// Campos nuevos del formulario B2C (Meta): DNI + 2 preguntas iniciales.
+try { db.exec("ALTER TABLE leads ADD COLUMN dni TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN interesInvertir TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN listo7dias TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
@@ -1601,11 +1605,12 @@ function procesarLeadMarketing(norm, opts = {}) {
   const monto = (norm.montoNumerico != null && isFinite(norm.montoNumerico)) ? norm.montoNumerico : null;
   const rango = monto != null ? L.montoARango(monto) : null;
   const gp = opts.sinAutoasignar ? null : elegirGPRoundRobin();
-  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'make')`)
+  db.prepare(`INSERT INTO leads (codigo,nombre,telefono,email,fuente,campana,conjunto,anuncio,adId,asesor,montoReal,montoPotencial,montoRango,fechaCarga,fechaAsignacion,origenCreacion,dni,interesInvertir,listo7dias)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'make',?,?,?)`)
     .run(codigo, norm.nombre || 'Sin nombre', norm.telefonoNormalizado, norm.email || null,
          norm.fuente || null, norm.campana || null, norm.conjunto || null, norm.anuncio || null, norm.adId || null,
-         gp || null, monto, monto, rango, ahora, gp ? ahora : null);
+         gp || null, monto, monto, rango, ahora, gp ? ahora : null,
+         norm.dni || null, norm.interesInvertir || null, norm.listo7dias || null);
   registrarAnuncioCatalogo(norm.campana, norm.conjunto, norm.anuncio, norm.adId);
   // Bienvenida automática (solo leads gestionables; nunca bloquea el flujo).
   bienvenida.saludar({ codigo, nombre: norm.nombre, telefono: norm.telefonoNormalizado, fuente: norm.fuente }, 'b2c');
@@ -8491,7 +8496,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.411 (REDISENO COMPLETO de Mensajeria estilo WhatsApp Web x Intercom manteniendo la logica Chatwoot intacta: (1) Lista con tarjetas modernas: avatar de color estable, asesor, hora verde con no-leidos, chips de etapa + prioridad del lead + tiempo sin responder. (2) Conversacion central: cabecera con Lead Score y % cierre, acciones rapidas (llamar via Aircall, buscar EN la conversacion con resaltado, menu), fondo con patron sutil tipo WhatsApp, separadores de dia, burbujas diferenciadas (blanco/verde) con fade-in y checks, skeleton loaders. (3) Panel CRM derecho: etiquetas, monto/ticket/ejecutivo, barras de avance/probabilidad/score, KPIs, proxima tarea y TIMELINE comercial (ultimos 8 eventos de la trazabilidad). (4) Input estilo WhatsApp: pildora redondeada, popover de 24 emojis, adjuntos/voz como proximamente, boton enviar circular que se pinta verde con texto. (5) TIEMPO REAL: polling de respaldo cada 15s de lista y mensajes ademas del SSE (los mensajes llegan sin dar actualizar; para instantaneo configurar webhook de Chatwoot al CRM). Modo noche completo. Solo frontend: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.412 (Formularios Meta - captura de 3 campos NUEVOS solo en B2C (el B2B usa normalizarB2B, NO se toca): normalizarLeadMarketing ahora extrae DNI, interes_al_Invertir y invertir_en_7dias (con tolerancia a variantes de nombre); se guardan en 3 columnas nuevas de leads (dni, interesInvertir, listo7dias) y se propagan por consolidarLead (spread). Se muestran como PISTAS del formulario en la cabecera del modal de gestion (chip azul: DNI, que le interesa, y 7 dias con icono fuego si esta listo) para ayudar a la GP a calificar. El B2B quedo intacto (sus campos ruc/montoRango/tieneInmueble/departamentoInmueble ya se soportaban). Validado E2E: webhook -> guardado -> detalle consolidado devuelve los 3 campos. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

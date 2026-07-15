@@ -3352,3 +3352,12 @@ body.night #v-chat .f-tl-dot { box-shadow:0 0 0 3px #151E2B, 0 0 0 4px #2A3849 !
 body.night #v-chat .f-tl-rail { background:#2A3849 !important; }
 body.night #v-chat .sk-b { background:linear-gradient(90deg,#16232D 25%,#1D2C38 50%,#16232D 75%) !important; background-size:200% 100% !important; }
 body.night #v-chat .sk-line { background:linear-gradient(90deg,#1A2534 25%,#22303F 50%,#1A2534 75%) !important; background-size:200% 100% !important; }
+
+/* Pistas del formulario Meta en el modal de gestión */
+#gPistasForm { margin: 8px 0 4px; padding: 10px 12px; background: #F0F6FD; border: 1px solid #CFE3FA; border-radius: 10px; }
+.gform-tit { font-size: 10.5px; font-weight: 800; color: #0A4E9E; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+.gform-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gform-chip { background: #fff; border: 1px solid #CFE3FA; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: #1E3A5F; font-weight: 600; }
+body.night #gPistasForm { background: #16243B !important; border-color: #2E4B75 !important; }
+body.night .gform-tit { color: #7FB0FF !important; }
+body.night .gform-chip { background: #1A2534 !important; border-color: #2E4B75 !important; color: #D8E6F5 !important; }

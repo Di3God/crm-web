@@ -1687,6 +1687,21 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     `<span class="sep">·</span><span class="dato"><b id="gSubScore">Score ${gLead.score}/100</b></span>` +
     `<span class="sep">·</span><span class="dato">Prob. <b id="gSubProb">${gLead.probabilidad}%</b></span>` +
     `<span class="sep">·</span><span class="dato">GP ${gLead.asesor || 'sin asignar'}</span>`;
+  // Pistas del formulario Meta (lo que el lead respondió al registrarse): ayudan a calificar.
+  const pistasForm = [];
+  if (gLead.dni) pistasForm.push('🪪 DNI ' + gLead.dni);
+  if (gLead.interesInvertir) pistasForm.push('💡 Le interesa: ' + gLead.interesInvertir);
+  if (gLead.listo7dias) {
+    const listo7 = /s[ií]|listo|ya\b|claro/i.test(String(gLead.listo7dias));
+    pistasForm.push((listo7 ? '🔥' : '🕐') + ' 7 días: ' + gLead.listo7dias);
+  }
+  const gPistasEl = document.getElementById('gPistasForm');
+  if (gPistasEl) {
+    gPistasEl.innerHTML = pistasForm.length
+      ? '<div class="gform-tit">📋 Respuestas del formulario</div><div class="gform-chips">' + pistasForm.map(x => '<span class="gform-chip">' + x + '</span>').join('') + '</div>'
+      : '';
+    gPistasEl.style.display = pistasForm.length ? 'block' : 'none';
+  }
   ['gResultado','gProxAccion','gFechaProx','gTiempo','gInteres',
    'gExperiencia','gExperienciaInv','gFechaReunion','gResumen','gFechaCierre',
    'gMonto','cMontoNum','cFondos','cPrioriza','cPlazo','cCompetencia','cProximoPaso']
