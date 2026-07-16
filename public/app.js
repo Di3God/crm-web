@@ -5231,10 +5231,12 @@ const B2B_ING_TXT = {
   'sin_datos': 'Sin datos', 'error_validacion': 'Error'
 };
 
+let B2B_ING_FILTRO = '';
+function filtrarB2BIng(estado) { B2B_ING_FILTRO = estado; cargarIngresosB2B(); }
 async function cargarIngresosB2B() {
   const cont = $('b2bIngCont'); if (!cont) return;
   try {
-    const d = await api('/api/b2b/ingresos');
+    const d = await api('/api/b2b/ingresos' + (B2B_ING_FILTRO ? '?estado=' + encodeURIComponent(B2B_ING_FILTRO) : ''));
     const lista = d.ingresos || [];
     // Badge: cuántos requieren gestión manual (duplicados + sin datos + error)
     const pendientes = lista.filter(i => i.estado !== 'creado').length;
@@ -5242,29 +5244,78 @@ async function cargarIngresosB2B() {
     if (badge) { badge.textContent = pendientes; badge.classList.toggle('oculto', pendientes === 0); }
     // Resumen
     const res = d.resumen || {};
-    $('b2bIngResumen').innerHTML = '<span class="b2b-chip"><b>' + d.total + '</b> ingresos</span>' +
-      Object.entries(res).map(([e, n]) => '<span class="b2b-chip"><i style="background:' + (B2B_ING_COL[e] || '#888') + '"></i>' + (B2B_ING_TXT[e] || e) + ': ' + n + '</span>').join('');
+    $('b2bIngResumen').innerHTML = '<span class="b2b-chip b2b-chip-fil' + (B2B_ING_FILTRO === '' ? ' b2b-chip-act' : '') + '" onclick="filtrarB2BIng(\'\')"><b>' + d.total + '</b> ingresos</span>' +
+      Object.entries(res).map(([e, n]) => '<span class="b2b-chip b2b-chip-fil' + (B2B_ING_FILTRO === e ? ' b2b-chip-act' : '') + '" onclick="filtrarB2BIng(\'' + e + '\')"><i style="background:' + (B2B_ING_COL[e] || '#888') + '"></i>' + (B2B_ING_TXT[e] || e) + ': ' + n + '</span>').join('');
     if (!lista.length) { cont.innerHTML = '<div class="vacio">Aún no llegan ingresos por webhook.</div>'; return; }
     cont.innerHTML = '<div style="overflow-x:auto"><table class="mt-tabla b2b-tabla"><thead><tr>' +
-      '<th>Recibido</th><th>Origen</th><th>Estado</th><th>RUC</th><th>Empresa</th><th>Teléfono</th><th>Monto</th><th>Garantía</th><th>Solicitud</th><th>Detalle</th>' +
+      '<th>Recibido</th><th>Origen</th><th>Estado</th><th>RUC</th><th>Empresa</th><th>Teléfono</th><th>Monto</th><th>Garantía</th><th>Solicitud</th><th>Detalle</th><th>Acciones</th>' +
       '</tr></thead><tbody>' +
-      lista.map(i =>
-        '<tr>' +
-        '<td>' + (i.fechaRecepcion ? fmtFecha(i.fechaRecepcion) : '—') + '</td>' +
-        '<td>' + (i.origen || '—') + '</td>' +
-        '<td><span class="b2b-pill" style="background:' + (B2B_ING_COL[i.estado] || '#888') + '22;color:' + (B2B_ING_COL[i.estado] || '#888') + '">' + (B2B_ING_TXT[i.estado] || i.estado) + '</span></td>' +
-        '<td>' + (i.ruc || '—') + '</td>' +
-        '<td>' + (i.razonSocial || '—') + '</td>' +
-        '<td>' + (i.telefono || '—') + '</td>' +
-        '<td>' + (i.monto != null ? fmtSoles(i.monto) : '—') + '</td>' +
-        '<td>' + (i.tieneInmueble ? (i.tieneInmueble + (i.tipoInmueble ? ' · ' + i.tipoInmueble : '')) : '—') + '</td>' +
-        '<td>' + (i.codigoSolicitud ? '<span class="b2b-cod">' + i.codigoSolicitud + '</span>' : '—') + '</td>' +
-        '<td>' + (i.mensajeError ? '<span class="b2b-sub">' + i.mensajeError + '</span>' : '—') + '</td>' +
-        '</tr>').join('') +
+      lista.map(i => {
+        const esCreado = i.estado === 'creado';
+        const esDup = i.estado === 'duplicado_activo' || i.estado === 'duplicado_historial';
+        const acc = [];
+        acc.push('<button class="btn-sunat b2b-acc" onclick="verRawB2B(' + i.id + ')">JSON</button>');
+        if (!esCreado) acc.push('<button class="btn-sunat b2b-acc" onclick="reprocesarB2B(' + i.id + ')">Reprocesar</button>');
+        if (esDup) acc.push('<button class="btn-sunat b2b-acc" style="color:#0F7B52;border-color:#9BDFC0" onclick="crearB2BForzado(' + i.id + ')">Crear igual</button>');
+        if (!esCreado) acc.push('<button class="btn-sunat b2b-acc" onclick="descartarB2BIngreso(' + i.id + ')">Descartar</button>');
+        if (i.codigoSolicitud) acc.push('<button class="btn-sunat b2b-acc" onclick="verLeadB2BDesdeBruto(\'' + i.codigoSolicitud + '\')">Ver</button>');
+        if (YO.rol === 'admin') acc.push('<button class="btn-sunat b2b-acc" style="color:#C0392B;border-color:#E8B5AD" onclick="eliminarB2BIngreso(' + i.id + ')">Eliminar</button>');
+        return '<tr>' +
+          '<td>' + (i.fechaRecepcion ? fmtFecha(i.fechaRecepcion) : '—') + '</td>' +
+          '<td>' + (i.origen || '—') + '</td>' +
+          '<td><span class="b2b-pill" style="background:' + (B2B_ING_COL[i.estado] || '#888') + '22;color:' + (B2B_ING_COL[i.estado] || '#888') + '">' + (B2B_ING_TXT[i.estado] || i.estado) + '</span></td>' +
+          '<td>' + (i.ruc || '—') + '</td>' +
+          '<td>' + (i.razonSocial || '—') + '</td>' +
+          '<td>' + (i.telefono || '—') + '</td>' +
+          '<td>' + (i.monto != null ? fmtSoles(i.monto) : '—') + '</td>' +
+          '<td>' + (i.tieneInmueble ? (i.tieneInmueble + (i.tipoInmueble ? ' · ' + i.tipoInmueble : '')) : '—') + '</td>' +
+          '<td>' + (i.codigoSolicitud ? '<span class="b2b-cod">' + i.codigoSolicitud + '</span>' : '—') + '</td>' +
+          '<td>' + (i.mensajeError ? '<span class="b2b-sub">' + i.mensajeError + '</span>' : '—') + '</td>' +
+          '<td><div class="b2b-acc-wrap">' + acc.join('') + '</div></td>' +
+          '</tr>';
+      }).join('') +
       '</tbody></table></div>';
   } catch (e) {
     cont.innerHTML = '<div class="vacio">No se pudo cargar la bandeja: ' + e.message + '</div>';
   }
+}
+
+// ---- Acciones de la bandeja de ingresos B2B (replican las de B2C) ----
+async function verRawB2B(id) {
+  try {
+    const i = await api('/api/b2b/ingresos/' + id);
+    let pretty = i.rawJson;
+    try { pretty = JSON.stringify(JSON.parse(i.rawJson), null, 2); } catch (e) {}
+    alert('JSON recibido (ingreso B2B #' + id + '):\n\n' + pretty);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function reprocesarB2B(id) {
+  if (!confirm('¿Reprocesar este ingreso? Reintenta crear la solicitud desde los datos recibidos.')) return;
+  try { const r = await api('/api/b2b/ingresos/' + id + '/reprocesar', { method: 'POST' });
+    alert(r.resultado && r.resultado.codigoSolicitud ? 'Resultado: ' + (B2B_ING_TXT[r.resultado.estado] || r.resultado.estado) + ' · ' + r.resultado.codigoSolicitud : 'Reprocesado.');
+    cargarIngresosB2B();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function crearB2BForzado(id) {
+  if (!confirm('¿Crear la solicitud AUNQUE sea duplicada?\n\nSe creará una solicitud nueva en el kanban B2B, saltando la validación de duplicado.')) return;
+  try { const r = await api('/api/b2b/ingresos/' + id + '/crear', { method: 'POST' });
+    alert('Solicitud creada: ' + r.codigoSolicitud); cargarIngresosB2B();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function descartarB2BIngreso(id) {
+  if (!confirm('¿Descartar este ingreso? No creará solicitud.')) return;
+  try { await api('/api/b2b/ingresos/' + id + '/descartar', { method: 'POST', body: JSON.stringify({ motivo: 'Descartado manualmente' }) });
+    cargarIngresosB2B();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function eliminarB2BIngreso(id) {
+  if (!confirm('¿Eliminar este ingreso de la bandeja? Esta acción no se puede deshacer.')) return;
+  try { await api('/api/b2b/ingresos/' + id, { method: 'DELETE' }); cargarIngresosB2B(); }
+  catch (e) { alert('Error: ' + e.message); }
+}
+function verLeadB2BDesdeBruto(codigo) {
+  ir('b2b');
+  setTimeout(() => { if (typeof abrirFichaB2B === 'function') abrirFichaB2B(codigo); }, 300);
 }
 
 // ========== Auditoría B2B + archivar/eliminar solicitudes ==========

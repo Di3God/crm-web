@@ -1291,7 +1291,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
   let existente = null;
   if (norm.ruc) existente = db.prepare('SELECT * FROM b2b_solicitudes WHERE ruc = ? ORDER BY id DESC LIMIT 1').get(norm.ruc);
   if (!existente && norm.telefono) existente = db.prepare('SELECT * FROM b2b_solicitudes WHERE telefono = ? ORDER BY id DESC LIMIT 1').get(norm.telefono);
-  if (existente) {
+  if (existente && !opts.forzar) {
     const terminal = B2B_ESTADOS_TERMINALES.includes(existente.estado) || existente.archivado;
     if (terminal) {
       return { estado: 'duplicado_historial', codigoSolicitud: existente.codigo, mensajeError: `⚠ Ya existe en historial (${existente.codigo}, ${existente.estado}) — la revisión es manual` };
@@ -7734,10 +7734,70 @@ app.post('/api/b2b/solicitudes/:codigo/sunat', soloB2B, async (req, res) => {
 app.get('/api/b2b/ingresos', soloB2B, (req, res) => {
   const estado = (req.query.estado || '').trim();
   let filas = db.prepare('SELECT * FROM b2b_ingresos ORDER BY id DESC LIMIT 500').all();
-  if (estado) filas = filas.filter(i => i.estado === estado);
+  // El resumen siempre refleja el TOTAL (no el filtro), para que los chips muestren los conteos reales.
   const resumen = {};
-  db.prepare('SELECT estado, COUNT(*) c FROM b2b_ingresos GROUP BY estado').all().forEach(r => { resumen[r.estado] = r.c; });
-  res.json({ ingresos: filas, total: filas.length, resumen });
+  let total = 0;
+  db.prepare('SELECT estado, COUNT(*) c FROM b2b_ingresos GROUP BY estado').all().forEach(r => { resumen[r.estado] = r.c; total += r.c; });
+  if (estado) filas = filas.filter(i => i.estado === estado);
+  res.json({ ingresos: filas, total, resumen });
+});
+
+// Detalle de un ingreso B2B (incluye rawJson para inspección).
+app.get('/api/b2b/ingresos/:id', soloB2B, (req, res) => {
+  const i = db.prepare('SELECT * FROM b2b_ingresos WHERE id = ?').get(req.params.id);
+  if (!i) return res.status(404).json({ error: 'No encontrado' });
+  res.json(i);
+});
+
+// Descartar un ingreso B2B (no crea solicitud).
+app.post('/api/b2b/ingresos/:id/descartar', soloB2B, (req, res) => {
+  const i = db.prepare('SELECT * FROM b2b_ingresos WHERE id = ?').get(req.params.id);
+  if (!i) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare("UPDATE b2b_ingresos SET estado='descartado', mensajeError=? WHERE id=?")
+    .run((req.body && req.body.motivo) || 'Descartado manualmente', req.params.id);
+  auditar(req, 'b2b_ingreso_descartar', String(req.params.id), i.razonSocial || i.ruc || '');
+  res.json({ ok: true });
+});
+
+// Reprocesar un ingreso B2B: reintenta crear la solicitud desde el rawJson.
+app.post('/api/b2b/ingresos/:id/reprocesar', soloB2B, (req, res) => {
+  const i = db.prepare('SELECT * FROM b2b_ingresos WHERE id = ?').get(req.params.id);
+  if (!i) return res.status(404).json({ error: 'No encontrado' });
+  let payload = {};
+  try { payload = JSON.parse(i.rawJson || '{}'); } catch (e) { return res.status(400).json({ error: 'JSON inválido en el ingreso' }); }
+  try {
+    const norm = normalizarB2B(i.origen || 'meta', payload);
+    const r = procesarSolicitudB2B(norm);
+    db.prepare("UPDATE b2b_ingresos SET estado=?, codigoSolicitud=?, mensajeError=? WHERE id=?")
+      .run(r.estado, r.codigoSolicitud || i.codigoSolicitud || null, r.mensajeError || null, req.params.id);
+    auditar(req, 'b2b_ingreso_reprocesar', String(req.params.id), r.codigoSolicitud || '');
+    res.json({ ok: true, resultado: r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Crear solicitud (forzada) desde un ingreso B2B, aunque sea duplicado.
+app.post('/api/b2b/ingresos/:id/crear', soloB2B, (req, res) => {
+  const i = db.prepare('SELECT * FROM b2b_ingresos WHERE id = ?').get(req.params.id);
+  if (!i) return res.status(404).json({ error: 'No encontrado' });
+  let payload = {};
+  try { payload = JSON.parse(i.rawJson || '{}'); } catch (e) { return res.status(400).json({ error: 'JSON inválido' }); }
+  try {
+    const norm = normalizarB2B(i.origen || 'meta', payload);
+    const r = procesarSolicitudB2B(norm, { forzar: true });
+    db.prepare("UPDATE b2b_ingresos SET estado='creado', codigoSolicitud=?, mensajeError=NULL WHERE id=?")
+      .run(r.codigoSolicitud || null, req.params.id);
+    auditar(req, 'b2b_ingreso_crear_forzado', String(req.params.id), r.codigoSolicitud || '');
+    res.json({ ok: true, codigoSolicitud: r.codigoSolicitud });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Eliminar un ingreso B2B (solo admin).
+app.delete('/api/b2b/ingresos/:id', soloAdmin, (req, res) => {
+  const i = db.prepare('SELECT * FROM b2b_ingresos WHERE id = ?').get(req.params.id);
+  if (!i) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare('DELETE FROM b2b_ingresos WHERE id = ?').run(req.params.id);
+  auditar(req, 'b2b_ingreso_eliminar', String(req.params.id), i.razonSocial || i.ruc || '');
+  res.json({ ok: true });
 });
 
 // Scorecards del tablero B2B: totales por columna, potencial estimado, vencidos, con observación, calientes.
@@ -8504,7 +8564,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.413 (Ticket subido - nuevas etiquetas de monto: (1) B2C ya funcionaba solo (montoEtiquetaANumero toma el minimo inferior): S/30,000 a 50,000 -> 30k, S/50,000 a 100,000 -> 50k, S/100,000 a mas -> 100k. NO se toco. (2) B2B montoRangoFijo actualizado por regla de negocio: S/200,000 a 1,000,000 -> 300,000 (arranca en el umbral de foco B2B, NO el minimo 200k), S/1,000,000 a mas -> 1,000,000. Compatibilidad con etiquetas viejas intacta (50-299k->100k, 300-999k->400k, 1M->1M). (3) FIX de rangoANumero: juntaba TODOS los digitos de una etiqueta con 2 numeros (S/200,000 a 1,000,000 daba 2 billones) - ahora extrae correctamente el primer numero (limite inferior). Validado con 7 casos nuevos+viejos. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.414 (Bandeja de ingresos B2B con las mismas funcionalidades que B2C: ahora cada ingreso B2B tiene columna de ACCIONES: JSON (ver el crudo recibido), Reprocesar (reintenta crear la solicitud), Crear igual (fuerza la creacion aunque sea duplicado, saltando el dedup), Descartar, Ver (abre la ficha si ya tiene solicitud) y Eliminar (solo admin). Chips de resumen ahora CLICABLES para filtrar por estado (creado/duplicado activo/duplicado historial/etc), con el total real siempre visible. Nuevos endpoints: GET/POST /api/b2b/ingresos/:id (detalle, reprocesar, descartar, crear) + DELETE. procesarSolicitudB2B ahora acepta opts.forzar para saltar el dedup. Validado E2E: JSON, crear forzado, descartar, eliminar. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

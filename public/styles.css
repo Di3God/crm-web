@@ -3361,3 +3361,13 @@ body.night #v-chat .sk-line { background:linear-gradient(90deg,#1A2534 25%,#2230
 body.night #gPistasForm { background: #16243B !important; border-color: #2E4B75 !important; }
 body.night .gform-tit { color: #7FB0FF !important; }
 body.night .gform-chip { background: #1A2534 !important; border-color: #2E4B75 !important; color: #D8E6F5 !important; }
+
+/* Bandeja B2B: acciones y chips filtrables */
+.b2b-acc-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+.btn-sunat.b2b-acc { padding: 2px 8px; font-size: 10.5px; white-space: nowrap; }
+.b2b-chip-fil { cursor: pointer; transition: all .12s; }
+.b2b-chip-fil:hover { border-color: #0B72E8; }
+.b2b-chip-act { background: #0B72E8 !important; color: #fff !important; border-color: #0B72E8 !important; }
+.b2b-chip-act i { filter: brightness(2); }
+.b2b-chip-act b { color: #fff !important; }
+body.night .btn-sunat.b2b-acc { background: #1A2534 !important; border-color: #2A3849 !important; }
