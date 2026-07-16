@@ -10317,19 +10317,28 @@ async function abrirResumenGestion() {
       '<pre id="resumPreview" style="background:#F0F2F5;border:1px solid #DDE3EA;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto;margin:0;font-family:ui-monospace,Menlo,monospace">Cargando…</pre>' +
     '</div>' +
     '<div style="padding:14px 20px;border-top:1px solid #EEF1F5;display:flex;gap:8px;justify-content:flex-end;align-items:center">' +
-      '<label style="font-size:11.5px;color:#5B7290;margin-right:auto;display:flex;align-items:center;gap:6px"><input type="checkbox" id="resumAuto"> Usar estos asesores en el envío automático (9am/1pm/6pm)</label>' +
+      '<label style="font-size:11.5px;color:#5B7290;margin-right:auto;display:flex;align-items:center;gap:6px"><input type="checkbox" id="resumAuto" onchange="guardarConfigAuto(this.checked)"> Usar estos asesores en el envío automático (9am/1pm/6pm)</label>' +
       '<button class="btn sec" onclick="document.getElementById(\'ovResumenGest\').remove()">Cerrar</button>' +
       '<button class="btn" id="resumEnviarBtn" onclick="enviarResumenGestion()" style="background:#25D366">📤 Enviar al grupo</button>' +
     '</div></div>';
   document.body.appendChild(ov);
+  // Cargar la config guardada del automático (para marcar el checkbox y los chips si ya se fijó).
+  let asesoresGuardados = null;
+  try { const cfg = await api('/api/b2b/resumen-gestion/config'); asesoresGuardados = cfg.asesores; } catch (e) {}
+  if (asesoresGuardados && asesoresGuardados.length) {
+    RESUMEN_ASESORES_SEL = asesoresGuardados.slice();
+    const chk = document.getElementById('resumAuto'); if (chk) chk.checked = true;
+  }
   // Cargar asesores operativos B2B
   try {
     const u = await api('/api/usuarios');
     const oper = (u.usuarios || u || []).filter(x => ['funcionario_b2b','asistente_creditos'].includes(x.rol) && x.activo);
     const cont = document.getElementById('resumChips');
     if (!oper.length) { cont.innerHTML = '<span style="color:#8AA0B8;font-size:12px">No hay asesores B2B operativos.</span>'; }
-    else cont.innerHTML = oper.map(o =>
-      '<span class="resum-chip" data-n="' + o.nombre.replace(/"/g,'&quot;') + '" onclick="toggleResumAsesor(this)" style="cursor:pointer;font-size:12px;font-weight:600;border:1px solid #DDE3EA;border-radius:14px;padding:4px 12px;color:#41566E">' + o.nombre + '</span>').join('');
+    else cont.innerHTML = oper.map(o => {
+      const on = asesoresGuardados && asesoresGuardados.includes(o.nombre);
+      return '<span class="resum-chip' + (on ? ' resum-chip-on' : '') + '" data-n="' + o.nombre.replace(/"/g,'&quot;') + '" onclick="toggleResumAsesor(this)" style="cursor:pointer;font-size:12px;font-weight:600;border:1px solid ' + (on ? '#0B72E8' : '#DDE3EA') + ';border-radius:14px;padding:4px 12px;color:' + (on ? '#fff' : '#41566E') + ';background:' + (on ? '#0B72E8' : '') + '">' + o.nombre + '</span>';
+    }).join('');
   } catch (e) {}
   cargarPreviewResumen();
 }
@@ -10342,6 +10351,13 @@ function toggleResumAsesor(el) {
   const sel = Array.from(document.querySelectorAll('.resum-chip-on')).map(x => x.getAttribute('data-n'));
   RESUMEN_ASESORES_SEL = sel.length ? sel : null;
   cargarPreviewResumen();
+}
+async function guardarConfigAuto(activo) {
+  try {
+    await api('/api/b2b/resumen-gestion/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: activo ? RESUMEN_ASESORES_SEL : null }) });
+    const lbl = document.querySelector('#ovResumenGest label');
+    if (lbl) { const prev = lbl.style.color; lbl.style.color = '#1D9E75'; setTimeout(() => { lbl.style.color = prev; }, 900); }
+  } catch (e) { alert('No se pudo guardar la configuración: ' + e.message); }
 }
 async function cargarPreviewResumen() {
   const pre = document.getElementById('resumPreview'); if (!pre) return;
@@ -10357,10 +10373,10 @@ async function enviarResumenGestion() {
   const btn = document.getElementById('resumEnviarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
   try {
-    // Guardar config de asesores para el automático si se marcó.
+    // Persistir config del automático: marcado guarda los asesores; desmarcado limpia (vuelve a todos).
     const auto = document.getElementById('resumAuto');
-    if (auto && auto.checked) {
-      await api('/api/b2b/resumen-gestion/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: RESUMEN_ASESORES_SEL }) });
+    if (auto) {
+      await api('/api/b2b/resumen-gestion/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: auto.checked ? RESUMEN_ASESORES_SEL : null }) });
     }
     await api('/api/b2b/resumen-gestion/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: RESUMEN_ASESORES_SEL }) });
     if (btn) { btn.textContent = '✓ Enviado'; btn.style.background = '#1D9E75'; }

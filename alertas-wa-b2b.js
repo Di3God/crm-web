@@ -199,24 +199,104 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       let avanzaronSinContacto = 0;
       avanzoSet.forEach(c => { if (!contactoSet.has(c)) avanzaronSinContacto++; });
 
-      const pctIco = pct >= 55 ? '' : (pct >= 40 ? '' : '');
+      // Hora de la PRIMERA gestión del día (la más temprana registrada por el asesor).
+      let primeraGestionHora = null;
+      if (gAs.length) {
+        const primera = gAs[0].fecha; // gestHoy viene ordenado ASC
+        const d = new Date(new Date(primera).getTime() + LIMA_OFF);
+        primeraGestionHora = d.toISOString().slice(11, 16);
+      }
+      // Leads del asesor SIN gestionar aún (asignados, vivos, que nunca tuvieron una gestión).
+      const conAlgunaGestion = new Set(db.prepare('SELECT DISTINCT codigoSolicitud c FROM b2b_gestiones WHERE responsable=?').all(asesor).map(r => r.c));
+      let noGestionados = 0;
+      sols.filter(s => s.responsableActual === asesor && !s.archivado && s.estado !== 'No elegible').forEach(s => {
+        const col = etapaKanbanB2B(s);
+        if (col === 'Desestimado' || col === 'Business case') return;
+        if (!conAlgunaGestion.has(s.codigo)) noGestionados++;
+      });
+      // Tiempo promedio de ABORDAJE sobre los ÚLTIMOS 10 leads asignados al asesor (no arrastra
+      // leads viejos desatendidos: mide la reacción reciente). Abordaje = ingreso → 1ª gestión.
+      const ult10 = db.prepare(
+        "SELECT codigo, fechaIngreso FROM b2b_solicitudes WHERE responsableActual=? AND fechaIngreso IS NOT NULL ORDER BY fechaIngreso DESC LIMIT 10"
+      ).all(asesor);
+      let sumaAbordajeMs = 0, nAbordaje = 0;
+      ult10.forEach(s => {
+        const pg = db.prepare('SELECT MIN(fecha) primera FROM b2b_gestiones WHERE codigoSolicitud=? AND responsable=?').get(s.codigo, asesor);
+        if (!pg || !pg.primera) return;
+        const ms = new Date(pg.primera) - new Date(s.fechaIngreso);
+        if (isFinite(ms) && ms > 0 && ms < 1000 * 60 * 60 * 24 * 30) { sumaAbordajeMs += ms; nAbordaje++; }
+      });
+      let abordajeTxt = null;
+      if (nAbordaje) {
+        const horas = (sumaAbordajeMs / nAbordaje) / (1000 * 60 * 60);
+        abordajeTxt = horas < 1 ? Math.round(horas * 60) + ' min' : (horas < 24 ? (Math.round(horas * 10) / 10) + ' h' : (Math.round(horas / 24 * 10) / 10) + ' d');
+      }
+
+      // Llamadas de Aircall del asesor HOY (matchea por 'agente' = nombre de Aircall del usuario).
+      // El usuario de Aircall está embebido: el número que marca identifica quién llamó.
+      const llamadasHoy = db.prepare(
+        "SELECT duracion FROM llamadas WHERE agente=? AND fecha>=? AND fecha<? ORDER BY duracion DESC"
+      ).all(asesor, ini, fin);
+      const totalLlamadas = llamadasHoy.length;
+      let masLargaTxt = null;
+      if (totalLlamadas && llamadasHoy[0].duracion) {
+        const seg = llamadasHoy[0].duracion;
+        const mm = Math.floor(seg / 60), ss = seg % 60;
+        masLargaTxt = mm > 0 ? (mm + 'm ' + String(ss).padStart(2, '0') + 's') : (ss + 's');
+      }
+
       const B = [];
       B.push('👤 *' + asesor.toUpperCase() + '*');
+      if (primeraGestionHora) B.push('🕐 Iniciaste ' + primeraGestionHora + ' — ¡sigamos avanzando!');
       B.push('📋 Gestionados: ' + codsGest.length + ' (' + gestHoyLlegoHoy + ' hoy · ' + gestPrevios + ' previos)');
       B.push('📞 Intentos: ' + intentos + ' · Contactó: ' + contactados + ' (' + pct + '%)');
       B.push('🎯 3×3: ' + con3x3 + '/' + codsGest.length + ' · ' + en1 + ' en 1er toque · ' + en2 + ' en 2do · ' + en3 + ' en 3ro+');
       B.push('🚀 Avances de etapa: ' + avances);
+      if (totalLlamadas) B.push('📱 Llamadas Aircall: ' + totalLlamadas + (masLargaTxt ? ' · más larga ' + masLargaTxt : ''));
+      B.push('📭 Sin gestionar aún: ' + noGestionados);
+      if (abordajeTxt) B.push('⚡ Tiempo de abordaje: ' + abordajeTxt + ' promedio');
       B.push('⏰ Vencidos sin gestión: ' + vencidosSinGestion);
       B.push('🔕 Avanzaron sin contacto: ' + avanzaronSinContacto);
       return { asesor, texto: B.join('\n'), vencidosSinGestion, pct };
     });
 
     if (!bloques.length) return null;
+
+    // --- AVANCES DEL DÍA POR TRANSICIÓN (equipo): cantidad + monto potencial de cada salto ---
+    // Crédito→Garantía · Garantía→Reunión · Reunión→Finanzas · Finanzas→Business case.
+    const ETAPAS_FLUJO = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+    const LBL_TRANS = {
+      'Filtro credito→Filtro garantia': 'Crédito → Garantía',
+      'Filtro garantia→Reunion comercial': 'Garantía → Reunión',
+      'Reunion comercial→Filtro finanzas': 'Reunión → Finanzas',
+      'Filtro finanzas→Business case': 'Finanzas → Business case'
+    };
+    const aCol = (n) => { n = String(n || '').trim(); if (ETAPAS_FLUJO.indexOf(n) >= 0) return n; try { return etapaKanbanB2B({ estado: n, sunatEstado: 'ok' }); } catch (e) { return n; } };
+    const montoDe = (cod) => { const s = solPorCodigo[cod]; if (!s) return 0; return s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo ? (montoRangoFijo(s.montoRango) || 0) : 0); };
+    const transAcum = {}; // "De→A" -> { n, monto }
+    // Avances de hoy del equipo (o del filtro de asesores).
+    const avHoyEquipo = db.prepare("SELECT nombre, objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin)
+      .filter(a => !opts.asesores || opts.asesores.includes(a.nombre));
+    avHoyEquipo.forEach(a => {
+      const mm = String(a.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
+      if (!mm) return;
+      const de = aCol(mm[1].trim()), aE = aCol(mm[2].trim());
+      const key = de + '→' + aE;
+      if (!LBL_TRANS[key]) return; // solo las 4 transiciones clave
+      (transAcum[key] = transAcum[key] || { n: 0, monto: 0 }).n++;
+      transAcum[key].monto += montoDe(a.objetivo);
+    });
+    const lineasTrans = Object.keys(LBL_TRANS)
+      .filter(k => transAcum[k] && transAcum[k].n > 0)
+      .map(k => '• ' + LBL_TRANS[k] + ': ' + transAcum[k].n + ' (' + fmtS(transAcum[k].monto) + ')');
+
     const cab = ['*📊 Gestión del día · ' + selloHora() + '*', 'Equipo comercial B2B', ''];
     const cuerpo = bloques.map(b => b.texto).join('\n\n');
-    // Cierre con alerta si alguien tiene muchos vencidos.
-    const alertas = bloques.filter(b => b.vencidosSinGestion >= 4).map(b => '⚠️ ' + primerNom(b.asesor) + ': ' + b.vencidosSinGestion + ' vencidos, priorizar mañana.');
-    return cab.join('\n') + cuerpo + (alertas.length ? '\n\n' + alertas.join('\n') : '');
+    // Bloque de avances por transición (si hubo alguno hoy).
+    const bloqueTrans = lineasTrans.length ? '\n\n*🚀 Avances por etapa (equipo):*\n' + lineasTrans.join('\n') : '';
+    // Cierre con alerta si alguien tiene muchos vencidos: priorizar gestionar esas empresas.
+    const alertas = bloques.filter(b => b.vencidosSinGestion >= 4).map(b => '⚠️ ' + primerNom(b.asesor) + ': ' + b.vencidosSinGestion + ' vencidos, priorizar gestión de estas empresas.');
+    return cab.join('\n') + cuerpo + bloqueTrans + (alertas.length ? '\n\n' + alertas.join('\n') : '');
   }
 
   function lineasGestionAsesor(act) {

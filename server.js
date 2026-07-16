@@ -7680,6 +7680,13 @@ app.post('/api/b2b/resumen-gestion/config', soloB2B, (req, res) => {
   auditar(req, 'b2b_resumen_config', null, asesores ? asesores.join(',') : 'todos');
   res.json({ ok: true, asesores });
 });
+// Lee la config actual del resumen automático (qué asesores + si está activo).
+app.get('/api/b2b/resumen-gestion/config', soloB2B, (req, res) => {
+  if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  let asesores = null;
+  try { const c = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_resumen_asesores'").get(); if (c && c.valor) asesores = JSON.parse(c.valor); } catch (e) {}
+  res.json({ asesores: Array.isArray(asesores) ? asesores : null });
+});
 
 // Envía un MENSAJE LIBRE al grupo B2B (para motivar, avisos puntuales, etc.).
 // POST /api/b2b/wa/mensaje  { texto }
@@ -8626,7 +8633,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.420 (Resumen gestion B2B - 2 fixes: (1) el conteo de Gestionados ahora coincide con el dashboard Gestion del dia: cuenta gestiones formales + trabajo de expediente (credito/garantia/links) + descartes, no solo gestiones formales. Antes bailaban los numeros (Shirley 10 vs 13, Bony 11 vs 10). (2) El boton Resumen gestion y sus 3 endpoints (preview/enviar/config) ahora son SOLO ADMIN (antes admin o jefe B2B). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.422 (Resumen gestion B2B - 3 mejoras: (1) Tiempo de abordaje ahora promedia SOLO los ultimos 10 leads asignados al asesor (no arrastra leads viejos desatendidos, mide reaccion reciente). (2) Llamadas de Aircall por asesor: total del dia + la mas larga con su duracion (matchea por agente=usuario de Aircall). (3) Avances por transicion del equipo: Credito->Garantia, Garantia->Reunion, Reunion->Finanzas, Finanzas->Business case, cada uno con cantidad + monto potencial. Los chips de seleccion de asesores ya permiten elegir a quien mostrar. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
