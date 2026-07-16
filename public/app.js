@@ -10332,7 +10332,8 @@ async function abrirResumenGestion() {
   // Cargar asesores operativos B2B
   try {
     const u = await api('/api/usuarios');
-    const oper = (u.usuarios || u || []).filter(x => ['funcionario_b2b','asistente_creditos'].includes(x.rol) && x.activo);
+    const lista = Array.isArray(u) ? u : (u.usuarios || u.lista || []);
+    const oper = lista.filter(x => ['funcionario_b2b','asistente_creditos'].includes(x.rol));
     const cont = document.getElementById('resumChips');
     if (!oper.length) { cont.innerHTML = '<span style="color:#8AA0B8;font-size:12px">No hay asesores B2B operativos.</span>'; }
     else cont.innerHTML = oper.map(o => {

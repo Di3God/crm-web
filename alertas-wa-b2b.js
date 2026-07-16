@@ -154,8 +154,19 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     // Avances de etapa hoy por asesor.
     const avHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
     // Solicitudes con su responsable + fecha de ingreso (para separar hoy vs previos).
-    const sols = db.prepare('SELECT codigo, responsableActual, fechaIngreso, estado, fechaEtapa, archivado FROM b2b_solicitudes').all();
+    const sols = db.prepare('SELECT codigo, responsableActual, fechaIngreso, estado, fechaEtapa, archivado, montoSolicitado, montoRango, ruc FROM b2b_solicitudes').all();
     const solPorCodigo = {}; sols.forEach(s => { solPorCodigo[s.codigo] = s; });
+
+    // Helpers para avances por transición con monto (se calculan POR ASESOR dentro del bloque).
+    const ETAPAS_FLUJO = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+    const LBL_TRANS = {
+      'Filtro credito→Filtro garantia': 'Crédito → Garantía',
+      'Filtro garantia→Reunion comercial': 'Garantía → Reunión',
+      'Reunion comercial→Filtro finanzas': 'Reunión → Finanzas',
+      'Filtro finanzas→Business case': 'Finanzas → Business case'
+    };
+    const aCol = (n) => { n = String(n || '').trim(); if (ETAPAS_FLUJO.indexOf(n) >= 0) return n; try { return etapaKanbanB2B({ estado: n, sunatEstado: 'ok' }); } catch (e) { return n; } };
+    const montoDe = (cod) => { const s = solPorCodigo[cod]; if (!s) return 0; return s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo ? (montoRangoFijo(s.montoRango) || 0) : 0); };
 
     const bloques = objetivo.map(asesor => {
       // Gestiones del asesor hoy.
@@ -233,17 +244,33 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       }
 
       // Llamadas de Aircall del asesor HOY (matchea por 'agente' = nombre de Aircall del usuario).
-      // El usuario de Aircall está embebido: el número que marca identifica quién llamó.
+      // Se cuentan EMPRESAS/NÚMEROS ÚNICOS para que no valga hacer 10 llamadas a la misma empresa.
       const llamadasHoy = db.prepare(
-        "SELECT duracion FROM llamadas WHERE agente=? AND fecha>=? AND fecha<? ORDER BY duracion DESC"
+        "SELECT duracion, codigoB2B, telefono FROM llamadas WHERE agente=? AND fecha>=? AND fecha<? ORDER BY duracion DESC"
       ).all(asesor, ini, fin);
       const totalLlamadas = llamadasHoy.length;
+      const empresasUnicas = new Set(llamadasHoy.map(l => l.codigoB2B || l.telefono || Math.random())).size;
       let masLargaTxt = null;
       if (totalLlamadas && llamadasHoy[0].duracion) {
         const seg = llamadasHoy[0].duracion;
         const mm = Math.floor(seg / 60), ss = seg % 60;
         masLargaTxt = mm > 0 ? (mm + 'm ' + String(ss).padStart(2, '0') + 's') : (ss + 's');
       }
+
+      // Avances por transición de ESTE asesor hoy (cantidad + monto potencial por salto).
+      const misAvances = avHoy.filter(a => a.nombre === asesor);
+      const transAsesor = {};
+      misAvances.forEach(a => {
+        const mm = String(a.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
+        if (!mm) return;
+        const key = aCol(mm[1].trim()) + '→' + aCol(mm[2].trim());
+        if (!LBL_TRANS[key]) return;
+        (transAsesor[key] = transAsesor[key] || { n: 0, monto: 0 }).n++;
+        transAsesor[key].monto += montoDe(a.objetivo);
+      });
+      const lineasTransAsesor = Object.keys(LBL_TRANS)
+        .filter(k => transAsesor[k] && transAsesor[k].n > 0)
+        .map(k => '   ▸ ' + LBL_TRANS[k] + ': ' + transAsesor[k].n + ' (' + fmtS(transAsesor[k].monto) + ')');
 
       const B = [];
       B.push('👤 *' + asesor.toUpperCase() + '*');
@@ -252,7 +279,8 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       B.push('📞 Intentos: ' + intentos + ' · Contactó: ' + contactados + ' (' + pct + '%)');
       B.push('🎯 3×3: ' + con3x3 + '/' + codsGest.length + ' · ' + en1 + ' en 1er toque · ' + en2 + ' en 2do · ' + en3 + ' en 3ro+');
       B.push('🚀 Avances de etapa: ' + avances);
-      if (totalLlamadas) B.push('📱 Llamadas Aircall: ' + totalLlamadas + (masLargaTxt ? ' · más larga ' + masLargaTxt : ''));
+      lineasTransAsesor.forEach(l => B.push(l));
+      B.push('📱 Llamadas Aircall: ' + totalLlamadas + (totalLlamadas ? ' · ' + empresasUnicas + ' empresa' + (empresasUnicas === 1 ? '' : 's') + (masLargaTxt ? ' · más larga ' + masLargaTxt : '') : ''));
       B.push('📭 Sin gestionar aún: ' + noGestionados);
       if (abordajeTxt) B.push('⚡ Tiempo de abordaje: ' + abordajeTxt + ' promedio');
       B.push('⏰ Vencidos sin gestión: ' + vencidosSinGestion);
@@ -262,41 +290,11 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
 
     if (!bloques.length) return null;
 
-    // --- AVANCES DEL DÍA POR TRANSICIÓN (equipo): cantidad + monto potencial de cada salto ---
-    // Crédito→Garantía · Garantía→Reunión · Reunión→Finanzas · Finanzas→Business case.
-    const ETAPAS_FLUJO = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
-    const LBL_TRANS = {
-      'Filtro credito→Filtro garantia': 'Crédito → Garantía',
-      'Filtro garantia→Reunion comercial': 'Garantía → Reunión',
-      'Reunion comercial→Filtro finanzas': 'Reunión → Finanzas',
-      'Filtro finanzas→Business case': 'Finanzas → Business case'
-    };
-    const aCol = (n) => { n = String(n || '').trim(); if (ETAPAS_FLUJO.indexOf(n) >= 0) return n; try { return etapaKanbanB2B({ estado: n, sunatEstado: 'ok' }); } catch (e) { return n; } };
-    const montoDe = (cod) => { const s = solPorCodigo[cod]; if (!s) return 0; return s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo ? (montoRangoFijo(s.montoRango) || 0) : 0); };
-    const transAcum = {}; // "De→A" -> { n, monto }
-    // Avances de hoy del equipo (o del filtro de asesores).
-    const avHoyEquipo = db.prepare("SELECT nombre, objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin)
-      .filter(a => !opts.asesores || opts.asesores.includes(a.nombre));
-    avHoyEquipo.forEach(a => {
-      const mm = String(a.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
-      if (!mm) return;
-      const de = aCol(mm[1].trim()), aE = aCol(mm[2].trim());
-      const key = de + '→' + aE;
-      if (!LBL_TRANS[key]) return; // solo las 4 transiciones clave
-      (transAcum[key] = transAcum[key] || { n: 0, monto: 0 }).n++;
-      transAcum[key].monto += montoDe(a.objetivo);
-    });
-    const lineasTrans = Object.keys(LBL_TRANS)
-      .filter(k => transAcum[k] && transAcum[k].n > 0)
-      .map(k => '• ' + LBL_TRANS[k] + ': ' + transAcum[k].n + ' (' + fmtS(transAcum[k].monto) + ')');
-
     const cab = ['*📊 Gestión del día · ' + selloHora() + '*', 'Equipo comercial B2B', ''];
     const cuerpo = bloques.map(b => b.texto).join('\n\n');
-    // Bloque de avances por transición (si hubo alguno hoy).
-    const bloqueTrans = lineasTrans.length ? '\n\n*🚀 Avances por etapa (equipo):*\n' + lineasTrans.join('\n') : '';
     // Cierre con alerta si alguien tiene muchos vencidos: priorizar gestionar esas empresas.
     const alertas = bloques.filter(b => b.vencidosSinGestion >= 4).map(b => '⚠️ ' + primerNom(b.asesor) + ': ' + b.vencidosSinGestion + ' vencidos, priorizar gestión de estas empresas.');
-    return cab.join('\n') + cuerpo + bloqueTrans + (alertas.length ? '\n\n' + alertas.join('\n') : '');
+    return cab.join('\n') + cuerpo + (alertas.length ? '\n\n' + alertas.join('\n') : '');
   }
 
   function lineasGestionAsesor(act) {
