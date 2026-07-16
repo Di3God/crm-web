@@ -1153,22 +1153,30 @@ function rangoANumero(txt) {
     n *= m[2].startsWith('mill') ? 1000000 : 1000;
     return Math.round(n);
   }
-  const solo = Number(String(txt).replace(/[^0-9]/g, ''));
+  // Extraer el PRIMER número de la etiqueta (límite inferior), no juntar todos los dígitos.
+  // Un número puede venir con separadores de miles: "200,000" o "200.000".
+  const primero = t.match(/\d[\d.,]*/);
+  if (!primero) return null;
+  const solo = Number(primero[0].replace(/[.,]/g, ''));
   return isFinite(solo) && solo >= 1000 ? solo : null;
 }
 
 // Monto POTENCIAL fijo por tramo (para el total del tablero y el ticket cuando el lead
 // vino por rango de formulario/Meta, sin monto exacto). Regla de negocio de Diego:
-//   50k–299k → 100,000 · 300k–999k → 400,000 · ≥1M → 1,000,000
+//   Etiquetas NUEVAS (ticket subido, jul-2026):
+//     "S/200,000 a 1,000,000"  → 300,000 (arranca en el umbral de foco B2B)
+//     "S/1,000,000 a más"       → 1,000,000
+//   Etiquetas viejas (compatibilidad): 50k–299k → 100,000 · 300k–999k → 400,000 · ≥1M → 1,000,000
 // Acepta un rango de texto o un número; devuelve el valor fijo del tramo (o null si no hay dato).
 function montoRangoFijo(rangoOtexto) {
   let piso = null;
   if (typeof rangoOtexto === 'number' && isFinite(rangoOtexto)) piso = rangoOtexto;
   else if (rangoOtexto != null) piso = rangoANumero(rangoOtexto);
   if (piso == null) return null;
-  if (piso >= 1000000) return 1000000;
-  if (piso >= 300000) return 400000;
-  return 100000;
+  if (piso >= 1000000) return 1000000;      // "S/1,000,000 a más"
+  if (piso >= 300000) return 400000;        // (compat. etiqueta vieja 300k–999k)
+  if (piso >= 200000) return 300000;        // "S/200,000 a 1,000,000" (nuevo) → 300k por regla de negocio
+  return 100000;                            // (compat. etiquetas viejas menores)
 }
 
 function normalizarB2B(origen, body) {
@@ -8496,7 +8504,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.412 (Formularios Meta - captura de 3 campos NUEVOS solo en B2C (el B2B usa normalizarB2B, NO se toca): normalizarLeadMarketing ahora extrae DNI, interes_al_Invertir y invertir_en_7dias (con tolerancia a variantes de nombre); se guardan en 3 columnas nuevas de leads (dni, interesInvertir, listo7dias) y se propagan por consolidarLead (spread). Se muestran como PISTAS del formulario en la cabecera del modal de gestion (chip azul: DNI, que le interesa, y 7 dias con icono fuego si esta listo) para ayudar a la GP a calificar. El B2B quedo intacto (sus campos ruc/montoRango/tieneInmueble/departamentoInmueble ya se soportaban). Validado E2E: webhook -> guardado -> detalle consolidado devuelve los 3 campos. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.413 (Ticket subido - nuevas etiquetas de monto: (1) B2C ya funcionaba solo (montoEtiquetaANumero toma el minimo inferior): S/30,000 a 50,000 -> 30k, S/50,000 a 100,000 -> 50k, S/100,000 a mas -> 100k. NO se toco. (2) B2B montoRangoFijo actualizado por regla de negocio: S/200,000 a 1,000,000 -> 300,000 (arranca en el umbral de foco B2B, NO el minimo 200k), S/1,000,000 a mas -> 1,000,000. Compatibilidad con etiquetas viejas intacta (50-299k->100k, 300-999k->400k, 1M->1M). (3) FIX de rangoANumero: juntaba TODOS los digitos de una etiqueta con 2 numeros (S/200,000 a 1,000,000 daba 2 billones) - ahora extrae correctamente el primer numero (limite inferior). Validado con 7 casos nuevos+viejos. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
