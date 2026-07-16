@@ -8569,7 +8569,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.415 (FIX CRITICO monto B2B: cuando el formulario Meta manda montoRango sin monto exacto, el barrido de respaldo agarraba por error los digitos del EMAIL o nombre (langel27591 daba 27591; acuario50265 daba 50265). Correcciones en normalizarB2B: (1) si viene montoRango NO se barre, el monto sale del rango fijo (200mil-1millon->300k, mas de 1millon->1M); (2) el barrido EXCLUYE email/correo/mail/contacto/nombre. Validado con los 2 JSON reales. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.416 (Tiempo promedio ENTRE etapas en el Centro de Operaciones B2B: bajo Avances del dia por etapa ahora se muestra el flujo Solicitud -Nd-> Credito -Nd-> Garantia -Nd-> Reunion -Nd-> Finanzas -Nd-> Business case, con el promedio real reconstruido del historial de auditoria (b2b_avanzar_etapa/kanban_mover/reunion_guardar) + la fecha de ingreso. Colores por rapidez (verde <=2d, ambar <=5d, rojo >5d), tooltip con # de leads, respeta el filtro por funcionario. Descarta outliers >1 ano. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -10066,6 +10066,18 @@ function renderB2BOps(d) {
   const barra = (pct, ok) => '<div class="ops-bar"><div class="ops-bar-fill ' + (ok ? 'ok' : 'mal') + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
 
   const avancesTxt = (K.avancesPorEtapa || []).map(a => '<span class="ops-av' + (a.n > 0 ? ' on' : '') + '"><b>' + a.n + '</b> →' + (OPS_CORTO[a.etapa] || a.etapa) + '</span>').join('');
+  // Tiempo promedio entre etapas (histórico): "Solicitud →2.3d→ Crédito →1.1d→ Garantía..."
+  const tEtapas = K.tiempoEntreEtapas || [];
+  const tiemposTxt = tEtapas.length
+    ? '<div class="ops-tiempos"><div class="ops-tiempos-lbl">⏱ Tiempo promedio entre etapas <span class="ops-kpi-de">(histórico del equipo/filtro)</span></div><div class="ops-tiempos-flow">' +
+      (OPS_CORTO[tEtapas[0].de] || tEtapas[0].de) +
+      tEtapas.map(t => {
+        const val = t.dias != null ? (t.dias >= 1 ? t.dias + 'd' : Math.round(t.dias * 24) + 'h') : '—';
+        const col = t.dias == null ? 'ops-t-gris' : (t.dias <= 2 ? 'ops-t-verde' : (t.dias <= 5 ? 'ops-t-ambar' : 'ops-t-rojo'));
+        return '<span class="ops-t-arrow ' + col + '" title="' + (t.n || 0) + ' leads">→<b>' + val + '</b>→</span>' + (OPS_CORTO[t.a] || t.a);
+      }).join('') +
+      '</div></div>'
+    : '';
   const metaHtml = M.monto > 0
     ? '<b>' + M.logradoFmt + '</b> <span class="ops-kpi-meta-de">de ' + M.montoFmt + '</span>' + barra(M.pct || 0, (M.pct || 0) >= 50) +
       '<span class="ops-kpi-sub">' + M.pct + '% · falta ' + M.faltaFmt + ' · quedan ' + M.diasRestantes + ' días</span>'
@@ -10076,7 +10088,7 @@ function renderB2BOps(d) {
     '<div class="ops-kpi ops-kpi-click" onclick="abrirTrabajados()"><div class="ops-ico t-teal">📞</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Gestión del día <span class="ops-kpi-de">clic para ver detalle</span></div><div class="ops-kpi-val">' + K.gestionados.hoy + ' <span class="ops-kpi-de">leads trabajados</span></div><div class="ops-kpi-sub">' + opsDelta(K.gestionados.delta) + ' · incluye desestimados</div></div></div>' +
     card('🎯', 't-verde', 'Cumplimiento 3x3', K.cumpl3x3.pct + '%', barra(K.cumpl3x3.pct, K.cumpl3x3.pct >= 70) + K.cumpl3x3.exigibles + ' exigibles · ' + K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidosIncumplidos + ' vencidos s/intentos') +
     card('🤝', 't-teal', 'Contactabilidad', K.contactabilidad.pct + '%', K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto') +
-    '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div></div></div>' +
+    '<div class="ops-kpi ops-kpi-w"><div class="ops-ico t-azul">🚀</div><div class="ops-kpi-body"><div class="ops-kpi-lbl">Avances del día por etapa <span class="ops-kpi-de">(cada lead cuenta una vez, en la etapa más avanzada que alcanzó)</span></div><div class="ops-avs">' + avancesTxt + '</div><div class="ops-kpi-sub">' + K.movimiento.avanzaron + ' avanzaron · ' + K.movimiento.retrocedieron + ' retrocedieron · ' + K.movimiento.sinCambio + ' gestionados sin cambio</div>' + tiemposTxt + '</div></div>' +
     card('💼', 't-azul', 'Pipeline activo', K.pipeline.montoFmt, K.pipeline.n + ' solicitudes vivas') +
     card('🔕', K.avanzaronSinContacto.n > 0 ? 't-rojo' : 't-verde', 'Avanzaron sin contacto', K.avanzaronSinContacto.n, K.avanzaronSinContacto.montoFmt + ' en Garantía+ sin abordar') +
     card('📅', G.accionesVencidas > 0 ? 't-ambar' : 't-teal', 'Agenda de hoy', G.vencenHoy + ' <span class="ops-kpi-de">vencen hoy</span>', G.reunionesHoy + ' reuniones · ' + G.seguimientosHoy + ' seguimientos · <span class="' + (G.accionesVencidas > 0 ? 'ops-rojo' : '') + '">' + G.accionesVencidas + ' vencidas</span>') +

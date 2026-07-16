@@ -254,6 +254,50 @@ module.exports = function (deps) {
       if (movPorLead[cod] > 0) { const slot = avancesPorEtapa.find(x => x.idx === idx); if (slot) slot.n++; }
     });
 
+    // --- TIEMPO PROMEDIO ENTRE ETAPAS (histórico completo, no solo del día) ---
+    // Se reconstruye el recorrido de cada lead a partir de TODOS sus movimientos de etapa
+    // con fecha (auditoría 'X → Y'), y se mide cuánto tardó en pasar de cada etapa a la siguiente.
+    // Se promedia por transición sobre todos los leads que la completaron.
+    const transiciones = {}; // "De→A" -> { sumaMs, n }
+    const movHist = db.prepare(
+      "SELECT objetivo, detalle, fecha FROM auditoria WHERE accion IN ('b2b_kanban_mover','b2b_avanzar_etapa','b2b_reunion_guardar') ORDER BY fecha ASC"
+    ).all().filter(m => !asesorFiltro || enScope.has(m.objetivo));
+    // Agrupar por lead: lista de {etapa, fecha} en orden cronológico.
+    const rutaPorLead = {};
+    // La creación de la solicitud marca la entrada a "Solicitud".
+    db.prepare("SELECT codigo, fechaIngreso FROM b2b_solicitudes").all().forEach(s => {
+      if (s.fechaIngreso) (rutaPorLead[s.codigo] = rutaPorLead[s.codigo] || []).push({ etapa: 'Solicitud', fecha: s.fechaIngreso });
+    });
+    movHist.forEach(m => {
+      const mm = String(m.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
+      let etapaDestino = null;
+      if (mm) etapaDestino = mm[2].trim();
+      else if (m.detalle && /Finanzas|Reunion|reunión/i.test(m.detalle)) etapaDestino = 'Filtro finanzas'; // reunion_guardar → avanza a Finanzas
+      if (!etapaDestino || ETAPAS.indexOf(etapaDestino) < 0) return;
+      (rutaPorLead[m.objetivo] = rutaPorLead[m.objetivo] || []).push({ etapa: etapaDestino, fecha: m.fecha });
+    });
+    // Recorrer cada ruta y acumular tiempos de transición consecutiva ascendente.
+    Object.values(rutaPorLead).forEach(pasos => {
+      pasos.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+      for (let k = 1; k < pasos.length; k++) {
+        const de = ETAPAS.indexOf(pasos[k - 1].etapa), a = ETAPAS.indexOf(pasos[k].etapa);
+        if (de < 0 || a < 0 || a <= de) continue; // solo avances
+        const ms = new Date(pasos[k].fecha) - new Date(pasos[k - 1].fecha);
+        if (!isFinite(ms) || ms <= 0 || ms > 1000 * 60 * 60 * 24 * 365) continue; // descarta outliers >1 año
+        const key = pasos[k - 1].etapa + '→' + pasos[k].etapa;
+        (transiciones[key] = transiciones[key] || { sumaMs: 0, n: 0 }).sumaMs += ms;
+        transiciones[key].n++;
+      }
+    });
+    // Armar el arreglo de tiempos entre etapas consecutivas (Solicitud→Filtro credito, etc.)
+    const tiempoEntreEtapas = [];
+    for (let k = 0; k < ETAPAS.length - 1; k++) {
+      const key = ETAPAS[k] + '→' + ETAPAS[k + 1];
+      const t = transiciones[key];
+      const dias = t && t.n ? (t.sumaMs / t.n) / (1000 * 60 * 60 * 24) : null;
+      tiempoEntreEtapas.push({ de: ETAPAS[k], a: ETAPAS[k + 1], dias: dias != null ? Math.round(dias * 10) / 10 : null, n: t ? t.n : 0 });
+    }
+
     // --- 3x3 y contactabilidad ---
     const exigibles = L.filter(l => l.t33.exigible);
     const contactados = exigibles.filter(l => l.t33.contactoEfectivo);
@@ -537,6 +581,7 @@ module.exports = function (deps) {
         gestionados: { hoy: gestHoySet.size, ayer: gestAyerSet.size, delta: gestHoySet.size - gestAyerSet.size },
         movimiento: { avanzaron, retrocedieron, sinCambio },
         avancesPorEtapa,
+        tiempoEntreEtapas,
         cumpl3x3: { pct: cumpl3x3, exigibles: exigibles.length, alDia: alDia.length + contactados.length, atrasados: atrasados.length, vencidos: vencidos.length, vencidosOk: vencidosOk.length, vencidosIncumplidos: vencidosIncumplidos.length },
         contactabilidad: { pct: contactabilidad, efectivos: contactados.length, sinContacto: sinContactoN, noResponden: noRespondenN },
         avanzaronSinContacto: { n: sinContactoAvanzados.length, monto: sinContactoAvanzados.reduce((a, l) => a + l.monto, 0), montoFmt: fmtMM(sinContactoAvanzados.reduce((a, l) => a + l.monto, 0)) },
