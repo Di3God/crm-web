@@ -258,6 +258,14 @@ module.exports = function (deps) {
     // Se reconstruye el recorrido de cada lead a partir de TODOS sus movimientos de etapa
     // con fecha (auditoría 'X → Y'), y se mide cuánto tardó en pasar de cada etapa a la siguiente.
     // Se promedia por transición sobre todos los leads que la completaron.
+    // IMPORTANTE: los detalles de auditoría guardan el ESTADO INTERNO (ej. "Apto credito",
+    // "Amarillo/nurture", "Expediente"...), que no siempre coincide con el nombre de la columna
+    // del kanban. Se normaliza cada estado a su columna con etapaKanbanB2B antes de comparar.
+    const aColumna = (nombreEstado) => {
+      const n = String(nombreEstado || '').trim();
+      if (ETAPAS.indexOf(n) >= 0) return n; // ya es un nombre de columna
+      try { return etapaKanbanB2B({ estado: n, sunatEstado: 'ok' }); } catch (e) { return n; }
+    };
     const transiciones = {}; // "De→A" -> { sumaMs, n }
     const movHist = db.prepare(
       "SELECT objetivo, detalle, fecha FROM auditoria WHERE accion IN ('b2b_kanban_mover','b2b_avanzar_etapa','b2b_reunion_guardar') ORDER BY fecha ASC"
@@ -271,7 +279,7 @@ module.exports = function (deps) {
     movHist.forEach(m => {
       const mm = String(m.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
       let etapaDestino = null;
-      if (mm) etapaDestino = mm[2].trim();
+      if (mm) etapaDestino = aColumna(mm[2].trim());
       else if (m.detalle && /Finanzas|Reunion|reunión/i.test(m.detalle)) etapaDestino = 'Filtro finanzas'; // reunion_guardar → avanza a Finanzas
       if (!etapaDestino || ETAPAS.indexOf(etapaDestino) < 0) return;
       (rutaPorLead[m.objetivo] = rutaPorLead[m.objetivo] || []).push({ etapa: etapaDestino, fecha: m.fecha });

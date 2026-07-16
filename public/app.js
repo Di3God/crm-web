@@ -5111,8 +5111,23 @@ async function confirmarRedFlagB2B() {
   } catch (e) { err.textContent = e.message || 'No se pudo descartar'; err.classList.remove('oculto'); }
 }
 // Compat: descartar directo desde tabla/kanban (sin ficha abierta) sigue con prompt.
+// Catálogo de motivos de desestimación B2B (estructurado, para métricas de marketing limpias).
+const MOTIVOS_DESEST_B2B = [
+  'No cuenta con garantía inmobiliaria',
+  'Garantía fuera de zona de cobertura',
+  'Monto solicitado fuera de rango',
+  'No sujeto de crédito (score/deudas)',
+  'Empresa muy nueva / sin historial',
+  'RUC de baja / no habido en SUNAT',
+  'No contactable (agotó 3×3)',
+  'No interesado / desistió',
+  'Solo cotizaba / no tenía intención real',
+  'Datos falsos o incompletos',
+  'Duplicado',
+  'Otro (especificar)'
+];
 async function descartarB2B(codigo) {
-  const motivo = prompt('Motivo del descarte:', '');
+  const motivo = await pedirMotivoDesest();
   if (motivo === null) return;
   try {
     await api('/api/b2b/solicitudes/' + codigo + '/descartar', {
@@ -5121,7 +5136,38 @@ async function descartarB2B(codigo) {
     });
     if (typeof cerrar === 'function') cerrar('ovFichaB2B');
     if (B2B_VISTA === 'kanban') cargarKanbanB2B(); else cargarB2B();
-  } catch (e) { alert(e.message || 'No se pudo descartar'); }
+  } catch (e) {
+    // Si el backend bloqueó por campos faltantes (etapa crédito+), mostrar mensaje claro.
+    alert(e.message || 'No se pudo descartar');
+  }
+}
+// Modal simple de selección de motivo (evita el prompt de texto libre para que agrupen bien).
+function pedirMotivoDesest() {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov act';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:9999';
+    const opciones = MOTIVOS_DESEST_B2B.map(m => '<option value="' + m.replace(/"/g, '&quot;') + '">' + m + '</option>').join('');
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;padding:20px;max-width:420px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,.2)">' +
+      '<div style="font-weight:800;font-size:15px;margin-bottom:4px">Motivo de la desestimación</div>' +
+      '<div style="font-size:12px;color:#5B7290;margin-bottom:12px">Elige un motivo. Esto alimenta el análisis de marketing.</div>' +
+      '<select id="desMotSel" class="mtr-in" style="width:100%;margin-bottom:8px">' + opciones + '</select>' +
+      '<input id="desMotOtro" class="mtr-in" placeholder="Detalle (si elegiste Otro)" style="width:100%;box-sizing:border-box;margin-bottom:14px;display:none">' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+      '<button class="btn sec" id="desMotCanc">Cancelar</button>' +
+      '<button class="btn" id="desMotOk" style="background:#C0392B">Desestimar</button></div></div>';
+    document.body.appendChild(ov);
+    const sel = ov.querySelector('#desMotSel'), otro = ov.querySelector('#desMotOtro');
+    sel.addEventListener('change', () => { otro.style.display = sel.value.startsWith('Otro') ? 'block' : 'none'; });
+    const cerrarM = (val) => { ov.remove(); resolve(val); };
+    ov.querySelector('#desMotCanc').onclick = () => cerrarM(null);
+    ov.querySelector('#desMotOk').onclick = () => {
+      let m = sel.value;
+      if (m.startsWith('Otro')) { const t = (otro.value || '').trim(); if (!t) { otro.focus(); return; } m = 'Otro: ' + t; }
+      cerrarM(m);
+    };
+    ov.addEventListener('click', e => { if (e.target === ov) cerrarM(null); });
+  });
 }
 
 // ===== Cambios sin guardar (v1.249): tracking por panel + cierre seguro =====
@@ -10252,6 +10298,79 @@ async function abrirTrabajados() {
 function cerrarTrabajados() { $('opsTrabajadosModal').classList.add('oculto'); }
 
 // ---- Modal Análisis IA ----
+// ---- Resumen de gestión por asesor (Centro de Operaciones B2B) ----
+let RESUMEN_ASESORES_SEL = null; // null = todos; array = filtro
+async function abrirResumenGestion() {
+  const ov = document.createElement('div');
+  ov.className = 'modal-ov act';
+  ov.id = 'ovResumenGest';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML = '<div style="background:#fff;border-radius:16px;padding:0;max-width:520px;width:100%;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.25)">' +
+    '<div style="background:#0F2A4A;color:#fff;padding:16px 20px;display:flex;justify-content:space-between;align-items:center">' +
+      '<div><div style="font-weight:800;font-size:15px">📊 Resumen de gestión</div><div style="font-size:12px;color:#9DB8D8">Por asesor · para el grupo B2B</div></div>' +
+      '<button onclick="document.getElementById(\'ovResumenGest\').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">×</button>' +
+    '</div>' +
+    '<div style="padding:16px 20px;overflow-y:auto">' +
+      '<div style="font-size:12.5px;color:#5B7290;margin-bottom:8px">Elige qué asesores incluir (vacío = todo el equipo):</div>' +
+      '<div id="resumChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"><span style="color:#8AA0B8;font-size:12px">Cargando asesores…</span></div>' +
+      '<div style="font-size:11px;font-weight:800;color:#8AA0B8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Previsualización</div>' +
+      '<pre id="resumPreview" style="background:#F0F2F5;border:1px solid #DDE3EA;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto;margin:0;font-family:ui-monospace,Menlo,monospace">Cargando…</pre>' +
+    '</div>' +
+    '<div style="padding:14px 20px;border-top:1px solid #EEF1F5;display:flex;gap:8px;justify-content:flex-end;align-items:center">' +
+      '<label style="font-size:11.5px;color:#5B7290;margin-right:auto;display:flex;align-items:center;gap:6px"><input type="checkbox" id="resumAuto"> Usar estos asesores en el envío automático (9am/1pm/6pm)</label>' +
+      '<button class="btn sec" onclick="document.getElementById(\'ovResumenGest\').remove()">Cerrar</button>' +
+      '<button class="btn" id="resumEnviarBtn" onclick="enviarResumenGestion()" style="background:#25D366">📤 Enviar al grupo</button>' +
+    '</div></div>';
+  document.body.appendChild(ov);
+  // Cargar asesores operativos B2B
+  try {
+    const u = await api('/api/usuarios');
+    const oper = (u.usuarios || u || []).filter(x => ['funcionario_b2b','asistente_creditos'].includes(x.rol) && x.activo);
+    const cont = document.getElementById('resumChips');
+    if (!oper.length) { cont.innerHTML = '<span style="color:#8AA0B8;font-size:12px">No hay asesores B2B operativos.</span>'; }
+    else cont.innerHTML = oper.map(o =>
+      '<span class="resum-chip" data-n="' + o.nombre.replace(/"/g,'&quot;') + '" onclick="toggleResumAsesor(this)" style="cursor:pointer;font-size:12px;font-weight:600;border:1px solid #DDE3EA;border-radius:14px;padding:4px 12px;color:#41566E">' + o.nombre + '</span>').join('');
+  } catch (e) {}
+  cargarPreviewResumen();
+}
+function toggleResumAsesor(el) {
+  el.classList.toggle('resum-chip-on');
+  const on = el.classList.contains('resum-chip-on');
+  el.style.background = on ? '#0B72E8' : '';
+  el.style.color = on ? '#fff' : '#41566E';
+  el.style.borderColor = on ? '#0B72E8' : '#DDE3EA';
+  const sel = Array.from(document.querySelectorAll('.resum-chip-on')).map(x => x.getAttribute('data-n'));
+  RESUMEN_ASESORES_SEL = sel.length ? sel : null;
+  cargarPreviewResumen();
+}
+async function cargarPreviewResumen() {
+  const pre = document.getElementById('resumPreview'); if (!pre) return;
+  pre.textContent = 'Cargando…';
+  try {
+    const q = RESUMEN_ASESORES_SEL ? '?asesores=' + encodeURIComponent(RESUMEN_ASESORES_SEL.join(',')) : '';
+    const d = await api('/api/b2b/resumen-gestion/preview' + q);
+    pre.textContent = d.texto || '(sin datos)';
+    if (!d.jidConfigurado) { const b = document.getElementById('resumEnviarBtn'); if (b) { b.disabled = true; b.title = 'Configura WA_GRUPO_B2B_JID en Railway'; b.style.opacity = .5; } }
+  } catch (e) { pre.textContent = 'Error: ' + e.message; }
+}
+async function enviarResumenGestion() {
+  const btn = document.getElementById('resumEnviarBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+  try {
+    // Guardar config de asesores para el automático si se marcó.
+    const auto = document.getElementById('resumAuto');
+    if (auto && auto.checked) {
+      await api('/api/b2b/resumen-gestion/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: RESUMEN_ASESORES_SEL }) });
+    }
+    await api('/api/b2b/resumen-gestion/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: RESUMEN_ASESORES_SEL }) });
+    if (btn) { btn.textContent = '✓ Enviado'; btn.style.background = '#1D9E75'; }
+    setTimeout(() => { const o = document.getElementById('ovResumenGest'); if (o) o.remove(); }, 1200);
+  } catch (e) {
+    alert('Error al enviar: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '📤 Enviar al grupo'; }
+  }
+}
+
 function abrirModalIA() {
   $('opsIAModal').classList.remove('oculto');
   const el = $('opsIAContent');

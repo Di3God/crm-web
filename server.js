@@ -1421,7 +1421,7 @@ async function enviarAlertaWA(texto, jid) {
 const alertasWA = require('./alertas-wa.js')({ db, consolidarLead: leadConsolidado, enviarAlertaWA, peruFecha, construirRankingDia });
 const iaReportes = require('./ia-reportes.js');
 // Alertas B2B a su PROPIO grupo (WA_GRUPO_B2B_JID). Mismo bot, otro destino.
-const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo });
+const alertasWAB2B = require('./alertas-wa-b2b.js')({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo, L });
 // v1.362: Centro de Operaciones B2B (motor 3x3 + dashboard de jefatura). Solo lee la BD.
 const dashB2B = require('./dashboard-b2b.js')({ db, etapaKanbanB2B, priorityScoreB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo, sellarFechaEtapa });
 // alertasWAB2B.iniciarCortes(); // DESACTIVADO temporalmente: por ahora al grupo B2B solo llegan alertas de leads nuevos. Los 3 cortes se pueden enviar manualmente con /api/b2b/alertas-wa/enviar o reactivar aquí.
@@ -1436,6 +1436,8 @@ const metaInsights = require('./meta-insights.js')({ db });
 watchdogLeads.iniciar();
 // alertasWA.iniciarCortes(); // v1.401: APAGADO — reemplazado por el Pulso del día (un bloque por grupo). El envío manual sigue disponible.
 pulsoDia.iniciarCortes();
+// v1.419: resumen de gestión por asesor al grupo B2B a las 9am/1pm/6pm (una vez cada uno).
+try { alertasWAB2B.iniciarResumenGestion(); } catch (e) { console.error('[WA-B2B] no se pudo iniciar resumen gestión:', e.message); }
 bienvenida.iniciarWorker(); // reintenta bienvenidas encoladas (fuera de horario) cada 5 min
 // ===== PULSO DEL DÍA (v1.401): preview, envío manual y metas configurables =====
 // Vista previa del mensaje de un corte, sin enviar (admin/jefa).
@@ -7654,6 +7656,31 @@ app.post('/api/b2b/alertas-wa/enviar', soloB2B, async (req, res) => {
   res.json({ ok, corte });
 });
 
+// Resumen de gestión diaria por asesor (para el jefe comercial). opts.asesores = filtrar personas.
+app.get('/api/b2b/resumen-gestion/preview', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  const asesores = req.query.asesores ? String(req.query.asesores).split(',').map(s => s.trim()).filter(Boolean) : null;
+  const texto = alertasWAB2B.resumenGestionPorAsesor({ asesores });
+  res.json({ jidConfigurado: !!process.env.WA_GRUPO_B2B_JID, texto: texto || '(sin actividad registrada hoy para los asesores indicados)' });
+});
+app.post('/api/b2b/resumen-gestion/enviar', soloB2B, async (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (!process.env.WA_GRUPO_B2B_JID) return res.status(422).json({ error: 'Configura WA_GRUPO_B2B_JID en Railway primero' });
+  const asesores = (req.body && req.body.asesores) ? req.body.asesores : null;
+  const texto = await alertasWAB2B.enviarResumenGestion({ asesores });
+  auditar(req, 'b2b_wa_resumen_gestion', null, asesores ? asesores.join(',') : 'todos');
+  res.json({ ok: !!texto, texto });
+});
+
+// Guarda qué asesores incluir en el resumen AUTOMÁTICO (9am/1pm/6pm). null/[] = todos.
+app.post('/api/b2b/resumen-gestion/config', soloB2B, (req, res) => {
+  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  const asesores = (req.body && Array.isArray(req.body.asesores)) ? req.body.asesores : null;
+  db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('b2b_resumen_asesores',?)").run(asesores && asesores.length ? JSON.stringify(asesores) : '');
+  auditar(req, 'b2b_resumen_config', null, asesores ? asesores.join(',') : 'todos');
+  res.json({ ok: true, asesores });
+});
+
 // Envía un MENSAJE LIBRE al grupo B2B (para motivar, avisos puntuales, etc.).
 // POST /api/b2b/wa/mensaje  { texto }
 app.post('/api/b2b/wa/mensaje', soloB2B, async (req, res) => {
@@ -7696,7 +7723,7 @@ app.get('/api/b2b/solicitudes/:codigo/trazabilidad', soloB2B, (req, res) => {
 });
 
 app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
-  const s = db.prepare('SELECT codigo, estado FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
+  const s = db.prepare('SELECT * FROM b2b_solicitudes WHERE codigo=?').get(req.params.codigo);
   if (!s) return res.status(404).json({ error: 'Solicitud no encontrada' });
   const motivo = (req.body && req.body.motivo && String(req.body.motivo).trim()) || 'No contactable';
   // COMPUERTA (v1.365): para desestimar, el funcionario DEBE haber registrado su gestión
@@ -7707,6 +7734,36 @@ app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
     return res.status(422).json({
       error: 'Para desestimar, primero registra tu gestión (un intento o contacto) en el modal de gestión.',
       bloqueoGestion: true });
+  }
+  // COMPUERTA (nueva): si la solicitud YA llegó a etapa de crédito o más avanzada, desestimar
+  // exige tener completos los datos de evaluación: empresa + representante legal (si RUC 20) +
+  // link de Drive con documentos. Cada consulta cuesta, así que un desestimado en créditos debe
+  // quedar documentado para que los motivos alimenten el análisis de marketing.
+  const colActual = etapaKanbanB2B(s);
+  const ETAPAS_CREDITO_MAS = ['Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
+  if (ETAPAS_CREDITO_MAS.includes(colActual)) {
+    const sujetos = db.prepare('SELECT tipoSujeto, nombre, documento FROM b2b_credito_sujetos WHERE codigoSolicitud=?').all(s.codigo);
+    const faltas = [];
+    // Empresa: debe existir el sujeto empresa con nombre y documento (o al menos razonSocial + RUC en la solicitud).
+    const tieneEmpresa = sujetos.some(x => x.tipoSujeto === 'empresa' && (x.nombre || '').trim()) || ((s.razonSocial || '').trim() && (s.ruc || '').trim());
+    if (!tieneEmpresa) faltas.push('datos de la empresa');
+    // Representante legal: obligatorio si el RUC es de persona jurídica (empieza en 20).
+    if (String(s.ruc || '').trim().startsWith('20')) {
+      const tieneRL = sujetos.some(x => x.tipoSujeto === 'representante' && (x.nombre || '').trim());
+      if (!tieneRL) faltas.push('representante legal');
+    }
+    // Vinculada: solo si aplica. Se considera que "aplica" cuando ya se agregó al menos una vinculada
+    // pero quedó incompleta (sin nombre). Si no hay ninguna, no se exige (puede no tener).
+    const vinculadasIncompletas = sujetos.filter(x => x.tipoSujeto === 'vinculada' && !(x.nombre || '').trim());
+    if (vinculadasIncompletas.length) faltas.push('completar la(s) empresa(s) vinculada(s)');
+    // Link de Drive con los documentos.
+    if (!(s.creditoLinkDrive || '').trim()) faltas.push('link de Drive con los documentos');
+
+    if (faltas.length) {
+      return res.status(422).json({
+        error: 'Para desestimar un lead en crédito, primero completa: ' + faltas.join(', ') + '. Cada consulta tiene costo — el expediente debe quedar documentado.',
+        bloqueoDatos: true, faltas });
+    }
   }
   db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
   auditar(req, 'b2b_descartar', s.codigo, motivo);
@@ -8569,7 +8626,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.416 (Tiempo promedio ENTRE etapas en el Centro de Operaciones B2B: bajo Avances del dia por etapa ahora se muestra el flujo Solicitud -Nd-> Credito -Nd-> Garantia -Nd-> Reunion -Nd-> Finanzas -Nd-> Business case, con el promedio real reconstruido del historial de auditoria (b2b_avanzar_etapa/kanban_mover/reunion_guardar) + la fecha de ingreso. Colores por rapidez (verde <=2d, ambar <=5d, rojo >5d), tooltip con # de leads, respeta el filtro por funcionario. Descarta outliers >1 ano. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.419 (Resumen de gestion B2B - boton en Centro de Operaciones con previsualizador en vivo + seleccion de asesores por chips + envio al grupo WA. Envio automatico 9am/1pm/6pm activo, con opcion de fijar asesores del automatico. Endpoints preview/enviar/config. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

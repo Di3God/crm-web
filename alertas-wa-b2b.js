@@ -6,7 +6,7 @@
 //   · Instantánea → nueva solicitud B2B entrante (webhook)
 // El texto se genera AL MOMENTO del envío con el estado vivo del CRM.
 // =============================================================
-module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo }) {
+module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaEtapaB2B, observacionesB2B, montoRangoFijo, L: LOGIC }) {
 
   const LIMA_OFF = -5 * 3600000;
   const JID = () => process.env.WA_GRUPO_B2B_JID || null;
@@ -123,6 +123,92 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     };
   }
 
+  // ---------- RESUMEN DE GESTIÓN DIARIA POR ASESOR (para el jefe comercial) ----------
+  // Arma el bloque de métricas por cada asesor operativo (o los indicados): gestionados
+  // (hoy vs previos), intentos, contactabilidad, 3x3 con nº de toque, avances, vencidos
+  // sin gestión y avanzaron sin contacto. Devuelve el texto WhatsApp completo.
+  function resumenGestionPorAsesor(opts) {
+    opts = opts || {};
+    const hoy = hoyPeru();
+    const ini = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+    const fin = new Date(new Date(hoy + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+    const grupo = r => LOGIC && LOGIC.grupoLimpio ? LOGIC.grupoLimpio(r) : (r || '');
+    const contacto = g => { const gg = grupo(g); return gg && gg !== 'No_respondio' && gg !== 'Dato_invalido' && gg !== 'No_contactar'; };
+
+    // Asesores objetivo: los pasados en opts.asesores, o todos los operativos.
+    let objetivo = opts.asesores && opts.asesores.length ? opts.asesores : null;
+    if (!objetivo) {
+      try { objetivo = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos')").all().map(u => u.nombre); }
+      catch (e) { objetivo = []; }
+    }
+    if (!objetivo.length) return null;
+
+    // Gestiones de HOY (todas, para intentos/contactabilidad/3x3).
+    const gestHoy = db.prepare('SELECT codigoSolicitud, responsable, resultado, fecha FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin);
+    // Avances de etapa hoy por asesor.
+    const avHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
+    // Solicitudes con su responsable + fecha de ingreso (para separar hoy vs previos).
+    const sols = db.prepare('SELECT codigo, responsableActual, fechaIngreso, estado, fechaEtapa, archivado FROM b2b_solicitudes').all();
+    const solPorCodigo = {}; sols.forEach(s => { solPorCodigo[s.codigo] = s; });
+
+    const bloques = objetivo.map(asesor => {
+      // Gestiones del asesor hoy.
+      const gAs = gestHoy.filter(g => g.responsable === asesor);
+      const intentos = gAs.length;
+      const contactados = gAs.filter(contacto).length;
+      const pct = intentos ? Math.round((contactados / intentos) * 100) : 0;
+      // Leads gestionados (únicos) hoy, separando por si el lead llegó hoy o antes.
+      const codsGest = Array.from(new Set(gAs.map(g => g.codigoSolicitud)));
+      let gestHoyLlegoHoy = 0, gestPrevios = 0;
+      codsGest.forEach(c => {
+        const s = solPorCodigo[c];
+        if (s && s.fechaIngreso >= ini && s.fechaIngreso < fin) gestHoyLlegoHoy++; else gestPrevios++;
+      });
+      // 3x3: cuántos de sus leads gestionados tienen toques, y en qué número van (1º,2º,3º).
+      const toquesPorLead = {};
+      gAs.forEach(g => { toquesPorLead[g.codigoSolicitud] = (toquesPorLead[g.codigoSolicitud] || 0) + 1; });
+      let en1 = 0, en2 = 0, en3 = 0, con3x3 = 0;
+      Object.values(toquesPorLead).forEach(n => {
+        if (n >= 1) con3x3++;
+        if (n === 1) en1++; else if (n === 2) en2++; else if (n >= 3) en3++;
+      });
+      // Avances de etapa del asesor hoy.
+      const avances = avHoy.filter(a => a.nombre === asesor).length;
+      // Vencidos sin gestión: leads del asesor con SLA vencido que NO fueron tocados hoy.
+      const tocadosHoy = new Set(gAs.map(g => g.codigoSolicitud));
+      let vencidosSinGestion = 0;
+      sols.filter(s => s.responsableActual === asesor && !s.archivado && s.estado !== 'No elegible').forEach(s => {
+        const col = etapaKanbanB2B(s);
+        if (col === 'Desestimado' || col === 'Business case') return;
+        const sla = slaEtapaB2B(col, s.fechaEtapa);
+        if (sla && sla.vencido && !tocadosHoy.has(s.codigo)) vencidosSinGestion++;
+      });
+      // Avanzaron sin contacto: avanzó de etapa hoy pero no registró gestión con contacto.
+      const avanzoSet = new Set(avHoy.filter(a => a.nombre === asesor).map(a => a.objetivo));
+      const contactoSet = new Set(gAs.filter(contacto).map(g => g.codigoSolicitud));
+      let avanzaronSinContacto = 0;
+      avanzoSet.forEach(c => { if (!contactoSet.has(c)) avanzaronSinContacto++; });
+
+      const pctIco = pct >= 55 ? '' : (pct >= 40 ? '' : '');
+      const B = [];
+      B.push('👤 *' + asesor.toUpperCase() + '*');
+      B.push('📋 Gestionados: ' + codsGest.length + ' (' + gestHoyLlegoHoy + ' hoy · ' + gestPrevios + ' previos)');
+      B.push('📞 Intentos: ' + intentos + ' · Contactó: ' + contactados + ' (' + pct + '%)');
+      B.push('🎯 3×3: ' + con3x3 + '/' + codsGest.length + ' · ' + en1 + ' en 1er toque · ' + en2 + ' en 2do · ' + en3 + ' en 3ro+');
+      B.push('🚀 Avances de etapa: ' + avances);
+      B.push('⏰ Vencidos sin gestión: ' + vencidosSinGestion);
+      B.push('🔕 Avanzaron sin contacto: ' + avanzaronSinContacto);
+      return { asesor, texto: B.join('\n'), vencidosSinGestion, pct };
+    });
+
+    if (!bloques.length) return null;
+    const cab = ['*📊 Gestión del día · ' + selloHora() + '*', 'Equipo comercial B2B', ''];
+    const cuerpo = bloques.map(b => b.texto).join('\n\n');
+    // Cierre con alerta si alguien tiene muchos vencidos.
+    const alertas = bloques.filter(b => b.vencidosSinGestion >= 4).map(b => '⚠️ ' + primerNom(b.asesor) + ': ' + b.vencidosSinGestion + ' vencidos, priorizar mañana.');
+    return cab.join('\n') + cuerpo + (alertas.length ? '\n\n' + alertas.join('\n') : '');
+  }
+
   function lineasGestionAsesor(act) {
     const L = ['', 'Gestión por asesor:'];
     // Incluir también asesores que solo tienen 'sin tocar' (aparecen aunque no hayan trabajado)
@@ -236,5 +322,36 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     }, 60000);
   }
 
-  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA };
+  // Envía el resumen de gestión por asesor al grupo B2B (o lo devuelve para preview).
+  async function enviarResumenGestion(opts) {
+    const txt = resumenGestionPorAsesor(opts || {});
+    if (!txt) return null;
+    if (opts && opts.soloTexto) return txt;
+    await enviarAlertaB2BWA(txt);
+    return txt;
+  }
+
+  // Scheduler del RESUMEN DE GESTIÓN por asesor: 9am, 1pm y 6pm (una vez cada uno por día).
+  function iniciarResumenGestion(opts) {
+    opts = opts || {};
+    setInterval(async () => {
+      try {
+        if (!JID()) return;
+        const now = new Date(Date.now() + LIMA_OFF);
+        const corte = CORTES[now.toISOString().slice(11, 16)];
+        if (!corte) return;
+        const clave = 'wa_b2b_resumen_' + corte + '_' + hoyPeru();
+        if (db.prepare('SELECT valor FROM app_config WHERE clave=?').get(clave)) return;
+        db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
+        // Asesores configurados para el resumen automático (ej. solo Shirley y Bony). Si no hay config, todos.
+        let asesores = opts.asesores || null;
+        try { const c = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_resumen_asesores'").get(); if (c && c.valor) { const arr = JSON.parse(c.valor); if (Array.isArray(arr) && arr.length) asesores = arr; } } catch (e) {}
+        const txt = resumenGestionPorAsesor({ asesores });
+        if (txt) await enviarAlertaB2BWA(txt);
+        console.log('[WA-B2B] resumen gestión ' + corte + ' enviado');
+      } catch (e) { console.error('[WA-B2B] resumen gestión falló:', e.message); }
+    }, 60000);
+  }
+
+  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA, resumenGestionPorAsesor, enviarResumenGestion, iniciarResumenGestion };
 };

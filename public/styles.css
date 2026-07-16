@@ -3384,3 +3384,9 @@ body.night .btn-sunat.b2b-acc { background: #1A2534 !important; border-color: #2
 .ops-t-gris b { background: #EEF1F5; color: #8AA0B8; }
 body.night .ops-tiempos { border-color: #2A3849 !important; }
 body.night .ops-tiempos-flow { color: #D8E6F5 !important; }
+
+/* Chips del modal de resumen de gestión */
+.resum-chip { transition: all .13s; }
+.resum-chip:hover { border-color: #0B72E8 !important; }
+body.night #ovResumenGest > div { background: #151E2B !important; }
+body.night #resumPreview { background: #0B141A !important; border-color: #2A3849 !important; color: #D8E6F5 !important; }
