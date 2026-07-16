@@ -10355,6 +10355,38 @@ function toggleResumAsesor(el) {
   RESUMEN_ASESORES_SEL = sel.length ? sel : null;
   cargarPreviewResumen();
 }
+// ---- Horarios libres del calendario (para agendar sin salir del CRM) ----
+async function verHorariosLibres() {
+  const cont = document.getElementById('gHorariosCont'); if (!cont) return;
+  const btn = document.getElementById('gHorariosBtn');
+  // Fecha: la del campo si ya eligió una; si no, hoy.
+  let fecha = ($('gFechaReunion').value || '').slice(0, 10);
+  if (!fecha) { const d = new Date(); fecha = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+  cont.style.display = 'block';
+  cont.innerHTML = '<span style="font-size:11.5px;color:#8AA0B8">Consultando calendario…</span>';
+  if (btn) btn.disabled = true;
+  try {
+    // El asesor del lead (admin/jefa ven la agenda del asignado; la gestora ve la suya).
+    const asesor = (typeof gLead === 'object' && gLead && gLead.asesor) ? '&asesor=' + encodeURIComponent(gLead.asesor) : '';
+    const d = await api('/api/gcal/disponibilidad?fecha=' + fecha + asesor);
+    if (!d.disponible) { cont.innerHTML = '<span style="font-size:11.5px;color:#B26A00">⚠ ' + (d.motivo || 'No disponible') + '</span>'; return; }
+    if (!d.libres.length) { cont.innerHTML = '<span style="font-size:11.5px;color:#C0392B">Sin huecos libres el ' + fecha + ' (9am-6pm). Prueba otra fecha.</span>'; return; }
+    cont.innerHTML = '<div style="font-size:10.5px;font-weight:800;color:#5B7290;margin-bottom:4px">Libres de ' + (d.asesor.split(' ')[0]) + ' · ' + fecha + '</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:4px">' +
+      d.libres.map(s => '<span class="gform-chip" style="cursor:pointer" onclick="elegirHorario(\'' + s.inicioISO + '\')">' + s.etiqueta + '</span>').join('') +
+      '</div>';
+  } catch (e) { cont.innerHTML = '<span style="font-size:11.5px;color:#C0392B">Error: ' + e.message + '</span>'; }
+  finally { if (btn) btn.disabled = false; }
+}
+function elegirHorario(iso) {
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  const val = d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  $('gFechaReunion').value = val;
+  if (FP.gFechaReunion) FP.gFechaReunion.setDate(val, false);
+  const cont = document.getElementById('gHorariosCont'); if (cont) cont.style.display = 'none';
+}
+
 async function guardarConfigAuto(activo) {
   try {
     await api('/api/b2b/resumen-gestion/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asesores: activo ? RESUMEN_ASESORES_SEL : null }) });

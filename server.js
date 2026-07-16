@@ -2712,6 +2712,25 @@ app.get('/api/leads/:codigo/resultados-permitidos', (req, res) => {
 });
 
 // ---------- Gestiones ----------
+// Disponibilidad del calendario de una gestora para un día (huecos libres de 45 min, 9am-6pm Perú).
+// La gestora consulta su propia agenda; admin/jefa pueden consultar la de cualquiera.
+app.get('/api/gcal/disponibilidad', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u) return res.status(401).json({ error: 'Sesión inválida' });
+  if (!gcal.configurado()) return res.json({ disponible: false, motivo: 'Calendar no configurado' });
+  const fecha = String(req.query.fecha || '').slice(0, 10); // YYYY-MM-DD
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ error: 'Fecha inválida (YYYY-MM-DD)' });
+  // ¿De quién es la agenda? Por defecto la del propio usuario; admin/jefa pueden pedir la de otro asesor.
+  let asesorNombre = req.query.asesor && ['admin', 'jefa'].includes(u.rol) ? String(req.query.asesor) : u.nombre;
+  const fila = db.prepare('SELECT usuario FROM usuarios WHERE nombre = ?').get(asesorNombre);
+  const correo = fila && fila.usuario && fila.usuario.includes('@') ? fila.usuario : null;
+  if (!correo) return res.json({ disponible: false, motivo: 'El asesor no tiene correo corporativo en el CRM' });
+  gcal.disponibilidadDia(correo, fecha).then(d => {
+    if (!d) return res.json({ disponible: false, motivo: 'No se pudo consultar el calendario' });
+    res.json({ disponible: true, asesor: asesorNombre, fecha, libres: d.libres, ocupados: d.ocupados.length });
+  }).catch(e => res.json({ disponible: false, motivo: e.message }));
+});
+
 app.post('/api/gestiones', (req, res) => {
   const g = req.body;
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(g.codigo);
@@ -2825,8 +2844,10 @@ app.post('/api/gestiones', (req, res) => {
         const leadFresco = db.prepare('SELECT gcalEventId FROM leads WHERE codigo = ?').get(g.codigo) || {};
         const datos = {
           fechaISO: g.fechaReunion,
-          titulo: 'Reunión TasaTop — ' + (lead.nombre || g.codigo),
-          descripcion: 'Reunión agendada desde MiTasaTop CRM.\nLead: ' + (lead.nombre || '') + ' (' + g.codigo + ')' + (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
+          titulo: 'Hablemos de Inversiones - ' + (lead.nombre || g.codigo),
+          descripcion: 'Agendado desde MiTasaTop.\nCódigo de inversionista: ' + g.codigo +
+            (lead.nombre ? '\nCliente: ' + lead.nombre : '') +
+            (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
           invitados: lead.email ? [lead.email] : []
         };
         if (leadFresco.gcalEventId && g.resultado === 'Reprogramo reunion') {
@@ -8696,7 +8717,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.428 (GOOGLE CALENDAR Fase 1: modulo google-calendar.js (JWT RS256 nativo, sin dependencias) con cuenta de servicio y delegacion de dominio. Agendar/Confirmar reunion B2C crea el evento automatico en el calendario de la gestora (usuario CRM = correo corporativo) con Meet e invita al lead si tiene correo. Reprogramar actualiza el MISMO evento. Desistio/No asistio/No interesado o descarte cancela el evento. Link Meet visible en modal de gestion. Variables Railway: GOOGLE_CALENDAR_CREDENTIALS + GOOGLE_WORKSPACE_DOMAIN. Sin credenciales se salta limpio. Columnas: gcalEventId, gcalMeetLink. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.430 (Ajustes evento Google Calendar: (1) duracion por defecto 30 minutos (antes 45), slots de disponibilidad tambien de 30 min. (2) Titulo del evento: Hablemos de Inversiones - Nombre del cliente. (3) Descripcion dice Agendado desde MiTasaTop. (4) Incluye el Codigo de inversionista (codigo del lead). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

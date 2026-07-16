@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="MiTasaTop">
-<link rel="stylesheet" href="styles.css?v=1428">
+<link rel="stylesheet" href="styles.css?v=1430">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/es.js"></script>
@@ -915,6 +915,8 @@
         <!-- Fecha y hora de la reunion: aparece al agendar o reprogramar (sin atajos) -->
         <div class="campoReu" style="margin-top:10px"><label>Fecha y hora de la reunión</label>
           <input type="datetime-local" id="gFechaReunion">
+          <button type="button" class="btn-sunat" id="gHorariosBtn" onclick="verHorariosLibres()" style="margin-top:4px;font-size:11px">🗓 Horarios libres</button>
+          <div id="gHorariosCont" style="display:none;margin-top:6px"></div>
         </div>
         <label style="margin-top:10px">Comentario <span id="gResumenReq" class="req oculto">*</span></label>
         <textarea id="gResumen" maxlength="300" placeholder="Ej.: Pidió opciones, quiere comparar rentabilidad y garantía."></textarea>
@@ -1349,7 +1351,7 @@
   </div>
 </div>
 
-<script src="app.js?v=1428"></script>
+<script src="app.js?v=1430"></script>
 
 <!-- Softphone Aircall embebido (persistente en toda la app) -->
 <button id="acFab" class="ac-fab oculto" onclick="acToggle()" title="Teléfono Aircall">📞</button>

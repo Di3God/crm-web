@@ -70,8 +70,8 @@ async function tokenPara(correo) {
   return j.access_token;
 }
 
-// Duración por defecto de la reunión: 45 minutos.
-const DURACION_MIN = 45;
+// Duración por defecto de la reunión: 30 minutos.
+const DURACION_MIN = 30;
 function aFechas(fechaISO) {
   // fechaReunion llega como ISO (guardada por el CRM). El evento usa zona América/Lima.
   const ini = new Date(fechaISO);
@@ -90,7 +90,7 @@ async function crearEvento(correoGestora, datos) {
     if (!token) return null;
     const fechas = aFechas(datos.fechaISO);
     const body = {
-      summary: datos.titulo || 'Reunión TasaTop',
+      summary: datos.titulo || 'Hablemos de Inversiones - TasaTop',
       description: datos.descripcion || '',
       ...fechas,
       conferenceData: { createRequest: { requestId: 'crm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
@@ -145,4 +145,41 @@ async function cancelarEvento(correoGestora, eventId) {
   } catch (e) { console.error('[gcal] cancelar evento:', e.message); return false; }
 }
 
-module.exports = { configurado, crearEvento, actualizarEvento, cancelarEvento };
+// ---- Disponibilidad: consulta free/busy del día y calcula los huecos libres. ----
+// horario laboral 9:00–18:00 Perú, slots de 45 min. Devuelve { ocupados, libres } o null.
+async function disponibilidadDia(correoGestora, fechaYMD) {
+  try {
+    if (!configurado()) return null;
+    const token = await tokenPara(correoGestora);
+    if (!token) return null;
+    // Día completo en hora Perú (UTC-5).
+    const iniDia = new Date(fechaYMD + 'T09:00:00-05:00');
+    const finDia = new Date(fechaYMD + 'T18:00:00-05:00');
+    const r = await fetch(CAL_API + '/freeBusy', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+      body: JSON.stringify({ timeMin: iniDia.toISOString(), timeMax: finDia.toISOString(), timeZone: 'America/Lima', items: [{ id: 'primary' }] })
+    });
+    const j = await r.json();
+    if (!r.ok) { console.error('[gcal] freeBusy falló:', JSON.stringify(j).slice(0, 300)); return null; }
+    const ocupados = ((j.calendars || {}).primary || {}).busy || [];
+    // Calcular huecos libres en slots de 30 min dentro del horario laboral.
+    const SLOT = 30 * 60 * 1000;
+    const libres = [];
+    let cursor = iniDia.getTime();
+    const finMs = finDia.getTime();
+    const bloques = ocupados.map(b => ({ ini: new Date(b.start).getTime(), fin: new Date(b.end).getTime() })).sort((a, b) => a.ini - b.ini);
+    while (cursor + SLOT <= finMs) {
+      const slotFin = cursor + SLOT;
+      const choca = bloques.some(b => cursor < b.fin && slotFin > b.ini);
+      if (!choca) {
+        const d = new Date(cursor - 5 * 3600000); // a hora Perú para la etiqueta
+        libres.push({ inicioISO: new Date(cursor).toISOString(), etiqueta: String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') });
+      }
+      cursor += 30 * 60 * 1000; // avanzar en pasos de 30 min (slots solapables cada media hora)
+    }
+    return { ocupados, libres };
+  } catch (e) { console.error('[gcal] disponibilidad:', e.message); return null; }
+}
+
+module.exports = { configurado, crearEvento, actualizarEvento, cancelarEvento, disponibilidadDia };
