@@ -8634,7 +8634,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.425 (Alerta de lead sin atender: cuando llega un lead B2B nuevo y se asigna, si a los 15 min NO tiene ninguna gestion registrada, el bot lanza al grupo WA B2B: Sin atender (15 min) - Empresa / Funcionario no lo dejes enfriar. Doble mecanismo: setTimeout al llegar + barrido de respaldo cada 5 min (sobrevive reinicios de Railway), con marca anti-duplicado en app_config. No alerta si ya fue gestionado, desestimado o archivado. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.426 (FIX detalle de avances por asesor: la consulta de avances NO traia el campo detalle (solo nombre/objetivo), por eso el desglose por transicion nunca matcheaba y no salia. Ahora trae detalle y el desglose aparece bajo Avances de etapa para cada funcionario: Solicitud->Credito, Credito->Garantia, etc, cada uno con cantidad + monto. Captura cualquier avance ascendente (aunque sea salto de 2 etapas) y el total cuadra con la suma. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

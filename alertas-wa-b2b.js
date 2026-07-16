@@ -152,7 +152,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     const trabajoHoy = db.prepare('SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN (' + phTrab + ')').all(ini, fin, ...ACCIONES_TRABAJO_B2B);
     const descartesHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
     // Avances de etapa hoy por asesor.
-    const avHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
+    const avHoy = db.prepare("SELECT nombre, objetivo, detalle FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
     // Solicitudes con su responsable + fecha de ingreso (para separar hoy vs previos).
     const sols = db.prepare('SELECT codigo, responsableActual, fechaIngreso, estado, fechaEtapa, archivado, montoSolicitado, montoRango, ruc FROM b2b_solicitudes').all();
     const solPorCodigo = {}; sols.forEach(s => { solPorCodigo[s.codigo] = s; });
@@ -167,6 +167,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       'Filtro finanzas→Business case': 'Finanzas → Business case'
     };
     const aCol = (n) => { n = String(n || '').trim(); if (ETAPAS_FLUJO.indexOf(n) >= 0) return n; try { return etapaKanbanB2B({ estado: n, sunatEstado: 'ok' }); } catch (e) { return n; } };
+    const OPS_ETAPA_CORTO = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business case' };
     const montoDe = (cod) => { const s = solPorCodigo[cod]; if (!s) return 0; return s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo ? (montoRangoFijo(s.montoRango) || 0) : 0); };
 
     const bloques = objetivo.map(asesor => {
@@ -259,19 +260,23 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       }
 
       // Avances por transición de ESTE asesor hoy (cantidad + monto potencial por salto).
+      // Se cuenta cada lead UNA vez por su salto ascendente neto del día (de dónde salió → a dónde llegó).
       const misAvances = avHoy.filter(a => a.nombre === asesor);
       const transAsesor = {};
       misAvances.forEach(a => {
         const mm = String(a.detalle || '').match(/^(.+?)\s*→\s*(.+?)(\s*\(|$)/);
         if (!mm) return;
-        const key = aCol(mm[1].trim()) + '→' + aCol(mm[2].trim());
-        if (!LBL_TRANS[key]) return;
-        (transAsesor[key] = transAsesor[key] || { n: 0, monto: 0 }).n++;
+        const de = aCol(mm[1].trim()), aE = aCol(mm[2].trim());
+        const iDe = ETAPAS_FLUJO.indexOf(de), iA = ETAPAS_FLUJO.indexOf(aE);
+        if (iDe < 0 || iA < 0 || iA <= iDe) return; // solo avances ascendentes
+        const key = de + '→' + aE;
+        const lbl = LBL_TRANS[key] || ((OPS_ETAPA_CORTO[de] || de) + ' → ' + (OPS_ETAPA_CORTO[aE] || aE));
+        (transAsesor[key] = transAsesor[key] || { n: 0, monto: 0, lbl }).n++;
         transAsesor[key].monto += montoDe(a.objetivo);
       });
-      const lineasTransAsesor = Object.keys(LBL_TRANS)
-        .filter(k => transAsesor[k] && transAsesor[k].n > 0)
-        .map(k => '   ▸ ' + LBL_TRANS[k] + ': ' + transAsesor[k].n + ' (' + fmtS(transAsesor[k].monto) + ')');
+      const lineasTransAsesor = Object.values(transAsesor)
+        .filter(t => t.n > 0)
+        .map(t => '   ▸ ' + t.lbl + ': ' + t.n + ' (' + fmtS(t.monto) + ')');
 
       const B = [];
       B.push('👤 *' + asesor.toUpperCase() + '*');
