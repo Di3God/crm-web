@@ -1196,15 +1196,20 @@ function normalizarB2B(origen, body) {
   const ruc = val('ruc', 'RUC', 'ruc_empresa', 'rucEmpresa', 'RUC de la empresa');
   // monto: clave directa; si no, barrido excluyendo RUC, teléfono, DNI y números con pinta de esos.
   let montoRaw = val('monto', 'montoSolicitado', 'Monto');
-  if (!montoRaw) {
+  // Si el formulario trae un RANGO (montoRango), NO se barre: el monto sale del rango fijo.
+  // Esto evita que el barrido agarre por error dígitos del email o del nombre.
+  const rangoRaw = val('montoRango', 'monto_rango', 'rango', 'Capital Requerido', 'capital_requerido', '¿qué monto necesitas?', 'que_monto_necesitas');
+  if (!montoRaw && !rangoRaw) {
     const telRaw = normalizarTelefonoB2B(telefono);
     for (const k of keys) {
       const kl = k.toLowerCase();
       if (kl.includes('ruc') || kl.includes('telefono') || kl.includes('celular') || kl.includes('phone') || kl.includes('dni')) continue;
+      // Excluir email/correo y nombre/contacto: sus dígitos NO son el monto.
+      if (kl.includes('email') || kl.includes('correo') || kl.includes('mail') || kl.includes('contacto') || kl.includes('nombre') || kl.includes('name')) continue;
       // Evitar IDs de anuncio, el rango (Capital Requerido), atribución y área: no son el monto.
       if (kl.includes('anuncio') || kl.includes('conjunto') || kl.includes('campan') || kl.includes('campaign') || kl.includes('campañ')
         || kl.includes('adset') || kl.includes('formulario') || kl.includes('utm') || kl.includes('capital') || kl.includes('requerido')
-        || kl.includes('rango') || kl.includes('source') || kl.includes('platform') || kl.includes('name') || kl.includes('id')
+        || kl.includes('rango') || kl.includes('source') || kl.includes('platform') || kl.includes('id')
         || kl.includes('area') || kl.includes('área') || kl.includes('sunarp') || kl.includes('inmueble')
         || kl.includes('propiedad') || kl.includes('garant') || kl.includes('adid')) continue;
       const digits = String(b[k]).replace(/[^0-9.]/g, '');
@@ -8564,7 +8569,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.414 (Bandeja de ingresos B2B con las mismas funcionalidades que B2C: ahora cada ingreso B2B tiene columna de ACCIONES: JSON (ver el crudo recibido), Reprocesar (reintenta crear la solicitud), Crear igual (fuerza la creacion aunque sea duplicado, saltando el dedup), Descartar, Ver (abre la ficha si ya tiene solicitud) y Eliminar (solo admin). Chips de resumen ahora CLICABLES para filtrar por estado (creado/duplicado activo/duplicado historial/etc), con el total real siempre visible. Nuevos endpoints: GET/POST /api/b2b/ingresos/:id (detalle, reprocesar, descartar, crear) + DELETE. procesarSolicitudB2B ahora acepta opts.forzar para saltar el dedup. Validado E2E: JSON, crear forzado, descartar, eliminar. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.415 (FIX CRITICO monto B2B: cuando el formulario Meta manda montoRango sin monto exacto, el barrido de respaldo agarraba por error los digitos del EMAIL o nombre (langel27591 daba 27591; acuario50265 daba 50265). Correcciones en normalizarB2B: (1) si viene montoRango NO se barre, el monto sale del rango fijo (200mil-1millon->300k, mas de 1millon->1M); (2) el barrido EXCLUYE email/correo/mail/contacto/nombre. Validado con los 2 JSON reales. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
