@@ -1438,6 +1438,7 @@ watchdogLeads.iniciar();
 pulsoDia.iniciarCortes();
 // v1.419: resumen de gestión por asesor al grupo B2B a las 9am/1pm/6pm (una vez cada uno).
 try { alertasWAB2B.iniciarResumenGestion(); } catch (e) { console.error('[WA-B2B] no se pudo iniciar resumen gestión:', e.message); }
+try { alertasWAB2B.iniciarWatchdogSinAtender(); } catch (e) { console.error('[WA-B2B] no se pudo iniciar watchdog sin atender:', e.message); }
 bienvenida.iniciarWorker(); // reintenta bienvenidas encoladas (fuera de horario) cada 5 min
 // ===== PULSO DEL DÍA (v1.401): preview, envío manual y metas configurables =====
 // Vista previa del mensaje de un corte, sin enviar (admin/jefa).
@@ -8633,7 +8634,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.423 (Resumen gestion B2B - 5 correcciones: (1) avances por transicion ahora son POR ASESOR (dentro de su bloque), no del equipo al final. (2) FIX monto S/0: la consulta de solicitudes no traia montoSolicitado/montoRango, por eso los avances salian en cero - corregido. (3) Llamadas Aircall siempre visibles (muestra 0 si no llamo). (4) FIX seleccion de asesores: el filtro dependia de un campo activo que el endpoint no devuelve, por eso salia No hay asesores - corregido, ahora aparecen los 3 (Luis/Bony/Shirley) para elegir a quien mostrar. (5) Aircall cuenta EMPRESAS UNICAS ademas del total (para que no valga hacer 10 llamadas a la misma empresa). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.425 (Alerta de lead sin atender: cuando llega un lead B2B nuevo y se asigna, si a los 15 min NO tiene ninguna gestion registrada, el bot lanza al grupo WA B2B: Sin atender (15 min) - Empresa / Funcionario no lo dejes enfriar. Doble mecanismo: setTimeout al llegar + barrido de respaldo cada 5 min (sobrevive reinicios de Railway), con marca anti-duplicado en app_config. No alerta si ya fue gestionado, desestimado o archivado. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

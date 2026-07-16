@@ -160,6 +160,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     // Helpers para avances por transición con monto (se calculan POR ASESOR dentro del bloque).
     const ETAPAS_FLUJO = ['Solicitud', 'Filtro credito', 'Filtro garantia', 'Reunion comercial', 'Filtro finanzas', 'Business case'];
     const LBL_TRANS = {
+      'Solicitud→Filtro credito': 'Solicitud → Crédito',
       'Filtro credito→Filtro garantia': 'Crédito → Garantía',
       'Filtro garantia→Reunion comercial': 'Garantía → Reunión',
       'Reunion comercial→Filtro finanzas': 'Reunión → Finanzas',
@@ -377,7 +378,35 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         '\n👔 Asignado: ' + (f.responsableActual ? primerNom(f.responsableActual) : 'Sin asignar') +
         '\n\n¡Contáctalo ahora!' + (link ? ' ' + link : '');
       enviarAlertaB2BWA(txt); // fire-and-forget
+      // Watchdog: si a los 15 min el lead NO tiene ninguna gestión registrada, avisar que no se enfríe.
+      programarAlertaSinAtender(codigo);
     } catch (e) { console.error('[WA-B2B] alerta nueva solicitud:', e.message); }
+  }
+
+  // Programa una verificación a los 15 min de llegar el lead. Si sigue sin gestión, lanza alerta.
+  function programarAlertaSinAtender(codigo) {
+    const QUINCE_MIN = 15 * 60 * 1000;
+    setTimeout(() => {
+      try {
+        if (!JID()) return;
+        const f = db.prepare('SELECT codigo, razonSocial, nombreComercial, contacto, responsableActual, estado, archivado FROM b2b_solicitudes WHERE codigo=?').get(codigo);
+        if (!f) return;
+        // Si ya fue desestimado/archivado, no molestar.
+        if (f.archivado || f.estado === 'No elegible') return;
+        // ¿Tiene alguna gestión registrada?
+        const g = db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud=? LIMIT 1').get(codigo);
+        if (g) return; // ya fue atendido, todo bien
+        // Marca anti-duplicado (compartida con el watchdog de respaldo).
+        const clave = 'wa_b2b_sinatender_' + codigo;
+        if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return;
+        db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
+        const empresa = f.razonSocial || f.nombreComercial || f.contacto || f.codigo;
+        const quien = f.responsableActual ? primerNom(f.responsableActual) : 'Equipo';
+        const txt = '⚠️ *Sin atender (15 min)* — ' + empresa +
+          '\n👤 ' + quien + ', ¡no lo dejes enfriar! ⏱️';
+        enviarAlertaB2BWA(txt);
+      } catch (e) { console.error('[WA-B2B] alerta sin atender:', e.message); }
+    }, QUINCE_MIN);
   }
 
   function generarCorte(corte) { return corte === '6pm' ? plan6pm() : corte === '1pm' ? plan1pm() : plan9am(); }
@@ -441,5 +470,31 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     }, 60000);
   }
 
-  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA, resumenGestionPorAsesor, enviarResumenGestion, iniciarResumenGestion };
+  // Barrido de respaldo: cada 5 min busca leads que llegaron hace 15-45 min, siguen sin gestión
+  // y aún no se les avisó. Cubre el caso de que el servidor se reinicie y se pierda el setTimeout.
+  function iniciarWatchdogSinAtender() {
+    setInterval(() => {
+      try {
+        if (!JID()) return;
+        const ahora = Date.now();
+        const hace15 = new Date(ahora - 15 * 60 * 1000).toISOString();
+        const hace45 = new Date(ahora - 45 * 60 * 1000).toISOString();
+        const nuevos = db.prepare(
+          "SELECT codigo, razonSocial, nombreComercial, contacto, responsableActual FROM b2b_solicitudes WHERE fechaIngreso<=? AND fechaIngreso>=? AND COALESCE(archivado,0)=0 AND estado<>'No elegible'"
+        ).all(hace15, hace45);
+        nuevos.forEach(f => {
+          const g = db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud=? LIMIT 1').get(f.codigo);
+          if (g) return; // ya atendido
+          const clave = 'wa_b2b_sinatender_' + f.codigo;
+          if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return; // ya avisado
+          db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
+          const empresa = f.razonSocial || f.nombreComercial || f.contacto || f.codigo;
+          const quien = f.responsableActual ? primerNom(f.responsableActual) : 'Equipo';
+          enviarAlertaB2BWA('⚠️ *Sin atender (15 min)* — ' + empresa + '\n👤 ' + quien + ', ¡no lo dejes enfriar! ⏱️');
+        });
+      } catch (e) { console.error('[WA-B2B] watchdog sin atender:', e.message); }
+    }, 5 * 60 * 1000);
+  }
+
+  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA, resumenGestionPorAsesor, enviarResumenGestion, iniciarResumenGestion, iniciarWatchdogSinAtender };
 };
