@@ -326,13 +326,39 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     if (!cards.length) return null;
     const totalM = cards.reduce((a, c) => a + (c.monto || 0), 0);
     const nuevas = cards.filter(c => c.col === 'Solicitud').length;
-    const reus = reunionesHoy().length;
-    const vencidos = cards.filter(c => c.sla && c.sla.vencido).length;
-    const L = ['*B2B · Arranque ' + selloHora() + '*'];
-    L.push('', 'Pipeline: ' + cards.length + ' empresas · ' + fmtM(totalM));
-    L.push('Nuevas por trabajar: ' + nuevas + ' · Reuniones hoy: ' + reus + ' · SLA vencido: ' + vencidos);
-    embudoPorEtapa(cards).forEach(l => L.push(l));
-    cargaPorAsesor(cards).forEach(l => L.push(l));
+    const reusList = reunionesHoy();
+    const reus = reusList.length;
+    const vencidosList = cards.filter(c => c.sla && c.sla.vencido);
+    const vencidos = vencidosList.length;
+    const L = ['*🌅 B2B · Arranque del día ' + selloHora() + '*', '¡A darle! Esto es lo que hay por gestionar hoy:', ''];
+    L.push('📊 Pipeline: ' + cards.length + ' empresas · ' + fmtM(totalM));
+    L.push('🆕 Nuevas por trabajar: ' + nuevas + '  ·  🤝 Reuniones hoy: ' + reus + '  ·  ⏰ SLA vencido: ' + vencidos);
+
+    // Reuniones de hoy con hora y responsable (lo más urgente de agendar la cabeza).
+    if (reusList.length) {
+      L.push('', '*🤝 Reuniones de hoy:*');
+      reusList.slice(0, 6).forEach(r => L.push('• ' + (r.hora ? r.hora + ' · ' : '') + r.nombre + (r.resp ? ' (' + primerNom(r.resp) + ')' : '')));
+    }
+
+    // Prioridades: leads con SLA vencido, ordenados por monto (los más grandes primero), por asesor.
+    if (vencidosList.length) {
+      L.push('', '*🔥 Prioriza estos (SLA vencido, por monto):*');
+      vencidosList
+        .sort((a, b) => (b.monto || 0) - (a.monto || 0))
+        .slice(0, 6)
+        .forEach(c => L.push('• ' + nombreCorto(c.f) + ' · ' + fmtM(c.monto) + (c.resp ? ' → ' + primerNom(c.resp) : ' → sin asignar')));
+    }
+
+    // Carga por asesor (cuántas empresas vivas tiene cada uno para arrancar).
+    const porAsesor = {};
+    cards.forEach(c => { if (c.resp) { porAsesor[c.resp] = porAsesor[c.resp] || { n: 0, venc: 0 }; porAsesor[c.resp].n++; if (c.sla && c.sla.vencido) porAsesor[c.resp].venc++; } });
+    const nombres = Object.keys(porAsesor).sort((x, y) => porAsesor[y].n - porAsesor[x].n);
+    if (nombres.length) {
+      L.push('', '*👔 Carga por asesor:*');
+      nombres.forEach(r => L.push('• ' + primerNom(r) + ': ' + porAsesor[r].n + ' empresas' + (porAsesor[r].venc ? ' · ⏰ ' + porAsesor[r].venc + ' vencidas' : '')));
+    }
+
+    L.push('', '💪 ¡El que madruga, cierra! Arranquemos fuerte.');
     return L.join('\n');
   }
 
@@ -468,9 +494,11 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         // Asesores configurados para el resumen automático (ej. solo Shirley y Bony). Si no hay config, todos.
         let asesores = opts.asesores || null;
         try { const c = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_resumen_asesores'").get(); if (c && c.valor) { const arr = JSON.parse(c.valor); if (Array.isArray(arr) && arr.length) asesores = arr; } } catch (e) {}
-        const txt = resumenGestionPorAsesor({ asesores });
+        // 9am = ARRANQUE del día (lo que hay por gestionar, no métricas en cero).
+        // 1pm y 6pm = RESUMEN de gestión con métricas por asesor.
+        const txt = corte === '9am' ? plan9am() : resumenGestionPorAsesor({ asesores });
         if (txt) await enviarAlertaB2BWA(txt);
-        console.log('[WA-B2B] resumen gestión ' + corte + ' enviado');
+        console.log('[WA-B2B] ' + (corte === '9am' ? 'arranque' : 'resumen gestión') + ' ' + corte + ' enviado');
       } catch (e) { console.error('[WA-B2B] resumen gestión falló:', e.message); }
     }, 60000);
   }

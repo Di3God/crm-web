@@ -1695,6 +1695,8 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     const listo7 = /s[ií]|listo|ya\b|claro/i.test(String(gLead.listo7dias));
     pistasForm.push((listo7 ? '🔥' : '🕐') + ' 7 días: ' + gLead.listo7dias);
   }
+  // Link de Meet de la reunión agendada (creado por Google Calendar).
+  if (gLead.gcalMeetLink) pistasForm.push('📹 <a href="' + gLead.gcalMeetLink + '" target="_blank" style="color:#0B72E8;font-weight:700">Enlace Meet de la reunión</a>');
   const gPistasEl = document.getElementById('gPistasForm');
   if (gPistasEl) {
     gPistasEl.innerHTML = pistasForm.length

@@ -533,6 +533,9 @@ try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) {
 try { db.exec("ALTER TABLE leads ADD COLUMN dni TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN interesInvertir TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN listo7dias TEXT"); } catch (e) { }
+// Google Calendar: id del evento y link de Meet de la reunión agendada.
+try { db.exec("ALTER TABLE leads ADD COLUMN gcalEventId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
@@ -1429,6 +1432,9 @@ const dashB2B = require('./dashboard-b2b.js')({ db, etapaKanbanB2B, priorityScor
 const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruFecha });
 const cw = require('./chatwoot');
 const bienvenida = require('./bienvenida-auto.js')({ db, cw, normalizarCelular: L.normalizarCelular });
+const gcal = require('./google-calendar.js');
+if (gcal.configurado()) console.log('[gcal] Google Calendar configurado: eventos automáticos activos');
+else console.log('[gcal] GOOGLE_CALENDAR_CREDENTIALS no configurado: eventos de calendario desactivados');
 // v1.401: Pulso del día (reemplaza los cortes anteriores de alertas-wa: un bloque por grupo, 3 cortes).
 const pulsoDia = require('./pulso-dia.js')({ db, enviarAlertaWA, peruFecha, construirRankingDia, consolidarLead: leadConsolidado, L, etapaKanbanB2B, slaEtapaB2B });
 // Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
@@ -2807,6 +2813,50 @@ app.post('/api/gestiones', (req, res) => {
     enviarAlertaWA(`${TITULO_AGENDA[g.resultado]} — ${lead.nombre}\n👤 ${gpCorto} · 🗓 ${fmtReunionWA(g.fechaReunion)}`);
   }
 
+  // Google Calendar: crear/actualizar el evento en el calendario de la gestora (fire-and-forget).
+  // - Agendo/Confirmo: crea el evento si no existe (con Meet, invita al lead si tiene correo).
+  // - Reprogramo: actualiza las fechas del MISMO evento (no duplica).
+  if (gcal.configurado() && g.fechaReunion && TITULO_AGENDA[g.resultado]) {
+    (async () => {
+      try {
+        const correoGestora = String(g.asesorUsuario || '').includes('@') ? g.asesorUsuario
+          : (db.prepare('SELECT usuario FROM usuarios WHERE nombre = ?').get(g.asesor) || {}).usuario;
+        if (!correoGestora || !correoGestora.includes('@')) return;
+        const leadFresco = db.prepare('SELECT gcalEventId FROM leads WHERE codigo = ?').get(g.codigo) || {};
+        const datos = {
+          fechaISO: g.fechaReunion,
+          titulo: 'Reunión TasaTop — ' + (lead.nombre || g.codigo),
+          descripcion: 'Reunión agendada desde MiTasaTop CRM.\nLead: ' + (lead.nombre || '') + ' (' + g.codigo + ')' + (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
+          invitados: lead.email ? [lead.email] : []
+        };
+        if (leadFresco.gcalEventId && g.resultado === 'Reprogramo reunion') {
+          const r = await gcal.actualizarEvento(correoGestora, leadFresco.gcalEventId, datos);
+          if (!r) { // el evento pudo haberse borrado a mano: crear uno nuevo
+            const n = await gcal.crearEvento(correoGestora, datos);
+            if (n) db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, g.codigo);
+          }
+        } else if (!leadFresco.gcalEventId) {
+          const n = await gcal.crearEvento(correoGestora, datos);
+          if (n) db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, g.codigo);
+        }
+      } catch (e) { console.error('[gcal] agendamiento:', e.message); }
+    })();
+  }
+
+  // Google Calendar: si la reunión se cayó (desistió / no asistió / no interesado), cancelar el evento.
+  if (gcal.configurado() && ['Desistio', 'No asistio a reunion', 'Respondio - no interesado'].includes(g.resultado)) {
+    (async () => {
+      try {
+        const leadFresco = db.prepare('SELECT gcalEventId FROM leads WHERE codigo = ?').get(g.codigo) || {};
+        if (!leadFresco.gcalEventId) return;
+        const correoGestora = (db.prepare('SELECT usuario FROM usuarios WHERE nombre = ?').get(g.asesor) || {}).usuario;
+        if (!correoGestora || !correoGestora.includes('@')) return;
+        const ok = await gcal.cancelarEvento(correoGestora, leadFresco.gcalEventId);
+        if (ok) db.prepare('UPDATE leads SET gcalEventId=NULL, gcalMeetLink=NULL WHERE codigo=?').run(g.codigo);
+      } catch (e) { console.error('[gcal] cancelación:', e.message); }
+    })();
+  }
+
   res.json(estadoFinal);
 });
 
@@ -3208,6 +3258,18 @@ app.post('/api/leads/:codigo/descartar', soloAdminOJefa, (req, res) => {
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
   db.prepare('UPDATE leads SET archivado = 1, cuarentena = 0 WHERE codigo = ?').run(req.params.codigo);
   auditar(req, 'descartar', req.params.codigo, lead.nombre);
+  // Google Calendar: si tenía reunión agendada, cancelar el evento (fire-and-forget).
+  if (gcal.configurado() && lead.gcalEventId && lead.asesor) {
+    (async () => {
+      try {
+        const correo = (db.prepare('SELECT usuario FROM usuarios WHERE nombre = ?').get(lead.asesor) || {}).usuario;
+        if (correo && correo.includes('@')) {
+          const ok = await gcal.cancelarEvento(correo, lead.gcalEventId);
+          if (ok) db.prepare('UPDATE leads SET gcalEventId=NULL, gcalMeetLink=NULL WHERE codigo=?').run(lead.codigo);
+        }
+      } catch (e) { console.error('[gcal] cancelar por descarte:', e.message); }
+    })();
+  }
   res.json({ ok: true });
 });
 
@@ -8634,7 +8696,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.426 (FIX detalle de avances por asesor: la consulta de avances NO traia el campo detalle (solo nombre/objetivo), por eso el desglose por transicion nunca matcheaba y no salia. Ahora trae detalle y el desglose aparece bajo Avances de etapa para cada funcionario: Solicitud->Credito, Credito->Garantia, etc, cada uno con cantidad + monto. Captura cualquier avance ascendente (aunque sea salto de 2 etapas) y el total cuadra con la suma. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.428 (GOOGLE CALENDAR Fase 1: modulo google-calendar.js (JWT RS256 nativo, sin dependencias) con cuenta de servicio y delegacion de dominio. Agendar/Confirmar reunion B2C crea el evento automatico en el calendario de la gestora (usuario CRM = correo corporativo) con Meet e invita al lead si tiene correo. Reprogramar actualiza el MISMO evento. Desistio/No asistio/No interesado o descarte cancela el evento. Link Meet visible en modal de gestion. Variables Railway: GOOGLE_CALENDAR_CREDENTIALS + GOOGLE_WORKSPACE_DOMAIN. Sin credenciales se salta limpio. Columnas: gcalEventId, gcalMeetLink. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
