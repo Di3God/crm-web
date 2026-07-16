@@ -7658,13 +7658,13 @@ app.post('/api/b2b/alertas-wa/enviar', soloB2B, async (req, res) => {
 
 // Resumen de gestión diaria por asesor (para el jefe comercial). opts.asesores = filtrar personas.
 app.get('/api/b2b/resumen-gestion/preview', soloB2B, (req, res) => {
-  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   const asesores = req.query.asesores ? String(req.query.asesores).split(',').map(s => s.trim()).filter(Boolean) : null;
   const texto = alertasWAB2B.resumenGestionPorAsesor({ asesores });
   res.json({ jidConfigurado: !!process.env.WA_GRUPO_B2B_JID, texto: texto || '(sin actividad registrada hoy para los asesores indicados)' });
 });
 app.post('/api/b2b/resumen-gestion/enviar', soloB2B, async (req, res) => {
-  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   if (!process.env.WA_GRUPO_B2B_JID) return res.status(422).json({ error: 'Configura WA_GRUPO_B2B_JID en Railway primero' });
   const asesores = (req.body && req.body.asesores) ? req.body.asesores : null;
   const texto = await alertasWAB2B.enviarResumenGestion({ asesores });
@@ -7674,7 +7674,7 @@ app.post('/api/b2b/resumen-gestion/enviar', soloB2B, async (req, res) => {
 
 // Guarda qué asesores incluir en el resumen AUTOMÁTICO (9am/1pm/6pm). null/[] = todos.
 app.post('/api/b2b/resumen-gestion/config', soloB2B, (req, res) => {
-  if (!['admin', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefe B2B' });
+  if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   const asesores = (req.body && Array.isArray(req.body.asesores)) ? req.body.asesores : null;
   db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('b2b_resumen_asesores',?)").run(asesores && asesores.length ? JSON.stringify(asesores) : '');
   auditar(req, 'b2b_resumen_config', null, asesores ? asesores.join(',') : 'todos');
@@ -8626,7 +8626,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.419 (Resumen de gestion B2B - boton en Centro de Operaciones con previsualizador en vivo + seleccion de asesores por chips + envio al grupo WA. Envio automatico 9am/1pm/6pm activo, con opcion de fijar asesores del automatico. Endpoints preview/enviar/config. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.420 (Resumen gestion B2B - 2 fixes: (1) el conteo de Gestionados ahora coincide con el dashboard Gestion del dia: cuenta gestiones formales + trabajo de expediente (credito/garantia/links) + descartes, no solo gestiones formales. Antes bailaban los numeros (Shirley 10 vs 13, Bony 11 vs 10). (2) El boton Resumen gestion y sus 3 endpoints (preview/enviar/config) ahora son SOLO ADMIN (antes admin o jefe B2B). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

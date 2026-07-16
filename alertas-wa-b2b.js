@@ -145,6 +145,12 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
 
     // Gestiones de HOY (todas, para intentos/contactabilidad/3x3).
     const gestHoy = db.prepare('SELECT codigoSolicitud, responsable, resultado, fecha FROM b2b_gestiones WHERE fecha>=? AND fecha<? ORDER BY fecha ASC').all(ini, fin);
+    // Trabajo de expediente y descartes por asesor (para que "Gestionados" cuente IGUAL que el
+    // dashboard "Gestión del día": gestiones formales + trabajo de filtros + descartes).
+    const ACCIONES_TRABAJO_B2B = ['b2b_credito_guardar_sujeto', 'b2b_garantia_guardar_inmueble', 'b2b_guardar_filtro', 'b2b_guardar_garantia', 'b2b_credito_link', 'b2b_credito_agregar_sujeto', 'b2b_garantia_agregar_inmueble'];
+    const phTrab = ACCIONES_TRABAJO_B2B.map(() => '?').join(',');
+    const trabajoHoy = db.prepare('SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN (' + phTrab + ')').all(ini, fin, ...ACCIONES_TRABAJO_B2B);
+    const descartesHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_descartar','b2b_descartar_duplicado')").all(ini, fin);
     // Avances de etapa hoy por asesor.
     const avHoy = db.prepare("SELECT nombre, objetivo FROM auditoria WHERE fecha>=? AND fecha<? AND accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa')").all(ini, fin);
     // Solicitudes con su responsable + fecha de ingreso (para separar hoy vs previos).
@@ -157,8 +163,12 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
       const intentos = gAs.length;
       const contactados = gAs.filter(contacto).length;
       const pct = intentos ? Math.round((contactados / intentos) * 100) : 0;
-      // Leads gestionados (únicos) hoy, separando por si el lead llegó hoy o antes.
-      const codsGest = Array.from(new Set(gAs.map(g => g.codigoSolicitud)));
+      // Leads gestionados (únicos) hoy: MISMO criterio que el dashboard "Gestión del día"
+      // = gestiones formales + trabajo de expediente + descartes (todo por este asesor).
+      const codsGestSet = new Set(gAs.map(g => g.codigoSolicitud));
+      trabajoHoy.filter(t => t.nombre === asesor).forEach(t => codsGestSet.add(t.objetivo));
+      descartesHoy.filter(d => d.nombre === asesor).forEach(d => codsGestSet.add(d.objetivo));
+      const codsGest = Array.from(codsGestSet);
       let gestHoyLlegoHoy = 0, gestPrevios = 0;
       codsGest.forEach(c => {
         const s = solPorCodigo[c];
