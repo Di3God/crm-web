@@ -2731,6 +2731,38 @@ app.get('/api/gcal/disponibilidad', (req, res) => {
   }).catch(e => res.json({ disponible: false, motivo: e.message }));
 });
 
+// BACKFILL (solo admin, una vez): crea eventos de Calendar para los leads YA agendados
+// (reunión futura, sin evento creado aún). Deja el viaje igual que un agendamiento nuevo.
+app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
+  if (!gcal.configurado()) return res.status(422).json({ error: 'Calendar no configurado' });
+  const ahora = new Date().toISOString();
+  const candidatos = db.prepare("SELECT * FROM leads WHERE COALESCE(archivado,0)=0 AND gcalEventId IS NULL AND asesor IS NOT NULL").all();
+  const resultados = { creados: 0, sinReunionFutura: 0, sinCorreoGestora: 0, fallidos: 0, detalle: [] };
+  for (const lead of candidatos) {
+    try {
+      const cons = leadConsolidado(lead);
+      if (!cons.fechaReunion || cons.estadoReunion !== 'Agendada' || cons.fechaReunion <= ahora) { resultados.sinReunionFutura++; continue; }
+      const fila = db.prepare('SELECT usuario FROM usuarios WHERE nombre = ?').get(lead.asesor);
+      const correo = fila && fila.usuario && fila.usuario.includes('@') ? fila.usuario : null;
+      if (!correo) { resultados.sinCorreoGestora++; continue; }
+      const n = await gcal.crearEvento(correo, {
+        fechaISO: cons.fechaReunion,
+        titulo: 'Hablemos de Inversiones - ' + (lead.nombre || lead.codigo),
+        descripcion: 'Agendado desde MiTasaTop.\nCódigo de inversionista: ' + lead.codigo +
+          (lead.nombre ? '\nCliente: ' + lead.nombre : '') + (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
+        invitados: lead.email ? [lead.email] : []
+      });
+      if (n) {
+        db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, lead.codigo);
+        resultados.creados++;
+        resultados.detalle.push({ codigo: lead.codigo, nombre: lead.nombre, fecha: cons.fechaReunion, gestora: lead.asesor });
+      } else resultados.fallidos++;
+    } catch (e) { resultados.fallidos++; }
+  }
+  auditar(req, 'gcal_backfill', null, resultados.creados + ' eventos creados');
+  res.json({ ok: true, ...resultados });
+});
+
 app.post('/api/gestiones', (req, res) => {
   const g = req.body;
   const lead = db.prepare('SELECT * FROM leads WHERE codigo = ?').get(g.codigo);
@@ -8717,7 +8749,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.430 (Ajustes evento Google Calendar: (1) duracion por defecto 30 minutos (antes 45), slots de disponibilidad tambien de 30 min. (2) Titulo del evento: Hablemos de Inversiones - Nombre del cliente. (3) Descripcion dice Agendado desde MiTasaTop. (4) Incluye el Codigo de inversionista (codigo del lead). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.431 (Calendar afinado: (1) al elegir/cambiar la fecha de reunion los horarios libres aparecen AUTOMATICAMENTE (sin clic en el boton). (2) Horario ampliado 9:00am a 8:00pm (23 slots de 30 min). (3) El evento se crea recien al GUARDAR la gestion (ya era asi, confirmado). (4) El Enlace Reunion aparece solo, sin el titulo Respuestas del formulario (el titulo solo sale si hay respuestas reales del form). (5) BACKFILL: POST /api/gcal/backfill (solo admin) crea eventos para los leads YA agendados con reunion futura y sin evento - mismo formato que un agendamiento nuevo. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -625,6 +625,8 @@ function initFlatpickr() {
   const dtOpts = { enableTime: true, time_24hr: true, dateFormat: 'Y-m-d\\TH:i', altInput: true, altFormat: 'd/m/Y H:i', allowInput: true };
   ['fDesde','fHasta','rlDesde','rlHasta','gFechaCierre'].forEach(id => { if ($(id)) FP[id] = flatpickr('#' + id, dOpts); });
   ['gFechaReunion','gFechaProx'].forEach(id => { if ($(id)) FP[id] = flatpickr('#' + id, dtOpts); });
+  // Al elegir/cambiar la fecha de la reunión, mostrar automáticamente los horarios libres del día.
+  if (FP.gFechaReunion) FP.gFechaReunion.config.onChange.push(() => { try { verHorariosLibres(); } catch (e) {} });
   FP._done = true;
 }
 
@@ -1695,14 +1697,17 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     const listo7 = /s[ií]|listo|ya\b|claro/i.test(String(gLead.listo7dias));
     pistasForm.push((listo7 ? '🔥' : '🕐') + ' 7 días: ' + gLead.listo7dias);
   }
-  // Link de Meet de la reunión agendada (creado por Google Calendar).
-  if (gLead.gcalMeetLink) pistasForm.push('📹 <a href="' + gLead.gcalMeetLink + '" target="_blank" style="color:#0B72E8;font-weight:700">Enlace Meet de la reunión</a>');
   const gPistasEl = document.getElementById('gPistasForm');
   if (gPistasEl) {
-    gPistasEl.innerHTML = pistasForm.length
+    // El título "Respuestas del formulario" SOLO si hay respuestas; el Enlace Reunión va aparte.
+    const bloqueForm = pistasForm.length
       ? '<div class="gform-tit">📋 Respuestas del formulario</div><div class="gform-chips">' + pistasForm.map(x => '<span class="gform-chip">' + x + '</span>').join('') + '</div>'
       : '';
-    gPistasEl.style.display = pistasForm.length ? 'block' : 'none';
+    const bloqueMeet = gLead.gcalMeetLink
+      ? '<div class="gform-chips"' + (pistasForm.length ? ' style="margin-top:6px"' : '') + '><span class="gform-chip">📹 <a href="' + gLead.gcalMeetLink + '" target="_blank" style="color:#0B72E8;font-weight:700;text-decoration:none">Enlace Reunión</a></span></div>'
+      : '';
+    gPistasEl.innerHTML = bloqueForm + bloqueMeet;
+    gPistasEl.style.display = (bloqueForm || bloqueMeet) ? 'block' : 'none';
   }
   ['gResultado','gProxAccion','gFechaProx','gTiempo','gInteres',
    'gExperiencia','gExperienciaInv','gFechaReunion','gResumen','gFechaCierre',

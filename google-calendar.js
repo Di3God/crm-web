@@ -152,9 +152,9 @@ async function disponibilidadDia(correoGestora, fechaYMD) {
     if (!configurado()) return null;
     const token = await tokenPara(correoGestora);
     if (!token) return null;
-    // Día completo en hora Perú (UTC-5).
+    // Día completo en hora Perú (UTC-5): de 9:00am a 8:00pm (último slot inicia 20:00).
     const iniDia = new Date(fechaYMD + 'T09:00:00-05:00');
-    const finDia = new Date(fechaYMD + 'T18:00:00-05:00');
+    const finDia = new Date(fechaYMD + 'T20:30:00-05:00');
     const r = await fetch(CAL_API + '/freeBusy', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
