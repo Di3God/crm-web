@@ -570,7 +570,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-dia', 'mi-b2b-ops']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-comite', 'mi-b2b-dia', 'mi-b2b-ops']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -582,10 +582,10 @@ async function arrancar() {
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-comite', 'mi-b2b-sol', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   } else if (r === 'jefe_b2b') {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
-    verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
+    verMundo('B2B'); ver(['mi-b2b-comite', 'mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit', 'mi-b2b-dia', 'mi-b2b-ops']); mundoInicial = 'B2B';
   }
   MUNDO_INICIAL = mundoInicial;
   CAT = await api('/api/catalogos');
@@ -648,6 +648,7 @@ function ir(v) {
   if (v === 'b2b-audit') cargarAuditoriaB2B();
   if (v === 'b2b-ops') cargarB2BOps();
   if (v === 'b2b-dia') cargarB2BDia();
+  if (v === 'b2b-comite') cargarComiteB2B();
   if (v === 'atribucion') cargarMarketing();
   if (v === 'supervisor') { cargarSupervisor(); SUP_TIMER = setInterval(cargarSupervisor, 20000); cargarConexiones(); }
 }
@@ -671,6 +672,7 @@ function navB2B(which) {
   if (which === 'audit') { ir('b2b-audit'); return; }
   if (which === 'dia') { ir('b2b-dia'); return; }
   if (which === 'ops') { ir('b2b-ops'); return; }
+  if (which === 'comite') { ir('b2b-comite'); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -10571,5 +10573,336 @@ async function verEstadoWA() {
     }
   } else {
     alert(msg + '\n\nTodo en orden ✅');
+  }
+}
+
+// ============================================================
+// ===== COMITÉ COMERCIAL B2B (lun/mié/vie 9am) ==============
+// Vista ejecutiva BI que cubre el correo de Dante: (1) avance
+// frente a la meta, (2) embudo por funcionario, (3) indicadores
+// de gestión de leads. Todo respeta el filtro general {desde,hasta,asesor}.
+// ============================================================
+let CB_DATA = null;
+const CB_CHARTS = {};
+function cbDestroyCharts() { Object.values(CB_CHARTS).forEach(c => { try { c.destroy(); } catch (e) {} }); Object.keys(CB_CHARTS).forEach(k => delete CB_CHARTS[k]); }
+function cbSoles(n) { n = Number(n) || 0; return 'S/ ' + n.toLocaleString('es-PE'); }
+function cbMM(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
+function cbDiaCorto(iso) { const p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; }
+const CB_PALETA = ['#378ADD', '#1D9E75', '#EF9F27', '#D4537E', '#7F77DD', '#D85A30', '#5DCAA5', '#888780'];
+
+async function cargarComiteB2B() {
+  const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const hace14 = new Date(Date.now() - 5 * 3600000 - 14 * 86400000).toISOString().slice(0, 10);
+  if ($('cbDesde') && !$('cbDesde').value) $('cbDesde').value = hace14;
+  if ($('cbHasta') && !$('cbHasta').value) $('cbHasta').value = hoyP;
+  const desde = $('cbDesde') ? $('cbDesde').value : hace14;
+  const hasta = $('cbHasta') ? $('cbHasta').value : hoyP;
+  const asesor = $('cbAsesor') ? $('cbAsesor').value : '';
+  if ($('cbCards')) $('cbCards').innerHTML = '<div class="vacio">Cargando comité…</div>';
+  try {
+    const qs = [];
+    if (asesor) qs.push('asesor=' + encodeURIComponent(asesor));
+    if (desde) qs.push('desde=' + desde);
+    if (hasta) qs.push('hasta=' + hasta);
+    const d = await api('/api/b2b/comite' + (qs.length ? '?' + qs.join('&') : ''));
+    CB_DATA = d;
+    renderComiteB2B(d);
+  } catch (e) {
+    if ($('cbCards')) $('cbCards').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderComiteB2B(d) {
+  // Poblar selector de funcionario (una vez).
+  const sel = $('cbAsesor');
+  if (sel && sel.options.length <= 1 && d.ejecutivos) {
+    d.ejecutivos.filter(e => e && e !== 'Sin asignar').forEach(e => sel.add(new Option(e, e)));
+  }
+  cbDestroyCharts();
+  cbRenderCards(d);
+  cbRenderAlertas(d);
+  cbRenderMeta(d);
+  cbRenderEmbudoFunc(d);
+  cbRenderEmbudo(d);
+  cbRenderProductividad(d);
+  cbRenderTransiciones(d);
+  cbRenderTopRiesgo(d);
+  cbRenderDesestLista(d);
+  // Gráficos (Chart.js) — tras pintar el DOM.
+  setTimeout(() => {
+    cbChartDistrib(d);
+    cbChartLlamadas(d);
+    cbChartHoras(d);
+    cbChartRecibidos(d);
+    cbChartAvances(d);
+    cbChartDesMotivo(d);
+    cbChartDesEtapa(d);
+  }, 40);
+}
+
+// ---- Scorecards ejecutivas ----
+function cbRenderCards(d) {
+  const K = d.kpis || {}, M = d.meta || {};
+  const cards = [
+    ['💼', 'Pipeline vivo', (K.pipeline ? K.pipeline.montoFmt : '—'), (K.pipeline ? K.pipeline.n + ' solicitudes' : '')],
+    ['🎯', 'Cumplimiento 3x3', (K.cumpl3x3 ? K.cumpl3x3.pct + '%' : '—'), (K.cumpl3x3 ? K.cumpl3x3.atrasados + ' atrasados' : '')],
+    ['🏆', 'A Business Case', (M.logradoFmt || 'S/ 0'), (M.pct != null ? M.pct + '% de ' + (M.montoFmt || '—') : 'sin meta')],
+    ['📞', 'Llamadas', (d.llamadas ? d.llamadas.total : 0), (d.llamadas ? d.llamadas.pctContestadas + '% contestadas' : '')],
+    ['🚀', 'Avances de etapa', (d.avances ? d.avances.total : 0), 'en el periodo'],
+    ['🔕', 'Avanzó sin contacto', (K.avanzaronSinContacto ? K.avanzaronSinContacto.montoFmt : '—'), (K.avanzaronSinContacto ? K.avanzaronSinContacto.n + ' solicitudes' : '')],
+    ['🗑', 'Desestimados', (d.desestimados && d.desestimados.resumen ? d.desestimados.resumen.total : 0), (d.desestimados && d.desestimados.resumen ? d.desestimados.resumen.montoFmt : '')]
+  ];
+  $('cbCards').innerHTML = cards.map(c =>
+    '<div class="com-card"><div class="com-card-ico">' + c[0] + '</div><div class="com-card-body"><div class="com-card-v">' + c[2] + '</div><div class="com-card-l">' + c[1] + '</div>' + (c[3] ? '<div class="com-card-s">' + c[3] + '</div>' : '') + '</div></div>').join('');
+}
+
+// ---- Alertas críticas + altas ----
+function cbRenderAlertas(d) {
+  const cont = $('cbAlertas'); if (!cont) return;
+  const crit = d.alertasCriticas || [], alta = d.alertasAltas || [];
+  if (!crit.length && !alta.length) { cont.innerHTML = ''; return; }
+  const fila = (a, tipo) => '<div class="cb-alerta cb-alerta-' + tipo + '"><span class="cb-alerta-tag cb-tag-' + tipo + '">' + (tipo === 'crit' ? 'CRÍTICA' : 'ALTA') + '</span><span>' + esc(a.texto) + '</span></div>';
+  cont.innerHTML = '<div class="com-panel com-panel-full cb-alertas-box"><div class="com-panel-tit">⚡ Alertas inteligentes más críticas</div>' +
+    crit.map(a => fila(a, 'crit')).join('') + alta.map(a => fila(a, 'alta')).join('') + '</div>';
+}
+
+// ---- BLOQUE 1: Avance frente a la meta ----
+function cbRenderMeta(d) {
+  const M = d.meta || {}; const cont = $('cbMeta'); if (!cont) return;
+  const pct = M.pct != null ? M.pct : 0;
+  const barCls = pct >= 80 ? 'cb-bar-verde' : pct >= 40 ? 'cb-bar-amber' : 'cb-bar-rojo';
+  let html = '<div class="cb-meta-top">' +
+    '<div class="cb-meta-big">' + (M.logradoFmt || 'S/ 0') + ' <span class="cb-meta-de">de ' + (M.montoFmt || 'S/ 0') + '</span></div>' +
+    '<div class="cb-meta-side">' + (M.pct != null ? M.pct + '%' : '—') + ' · falta ' + (M.faltaFmt || '—') + ' · quedan ' + (M.diasRestantes != null ? M.diasRestantes : '—') + ' días</div>' +
+    '</div>' +
+    '<div class="cb-meta-track"><div class="cb-meta-fill ' + barCls + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
+  // Metas individuales si existen.
+  if (M.individuales && M.individuales.length) {
+    html += '<div class="cb-meta-inds">' + M.individuales.map(i => {
+      const p = i.pct != null ? i.pct : 0;
+      const c = p >= 80 ? 'cb-bar-verde' : p >= 40 ? 'cb-bar-amber' : 'cb-bar-rojo';
+      return '<div class="cb-meta-ind"><div class="cb-meta-ind-top"><b>' + esc(primerNombre(i.nombre)) + '</b><span>' + i.logradoFmt + ' / ' + i.montoFmt + (i.pct != null ? ' · ' + i.pct + '%' : '') + '</span></div>' +
+        '<div class="cb-meta-track sm"><div class="cb-meta-fill ' + c + '" style="width:' + Math.min(100, p) + '%"></div></div></div>';
+    }).join('') + '</div>';
+  }
+  cont.innerHTML = html;
+}
+
+// ---- BLOQUE 2: Embudo por funcionario (Reunión, Finanzas, Business Case) ----
+function cbRenderEmbudoFunc(d) {
+  const cont = $('cbEmbFunc'); if (!cont) return;
+  const filas = d.embudoFuncionario || [];
+  if (!filas.length) { cont.innerHTML = '<div class="vacio">Sin solicitudes vivas en el periodo.</div>'; return; }
+  let html = '<table class="com-tabla cb-tabla-func"><thead><tr>' +
+    '<th>Funcionario</th><th>Solicitud</th><th>Crédito</th><th>Garantía</th>' +
+    '<th class="cb-hl">Reunión</th><th class="cb-hl">Finanzas</th><th class="cb-hl">Business Case</th><th>Monto avanzado</th></tr></thead><tbody>';
+  filas.forEach(f => {
+    html += '<tr><td><b>' + esc(f.ejecutivo) + '</b></td>' +
+      '<td>' + f.solicitud + '</td><td>' + f.credito + '</td><td>' + f.garantia + '</td>' +
+      '<td class="cb-hl">' + (f.reunion || '—') + '</td><td class="cb-hl">' + (f.finanzas || '—') + '</td>' +
+      '<td class="cb-hl"><b>' + (f.businessCase || '—') + '</b></td>' +
+      '<td>' + f.montoAvanzadoFmt + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  cont.innerHTML = html;
+}
+
+// ---- Embudo comercial peso-céntrico ----
+function cbRenderEmbudo(d) {
+  const cont = $('cbEmbudo'); if (!cont) return;
+  const emb = d.embudo || [];
+  if (!emb.length) { cont.innerHTML = '<div class="vacio">Sin datos.</div>'; return; }
+  const LBL = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case' };
+  // Marcar cuello: peor conversión desde anterior (i>0).
+  let peorIdx = -1, peorConv = 101;
+  emb.forEach((f, i) => { if (i > 0 && f.nAcum > 0 && f.convDesdeAnterior < peorConv) { peorConv = f.convDesdeAnterior; peorIdx = i; } });
+  cont.innerHTML = emb.map((f, i) => {
+    const ancho = Math.max(4, f.pctDelTotal);
+    const esCuello = i === peorIdx;
+    const conv = i === 0 ? '' : '<span class="emb-conv ' + (f.convDesdeAnterior >= 60 ? 'ok' : f.convDesdeAnterior >= 35 ? 'med' : 'bad') + '">' + f.convDesdeAnterior + '%</span>';
+    return '<div class="emb-fila' + (esCuello ? ' emb-cuello' : '') + '">' +
+      '<div class="emb-top"><span class="emb-lbl">' + (LBL[f.etapa] || f.etapa) + '</span>' + conv + '</div>' +
+      '<div class="emb-row2"><div class="emb-track"><div class="emb-fill" style="width:' + ancho + '%"></div>' +
+      '<span class="emb-n">' + f.nAcum + ' <small>· ' + f.pctDelTotal + '% · ' + f.montoAcumFmt + '</small></span></div>' +
+      '<span class="emb-side"><span class="cb-emb-prom">' + f.n + ' en etapa · ' + f.promDias + ' d prom</span></span></div>' +
+      (esCuello ? '<span class="emb-cuello-tag">⚠ Cuello: mayor caída de conversión</span>' : '') +
+      '</div>';
+  }).join('');
+}
+
+// ---- Índice de gestión por ejecutivo ----
+function cbRenderProductividad(d) {
+  const cont = $('cbProductividad'); if (!cont) return;
+  const P = (d.productividad || []).filter(p => p.asignados > 0 || p.indice != null);
+  if (!P.length) { cont.innerHTML = '<div class="vacio">Sin datos por ejecutivo.</div>'; return; }
+  const semCol = { verde: 'var(--text-success,#16A34A)', amarillo: '#B8860B', rojo: '#DC2626', gris: '#9AA5B1' };
+  let html = '<table class="com-tabla"><thead><tr><th>Ejecutivo</th><th>3x3</th><th>1er contacto</th><th>Sin mov.</th><th>Pipe</th><th>BC</th><th>Índice</th></tr></thead><tbody>';
+  P.forEach(p => {
+    html += '<tr><td><b>' + esc(primerNombre(p.ejecutivo)) + '</b></td>' +
+      '<td>' + (p.cumpl3x3 != null ? p.cumpl3x3 + '%' : '—') + '</td>' +
+      '<td>' + (p.primerContactoMin != null ? p.primerContactoMin + ' min' : '—') + '</td>' +
+      '<td>' + (p.sinMovimiento || 0) + '</td>' +
+      '<td>' + (p.pipelineFmt || '—') + '</td>' +
+      '<td>' + (p.businessCase || 0) + '</td>' +
+      '<td><span class="cb-indice" style="background:' + (semCol[p.semaforo] || '#9AA5B1') + '">' + (p.indice != null ? p.indice : '—') + '</span></td></tr>';
+  });
+  html += '</tbody></table>';
+  cont.innerHTML = html;
+}
+
+// ---- Avances por transición ----
+function cbRenderTransiciones(d) {
+  const cont = $('cbTransiciones'); if (!cont) return;
+  const T = (d.avances && d.avances.porTransicion) || [];
+  if (!T.length) { cont.innerHTML = '<div class="vacio">Sin avances de etapa en el periodo.</div>'; return; }
+  const max = Math.max(1, ...T.map(t => t.n));
+  cont.innerHTML = T.map(t =>
+    '<div class="cb-trans"><div class="cb-trans-lbl">' + esc(t.transicion) + '</div>' +
+    '<div class="cb-trans-track"><div class="cb-trans-fill" style="width:' + Math.round(t.n / max * 100) + '%"></div></div>' +
+    '<div class="cb-trans-n">' + t.n + '</div></div>').join('');
+}
+
+// ---- Top leads en riesgo ----
+function cbRenderTopRiesgo(d) {
+  const cont = $('cbTopRiesgo'); if (!cont) return;
+  const T = d.topRiesgo || [];
+  if (!T.length) { cont.innerHTML = '<div class="vacio">Sin operaciones en riesgo.</div>'; return; }
+  const LBL = { 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Solicitud': 'Solicitud' };
+  cont.innerHTML = '<table class="com-tabla"><thead><tr><th>#</th><th>Empresa</th><th>Etapa</th><th>Monto</th><th>Score</th></tr></thead><tbody>' +
+    T.map((t, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc((t.empresa || '').slice(0, 42)) + '</b></td>' +
+      '<td>' + esc(LBL[t.etapa] || t.etapa || '—') + '</td><td>' + (t.montoFmt || cbMM(t.monto)) + '</td>' +
+      '<td><span class="cb-score">' + (t.score != null ? t.score : '—') + '</span></td></tr>').join('') +
+    '</tbody></table>';
+}
+
+// ---- Desestimados: lista detalle ----
+function cbRenderDesestLista(d) {
+  const cont = $('cbDesLista'); if (!cont) return;
+  const R = (d.desestimados && d.desestimados.resumen) || {};
+  const lista = R.lista || [];
+  if ($('cbDesSub')) $('cbDesSub').textContent = '· ' + (R.total || 0) + ' desestimados · ' + (R.montoFmt || 'S/ 0') + (R.diasVivoProm != null ? ' · ' + R.diasVivoProm + ' días vivos prom' : '');
+  if (!lista.length) { cont.innerHTML = '<div class="vacio">Sin desestimados en el periodo.</div>'; return; }
+  cont.innerHTML = lista.map(x =>
+    '<div class="cb-des-row"><div class="cb-des-emp">' + esc((x.empresa || '').slice(0, 34)) + '</div>' +
+    '<div class="cb-des-meta">' + x.montoFmt + ' · ' + esc(x.etapaCaida) + (x.diasVivo != null ? ' · ' + x.diasVivo + 'd vivo' : '') + '</div>' +
+    '<div class="cb-des-mot">' + esc((x.motivo || '').slice(0, 70)) + '</div></div>').join('');
+}
+
+// ============ GRÁFICOS Chart.js ============
+function cbCtx(id) { const el = $(id); return el ? el.getContext('2d') : null; }
+const CB_GRID = 'rgba(148,163,184,.15)';
+
+function cbChartDistrib(d) {
+  const ctx = cbCtx('cbChartDistrib'); if (!ctx) return;
+  const LBL = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
+  const D = (d.distribucion || []).filter(x => x.monto > 0);
+  if (!D.length) return;
+  CB_CHARTS.distrib = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels: D.map(x => (LBL[x.etapa] || x.etapa) + ' · ' + x.pct + '%'), datasets: [{ data: D.map(x => x.monto), backgroundColor: CB_PALETA, borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: c => ' ' + cbMM(c.raw) } } } }
+  });
+}
+
+function cbChartLlamadas(d) {
+  const ctx = cbCtx('cbChartLlamadas'); if (!ctx) return;
+  const S = (d.llamadas && d.llamadas.series) || [];
+  if ($('cbLlamSub')) $('cbLlamSub').textContent = d.llamadas ? '· ' + d.llamadas.total + ' llamadas · ' + d.llamadas.pctContestadas + '% contestadas' : '';
+  if (!S.length) return;
+  CB_CHARTS.llam = new Chart(ctx, {
+    data: {
+      labels: S.map(x => cbDiaCorto(x.dia)),
+      datasets: [
+        { type: 'bar', label: 'Llamadas', data: S.map(x => x.total), backgroundColor: '#85B7EB', order: 2 },
+        { type: 'bar', label: 'Contestadas', data: S.map(x => x.contestadas), backgroundColor: '#1D9E75', order: 2 },
+        { type: 'line', label: 'Acumulado', data: S.map(x => x.acumulado), borderColor: '#D4537E', backgroundColor: 'transparent', tension: .3, yAxisID: 'y2', order: 1, pointRadius: 2 }
+      ]
+    },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } }, y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { font: { size: 10 } } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } } }
+  });
+}
+
+function cbChartHoras(d) {
+  const ctx = cbCtx('cbChartHoras'); if (!ctx) return;
+  const H = (d.gestionHoraria && d.gestionHoraria.porHora) || [];
+  if (!H.length) return;
+  const pico = d.gestionHoraria.horaPico;
+  CB_CHARTS.horas = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: H.map((_, i) => i + 'h'), datasets: [{ label: 'Gestiones', data: H, backgroundColor: H.map((_, i) => i === pico ? '#D85A30' : '#378ADD') }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } }, x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => c[0].label + ' — ' + (c[0].dataIndex === pico ? 'hora pico' : '') } } } }
+  });
+}
+
+function cbChartRecibidos(d) {
+  const ctx = cbCtx('cbChartRecibidos'); if (!ctx) return;
+  const R = d.recibidos; if (!R || !R.datos || !R.datos.length) return;
+  CB_CHARTS.recib = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: R.dias.map(cbDiaCorto), datasets: R.datos.map((e, i) => ({ label: e.ejecutivo, data: e.valores, backgroundColor: CB_PALETA[i % CB_PALETA.length] })) },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } }, y: { stacked: true, beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } } }
+  });
+}
+
+function cbChartAvances(d) {
+  const ctx = cbCtx('cbChartAvances'); if (!ctx) return;
+  const S = (d.avances && d.avances.series) || [];
+  if ($('cbAvSub')) $('cbAvSub').textContent = d.avances ? '· ' + d.avances.total + ' avances totales' : '';
+  if (!S.length) return;
+  CB_CHARTS.avances = new Chart(ctx, {
+    type: 'line',
+    data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [{ label: 'Avances de etapa', data: S.map(x => x.n), borderColor: '#1D9E75', backgroundColor: 'rgba(29,158,117,.12)', fill: true, tension: .3, pointRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { display: false } } }
+  });
+}
+
+function cbChartDesMotivo(d) {
+  const ctx = cbCtx('cbChartDesMotivo'); if (!ctx) return;
+  const M = (d.desestimados && d.desestimados.porMotivo) || [];
+  if (!M.length) return;
+  CB_CHARTS.desMot = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: M.map(x => x.motivo.length > 24 ? x.motivo.slice(0, 24) + '…' : x.motivo), datasets: [{ data: M.map(x => x.n), backgroundColor: '#D4537E' }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      scales: { x: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => cbMM(M[c.dataIndex].monto) } } } }
+  });
+}
+
+function cbChartDesEtapa(d) {
+  const ctx = cbCtx('cbChartDesEtapa'); if (!ctx) return;
+  const E = (d.desestimados && d.desestimados.porEtapa) || [];
+  if (!E.length) return;
+  CB_CHARTS.desEt = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: E.map(x => x.etapa), datasets: [{ data: E.map(x => x.n), backgroundColor: '#D85A30' }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => cbMM(E[c.dataIndex].monto) } } } }
+  });
+}
+
+// ---- Análisis IA del comité (reutiliza el panel IA del dashboard B2B) ----
+async function analizarComiteB2BIA() {
+  const box = $('cbIaBox'); if (!box) return;
+  box.classList.remove('oculto');
+  box.innerHTML = '<div class="com-ia-load">🤖 Analizando el comité…</div>';
+  try {
+    const r = await api('/api/b2b/dashboard/ia');
+    if (r && r.disponible && r.texto) {
+      box.innerHTML = '<div class="com-ia-head">🤖 Análisis IA del comité</div><div class="com-ia-body">' + esc(r.texto).replace(/\n/g, '<br>') + '</div>';
+    } else {
+      box.innerHTML = '<div class="com-ia-body">' + esc((r && r.error) || 'La IA no está disponible ahora.') + '</div>';
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="com-ia-body">No se pudo generar el análisis: ' + esc(e.message) + '</div>';
   }
 }

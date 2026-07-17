@@ -3390,3 +3390,58 @@ body.night .ops-tiempos-flow { color: #D8E6F5 !important; }
 .resum-chip:hover { border-color: #0B72E8 !important; }
 body.night #ovResumenGest > div { background: #151E2B !important; }
 body.night #resumPreview { background: #0B141A !important; border-color: #2A3849 !important; color: #D8E6F5 !important; }
+
+/* ===== COMITÉ COMERCIAL B2B ===== */
+.cb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.cb-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start}
+@media(max-width:1000px){.cb-grid2,.cb-grid3{grid-template-columns:1fr}}
+.cb-canvas-wrap{position:relative;height:230px;width:100%}
+.cb-canvas-lg{height:260px}
+.cb-mini-tit{font-size:12px;font-weight:600;color:#475569;margin-bottom:8px}
+
+/* Alertas */
+.cb-alertas-box{margin-bottom:14px}
+.cb-alerta{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:6px;font-size:13px;line-height:1.5}
+.cb-alerta-crit{background:#FEF2F2;color:#7F1D1D}
+.cb-alerta-alta{background:#FFFBEB;color:#78350F}
+.cb-alerta-tag{flex:none;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.03em}
+.cb-tag-crit{background:#FCA5A5;color:#7F1D1D}
+.cb-tag-alta{background:#FCD34D;color:#78350F}
+
+/* Meta */
+.cb-meta-top{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.cb-meta-big{font-size:26px;font-weight:700;color:#0F172A}
+.cb-meta-de{font-size:15px;font-weight:500;color:#94A3B8}
+.cb-meta-side{font-size:13px;color:#64748B}
+.cb-meta-track{height:14px;background:#EEF2F7;border-radius:8px;overflow:hidden}
+.cb-meta-track.sm{height:8px}
+.cb-meta-fill{height:100%;border-radius:8px;transition:width .4s}
+.cb-bar-verde{background:#16A34A}.cb-bar-amber{background:#EAB308}.cb-bar-rojo{background:#DC2626}
+.cb-meta-inds{margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:800px){.cb-meta-inds{grid-template-columns:1fr}}
+.cb-meta-ind-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;color:#475569}
+
+/* Embudo por funcionario */
+.cb-tabla-func th,.cb-tabla-func td{text-align:center}
+.cb-tabla-func td:first-child,.cb-tabla-func th:first-child{text-align:left}
+.cb-tabla-func .cb-hl{background:#EFF6FF}
+.cb-tabla-func th.cb-hl{color:#1D4ED8}
+.cb-emb-prom{font-size:11px;color:#94A3B8}
+
+/* Transiciones */
+.cb-trans{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.cb-trans-lbl{flex:none;width:190px;font-size:12px;color:#475569}
+.cb-trans-track{flex:1;height:16px;background:#EEF2F7;border-radius:6px;overflow:hidden}
+.cb-trans-fill{height:100%;background:#378ADD;border-radius:6px}
+.cb-trans-n{flex:none;width:34px;text-align:right;font-size:13px;font-weight:600;color:#0F172A}
+
+/* Índice / score pills */
+.cb-indice{display:inline-block;min-width:30px;text-align:center;padding:2px 8px;border-radius:11px;color:#fff;font-weight:600;font-size:12px}
+.cb-score{display:inline-block;min-width:28px;text-align:center;padding:2px 8px;border-radius:11px;background:#EEF2F7;color:#334155;font-weight:600;font-size:12px}
+
+/* Desestimados detalle */
+.cb-des-lista{max-height:260px;overflow-y:auto}
+.cb-des-row{padding:7px 0;border-bottom:1px solid #F1F5F9}
+.cb-des-emp{font-size:12px;font-weight:600;color:#0F172A}
+.cb-des-meta{font-size:11px;color:#64748B;margin:1px 0}
+.cb-des-mot{font-size:11px;color:#94A3B8;line-height:1.4}

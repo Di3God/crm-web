@@ -654,10 +654,158 @@ module.exports = function (deps) {
     return { total: leads.length, periodo: { desde, hasta }, leads };
   }
 
+  // ===== COMITÉ COMERCIAL B2B ==========================================
+  // Payload ejecutivo para el comité (lun/mié/vie 9am). Reúne el dashboard base
+  // (meta, embudo, alertas, productividad, desestimados) + series BI por periodo:
+  // llamadas/día, gestión por franja horaria, desestimados enriquecidos (tiempo
+  // vivo + última etapa), leads recibidos/día por funcionario, y avances etapa a
+  // etapa por día. Todo respeta el filtro general {desde, hasta, asesor}.
+  function construirComiteB2B(opts = {}) {
+    const val = f => /^\d{4}-\d{2}-\d{2}$/.test(f || '') ? f : null;
+    const hoy = hoyLima();
+    const desde = val(opts.desde) || val(opts.fecha) || diaMas(hoy, -14);
+    const hasta = val(opts.hasta) || val(opts.fecha) || hoy;
+    const dDesde = desde <= hasta ? desde : hasta;
+    const dHasta = desde <= hasta ? hasta : desde;
+    const asesor = (opts.asesor || '').trim() || null;
+    const [ini] = rangoDia(dDesde);
+    const [, fin] = rangoDia(dHasta);
+
+    // Dashboard base (estado vivo + KPIs del periodo). Reutiliza toda la lógica ya probada.
+    const base = construirDashboard({ desde: dDesde, hasta: dHasta, asesor });
+
+    // Lista ordenada de días del rango (para las series temporales).
+    const dias = [];
+    for (let d = dDesde; d <= dHasta; d = diaMas(d, 1)) { dias.push(d); if (dias.length > 120) break; }
+
+    // Set de solicitudes en scope (para filtrar llamadas/gestiones por asesor).
+    let vivasScope = db.prepare("SELECT codigo, responsableActual FROM b2b_solicitudes").all();
+    const respDe = {}; vivasScope.forEach(s => { respDe[s.codigo] = s.responsableActual; });
+    const codsAsesor = asesor ? new Set(vivasScope.filter(s => s.responsableActual === asesor).map(s => s.codigo)) : null;
+
+    const ejecutivos = [...new Set(funcionariosB2B())]; // dedup defensivo por nombre
+    const nombreCorto = n => primerNombre(n || '—');
+
+    // --- 1) LLAMADAS por día (B2B: tabla llamadas con codigoB2B) ---
+    let llamadas = [];
+    try {
+      llamadas = db.prepare("SELECT codigoB2B, agente, contestada, duracion, fecha FROM llamadas WHERE codigoB2B IS NOT NULL AND codigoB2B<>'' AND fecha>=? AND fecha<?").all(ini, fin);
+    } catch (e) { llamadas = []; }
+    if (asesor) llamadas = llamadas.filter(x => respDe[x.codigoB2B] === asesor || nombreCorto(x.agente) === nombreCorto(asesor));
+    const llamPorDia = {}; dias.forEach(d => llamPorDia[d] = { total: 0, contestadas: 0 });
+    llamadas.forEach(x => { const d = diaLima(x.fecha); if (llamPorDia[d]) { llamPorDia[d].total++; if (x.contestada) llamPorDia[d].contestadas++; } });
+    let acumLlam = 0;
+    const seriesLlamadas = dias.map(d => { acumLlam += llamPorDia[d].total; return { dia: d, total: llamPorDia[d].total, contestadas: llamPorDia[d].contestadas, acumulado: acumLlam }; });
+    const totalLlamadas = llamadas.length;
+    const llamContestadas = llamadas.filter(x => x.contestada).length;
+
+    // --- 2) GESTIONES por FRANJA HORARIA (24 bins de hora Perú) ---
+    let gestRango = db.prepare("SELECT codigoSolicitud, responsable, fecha FROM b2b_gestiones WHERE fecha>=? AND fecha<?").all(ini, fin);
+    if (asesor) gestRango = gestRango.filter(g => g.responsable === asesor || (codsAsesor && codsAsesor.has(g.codigoSolicitud)));
+    const porHora = Array.from({ length: 24 }, () => 0);
+    gestRango.forEach(g => { const h = Math.floor(horaLima(g.fecha)); if (h >= 0 && h < 24) porHora[h]++; });
+    // Franjas resumidas para lectura ejecutiva.
+    const franjas = { manana: 0, tarde: 0, noche: 0 };
+    gestRango.forEach(g => { const f = franjaDe(g.fecha); franjas[f === 0 ? 'manana' : f === 1 ? 'tarde' : 'noche']++; });
+    const horaPico = porHora.indexOf(Math.max(...porHora));
+
+    // --- 3) DESESTIMADOS enriquecidos: tiempo vivo + última etapa antes de caer ---
+    let desRows = db.prepare("SELECT codigo, razonSocial, nombreComercial, contacto, responsableActual, montoSolicitado, montoRango, motivoDescarte, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, fechaIngreso FROM b2b_solicitudes WHERE (COALESCE(archivado,0)=1 OR estado='No elegible')").all();
+    if (asesor) desRows = desRows.filter(s => s.responsableActual === asesor);
+    // Fecha de descarte desde auditoría.
+    const descAud = {};
+    db.prepare("SELECT objetivo, fecha FROM auditoria WHERE accion IN ('b2b_descartar','b2b_descartar_duplicado') ORDER BY fecha ASC").all()
+      .forEach(a => { if (!descAud[a.objetivo]) descAud[a.objetivo] = a.fecha; });
+    const etapaCaida = s => {
+      if (s.resultadoFinanzas === 'Rojo') return 'Finanzas';
+      if (s.resultadoGarantia === 'Rojo') return 'Garantía';
+      if (s.resultadoCredito === 'Rojo') return 'Crédito';
+      if (s.sunatEstado && s.sunatEstado !== 'ok') return 'SUNAT (RUC)';
+      return 'Solicitud';
+    };
+    const desEnr = desRows.map(s => {
+      const fDesc = descAud[s.codigo] || null;
+      const dia = fDesc ? diaLima(fDesc) : null;
+      const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
+      const diasVivo = (fDesc && s.fechaIngreso) ? Math.max(0, Math.round((new Date(fDesc) - new Date(s.fechaIngreso)) / 86400000)) : null;
+      return { codigo: s.codigo, empresa: s.razonSocial || s.nombreComercial || s.contacto || s.codigo,
+        responsable: nombreCorto(s.responsableActual), monto, montoFmt: fmtMM(monto),
+        motivo: (s.motivoDescarte || 'Sin motivo registrado').trim(), etapaCaida: etapaCaida(s),
+        dia, fecha: fDesc, diasVivo };
+    }).filter(x => x.dia && x.dia >= dDesde && x.dia <= dHasta);
+    // Agrupaciones.
+    const agr = (arr, key) => { const m = {}; arr.forEach(x => { const k = x[key] || '—'; m[k] = m[k] || { k, n: 0, monto: 0 }; m[k].n++; m[k].monto += x.monto; }); return Object.values(m).sort((a, b) => b.n - a.n); };
+    const desMotivos = agr(desEnr, 'motivo').slice(0, 8).map(x => ({ motivo: x.k.slice(0, 60), n: x.n, monto: x.monto, montoFmt: fmtMM(x.monto) }));
+    const desEtapas = ['SUNAT (RUC)', 'Solicitud', 'Crédito', 'Garantía', 'Reunión', 'Finanzas'].map(e => { const g = desEnr.filter(x => x.etapaCaida === e); return { etapa: e, n: g.length, monto: g.reduce((a, x) => a + x.monto, 0), montoFmt: fmtMM(g.reduce((a, x) => a + x.monto, 0)) }; }).filter(x => x.n > 0);
+    const diasVivoVals = desEnr.map(x => x.diasVivo).filter(v => v != null);
+    const desResumen = { total: desEnr.length, monto: desEnr.reduce((a, x) => a + x.monto, 0), montoFmt: fmtMM(desEnr.reduce((a, x) => a + x.monto, 0)),
+      diasVivoProm: diasVivoVals.length ? Math.round(prom(diasVivoVals)) : null,
+      lista: desEnr.sort((a, b) => b.monto - a.monto).slice(0, 15) };
+
+    // --- 4) LEADS RECIBIDOS por día × funcionario (fechaIngreso, según responsable) ---
+    let nuevos = db.prepare("SELECT codigo, responsableActual, fechaIngreso FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?").all(ini, fin);
+    if (asesor) nuevos = nuevos.filter(s => s.responsableActual === asesor);
+    const recibidosDia = {}; dias.forEach(d => { recibidosDia[d] = {}; ejecutivos.forEach(e => recibidosDia[d][e] = 0); recibidosDia[d]['Sin asignar'] = 0; });
+    nuevos.forEach(s => { const d = diaLima(s.fechaIngreso); const r = s.responsableActual || 'Sin asignar'; if (recibidosDia[d]) recibidosDia[d][r] = (recibidosDia[d][r] || 0) + 1; });
+    const quienesRecibe = asesor ? [asesor] : [...ejecutivos, 'Sin asignar'];
+    const seriesRecibidos = { dias, ejecutivos: quienesRecibe.map(nombreCorto),
+      datos: quienesRecibe.map(e => ({ ejecutivo: nombreCorto(e), valores: dias.map(d => recibidosDia[d][e] || 0), total: dias.reduce((a, d) => a + (recibidosDia[d][e] || 0), 0) })) };
+
+    // --- 5) AVANCES etapa a etapa por día (auditoría de movimientos de kanban) ---
+    let avRows = db.prepare("SELECT objetivo, nombre, detalle, fecha FROM auditoria WHERE fecha>=? AND fecha<? AND (accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa') OR (accion IN ('b2b_guardar_filtro','b2b_reunion_guardar') AND detalle LIKE '%avanz%'))").all(ini, fin);
+    if (asesor) avRows = avRows.filter(a => a.nombre === asesor || (codsAsesor && codsAsesor.has(a.objetivo)));
+    const LBL = { 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Solicitud': 'Solicitud' };
+    const avancesDia = {}; dias.forEach(d => avancesDia[d] = 0);
+    const avPorTrans = {};
+    avRows.forEach(a => {
+      const d = diaLima(a.fecha); if (avancesDia[d] != null) avancesDia[d]++;
+      const m = String(a.detalle || '').match(/(.+?)\s*(?:→|->)\s*(.+)/);
+      if (m) { const k = (LBL[m[1].trim()] || m[1].trim()) + ' → ' + (LBL[m[2].trim()] || m[2].trim()); avPorTrans[k] = (avPorTrans[k] || 0) + 1; }
+    });
+    const seriesAvances = dias.map(d => ({ dia: d, n: avancesDia[d] }));
+    const avancesTransicion = Object.entries(avPorTrans).map(([transicion, n]) => ({ transicion, n })).sort((a, b) => b.n - a.n);
+    const totalAvances = avRows.length;
+
+    // --- 6) EMBUDO POR FUNCIONARIO (los 3 puntos del correo de Dante: Reunión, Finanzas, Business Case) ---
+    let vivasFull = db.prepare("SELECT codigo, responsableActual, montoSolicitado, montoRango, estado, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, archivado FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    if (asesor) vivasFull = vivasFull.filter(s => s.responsableActual === asesor);
+    const embFuncBase = {};
+    (asesor ? [asesor] : ejecutivos).forEach(e => { embFuncBase[e] = { ejecutivo: nombreCorto(e), Solicitud: 0, 'Filtro credito': 0, 'Filtro garantia': 0, 'Reunion comercial': 0, 'Filtro finanzas': 0, 'Business case': 0, montoReunionMas: 0 }; });
+    vivasFull.forEach(s => {
+      const e = s.responsableActual || 'Sin asignar';
+      if (!embFuncBase[e]) embFuncBase[e] = { ejecutivo: nombreCorto(e), Solicitud: 0, 'Filtro credito': 0, 'Filtro garantia': 0, 'Reunion comercial': 0, 'Filtro finanzas': 0, 'Business case': 0, montoReunionMas: 0 };
+      const col = etapaKanbanB2B(s);
+      if (embFuncBase[e][col] != null) embFuncBase[e][col]++;
+      const monto = s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0);
+      if (['Reunion comercial', 'Filtro finanzas', 'Business case'].includes(col)) embFuncBase[e].montoReunionMas += monto;
+    });
+    const embudoFuncionario = Object.values(embFuncBase)
+      .map(x => ({ ejecutivo: x.ejecutivo, reunion: x['Reunion comercial'], finanzas: x['Filtro finanzas'], businessCase: x['Business case'],
+        credito: x['Filtro credito'], garantia: x['Filtro garantia'], solicitud: x.Solicitud,
+        montoAvanzado: x.montoReunionMas, montoAvanzadoFmt: fmtMM(x.montoReunionMas) }))
+      .filter(x => x.solicitud || x.credito || x.garantia || x.reunion || x.finanzas || x.businessCase)
+      .sort((a, b) => b.montoAvanzado - a.montoAvanzado);
+
+    return {
+      periodo: { desde: dDesde, hasta: dHasta, dias: dias.length }, asesor: asesor || null, ejecutivos: ejecutivos.map(nombreCorto),
+      generado: new Date().toISOString(),
+      meta: base.meta, embudo: base.embudo, distribucion: base.distribucion, cuellos: base.cuellos,
+      kpis: base.kpis, salud: base.salud, productividad: base.productividad, topRiesgo: base.topRiesgo,
+      alertasCriticas: (base.alertas || []).filter(a => a.prioridad === 'critica').slice(0, 4),
+      alertasAltas: (base.alertas || []).filter(a => a.prioridad === 'alta').slice(0, 4),
+      embudoFuncionario,
+      llamadas: { total: totalLlamadas, contestadas: llamContestadas, pctContestadas: totalLlamadas ? Math.round(llamContestadas / totalLlamadas * 100) : 0, series: seriesLlamadas },
+      gestionHoraria: { porHora, franjas, horaPico, total: gestRango.length },
+      desestimados: { resumen: desResumen, porMotivo: desMotivos, porEtapa: desEtapas },
+      recibidos: seriesRecibidos,
+      avances: { total: totalAvances, series: seriesAvances, porTransicion: avancesTransicion }
+    };
+  }
+
   // Funcionarios B2B activos (para el modal de asignar metas).
   function funcionariosB2B() {
     return db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('funcionario_b2b','asistente_creditos','jefe_creditos','jefe_b2b') ORDER BY nombre").all().map(u => u.nombre);
   }
 
-  return { construirDashboard, estado3x3, estado3x3PorCodigo, esExigible3x3, tieneGestionRegistrada, leadsTrabajados, funcionariosB2B, CONTACTO_EFECTIVO };
+  return { construirDashboard, construirComiteB2B, estado3x3, estado3x3PorCodigo, esExigible3x3, tieneGestionRegistrada, leadsTrabajados, funcionariosB2B, CONTACTO_EFECTIVO };
 };

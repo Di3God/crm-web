@@ -40,6 +40,7 @@
     <div class="mundo oculto" id="mundoB2B">
       <button class="mundo-btn" onclick="toggleMundo('B2B', event)"><span class="mundo-ic">🏢</span> B2B <span class="tu-caret">▾</span></button>
       <div class="mundo-menu oculto" id="menuB2B">
+        <button class="mundo-item oculto" id="mi-b2b-comite" onclick="navB2B('comite')">📊 Comité</button>
         <button class="mundo-item oculto" id="mi-b2b-sol" onclick="navB2B('sol')">Solicitudes</button>
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
@@ -744,6 +745,109 @@
           <div id="opsMetas"></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ===== COMITÉ COMERCIAL B2B ===== -->
+  <section id="v-b2b-comite" class="vista">
+    <div class="barra com-barra">
+      <h2>📊 Resultados del comité · B2B</h2>
+      <div class="com-filtros">
+        <input type="date" id="cbDesde" onchange="cargarComiteB2B()" class="com-fecha">
+        <span class="com-flecha">→</span>
+        <input type="date" id="cbHasta" onchange="cargarComiteB2B()" class="com-fecha">
+        <select id="cbAsesor" onchange="cargarComiteB2B()" class="com-gp-sel"><option value="">Todo el equipo</option></select>
+        <button class="btn sec" onclick="cargarComiteB2B()">⟳</button>
+        <button class="btn sec soloAdmin oculto" onclick="abrirModuloLlamadas('b2b')" title="Llamadas Aircall B2B">📞 Llamadas</button>
+      </div>
+      <div class="com-botones">
+        <button class="btn" id="cbIaBtn" onclick="analizarComiteB2BIA()">🤖 Análisis IA</button>
+      </div>
+    </div>
+
+    <div id="cbCards" class="com-cards"></div>
+    <div id="cbIaBox" class="com-ia oculto"></div>
+
+    <!-- Alertas críticas -->
+    <div id="cbAlertas"></div>
+
+    <!-- BLOQUE 1 del correo de Dante: AVANCE FRENTE A LA META -->
+    <div class="com-panel com-panel-full">
+      <div class="com-panel-tit">🎯 Avance frente a la meta <span class="bd-sub">monto que llega a Business Case este mes</span></div>
+      <div id="cbMeta"></div>
+    </div>
+
+    <!-- BLOQUE 2 del correo: EMBUDO POR FUNCIONARIO (Reunión, Finanzas, Business Case) -->
+    <div class="com-panel com-panel-full">
+      <div class="com-panel-tit">🏢 Embudo por funcionario <span class="bd-sub">Reunión comercial · Finanzas · Business Case</span></div>
+      <div id="cbEmbFunc"></div>
+    </div>
+
+    <!-- Embudo comercial global peso-céntrico -->
+    <div class="cb-grid2">
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">Embudo comercial <span class="bd-sub">alcance acumulado por etapa</span></div>
+        <div id="cbEmbudo"></div>
+      </div>
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">Distribución del pipeline <span class="bd-sub">por monto</span></div>
+        <div class="cb-canvas-wrap"><canvas id="cbChartDistrib"></canvas></div>
+      </div>
+    </div>
+
+    <!-- BLOQUE 3 del correo: INDICADORES DE GESTIÓN DE LEADS -->
+    <div class="com-panel com-panel-full"><div class="com-panel-tit">📈 Indicadores de gestión de leads</div></div>
+
+    <!-- Llamadas por día + acumulado -->
+    <div class="cb-grid2">
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">📞 Llamadas por día <span class="bd-sub" id="cbLlamSub"></span></div>
+        <div class="cb-canvas-wrap cb-canvas-lg"><canvas id="cbChartLlamadas"></canvas></div>
+      </div>
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">🕐 ¿A qué hora se gestiona? <span class="bd-sub">gestiones por hora del día</span></div>
+        <div class="cb-canvas-wrap cb-canvas-lg"><canvas id="cbChartHoras"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Leads recibidos por día × funcionario + Avances etapa a etapa -->
+    <div class="cb-grid2">
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">📥 Leads recibidos por día <span class="bd-sub">por funcionario</span></div>
+        <div class="cb-canvas-wrap cb-canvas-lg"><canvas id="cbChartRecibidos"></canvas></div>
+      </div>
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">🚀 Avances de etapa por día <span class="bd-sub" id="cbAvSub"></span></div>
+        <div class="cb-canvas-wrap cb-canvas-lg"><canvas id="cbChartAvances"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Avances por transición + Índice por ejecutivo -->
+    <div class="cb-grid2">
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">🔀 Avances por transición <span class="bd-sub">de qué etapa a cuál</span></div>
+        <div id="cbTransiciones"></div>
+      </div>
+      <div class="com-panel com-panel-full">
+        <div class="com-panel-tit">👥 Índice de gestión por ejecutivo</div>
+        <div id="cbProductividad"></div>
+      </div>
+    </div>
+
+    <!-- Desestimados: análisis BI -->
+    <div class="com-panel com-panel-full">
+      <div class="com-panel-tit">🗑 Análisis de desestimados <span class="bd-sub" id="cbDesSub"></span></div>
+      <div class="cb-grid3">
+        <div><div class="cb-mini-tit">Por causa</div><div class="cb-canvas-wrap"><canvas id="cbChartDesMotivo"></canvas></div></div>
+        <div><div class="cb-mini-tit">Última etapa antes de caer</div><div class="cb-canvas-wrap"><canvas id="cbChartDesEtapa"></canvas></div></div>
+        <div><div class="cb-mini-tit">Detalle · monto y tiempo vivo</div><div id="cbDesLista" class="cb-des-lista"></div></div>
+      </div>
+    </div>
+
+    <!-- Top leads en riesgo -->
+    <div class="com-panel com-panel-full">
+      <div class="com-panel-tit">⚠️ Top operaciones en riesgo <span class="bd-sub">no se pueden perder · monto × score</span></div>
+      <div id="cbTopRiesgo"></div>
     </div>
   </section>
 

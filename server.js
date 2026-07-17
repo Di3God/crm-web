@@ -6601,6 +6601,16 @@ app.get('/api/b2b/dashboard/trabajados', soloB2B, (req, res) => {
   catch (e) { console.error('[b2b/trabajados]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// COMITÉ COMERCIAL B2B (lun/mié/vie 9am): payload ejecutivo unificado con series BI.
+// GET /api/b2b/comite?desde&hasta&asesor  (solo jefatura)
+app.get('/api/b2b/comite', soloB2B, (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try { res.json(dashB2B.construirComiteB2B({ desde: req.query.desde, hasta: req.query.hasta, asesor: req.query.asesor })); }
+  catch (e) { console.error('[b2b/comite]', e.stack || e.message); res.status(500).json({ error: e.message }); }
+});
+
 // Funcionarios B2B (para el modal de asignar metas).
 app.get('/api/b2b/funcionarios', soloB2B, (req, res) => {
   try { res.json({ funcionarios: dashB2B.funcionariosB2B() }); }
@@ -8939,7 +8949,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.439 (Ajustes visuales Centro de llamadas: (1) titulo del modal ahora dice Centro de llamadas (antes Llamadas Aircall). (2) encabezado de la tabla con letras BLANCAS sobre el fondo azul (antes gris ilegible). (3) columna IA renombrada a Transcp, boton Ver. (4) columna Dir ahora muestra Ent (entrante, verde) / Sal (saliente, azul) en vez del icono. Aplica a B2B y B2C. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.440 (Comité Comercial B2B: nueva vista ejecutiva BI en el menú B2B que condensa Centro de Operaciones + Gestión del día en una sola hoja limpia estilo Comité B2C, con las lógicas del B2B. Cubre el correo de Dante: (1) avance frente a la meta, (2) embudo por funcionario -Reunión/Finanzas/Business Case-, (3) indicadores de gestión de leads. Gráficos Chart.js: llamadas/día + acumulado, gestión por hora del día, leads recibidos/día por funcionario -apilado-, avances de etapa/día -línea-, desestimados por causa y última etapa -con tiempo vivo-, distribución del pipeline -dona-. Alertas inteligentes más críticas, embudo peso-céntrico, índice de gestión por ejecutivo, avances por transición, top operaciones en riesgo. Endpoint /api/b2b/comite con filtro general {desde,hasta,asesor}. Solo jefatura. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
