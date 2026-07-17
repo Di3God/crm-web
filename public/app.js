@@ -10448,7 +10448,9 @@ async function cargarLlamadas() {
         const ia = l.tieneTrans
           ? '<button class="btn-sunat b2b-acc" onclick="verInteligenciaLlamada(' + l.id + ')">📝 Ver</button>'
           : '<span style="color:#C9D4E0;font-size:11px">—</span>';
-        const dir = l.direccion === 'outbound'
+        // La BD guarda 'saliente'/'entrante' (el webhook traduce el direction de Aircall).
+        const esSaliente = l.direccion === 'saliente' || l.direccion === 'outbound';
+        const dir = esSaliente
           ? '<span style="font-size:11px;font-weight:700;color:#0B72E8">Sal</span>'
           : '<span style="font-size:11px;font-weight:700;color:#0F7B52">Ent</span>';
         return '<tr><td>' + hora + '</td><td>' + (l.agente || '—') + '</td><td>' + cliente + '</td><td>' + (l.telefono || '—') + '</td>' +

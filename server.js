@@ -1425,8 +1425,8 @@ function procesarSolicitudB2B(norm, opts = {}) {
     enriquecerSunatYAvisar(codigo, !!norm.ruc); // SUNAT primero, luego el aviso WA con ubicación y status
   }
   try { watchdogLeads.registrarLead('b2b'); } catch (e) { } // resetea el reloj B2B del watchdog
-  // v1.408: si el lead quedó asignado a un funcionario, verificar a los 30 min que lo atienda.
-  if (op) { try { enColaVerificacionB2B(codigo, op, norm.razonSocial || norm.contacto); } catch (e) { } }
+  // v1.447: si el lead quedó asignado a un funcionario, verificar a la HORA que lo atienda (2º recordatorio).
+  if (op) { try { enColaVerificacionB2B(codigo, op, norm.contacto || norm.razonSocial); } catch (e) { } }
   // Bienvenida automática B2B (todo lead creado recibe el saludo, sin importar foco/asignación).
   bienvenida.saludar({ codigo, nombre: norm.contacto, telefono: norm.telefono, fuente: norm.origen, razonSocial: norm.razonSocial }, 'b2b');
   return { estado: 'creado', codigoSolicitud: codigo, asignadoA: op || null };
@@ -8858,7 +8858,9 @@ const WA_PENDIENTES = []; // { codigo, asesor, nombre, ts }
 function enColaVerificacion(codigo, asesor, nombre) {
   if (codigo && asesor) WA_PENDIENTES.push({ codigo, asesor, nombre: nombre || 'el lead', ts: Date.now() });
 }
-// v1.408: cola de verificación B2B — si a los 30 min no hay gestión, alerta al grupo B2B.
+// v1.447: cola de verificación B2B — SEGUNDO recordatorio: si a la HORA no hay gestión, alerta al grupo B2B.
+// (El primero, a los 30 min, lo envía alertas-wa-b2b.js. Ventanas ampliadas porque la búsqueda
+//  inicial en centrales de riesgo toma unos minutos extra.)
 const WA_PENDIENTES_B2B = [];
 function enColaVerificacionB2B(codigo, responsable, nombre) {
   if (codigo && responsable) WA_PENDIENTES_B2B.push({ codigo, responsable, nombre: nombre || 'la empresa', ts: Date.now() });
@@ -8885,21 +8887,23 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
-// v1.408: verificación B2B — a los 30 min sin gestión, alerta al grupo B2B (mismo formato B2C).
+// v1.447: verificación B2B — SEGUNDO recordatorio a la HORA sin gestión, alerta al grupo B2B.
 setInterval(() => {
   const ahora = Date.now();
   for (let i = WA_PENDIENTES_B2B.length - 1; i >= 0; i--) {
     const p = WA_PENDIENTES_B2B[i];
-    if (ahora - p.ts < 30 * 60 * 1000) continue;   // aún no cumple 30 min
+    if (ahora - p.ts < 60 * 60 * 1000) continue;   // aún no cumple 1 hora
     WA_PENDIENTES_B2B.splice(i, 1);                  // procesar una sola vez
     try {
       const tocado = db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud = ? LIMIT 1').get(p.codigo);
       if (tocado) continue;                          // ya fue gestionado -> silencio
       if (!esHorarioLaboralWA()) continue;           // fuera de horario -> nada
-      const sol = db.prepare('SELECT archivado, estado FROM b2b_solicitudes WHERE codigo = ?').get(p.codigo);
+      const sol = db.prepare('SELECT archivado, estado, contacto, razonSocial FROM b2b_solicitudes WHERE codigo = ?').get(p.codigo);
       if (!sol || sol.archivado || sol.estado === 'No elegible') continue; // ya no aplica
+      // Nombre de la PERSONA leído fresco de la BD (el encolado pudo ocurrir antes del enriquecimiento SUNAT).
+      const persona = sol.contacto || sol.razonSocial || p.nombre;
       const fCorto = String(p.responsable).trim().split(/\s+/)[0] || p.responsable;
-      enviarAlertaWA(`⚠️ *Sin atender (30 min)* — ${p.nombre}\n👤 ${fCorto}, ¡no lo dejes enfriar! ⏱`, process.env.WA_GRUPO_B2B_JID || undefined);
+      enviarAlertaWA(`⚠️ *Sin atender (1 hora)* — ${persona}\n👤 ${fCorto}, ¡sigue sin gestión, no lo pierdas! ⏱`, process.env.WA_GRUPO_B2B_JID || undefined);
     } catch (e) { /* silencioso */ }
   }
 }, 60 * 1000);
@@ -8974,7 +8978,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.445 (Botón de Llamadas habilitado para Dante: los botones 📞 Llamadas del Comité B2B y del Centro de Operaciones pasan de la clase soloAdmin a la nueva soloLlamadasB2B, visible para admin y jefe_b2b. El endpoint /api/llamadas ya permitía jefe_b2b, así que Dante entra al Centro de llamadas con el equipo B2B completo (Bony, Luis, Shirley). jefe_creditos NO ve el botón porque el endpoint lo rechaza. El botón de Llamadas B2C del Comité B2C sigue solo para admin. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.447 (Bot WhatsApp B2B — recordatorios de leads sin gestionar recalibrados: el PRIMER recordatorio pasa de 15 a 30 MINUTOS (setTimeout + barrido de respaldo cada 5 min con ventana 30-75 min en alertas-wa-b2b.js) y el SEGUNDO de 30 minutos a 1 HORA (cola de verificación en server.js, solo leads asignados, respeta horario laboral L-S 9-18). Motivo: la primera búsqueda en centrales de riesgo toma unos minutos extra y los recordatorios llegaban antes de tiempo. Además, AMBAS alertas ahora muestran el nombre de la PERSONA (contacto) en lugar de la razón social: la primera priorizaba empresa y la segunda leía el nombre encolado antes del enriquecimiento SUNAT — ahora el 2º recordatorio lee contacto fresco de la BD. Mensajes: Sin atender (30 min) y Sin atender (1 hora). Front: solo backend, no requiere Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

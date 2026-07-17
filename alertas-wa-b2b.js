@@ -409,14 +409,15 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         '\n👔 Asignado: ' + (f.responsableActual ? primerNom(f.responsableActual) : 'Sin asignar') +
         '\n\n¡Contáctalo ahora!' + (link ? ' ' + link : '');
       enviarAlertaB2BWA(txt); // fire-and-forget
-      // Watchdog: si a los 15 min el lead NO tiene ninguna gestión registrada, avisar que no se enfríe.
+      // Watchdog: si a los 30 min el lead NO tiene ninguna gestión registrada, avisar que no se enfríe.
+      // (v1.447: ventana ampliada de 15 a 30 min — la primera búsqueda en centrales de riesgo toma unos minutos.)
       programarAlertaSinAtender(codigo);
     } catch (e) { console.error('[WA-B2B] alerta nueva solicitud:', e.message); }
   }
 
-  // Programa una verificación a los 15 min de llegar el lead. Si sigue sin gestión, lanza alerta.
+  // Programa una verificación a los 30 min de llegar el lead. Si sigue sin gestión, lanza alerta.
   function programarAlertaSinAtender(codigo) {
-    const QUINCE_MIN = 15 * 60 * 1000;
+    const TREINTA_MIN = 30 * 60 * 1000;
     setTimeout(() => {
       try {
         if (!JID()) return;
@@ -431,13 +432,14 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         const clave = 'wa_b2b_sinatender_' + codigo;
         if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return;
         db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
-        const empresa = f.razonSocial || f.nombreComercial || f.contacto || f.codigo;
+        // Nombre de la PERSONA (contacto) — no la razón social — para hablarle de tú a tú.
+        const persona = f.contacto || f.razonSocial || f.nombreComercial || f.codigo;
         const quien = f.responsableActual ? primerNom(f.responsableActual) : 'Equipo';
-        const txt = '⚠️ *Sin atender (15 min)* — ' + empresa +
+        const txt = '⚠️ *Sin atender (30 min)* — ' + persona +
           '\n👤 ' + quien + ', ¡no lo dejes enfriar! ⏱️';
         enviarAlertaB2BWA(txt);
       } catch (e) { console.error('[WA-B2B] alerta sin atender:', e.message); }
-    }, QUINCE_MIN);
+    }, TREINTA_MIN);
   }
 
   function generarCorte(corte) { return corte === '6pm' ? plan6pm() : corte === '1pm' ? plan1pm() : plan9am(); }
@@ -503,27 +505,27 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     }, 60000);
   }
 
-  // Barrido de respaldo: cada 5 min busca leads que llegaron hace 15-45 min, siguen sin gestión
+  // Barrido de respaldo: cada 5 min busca leads que llegaron hace 30-75 min, siguen sin gestión
   // y aún no se les avisó. Cubre el caso de que el servidor se reinicie y se pierda el setTimeout.
   function iniciarWatchdogSinAtender() {
     setInterval(() => {
       try {
         if (!JID()) return;
         const ahora = Date.now();
-        const hace15 = new Date(ahora - 15 * 60 * 1000).toISOString();
-        const hace45 = new Date(ahora - 45 * 60 * 1000).toISOString();
+        const hace30 = new Date(ahora - 30 * 60 * 1000).toISOString();
+        const hace75 = new Date(ahora - 75 * 60 * 1000).toISOString();
         const nuevos = db.prepare(
           "SELECT codigo, razonSocial, nombreComercial, contacto, responsableActual FROM b2b_solicitudes WHERE fechaIngreso<=? AND fechaIngreso>=? AND COALESCE(archivado,0)=0 AND estado<>'No elegible'"
-        ).all(hace15, hace45);
+        ).all(hace30, hace75);
         nuevos.forEach(f => {
           const g = db.prepare('SELECT 1 FROM b2b_gestiones WHERE codigoSolicitud=? LIMIT 1').get(f.codigo);
           if (g) return; // ya atendido
           const clave = 'wa_b2b_sinatender_' + f.codigo;
           if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return; // ya avisado
           db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
-          const empresa = f.razonSocial || f.nombreComercial || f.contacto || f.codigo;
+          const persona = f.contacto || f.razonSocial || f.nombreComercial || f.codigo;
           const quien = f.responsableActual ? primerNom(f.responsableActual) : 'Equipo';
-          enviarAlertaB2BWA('⚠️ *Sin atender (15 min)* — ' + empresa + '\n👤 ' + quien + ', ¡no lo dejes enfriar! ⏱️');
+          enviarAlertaB2BWA('⚠️ *Sin atender (30 min)* — ' + persona + '\n👤 ' + quien + ', ¡no lo dejes enfriar! ⏱️');
         });
       } catch (e) { console.error('[WA-B2B] watchdog sin atender:', e.message); }
     }, 5 * 60 * 1000);
