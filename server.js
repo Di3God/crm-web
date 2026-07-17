@@ -541,6 +541,24 @@ try { db.exec("ALTER TABLE leads ADD COLUMN listo7dias TEXT"); } catch (e) { }
 // Google Calendar: id del evento y link de Meet de la reunión agendada.
 try { db.exec("ALTER TABLE leads ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
+// v1.448: Calendar B2B + bots de notas (Recall) para B2C y B2B.
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalEventId TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
+db.exec(`CREATE TABLE IF NOT EXISTS reuniones_bots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mundo TEXT NOT NULL,               -- 'b2c' | 'b2b'
+  codigo TEXT NOT NULL,              -- codigo del lead / solicitud
+  botId TEXT,
+  meetingUrl TEXT,
+  joinAt TEXT,                       -- ISO del inicio de la reunión
+  estado TEXT DEFAULT 'programado',  -- programado | completado | sin_transcript | fallido | cancelado
+  participantes TEXT,                -- JSON [nombres]
+  transcript TEXT,                   -- JSON [{speaker, texto}]
+  resumenIA TEXT,
+  creadoEn TEXT,
+  actualizadoEn TEXT
+)`);
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_reubots_codigo ON reuniones_bots (mundo, codigo)"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
@@ -1010,6 +1028,12 @@ app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/webhooks/leads/')) return next();
   if (req.path.startsWith('/webhooks/b2b/')) return next();
   if (req.path.startsWith('/webhooks/chatwoot/')) return next();
+  // Webhook de Recall.ai: sin sesión; se valida con RECALL_WEBHOOK_SECRET (query ?s=) si está definido.
+  if (req.path === '/recall/webhook') {
+    const sec = process.env.RECALL_WEBHOOK_SECRET;
+    if (sec && req.query.s !== sec) return res.status(401).json({ error: 'Webhook no autorizado' });
+    return next();
+  }
   const u = usuarioDeSesion(req);
   if (!u) return res.status(401).json({ error: 'Sin sesion. Inicia sesion.' });
   req.user = u;
@@ -1523,6 +1547,98 @@ const bienvenida = require('./bienvenida-auto.js')({ db, cw, normalizarCelular: 
 const gcal = require('./google-calendar.js');
 if (gcal.configurado()) console.log('[gcal] Google Calendar configurado: eventos automáticos activos');
 else console.log('[gcal] GOOGLE_CALENDAR_CREDENTIALS no configurado: eventos de calendario desactivados');
+const recall = require('./recall.js')();
+if (recall.configurado()) console.log('[recall] Recall.ai configurado: bots de notas activos (B2C y B2B)');
+else console.log('[recall] RECALL_API_KEY no configurado: bots de notas desactivados');
+
+// ---- Programar bot de notas para una reunión (fire-and-forget, ambos mundos). ----
+// Reemplaza cualquier bot previo aún programado para el mismo lead (reprogramaciones).
+function recallProgramarBot(mundo, codigo, meetingUrl, fechaISO, extra) {
+  if (!recall.configurado() || !meetingUrl || !fechaISO) return;
+  (async () => {
+    try {
+      // Cancelar bot previo pendiente del mismo lead (reunión reprogramada).
+      const prev = db.prepare("SELECT id, botId FROM reuniones_bots WHERE mundo=? AND codigo=? AND estado='programado' ORDER BY id DESC LIMIT 1").get(mundo, codigo);
+      if (prev && prev.botId) { await recall.cancelarBot(prev.botId); db.prepare("UPDATE reuniones_bots SET estado='cancelado', actualizadoEn=? WHERE id=?").run(new Date().toISOString(), prev.id); }
+      const { botId } = await recall.crearBot({ meetingUrl, joinAtISO: new Date(fechaISO).toISOString(), metadata: { mundo, codigo } });
+      if (!botId) return console.error('[recall] crearBot sin id para', mundo, codigo);
+      const ahora = new Date().toISOString();
+      db.prepare('INSERT INTO reuniones_bots (mundo, codigo, botId, meetingUrl, joinAt, estado, creadoEn, actualizadoEn) VALUES (?,?,?,?,?,?,?,?)')
+        .run(mundo, codigo, botId, meetingUrl, new Date(fechaISO).toISOString(), 'programado', ahora, ahora);
+      console.log('[recall] bot programado', botId, mundo, codigo, 'para', new Date(fechaISO).toISOString());
+    } catch (e) { console.error('[recall] programar bot ' + mundo + ' ' + codigo + ':', e.message); }
+  })();
+}
+
+// ---- Cancelar el bot pendiente de un lead (reunión caída / lead descartado). ----
+function recallCancelarBot(mundo, codigo) {
+  if (!recall.configurado()) return;
+  (async () => {
+    try {
+      const prev = db.prepare("SELECT id, botId FROM reuniones_bots WHERE mundo=? AND codigo=? AND estado='programado' ORDER BY id DESC LIMIT 1").get(mundo, codigo);
+      if (!prev) return;
+      if (prev.botId) await recall.cancelarBot(prev.botId);
+      db.prepare("UPDATE reuniones_bots SET estado='cancelado', actualizadoEn=? WHERE id=?").run(new Date().toISOString(), prev.id);
+    } catch (e) { console.error('[recall] cancelar bot ' + mundo + ' ' + codigo + ':', e.message); }
+  })();
+}
+
+// ---- Procesar un bot: si terminó, bajar transcript, guardar y generar resumen IA. ----
+async function recallProcesarBot(fila) {
+  try {
+    const t = await recall.obtenerTranscript(fila.botId);
+    const ahora = new Date().toISOString();
+    if (t && t.listo) {
+      db.prepare('UPDATE reuniones_bots SET estado=?, participantes=?, transcript=?, actualizadoEn=? WHERE id=?')
+        .run('completado', JSON.stringify(t.participantes || []), JSON.stringify(t.turnos || []), ahora, fila.id);
+      console.log('[recall] transcript listo', fila.botId, fila.mundo, fila.codigo, '(' + (t.turnos || []).length + ' turnos)');
+      // Resumen IA (fire-and-forget; si no hay API key de IA, queda solo el transcript).
+      if (iaReportes.configurado()) {
+        try {
+          let ctx = { mundo: fila.mundo, participantes: t.participantes || [] };
+          if (fila.mundo === 'b2b') {
+            const s = db.prepare('SELECT razonSocial, nombreComercial, contacto, montoSolicitado, montoRango, estado FROM b2b_solicitudes WHERE codigo=?').get(fila.codigo) || {};
+            ctx.empresa = s.razonSocial || s.nombreComercial || ''; ctx.cliente = s.contacto || '';
+            ctx.monto = s.montoSolicitado != null ? 'S/ ' + Number(s.montoSolicitado).toLocaleString('es-PE') : (s.montoRango || '');
+          } else {
+            const l = db.prepare('SELECT nombre, rango FROM leads WHERE codigo=?').get(fila.codigo) || {};
+            ctx.cliente = l.nombre || ''; ctx.monto = l.rango || '';
+          }
+          const resumen = await iaReportes.resumenReunionComercial(t.texto, ctx);
+          if (resumen) db.prepare('UPDATE reuniones_bots SET resumenIA=?, actualizadoEn=? WHERE id=?').run(resumen, new Date().toISOString(), fila.id);
+        } catch (e) { console.error('[recall] resumen IA:', e.message); }
+      }
+      return true;
+    }
+    // Terminó pero sin transcript (nadie habló / bot no admitido) → cerrar tras un margen.
+    if (t && (t.estado === 'done' || t.estado === 'fatal')) {
+      const finHace = Date.now() - new Date(fila.joinAt).getTime();
+      if (finHace > 3 * 3600000) {
+        db.prepare('UPDATE reuniones_bots SET estado=?, participantes=?, actualizadoEn=? WHERE id=?')
+          .run(t.estado === 'fatal' ? 'fallido' : 'sin_transcript', JSON.stringify(t.participantes || []), ahora, fila.id);
+      }
+    }
+    return false;
+  } catch (e) {
+    console.error('[recall] procesar bot ' + fila.botId + ':', e.message);
+    // Si el bot ya no existe en Recall, cerrar la fila.
+    if (e.status === 404) db.prepare("UPDATE reuniones_bots SET estado='fallido', actualizadoEn=? WHERE id=?").run(new Date().toISOString(), fila.id);
+    return false;
+  }
+}
+
+// ---- Poller de respaldo: cada 5 min revisa bots cuya reunión ya empezó hace 20+ min. ----
+setInterval(() => {
+  if (!recall.configurado()) return;
+  try {
+    const corte = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const lim = new Date(Date.now() - 48 * 3600000).toISOString(); // ventana máx: 48 h
+    const pendientes = db.prepare("SELECT * FROM reuniones_bots WHERE estado='programado' AND joinAt<=? AND joinAt>=?").all(corte, lim);
+    pendientes.forEach(f => { recallProcesarBot(f); });
+    // Bots muy viejos sin resolver → fallido.
+    db.prepare("UPDATE reuniones_bots SET estado='fallido', actualizadoEn=? WHERE estado='programado' AND joinAt<?").run(new Date().toISOString(), lim);
+  } catch (e) { console.error('[recall] poller:', e.message); }
+}, 5 * 60 * 1000);
 // v1.401: Pulso del día (reemplaza los cortes anteriores de alertas-wa: un bloque por grupo, 3 cortes).
 const pulsoDia = require('./pulso-dia.js')({ db, enviarAlertaWA, peruFecha, construirRankingDia, consolidarLead: leadConsolidado, L, etapaKanbanB2B, slaEtapaB2B });
 // Insights de Meta Ads (costos/CPL). Requiere META_ACCESS_TOKEN + META_AD_ACCOUNT_ID en el entorno.
@@ -3078,9 +3194,16 @@ app.post('/api/gestiones', (req, res) => {
             const n = await gcal.crearEvento(correoGestora, datos);
             if (n) db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, g.codigo);
           }
+          // Reunión reprogramada: mover el bot de notas a la nueva fecha.
+          const lf2 = db.prepare('SELECT gcalMeetLink FROM leads WHERE codigo=?').get(g.codigo) || {};
+          if (lf2.gcalMeetLink) recallProgramarBot('b2c', g.codigo, lf2.gcalMeetLink, g.fechaReunion);
         } else if (!leadFresco.gcalEventId) {
           const n = await gcal.crearEvento(correoGestora, datos);
-          if (n) db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, g.codigo);
+          if (n) {
+            db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, g.codigo);
+            // Bot de notas para la reunión recién agendada.
+            if (n.meetLink) recallProgramarBot('b2c', g.codigo, n.meetLink, g.fechaReunion);
+          }
         }
       } catch (e) { console.error('[gcal] agendamiento:', e.message); }
     })();
@@ -3096,6 +3219,7 @@ app.post('/api/gestiones', (req, res) => {
         if (!correoGestora || !correoGestora.includes('@')) return;
         const ok = await gcal.cancelarEvento(correoGestora, leadFresco.gcalEventId);
         if (ok) db.prepare('UPDATE leads SET gcalEventId=NULL, gcalMeetLink=NULL WHERE codigo=?').run(g.codigo);
+        recallCancelarBot('b2c', g.codigo); // la reunión se cayó: el bot ya no debe entrar
       } catch (e) { console.error('[gcal] cancelación:', e.message); }
     })();
   }
@@ -6869,8 +6993,76 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
   if (datos.realizada && datos.comentario && datos.comentario.trim()) {
     avanzo = autoAvanzarB2B(s.codigo, 'Reunion comercial', 'Verde', req.user.nombre);
   }
+  // v1.448 — Google Calendar B2B: al agendar (fecha + hora, aún no realizada) crear/actualizar el
+  // evento en el calendario del funcionario responsable, con Meet, y programar el bot de notas.
+  if (gcal.configurado() && datos.fecha && datos.hora && !datos.realizada) {
+    (async () => {
+      try {
+        const sol = db.prepare('SELECT razonSocial, nombreComercial, contacto, telefono, email, responsableActual, gcalEventId FROM b2b_solicitudes WHERE codigo=?').get(s.codigo) || {};
+        const correoFunc = (db.prepare('SELECT usuario FROM usuarios WHERE nombre=?').get(sol.responsableActual) || {}).usuario
+          || (req.user && String(req.user.usuario || '').includes('@') ? req.user.usuario : null);
+        if (!correoFunc || !correoFunc.includes('@')) return;
+        const empresa = sol.razonSocial || sol.nombreComercial || sol.contacto || s.codigo;
+        // fecha + hora en hora Perú (UTC-5) → ISO.
+        const fechaISO = new Date(datos.fecha + 'T' + datos.hora + ':00-05:00').toISOString();
+        const dts = {
+          fechaISO,
+          titulo: 'Reunión comercial TasaTop - ' + empresa,
+          descripcion: 'Agendado desde MiTasatop (B2B).\nCódigo: ' + s.codigo +
+            '\nEmpresa: ' + empresa + (sol.contacto ? '\nContacto: ' + sol.contacto : '') +
+            (sol.telefono ? '\nTeléfono: ' + sol.telefono : '') +
+            (datos.modalidad ? '\nModalidad: ' + datos.modalidad : '') + (datos.lugar ? '\nLugar: ' + datos.lugar : '') +
+            '\n\nEsta reunión puede ser transcrita con fines de calidad y seguimiento comercial.',
+          invitados: sol.email && String(sol.email).includes('@') ? [sol.email] : []
+        };
+        let eventId = sol.gcalEventId, meetLink = null;
+        if (eventId) {
+          const r = await gcal.actualizarEvento(correoFunc, eventId, dts);
+          if (r) meetLink = r.meetLink || null;
+          else { const n = await gcal.crearEvento(correoFunc, dts); if (n) { eventId = n.eventId; meetLink = n.meetLink; } }
+        } else {
+          const n = await gcal.crearEvento(correoFunc, dts);
+          if (n) { eventId = n.eventId; meetLink = n.meetLink; }
+        }
+        if (eventId) {
+          db.prepare('UPDATE b2b_solicitudes SET gcalEventId=?, gcalMeetLink=COALESCE(?, gcalMeetLink) WHERE codigo=?').run(eventId, meetLink, s.codigo);
+          const linkFinal = meetLink || (db.prepare('SELECT gcalMeetLink FROM b2b_solicitudes WHERE codigo=?').get(s.codigo) || {}).gcalMeetLink;
+          // Bot de notas solo para reuniones no presenciales (el bot entra al Meet).
+          const esPresencial = /presencial/i.test(String(datos.modalidad || ''));
+          if (linkFinal && !esPresencial) recallProgramarBot('b2b', s.codigo, linkFinal, fechaISO);
+        }
+      } catch (e) { console.error('[gcal-b2b] agendar reunión:', e.message); }
+    })();
+  }
   auditar(req, 'b2b_reunion_guardar', s.codigo, (datos.fecha ? datos.fecha + (datos.hora ? ' ' + datos.hora : '') + ' · ' + (datos.modalidad || '') : 'sin fecha') + (datos.comentario ? ' · comentario' : '') + (avanzo ? ' → avanzó a Finanzas' : ''));
   res.json({ ok: true, reunion: datos, avanzo });
+});
+
+// ===== Reuniones con bot de notas (Recall): estado, transcript y resumen =====
+// GET /api/reuniones/:mundo/:codigo — última reunión con bot del lead/solicitud.
+app.get('/api/reuniones/:mundo/:codigo', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const mundo = req.params.mundo === 'b2b' ? 'b2b' : 'b2c';
+  const f = db.prepare('SELECT * FROM reuniones_bots WHERE mundo=? AND codigo=? ORDER BY id DESC LIMIT 1').get(mundo, req.params.codigo);
+  if (!f) return res.json({ existe: false, activo: recall.configurado() });
+  let participantes = [], transcript = [];
+  try { participantes = JSON.parse(f.participantes || '[]'); } catch (e) { }
+  try { transcript = JSON.parse(f.transcript || '[]'); } catch (e) { }
+  res.json({ existe: true, activo: recall.configurado(), estado: f.estado, joinAt: f.joinAt, meetingUrl: f.meetingUrl,
+    participantes, transcript, resumenIA: f.resumenIA || null, actualizadoEn: f.actualizadoEn });
+});
+
+// Webhook de Recall (configurar https://<dominio>/api/recall/webhook en su dashboard).
+// Ante cualquier evento de un bot conocido, se dispara el procesamiento inmediato.
+app.post('/api/recall/webhook', express.json({ limit: '2mb' }), (req, res) => {
+  res.json({ ok: true }); // responder rápido; procesar aparte
+  try {
+    const b = req.body || {};
+    const botId = (b.data && (b.data.bot_id || (b.data.bot && b.data.bot.id))) || b.bot_id || null;
+    if (!botId) return;
+    const fila = db.prepare("SELECT * FROM reuniones_bots WHERE botId=? AND estado='programado'").get(String(botId));
+    if (fila) setTimeout(() => recallProcesarBot(fila), 30000); // 30 s de gracia para que el transcript esté listo
+  } catch (e) { console.error('[recall] webhook:', e.message); }
 });
 
 // ===== SEGUIMIENTO DIARIO B2B: qué se gestionó hoy, avances de etapa =====
@@ -8115,6 +8307,22 @@ app.put('/api/b2b/solicitudes/:codigo/descartar', soloB2B, (req, res) => {
   }
   db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', motivoDescarte=? WHERE codigo=?").run(motivo, s.codigo);
   auditar(req, 'b2b_descartar', s.codigo, motivo);
+  // v1.448: solicitud descartada → cancelar el evento de calendario y el bot de notas pendiente.
+  if (gcal.configurado()) {
+    (async () => {
+      try {
+        const sol = db.prepare('SELECT gcalEventId, responsableActual FROM b2b_solicitudes WHERE codigo=?').get(s.codigo) || {};
+        if (sol.gcalEventId) {
+          const correoFunc = (db.prepare('SELECT usuario FROM usuarios WHERE nombre=?').get(sol.responsableActual) || {}).usuario;
+          if (correoFunc && correoFunc.includes('@')) {
+            const ok = await gcal.cancelarEvento(correoFunc, sol.gcalEventId);
+            if (ok) db.prepare('UPDATE b2b_solicitudes SET gcalEventId=NULL, gcalMeetLink=NULL WHERE codigo=?').run(s.codigo);
+          }
+        }
+      } catch (e) { console.error('[gcal-b2b] cancelar por descarte:', e.message); }
+    })();
+  }
+  recallCancelarBot('b2b', s.codigo);
   res.json({ ok: true });
 });
 
@@ -8978,7 +9186,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.447 (Bot WhatsApp B2B — recordatorios de leads sin gestionar recalibrados: el PRIMER recordatorio pasa de 15 a 30 MINUTOS (setTimeout + barrido de respaldo cada 5 min con ventana 30-75 min en alertas-wa-b2b.js) y el SEGUNDO de 30 minutos a 1 HORA (cola de verificación en server.js, solo leads asignados, respeta horario laboral L-S 9-18). Motivo: la primera búsqueda en centrales de riesgo toma unos minutos extra y los recordatorios llegaban antes de tiempo. Además, AMBAS alertas ahora muestran el nombre de la PERSONA (contacto) en lugar de la razón social: la primera priorizaba empresa y la segunda leía el nombre encolado antes del enriquecimiento SUNAT — ahora el 2º recordatorio lee contacto fresco de la BD. Mensajes: Sin atender (30 min) y Sin atender (1 hora). Front: solo backend, no requiere Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.448 (CALENDAR B2B + BOTS DE NOTAS RECALL.AI para B2C y B2B: (1) Google Calendar B2B: al agendar una reunión (fecha+hora) en el kanban se crea/actualiza el evento en el calendario del funcionario responsable con Meet e invitación al cliente si tiene email; columnas gcalEventId/gcalMeetLink en b2b_solicitudes; el evento se cancela al descartar la solicitud. (2) Integración Recall.ai (una sola cuenta TasaTop, cobro por hora de bot, reuniones simultáneas sin conflicto): nuevo módulo recall.js; al agendarse una reunión virtual (B2C vía gestiones de gestora, B2B vía panel de reunión) se despacha un bot Notas TasaTop programado al Meet; tabla reuniones_bots; el bot se reprograma al reprogramar y se cancela si la reunión se cae o el lead se descarta; poller cada 5 min + webhook POST /api/recall/webhook (excluido del auth de sesión, con RECALL_WEBHOOK_SECRET opcional ?s=) descargan el transcript DIARIZADO CON NOMBRES REALES de participantes y la lista de quiénes entraron. (3) Resumen IA automático de la reunión (resumenReunionComercial en ia-reportes: Resumen/Acuerdos/Objeciones/Próximos pasos) guardado en la solicitud. (4) Visor 📝 Notas de la reunión: botón en el panel de Reunión comercial B2B y chip Notas IA junto al enlace de Meet en la ficha B2C, con estado, participantes, resumen y transcripción. Variables Railway: RECALL_API_KEY (obligatoria), RECALL_API_URL (default us-west-2, ajustar región), RECALL_BOT_NAME, RECALL_TRANSCRIPT_PROVIDER (meeting_captions default), RECALL_WEBHOOK_SECRET (opcional). Configurar webhook en dashboard Recall: https://<dominio>/api/recall/webhook?s=<secreto>. Degradación limpia sin las variables. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

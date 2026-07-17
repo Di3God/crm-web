@@ -1710,7 +1710,8 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
       ? '<div class="gform-tit">📋 Respuestas del formulario</div><div class="gform-chips">' + pistasForm.map(x => '<span class="gform-chip">' + x + '</span>').join('') + '</div>'
       : '';
     const bloqueMeet = gLead.gcalMeetLink
-      ? '<div class="gform-chips"' + (pistasForm.length ? ' style="margin-top:6px"' : '') + '><span class="gform-chip">📹 <a href="' + gLead.gcalMeetLink + '" target="_blank" style="color:#0B72E8;font-weight:700;text-decoration:none">Enlace Reunión</a></span></div>'
+      ? '<div class="gform-chips"' + (pistasForm.length ? ' style="margin-top:6px"' : '') + '><span class="gform-chip">📹 <a href="' + gLead.gcalMeetLink + '" target="_blank" style="color:#0B72E8;font-weight:700;text-decoration:none">Enlace Reunión</a></span>' +
+        '<span class="gform-chip" style="cursor:pointer" onclick="verNotasReunion(\'b2c\',\'' + gLead.codigo + '\')">📝 Notas IA</span></div>'
       : '';
     gPistasEl.innerHTML = bloqueForm + bloqueMeet;
     gPistasEl.style.display = (bloqueForm || bloqueMeet) ? 'block' : 'none';
@@ -5820,7 +5821,9 @@ function panelReunion(modo) {
 
   const cuerpo = '<div class="fb-body reu-body">' +
     '<div class="reu-top"><span class="fcr-sub">Validación de observaciones y definición de próximos pasos</span>' +
-    '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar</button></div>' +
+    '<span style="display:flex;gap:8px">' +
+    '<button class="btn sec" onclick="verNotasReunion(\'b2b\')">📝 Notas de la reunión</button>' +
+    '<button class="btn" onclick="guardarReunionB2B()">💾 Guardar</button></span></div>' +
     banda + cards + puntos + comentarios +
     (pasada ? '<div class="sub" style="margin-top:8px">✓ Este lead ya pasó la reunión comercial.</div>' : '') + '</div>';
   return fbPanelWrap('reunion', '🤝', '4 · Reunión comercial', head, true, cuerpo, false, modo, 'Reunion comercial');
@@ -10978,4 +10981,38 @@ function cbbFormatearIA(texto) {
     return '<div class="cbb-ia-item"><span>▸</span><span>' + esc(l) + '</span></div>';
   }).join('');
   return html;
+}
+
+// ============================================================
+// ===== NOTAS DE REUNIÓN (bot Recall) — visor B2C/B2B v1.448 =
+// ============================================================
+async function verNotasReunion(mundo, codigo) {
+  try {
+    const cod = codigo || (mundo === 'b2b' && typeof FICHA !== 'undefined' && FICHA && FICHA.solicitud ? FICHA.solicitud.codigo : null);
+    if (!cod) return alert('No se encontró el código del lead.');
+    const d = await api('/api/reuniones/' + mundo + '/' + encodeURIComponent(cod));
+    if (!d.activo && !d.existe) { mostrarRevModal('<div class="rev-modal-head">📝 Notas de reunión</div><div class="rev-modal-body" style="padding:16px">La integración de notas (Recall) no está configurada. Agrega RECALL_API_KEY en Railway.</div>', true); return; }
+    if (!d.existe) { mostrarRevModal('<div class="rev-modal-head">📝 Notas de reunión</div><div class="rev-modal-body" style="padding:16px">Aún no hay un bot de notas para este lead. Se programa automáticamente al agendar una reunión virtual con fecha y hora.</div>', true); return; }
+    const fecha = d.joinAt ? new Date(d.joinAt).toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+    let cuerpo = '<div style="padding:14px 16px">';
+    cuerpo += '<div style="font-size:12px;color:#64748B;margin-bottom:8px">Reunión del <b>' + fecha + '</b> · estado: <b>' + esc(d.estado) + '</b>' +
+      (d.participantes && d.participantes.length ? ' · 👥 ' + d.participantes.map(esc).join(', ') : '') + '</div>';
+    if (d.estado === 'programado') cuerpo += '<div class="vacio">El bot está programado. El transcript aparecerá aquí después de la reunión.</div>';
+    if (d.estado === 'sin_transcript') cuerpo += '<div class="vacio">La reunión terminó sin transcript (posiblemente el bot no fue admitido al Meet o nadie habló).</div>';
+    if (d.estado === 'fallido') cuerpo += '<div class="vacio">El bot no pudo capturar esta reunión.</div>';
+    if (d.resumenIA) {
+      cuerpo += '<div style="font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#7C8AA5;margin:8px 0 4px">🤖 Resumen IA</div>';
+      cuerpo += '<div style="font-size:13px;line-height:1.6;color:#1E293B;white-space:pre-wrap;background:#F6F8FC;border-radius:10px;padding:10px 12px">' + esc(d.resumenIA).replace(/###(RESUMEN|ACUERDOS|OBJECIONES|PROXIMOS)/g, (m, s) => '\n' + ({ RESUMEN: '📊 Resumen', ACUERDOS: '🤝 Acuerdos', OBJECIONES: '⚠️ Objeciones', PROXIMOS: '🎯 Próximos pasos' })[s] + '\n') + '</div>';
+    }
+    if (d.transcript && d.transcript.length) {
+      cuerpo += '<div style="font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#7C8AA5;margin:12px 0 4px">🎙 Transcripción (' + d.transcript.length + ' intervenciones)</div>';
+      cuerpo += '<div style="max-height:320px;overflow-y:auto;border:1px solid #EEF2F8;border-radius:10px;padding:8px 12px">';
+      d.transcript.forEach(t => {
+        cuerpo += '<div style="margin-bottom:7px"><b style="font-size:12px;color:#2563EB">' + esc(t.speaker) + '</b><div style="font-size:12.5px;color:#334155;line-height:1.5">' + esc(t.texto) + '</div></div>';
+      });
+      cuerpo += '</div>';
+    }
+    cuerpo += '</div>';
+    mostrarRevModal('<div class="rev-modal-head">📝 Notas de la reunión</div><div class="rev-modal-body">' + cuerpo + '</div>', true);
+  } catch (e) { alert('No se pudo cargar: ' + e.message); }
 }

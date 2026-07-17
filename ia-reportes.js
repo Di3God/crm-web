@@ -248,6 +248,27 @@ async function analizarComiteEjecutivoB2B(D) {
   return await llamar(instruccion, 1200);
 }
 
+
+// RESUMEN DE REUNIÓN COMERCIAL (v1.448): analiza la transcripción diarizada
+// que trae el bot de Recall y produce un resumen accionable para el CRM.
+// contexto: { mundo: 'b2c'|'b2b', cliente, empresa, monto, etapa, participantes: [] }
+async function resumenReunionComercial(transcriptTexto, contexto) {
+  const c = contexto || {};
+  const quien = c.mundo === 'b2b'
+    ? ('Empresa: ' + (c.empresa || '—') + (c.cliente ? ' · Contacto: ' + c.cliente : '') + (c.monto ? ' · Financiamiento solicitado: ' + c.monto : ''))
+    : ('Inversionista potencial: ' + (c.cliente || '—') + (c.monto ? ' · Ticket estimado: ' + c.monto : ''));
+  const instruccion = `Eres el analista comercial senior de TasaTop (crowdlending con garantía inmobiliaria, Perú). Analiza la transcripción de una reunión ${c.mundo === 'b2b' ? 'de originación B2B (empresa que busca financiamiento)' : 'comercial B2C (captación de inversionista)'}.\n` +
+    `${quien}\n` + (Array.isArray(c.participantes) && c.participantes.length ? 'Participantes: ' + c.participantes.join(', ') + '\n' : '') +
+    `\nTRANSCRIPCIÓN (hablante: texto):\n${String(transcriptTexto || '').slice(0, 24000)}\n\n` +
+    `Redacta en ESPAÑOL IMPECABLE y devuelve EXACTAMENTE este formato con los marcadores en líneas propias:\n` +
+    `###RESUMEN\n(3-4 oraciones: qué se trató, postura del cliente, temperatura del cierre.)\n` +
+    `###ACUERDOS\n(líneas con "- ": compromisos concretos de cada parte; si no hubo, dilo.)\n` +
+    `###OBJECIONES\n(líneas con "- ": objeciones o dudas del cliente y cómo se respondieron; omite la sección si no hubo.)\n` +
+    `###PROXIMOS\n(líneas con "- ": próximos pasos con responsable y plazo si se mencionó.)\n` +
+    `No inventes nada que no esté en la transcripción.`;
+  return await llamar(instruccion, 900);
+}
+
 // Call scoring: analiza la transcripción de una llamada comercial y devuelve un puntaje
 // por dimensión + hallazgos. Devuelve texto formateado (o null si falla/no configurado).
 async function scoringLlamada(transcripcion, ctx) {
@@ -269,4 +290,4 @@ async function scoringLlamada(transcripcion, ctx) {
   return await llamar(prompt, 700);
 }
 
-module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B, analizarComiteEjecutivoB2B, scoringLlamada };
+module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B, analizarComiteEjecutivoB2B, resumenReunionComercial, scoringLlamada };
