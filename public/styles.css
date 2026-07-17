@@ -3391,17 +3391,28 @@ body.night .ops-tiempos-flow { color: #D8E6F5 !important; }
 body.night #ovResumenGest > div { background: #151E2B !important; }
 body.night #resumPreview { background: #0B141A !important; border-color: #2A3849 !important; color: #D8E6F5 !important; }
 
-/* ===== COMITÉ COMERCIAL B2B ===== */
-.cb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.cb-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start}
-@media(max-width:1000px){.cb-grid2,.cb-grid3{grid-template-columns:1fr}}
-.cb-canvas-wrap{position:relative;height:230px;width:100%}
-.cb-canvas-lg{height:260px}
-.cb-mini-tit{font-size:12px;font-weight:600;color:#475569;margin-bottom:8px}
+/* ===== COMITÉ COMERCIAL B2B (v1.441) ===== */
+/* Ancho completo de página: rompe el max-width de .content solo en esta vista */
+#v-b2b-comite.act { width: calc(100vw - 48px); position: relative; left: 50%; transform: translateX(-50%); }
+#v-b2b-comite .com-panel { margin-bottom: 12px; }
 
-/* Alertas */
-.cb-alertas-box{margin-bottom:14px}
-.cb-alerta{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:6px;font-size:13px;line-height:1.5}
+/* Grids compactos: todo en una vista al 100% */
+.cb-grid-2a{display:grid;grid-template-columns:minmax(340px,1fr) minmax(420px,1.3fr);gap:12px}
+.cb-grid-2b{display:grid;grid-template-columns:1.4fr 1fr;gap:12px;align-items:start}
+.cb-grid-3{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:12px}
+.cb-grid-des{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:1100px){.cb-grid-2a,.cb-grid-2b,.cb-grid-3,.cb-grid-des{grid-template-columns:1fr}}
+.cb-canvas-wrap{position:relative;height:200px;width:100%}
+.cb-canvas-sm{height:170px}
+.cb-mini-tit{font-size:12px;font-weight:600;color:#475569;margin-bottom:6px}
+
+/* Alertas colapsables */
+.cb-alertas-box{margin-bottom:12px;padding-top:8px;padding-bottom:8px}
+.cb-alertas-head{display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:13px;color:#334155}
+.cb-alertas-head b.cb-al-crit{color:#DC2626}
+.cb-alertas-head b.cb-al-alta{color:#B45309}
+.cb-al-btn{border:1px solid #E2E8F0;background:#fff;border-radius:7px;font-size:11px;padding:4px 10px;cursor:pointer;color:#475569}
+.cb-alerta{display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:8px;margin-top:6px;font-size:12.5px;line-height:1.5}
 .cb-alerta-crit{background:#FEF2F2;color:#7F1D1D}
 .cb-alerta-alta{background:#FFFBEB;color:#78350F}
 .cb-alerta-tag{flex:none;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.03em}
@@ -3409,39 +3420,35 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cb-tag-alta{background:#FCD34D;color:#78350F}
 
 /* Meta */
-.cb-meta-top{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px}
-.cb-meta-big{font-size:26px;font-weight:700;color:#0F172A}
-.cb-meta-de{font-size:15px;font-weight:500;color:#94A3B8}
-.cb-meta-side{font-size:13px;color:#64748B}
-.cb-meta-track{height:14px;background:#EEF2F7;border-radius:8px;overflow:hidden}
+.cb-meta-top{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+.cb-meta-big{font-size:24px;font-weight:700;color:#0F172A}
+.cb-meta-de{font-size:14px;font-weight:500;color:#94A3B8}
+.cb-meta-side{font-size:12px;color:#64748B}
+.cb-meta-eq{font-size:11.5px;color:#64748B;margin-bottom:6px}
+.cb-meta-track{height:13px;background:#EEF2F7;border-radius:8px;overflow:hidden}
 .cb-meta-track.sm{height:8px}
 .cb-meta-fill{height:100%;border-radius:8px;transition:width .4s}
 .cb-bar-verde{background:#16A34A}.cb-bar-amber{background:#EAB308}.cb-bar-rojo{background:#DC2626}
-.cb-meta-inds{margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:800px){.cb-meta-inds{grid-template-columns:1fr}}
+.cb-meta-inds{margin-top:12px;display:grid;grid-template-columns:1fr;gap:10px}
 .cb-meta-ind-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;color:#475569}
 
-/* Embudo por funcionario */
-.cb-tabla-func th,.cb-tabla-func td{text-align:center}
-.cb-tabla-func td:first-child,.cb-tabla-func th:first-child{text-align:left}
-.cb-tabla-func .cb-hl{background:#EFF6FF}
-.cb-tabla-func th.cb-hl{color:#1D4ED8}
-.cb-emb-prom{font-size:11px;color:#94A3B8}
+/* Embudo vertical compacto (recuadro pequeño) */
+.cb-funnel{display:flex;flex-direction:column;gap:6px}
+.cb-fun-fila{display:grid;grid-template-columns:150px 1fr 210px;gap:8px;align-items:center}
+.cb-fun-lbl{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;font-weight:600;color:#334155}
+.cb-fun-barwrap{display:flex;justify-content:center}
+.cb-fun-bar{background:linear-gradient(90deg,#378ADD,#5BA3E8);color:#fff;font-size:11.5px;border-radius:6px;padding:5px 10px;text-align:center;white-space:nowrap;min-width:60px;transition:width .4s}
+.cb-fun-side{display:flex;flex-direction:column;gap:2px;font-size:11px}
+.cb-fun-side .emb-vivos,.cb-fun-side .emb-fuga{cursor:pointer}
+@media(max-width:1100px){.cb-fun-fila{grid-template-columns:120px 1fr 170px}}
 
-/* Transiciones */
-.cb-trans{display:flex;align-items:center;gap:10px;margin-bottom:7px}
-.cb-trans-lbl{flex:none;width:190px;font-size:12px;color:#475569}
-.cb-trans-track{flex:1;height:16px;background:#EEF2F7;border-radius:6px;overflow:hidden}
-.cb-trans-fill{height:100%;background:#378ADD;border-radius:6px}
-.cb-trans-n{flex:none;width:34px;text-align:right;font-size:13px;font-weight:600;color:#0F172A}
-
-/* Índice / score pills */
-.cb-indice{display:inline-block;min-width:30px;text-align:center;padding:2px 8px;border-radius:11px;color:#fff;font-weight:600;font-size:12px}
+/* Top riesgo angosto */
+.cb-tabla-riesgo th,.cb-tabla-riesgo td{font-size:12px;padding:6px 6px}
 .cb-score{display:inline-block;min-width:28px;text-align:center;padding:2px 8px;border-radius:11px;background:#EEF2F7;color:#334155;font-weight:600;font-size:12px}
 
 /* Desestimados detalle */
-.cb-des-lista{max-height:260px;overflow-y:auto}
-.cb-des-row{padding:7px 0;border-bottom:1px solid #F1F5F9}
+.cb-des-lista{max-height:210px;overflow-y:auto}
+.cb-des-row{padding:6px 0;border-bottom:1px solid #F1F5F9}
 .cb-des-emp{font-size:12px;font-weight:600;color:#0F172A}
 .cb-des-meta{font-size:11px;color:#64748B;margin:1px 0}
 .cb-des-mot{font-size:11px;color:#94A3B8;line-height:1.4}

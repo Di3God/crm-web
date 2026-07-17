@@ -10577,18 +10577,21 @@ async function verEstadoWA() {
 }
 
 // ============================================================
-// ===== COMITÉ COMERCIAL B2B (lun/mié/vie 9am) ==============
-// Vista ejecutiva BI que cubre el correo de Dante: (1) avance
-// frente a la meta, (2) embudo por funcionario, (3) indicadores
-// de gestión de leads. Todo respeta el filtro general {desde,hasta,asesor}.
+// ===== COMITÉ COMERCIAL B2B (lun/mié/vie 9am) — v1.441 =====
+// Una sola vista compacta: cards, alertas colapsadas, meta
+// (equipo + solo funcionarios con meta), embudo vertical con
+// vivos/desestimados clicables, llamadas/día, horas × funcionario,
+// recibidos (pie), desestimados y top riesgo. Etiquetas de datos
+// con chartjs-plugin-datalabels (registrado POR chart, no global).
 // ============================================================
 let CB_DATA = null;
 const CB_CHARTS = {};
 function cbDestroyCharts() { Object.values(CB_CHARTS).forEach(c => { try { c.destroy(); } catch (e) {} }); Object.keys(CB_CHARTS).forEach(k => delete CB_CHARTS[k]); }
-function cbSoles(n) { n = Number(n) || 0; return 'S/ ' + n.toLocaleString('es-PE'); }
 function cbMM(n) { n = Number(n) || 0; if (n >= 1e6) return 'S/ ' + (Math.round(n / 1e5) / 10) + ' MM'; if (n >= 1e3) return 'S/ ' + Math.round(n / 1e3) + ' K'; return 'S/ ' + Math.round(n); }
 function cbDiaCorto(iso) { const p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; }
 const CB_PALETA = ['#378ADD', '#1D9E75', '#EF9F27', '#D4537E', '#7F77DD', '#D85A30', '#5DCAA5', '#888780'];
+const CB_GRID = 'rgba(148,163,184,.15)';
+const CB_DL = (typeof ChartDataLabels !== 'undefined') ? ChartDataLabels : null;
 
 async function cargarComiteB2B() {
   const hoyP = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
@@ -10613,42 +10616,37 @@ async function cargarComiteB2B() {
 }
 
 function renderComiteB2B(d) {
-  // Poblar selector de funcionario (una vez).
+  // Selector: VALUE = nombre completo (matchea responsableActual en BD); texto = nombre corto.
   const sel = $('cbAsesor');
   if (sel && sel.options.length <= 1 && d.ejecutivos) {
-    d.ejecutivos.filter(e => e && e !== 'Sin asignar').forEach(e => sel.add(new Option(e, e)));
+    d.ejecutivos.filter(e => e && e.nombre && e.nombre !== 'Sin asignar')
+      .forEach(e => sel.add(new Option(e.corto, e.nombre)));
   }
   cbDestroyCharts();
   cbRenderCards(d);
   cbRenderAlertas(d);
   cbRenderMeta(d);
-  cbRenderEmbudoFunc(d);
   cbRenderEmbudo(d);
-  cbRenderProductividad(d);
-  cbRenderTransiciones(d);
   cbRenderTopRiesgo(d);
   cbRenderDesestLista(d);
-  // Gráficos (Chart.js) — tras pintar el DOM.
   setTimeout(() => {
-    cbChartDistrib(d);
     cbChartLlamadas(d);
     cbChartHoras(d);
     cbChartRecibidos(d);
-    cbChartAvances(d);
     cbChartDesMotivo(d);
     cbChartDesEtapa(d);
   }, 40);
 }
 
-// ---- Scorecards ejecutivas ----
+// ---- Scorecards ----
 function cbRenderCards(d) {
   const K = d.kpis || {}, M = d.meta || {};
   const cards = [
     ['💼', 'Pipeline vivo', (K.pipeline ? K.pipeline.montoFmt : '—'), (K.pipeline ? K.pipeline.n + ' solicitudes' : '')],
     ['🎯', 'Cumplimiento 3x3', (K.cumpl3x3 ? K.cumpl3x3.pct + '%' : '—'), (K.cumpl3x3 ? K.cumpl3x3.atrasados + ' atrasados' : '')],
     ['🏆', 'A Business Case', (M.logradoFmt || 'S/ 0'), (M.pct != null ? M.pct + '% de ' + (M.montoFmt || '—') : 'sin meta')],
-    ['📞', 'Llamadas', (d.llamadas ? d.llamadas.total : 0), (d.llamadas ? d.llamadas.pctContestadas + '% contestadas' : '')],
-    ['🚀', 'Avances de etapa', (d.avances ? d.avances.total : 0), 'en el periodo'],
+    ['📞', 'Gestiones de llamada', (d.llamadas ? d.llamadas.total : 0), (d.llamadas ? d.llamadas.empresasUnicas + ' empresas únicas' : '')],
+    ['📥', 'Leads recibidos', (d.recibidos ? d.recibidos.total : 0), (d.recibidos ? cbMM(d.recibidos.montoTotal) : '')],
     ['🔕', 'Avanzó sin contacto', (K.avanzaronSinContacto ? K.avanzaronSinContacto.montoFmt : '—'), (K.avanzaronSinContacto ? K.avanzaronSinContacto.n + ' solicitudes' : '')],
     ['🗑', 'Desestimados', (d.desestimados && d.desestimados.resumen ? d.desestimados.resumen.total : 0), (d.desestimados && d.desestimados.resumen ? d.desestimados.resumen.montoFmt : '')]
   ];
@@ -10656,121 +10654,101 @@ function cbRenderCards(d) {
     '<div class="com-card"><div class="com-card-ico">' + c[0] + '</div><div class="com-card-body"><div class="com-card-v">' + c[2] + '</div><div class="com-card-l">' + c[1] + '</div>' + (c[3] ? '<div class="com-card-s">' + c[3] + '</div>' : '') + '</div></div>').join('');
 }
 
-// ---- Alertas críticas + altas ----
+// ---- Alertas COLAPSADAS por default ----
+let CB_ALERTAS_ABIERTAS = false;
+function cbToggleAlertas() { CB_ALERTAS_ABIERTAS = !CB_ALERTAS_ABIERTAS; if (CB_DATA) cbRenderAlertas(CB_DATA); }
 function cbRenderAlertas(d) {
   const cont = $('cbAlertas'); if (!cont) return;
   const crit = d.alertasCriticas || [], alta = d.alertasAltas || [];
   if (!crit.length && !alta.length) { cont.innerHTML = ''; return; }
-  const fila = (a, tipo) => '<div class="cb-alerta cb-alerta-' + tipo + '"><span class="cb-alerta-tag cb-tag-' + tipo + '">' + (tipo === 'crit' ? 'CRÍTICA' : 'ALTA') + '</span><span>' + esc(a.texto) + '</span></div>';
-  cont.innerHTML = '<div class="com-panel com-panel-full cb-alertas-box"><div class="com-panel-tit">⚡ Alertas inteligentes más críticas</div>' +
-    crit.map(a => fila(a, 'crit')).join('') + alta.map(a => fila(a, 'alta')).join('') + '</div>';
+  const head = '<div class="cb-alertas-head" onclick="cbToggleAlertas()">' +
+    '<span>⚡ Alertas inteligentes <b class="cb-al-crit">' + crit.length + ' críticas</b> · <b class="cb-al-alta">' + alta.length + ' altas</b></span>' +
+    '<button class="cb-al-btn">' + (CB_ALERTAS_ABIERTAS ? '▲ Contraer' : '▼ Expandir') + '</button></div>';
+  let body = '';
+  if (CB_ALERTAS_ABIERTAS) {
+    const fila = (a, t) => '<div class="cb-alerta cb-alerta-' + t + '"><span class="cb-alerta-tag cb-tag-' + t + '">' + (t === 'crit' ? 'CRÍTICA' : 'ALTA') + '</span><span>' + esc(a.texto) + '</span></div>';
+    body = crit.map(a => fila(a, 'crit')).join('') + alta.map(a => fila(a, 'alta')).join('');
+  }
+  cont.innerHTML = '<div class="com-panel com-panel-full cb-alertas-box">' + head + body + '</div>';
 }
 
-// ---- BLOQUE 1: Avance frente a la meta ----
+// ---- Meta: equipo (la lleva Dante) + SOLO funcionarios con meta individual ----
 function cbRenderMeta(d) {
   const M = d.meta || {}; const cont = $('cbMeta'); if (!cont) return;
-  const pct = M.pct != null ? M.pct : 0;
-  const barCls = pct >= 80 ? 'cb-bar-verde' : pct >= 40 ? 'cb-bar-amber' : 'cb-bar-rojo';
+  const G = M.global || M;
+  const pctG = G.pct != null ? G.pct : 0;
+  const barCls = p => p >= 80 ? 'cb-bar-verde' : p >= 40 ? 'cb-bar-amber' : 'cb-bar-rojo';
   let html = '<div class="cb-meta-top">' +
-    '<div class="cb-meta-big">' + (M.logradoFmt || 'S/ 0') + ' <span class="cb-meta-de">de ' + (M.montoFmt || 'S/ 0') + '</span></div>' +
-    '<div class="cb-meta-side">' + (M.pct != null ? M.pct + '%' : '—') + ' · falta ' + (M.faltaFmt || '—') + ' · quedan ' + (M.diasRestantes != null ? M.diasRestantes : '—') + ' días</div>' +
-    '</div>' +
-    '<div class="cb-meta-track"><div class="cb-meta-fill ' + barCls + '" style="width:' + Math.min(100, pct) + '%"></div></div>';
-  // Metas individuales si existen.
-  if (M.individuales && M.individuales.length) {
-    html += '<div class="cb-meta-inds">' + M.individuales.map(i => {
+    '<div class="cb-meta-big">' + (G.logradoFmt || 'S/ 0') + ' <span class="cb-meta-de">de ' + (G.montoFmt || 'S/ 0') + '</span></div>' +
+    '<div class="cb-meta-side">' + (G.pct != null ? G.pct + '%' : '—') + ' · quedan ' + (M.diasRestantes != null ? M.diasRestantes : '—') + ' días</div></div>' +
+    '<div class="cb-meta-eq">👔 Meta del equipo · responsable: Dante (Jefe B2B)</div>' +
+    '<div class="cb-meta-track"><div class="cb-meta-fill ' + barCls(pctG) + '" style="width:' + Math.min(100, pctG) + '%"></div></div>';
+  const inds = (M.individuales || []).filter(i => Number(i.monto) > 0);
+  if (inds.length) {
+    html += '<div class="cb-meta-inds">' + inds.map(i => {
       const p = i.pct != null ? i.pct : 0;
-      const c = p >= 80 ? 'cb-bar-verde' : p >= 40 ? 'cb-bar-amber' : 'cb-bar-rojo';
-      return '<div class="cb-meta-ind"><div class="cb-meta-ind-top"><b>' + esc(primerNombre(i.nombre)) + '</b><span>' + i.logradoFmt + ' / ' + i.montoFmt + (i.pct != null ? ' · ' + i.pct + '%' : '') + '</span></div>' +
-        '<div class="cb-meta-track sm"><div class="cb-meta-fill ' + c + '" style="width:' + Math.min(100, p) + '%"></div></div></div>';
+      return '<div class="cb-meta-ind"><div class="cb-meta-ind-top"><b>' + esc(primerNombre(i.nombre)) + '</b><span>' + i.logradoFmt + ' / ' + i.montoFmt + ' · ' + p + '%</span></div>' +
+        '<div class="cb-meta-track sm"><div class="cb-meta-fill ' + barCls(p) + '" style="width:' + Math.min(100, p) + '%"></div></div></div>';
     }).join('') + '</div>';
   }
   cont.innerHTML = html;
 }
 
-// ---- BLOQUE 2: Embudo por funcionario (Reunión, Finanzas, Business Case) ----
-function cbRenderEmbudoFunc(d) {
-  const cont = $('cbEmbFunc'); if (!cont) return;
-  const filas = d.embudoFuncionario || [];
-  if (!filas.length) { cont.innerHTML = '<div class="vacio">Sin solicitudes vivas en el periodo.</div>'; return; }
-  let html = '<table class="com-tabla cb-tabla-func"><thead><tr>' +
-    '<th>Funcionario</th><th>Solicitud</th><th>Crédito</th><th>Garantía</th>' +
-    '<th class="cb-hl">Reunión</th><th class="cb-hl">Finanzas</th><th class="cb-hl">Business Case</th><th>Monto avanzado</th></tr></thead><tbody>';
-  filas.forEach(f => {
-    html += '<tr><td><b>' + esc(f.ejecutivo) + '</b></td>' +
-      '<td>' + f.solicitud + '</td><td>' + f.credito + '</td><td>' + f.garantia + '</td>' +
-      '<td class="cb-hl">' + (f.reunion || '—') + '</td><td class="cb-hl">' + (f.finanzas || '—') + '</td>' +
-      '<td class="cb-hl"><b>' + (f.businessCase || '—') + '</b></td>' +
-      '<td>' + f.montoAvanzadoFmt + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  cont.innerHTML = html;
-}
-
-// ---- Embudo comercial peso-céntrico ----
+// ---- EMBUDO VERTICAL compacto con vivos/desestimados clicables ----
 function cbRenderEmbudo(d) {
   const cont = $('cbEmbudo'); if (!cont) return;
   const emb = d.embudo || [];
-  if (!emb.length) { cont.innerHTML = '<div class="vacio">Sin datos.</div>'; return; }
-  const LBL = { 'Solicitud': 'Solicitud/SUNAT', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case' };
-  // Marcar cuello: peor conversión desde anterior (i>0).
-  let peorIdx = -1, peorConv = 101;
-  emb.forEach((f, i) => { if (i > 0 && f.nAcum > 0 && f.convDesdeAnterior < peorConv) { peorConv = f.convDesdeAnterior; peorIdx = i; } });
+  if (!emb.length || !emb[0].nAcum) { cont.innerHTML = '<div class="vacio">Sin solicitudes vivas.</div>'; return; }
+  const maxN = Math.max(1, emb[0].nAcum);
   cont.innerHTML = emb.map((f, i) => {
-    const ancho = Math.max(4, f.pctDelTotal);
-    const esCuello = i === peorIdx;
+    const w = Math.max(16, Math.round(f.nAcum / maxN * 100));
     const conv = i === 0 ? '' : '<span class="emb-conv ' + (f.convDesdeAnterior >= 60 ? 'ok' : f.convDesdeAnterior >= 35 ? 'med' : 'bad') + '">' + f.convDesdeAnterior + '%</span>';
-    return '<div class="emb-fila' + (esCuello ? ' emb-cuello' : '') + '">' +
-      '<div class="emb-top"><span class="emb-lbl">' + (LBL[f.etapa] || f.etapa) + '</span>' + conv + '</div>' +
-      '<div class="emb-row2"><div class="emb-track"><div class="emb-fill" style="width:' + ancho + '%"></div>' +
-      '<span class="emb-n">' + f.nAcum + ' <small>· ' + f.pctDelTotal + '% · ' + f.montoAcumFmt + '</small></span></div>' +
-      '<span class="emb-side"><span class="cb-emb-prom">' + f.n + ' en etapa · ' + f.promDias + ' d prom</span></span></div>' +
-      (esCuello ? '<span class="emb-cuello-tag">⚠ Cuello: mayor caída de conversión</span>' : '') +
-      '</div>';
+    return '<div class="cb-fun-fila">' +
+      '<div class="cb-fun-lbl"><span>' + f.etapa + '</span>' + conv + '</div>' +
+      '<div class="cb-fun-barwrap"><div class="cb-fun-bar" style="width:' + w + '%"><b>' + f.nAcum + '</b> · ' + f.montoAcumFmt + '</div></div>' +
+      '<div class="cb-fun-side">' +
+        (f.vivos > 0 ? '<span class="emb-vivos" onclick="cbVerEtapa(\'' + f.id + '\',\'vivos\')">🟢 ' + f.vivos + ' vivos <small>(' + f.montoVivosFmt + ')</small></span>' : '') +
+        (f.desest > 0 ? '<span class="emb-fuga" onclick="cbVerEtapa(\'' + f.id + '\',\'desest\')">✕ ' + f.desest + ' desest. <small>(' + f.montoDesestFmt + ')</small></span>' : '') +
+      '</div></div>';
   }).join('');
 }
 
-// ---- Índice de gestión por ejecutivo ----
-function cbRenderProductividad(d) {
-  const cont = $('cbProductividad'); if (!cont) return;
-  const P = (d.productividad || []).filter(p => p.asignados > 0 || p.indice != null);
-  if (!P.length) { cont.innerHTML = '<div class="vacio">Sin datos por ejecutivo.</div>'; return; }
-  const semCol = { verde: 'var(--text-success,#16A34A)', amarillo: '#B8860B', rojo: '#DC2626', gris: '#9AA5B1' };
-  let html = '<table class="com-tabla"><thead><tr><th>Ejecutivo</th><th>3x3</th><th>1er contacto</th><th>Sin mov.</th><th>Pipe</th><th>BC</th><th>Índice</th></tr></thead><tbody>';
-  P.forEach(p => {
-    html += '<tr><td><b>' + esc(primerNombre(p.ejecutivo)) + '</b></td>' +
-      '<td>' + (p.cumpl3x3 != null ? p.cumpl3x3 + '%' : '—') + '</td>' +
-      '<td>' + (p.primerContactoMin != null ? p.primerContactoMin + ' min' : '—') + '</td>' +
-      '<td>' + (p.sinMovimiento || 0) + '</td>' +
-      '<td>' + (p.pipelineFmt || '—') + '</td>' +
-      '<td>' + (p.businessCase || 0) + '</td>' +
-      '<td><span class="cb-indice" style="background:' + (semCol[p.semaforo] || '#9AA5B1') + '">' + (p.indice != null ? p.indice : '—') + '</span></td></tr>';
-  });
-  html += '</tbody></table>';
-  cont.innerHTML = html;
+// Modal detalle de leads vivos/desestimados de una etapa del embudo.
+function cbVerEtapa(id, tipo) {
+  if (!CB_DATA) return;
+  const f = (CB_DATA.embudo || []).find(x => x.id === id); if (!f) return;
+  if (tipo === 'vivos') {
+    const lista = f.vivosLista || []; if (!lista.length) return;
+    const filas = lista.map(a => '<tr>' +
+      '<td><b>' + esc((a.empresa || '').slice(0, 42)) + '</b></td><td>' + esc(a.responsable) + '</td>' +
+      '<td>' + a.montoFmt + '</td>' +
+      '<td class="emb-td-c">' + a.diasEnEtapa + ' d</td>' +
+      '<td class="emb-td-c"><b class="' + ((a.diasSinGestion == null || a.diasSinGestion >= 3) ? 'emb-estanca' : '') + '">' + (a.diasSinGestion != null ? a.diasSinGestion + ' d' : 'nunca') + '</b></td></tr>').join('');
+    mostrarRevModal('<div class="rev-modal-head rev-head-vivos">🟢 Vivos en ' + esc(f.etapa) + ' <span>· rojo = 3+ días sin gestión</span></div>' +
+      '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Empresa</th><th>Resp.</th><th>Monto</th><th>En etapa</th><th>Sin gestión</th></tr></thead><tbody>' + filas + '</tbody></table></div>');
+  } else {
+    const lista = f.desestLista || []; if (!lista.length) return;
+    const filas = lista.map(a => '<tr>' +
+      '<td><b>' + esc((a.empresa || '').slice(0, 42)) + '</b></td><td>' + esc(a.responsable) + '</td>' +
+      '<td>' + a.montoFmt + '</td>' +
+      '<td class="emb-td-c">' + (a.diasVivo != null ? a.diasVivo + ' d' : '—') + '</td>' +
+      '<td><small>' + esc((a.motivo || '').slice(0, 70)) + '</small></td></tr>').join('');
+    mostrarRevModal('<div class="rev-modal-head rev-head-desest">✕ Desestimados en ' + esc(f.etapa) + ' <span>· motivo y tiempo vivo antes de caer</span></div>' +
+      '<div class="rev-modal-body"><table class="com-tabla"><thead><tr><th>Empresa</th><th>Resp.</th><th>Monto</th><th>Vivió</th><th>Motivo</th></tr></thead><tbody>' + filas + '</tbody></table></div>', true);
+  }
 }
 
-// ---- Avances por transición ----
-function cbRenderTransiciones(d) {
-  const cont = $('cbTransiciones'); if (!cont) return;
-  const T = (d.avances && d.avances.porTransicion) || [];
-  if (!T.length) { cont.innerHTML = '<div class="vacio">Sin avances de etapa en el periodo.</div>'; return; }
-  const max = Math.max(1, ...T.map(t => t.n));
-  cont.innerHTML = T.map(t =>
-    '<div class="cb-trans"><div class="cb-trans-lbl">' + esc(t.transicion) + '</div>' +
-    '<div class="cb-trans-track"><div class="cb-trans-fill" style="width:' + Math.round(t.n / max * 100) + '%"></div></div>' +
-    '<div class="cb-trans-n">' + t.n + '</div></div>').join('');
-}
-
-// ---- Top leads en riesgo ----
+// ---- Top riesgo (angosto, sin #, con tiempo en etapa y sin gestión) ----
 function cbRenderTopRiesgo(d) {
   const cont = $('cbTopRiesgo'); if (!cont) return;
   const T = d.topRiesgo || [];
   if (!T.length) { cont.innerHTML = '<div class="vacio">Sin operaciones en riesgo.</div>'; return; }
-  const LBL = { 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case', 'Solicitud': 'Solicitud' };
-  cont.innerHTML = '<table class="com-tabla"><thead><tr><th>#</th><th>Empresa</th><th>Etapa</th><th>Monto</th><th>Score</th></tr></thead><tbody>' +
-    T.map((t, i) => '<tr><td>' + (i + 1) + '</td><td><b>' + esc((t.empresa || '').slice(0, 42)) + '</b></td>' +
+  const LBL = { 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case', 'Solicitud': 'Solicitud' };
+  cont.innerHTML = '<table class="com-tabla cb-tabla-riesgo"><thead><tr><th>Empresa</th><th>Etapa</th><th>Monto</th><th>En etapa</th><th>Sin gestión</th><th>Score</th></tr></thead><tbody>' +
+    T.map(t => '<tr><td><b>' + esc((t.empresa || '').slice(0, 34)) + '</b></td>' +
       '<td>' + esc(LBL[t.etapa] || t.etapa || '—') + '</td><td>' + (t.montoFmt || cbMM(t.monto)) + '</td>' +
+      '<td class="emb-td-c">' + (t.diasEnEtapa != null ? t.diasEnEtapa + ' d' : '—') + '</td>' +
+      '<td class="emb-td-c"><b class="' + ((t.diasSinGestion == null || t.diasSinGestion >= 3) ? 'emb-estanca' : '') + '">' + (t.diasSinGestion != null ? t.diasSinGestion + ' d' : 'nunca') + '</b></td>' +
       '<td><span class="cb-score">' + (t.score != null ? t.score : '—') + '</span></td></tr>').join('') +
     '</tbody></table>';
 }
@@ -10780,117 +10758,116 @@ function cbRenderDesestLista(d) {
   const cont = $('cbDesLista'); if (!cont) return;
   const R = (d.desestimados && d.desestimados.resumen) || {};
   const lista = R.lista || [];
-  if ($('cbDesSub')) $('cbDesSub').textContent = '· ' + (R.total || 0) + ' desestimados · ' + (R.montoFmt || 'S/ 0') + (R.diasVivoProm != null ? ' · ' + R.diasVivoProm + ' días vivos prom' : '');
+  if ($('cbDesSub')) $('cbDesSub').textContent = '· ' + (R.total || 0) + ' en el periodo · ' + (R.montoFmt || 'S/ 0') + (R.diasVivoProm != null ? ' · ' + R.diasVivoProm + ' días vivos prom' : '');
   if (!lista.length) { cont.innerHTML = '<div class="vacio">Sin desestimados en el periodo.</div>'; return; }
   cont.innerHTML = lista.map(x =>
-    '<div class="cb-des-row"><div class="cb-des-emp">' + esc((x.empresa || '').slice(0, 34)) + '</div>' +
-    '<div class="cb-des-meta">' + x.montoFmt + ' · ' + esc(x.etapaCaida) + (x.diasVivo != null ? ' · ' + x.diasVivo + 'd vivo' : '') + '</div>' +
-    '<div class="cb-des-mot">' + esc((x.motivo || '').slice(0, 70)) + '</div></div>').join('');
+    '<div class="cb-des-row"><div class="cb-des-emp">' + esc((x.empresa || '').slice(0, 40)) + '</div>' +
+    '<div class="cb-des-meta">' + x.montoFmt + ' · ' + esc(x.etapaCaida) + (x.diasVivo != null ? ' · ' + x.diasVivo + 'd vivo' : '') + ' · ' + esc(x.responsable) + '</div>' +
+    '<div class="cb-des-mot">' + esc((x.motivo || '').slice(0, 90)) + '</div></div>').join('');
 }
 
-// ============ GRÁFICOS Chart.js ============
+// ============ GRÁFICOS ============
 function cbCtx(id) { const el = $(id); return el ? el.getContext('2d') : null; }
-const CB_GRID = 'rgba(148,163,184,.15)';
 
-function cbChartDistrib(d) {
-  const ctx = cbCtx('cbChartDistrib'); if (!ctx) return;
-  const LBL = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión', 'Filtro finanzas': 'Finanzas', 'Business case': 'B. Case' };
-  const D = (d.distribucion || []).filter(x => x.monto > 0);
-  if (!D.length) return;
-  CB_CHARTS.distrib = new Chart(ctx, {
-    type: 'doughnut',
-    data: { labels: D.map(x => (LBL[x.etapa] || x.etapa) + ' · ' + x.pct + '%'), datasets: [{ data: D.map(x => x.monto), backgroundColor: CB_PALETA, borderWidth: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: c => ' ' + cbMM(c.raw) } } } }
-  });
-}
-
+// Llamadas por día: SOLO días con registros, etiquetas de datos, sin acumulado.
 function cbChartLlamadas(d) {
   const ctx = cbCtx('cbChartLlamadas'); if (!ctx) return;
   const S = (d.llamadas && d.llamadas.series) || [];
-  if ($('cbLlamSub')) $('cbLlamSub').textContent = d.llamadas ? '· ' + d.llamadas.total + ' llamadas · ' + d.llamadas.pctContestadas + '% contestadas' : '';
+  if ($('cbLlamSub')) $('cbLlamSub').textContent = d.llamadas ? '· ' + d.llamadas.total + ' gestiones · ' + d.llamadas.empresasUnicas + ' empresas únicas' : '';
   if (!S.length) return;
   CB_CHARTS.llam = new Chart(ctx, {
-    data: {
-      labels: S.map(x => cbDiaCorto(x.dia)),
-      datasets: [
-        { type: 'bar', label: 'Llamadas', data: S.map(x => x.total), backgroundColor: '#85B7EB', order: 2 },
-        { type: 'bar', label: 'Contestadas', data: S.map(x => x.contestadas), backgroundColor: '#1D9E75', order: 2 },
-        { type: 'line', label: 'Acumulado', data: S.map(x => x.acumulado), borderColor: '#D4537E', backgroundColor: 'transparent', tension: .3, yAxisID: 'y2', order: 1, pointRadius: 2 }
-      ]
-    },
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } }, y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { font: { size: 10 } } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
-      plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } } }
+    type: 'bar',
+    plugins: CB_DL ? [CB_DL] : [],
+    data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [
+      { label: 'Gestiones de llamada', data: S.map(x => x.n), backgroundColor: '#378ADD' },
+      { label: 'Empresas únicas', data: S.map(x => x.empresas), backgroundColor: '#5DCAA5' }
+    ] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 }, grace: '15%' }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { labels: { boxWidth: 11, font: { size: 10 } } },
+        datalabels: { anchor: 'end', align: 'top', font: { size: 10, weight: '600' }, color: '#334155', formatter: v => v || '' } } }
   });
 }
 
+// Horas: LÍNEAS por funcionario, eje X = horas del día, etiquetas de datos.
 function cbChartHoras(d) {
   const ctx = cbCtx('cbChartHoras'); if (!ctx) return;
-  const H = (d.gestionHoraria && d.gestionHoraria.porHora) || [];
-  if (!H.length) return;
-  const pico = d.gestionHoraria.horaPico;
+  const G = d.gestionHoraria; if (!G || !G.porFuncionario) return;
+  // Recortar el eje a las horas con actividad (con 1h de margen) para que se lea.
+  const tot = G.totales || [];
+  let h0 = tot.findIndex(v => v > 0), h1 = 23 - [...tot].reverse().findIndex(v => v > 0);
+  if (h0 < 0) { h0 = 8; h1 = 18; }
+  h0 = Math.max(0, h0 - 1); h1 = Math.min(23, h1 + 1);
+  const horas = []; for (let h = h0; h <= h1; h++) horas.push(h);
+  const dss = G.porFuncionario.filter(f => f.valores.some(v => v > 0)).map((f, i) => ({
+    label: f.ejecutivo, data: horas.map(h => f.valores[h]),
+    borderColor: CB_PALETA[i % CB_PALETA.length], backgroundColor: CB_PALETA[i % CB_PALETA.length],
+    tension: .35, pointRadius: 3, fill: false
+  }));
+  if (!dss.length) return;
   CB_CHARTS.horas = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: H.map((_, i) => i + 'h'), datasets: [{ label: 'Gestiones', data: H, backgroundColor: H.map((_, i) => i === pico ? '#D85A30' : '#378ADD') }] },
-    options: { responsive: true, maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } }, x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => c[0].label + ' — ' + (c[0].dataIndex === pico ? 'hora pico' : '') } } } }
+    type: 'line',
+    plugins: CB_DL ? [CB_DL] : [],
+    data: { labels: horas.map(h => h + ':00'), datasets: dss },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 }, grace: '15%', title: { display: true, text: 'Gestiones', font: { size: 10 } } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 } }, title: { display: true, text: 'Hora del día', font: { size: 10 } } } },
+      plugins: { legend: { labels: { boxWidth: 11, font: { size: 10 } } },
+        datalabels: { align: 'top', font: { size: 9, weight: '600' }, formatter: v => v || '', color: c => c.dataset.borderColor } } }
   });
 }
 
+// Recibidos: PIE por fecha — cantidad y monto en etiqueta/tooltip.
 function cbChartRecibidos(d) {
   const ctx = cbCtx('cbChartRecibidos'); if (!ctx) return;
-  const R = d.recibidos; if (!R || !R.datos || !R.datos.length) return;
+  const R = d.recibidos; if (!R || !R.dias || !R.dias.length) return;
+  if ($('cbRecSub')) $('cbRecSub').textContent = '· ' + R.total + ' leads · ' + cbMM(R.montoTotal);
   CB_CHARTS.recib = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: R.dias.map(cbDiaCorto), datasets: R.datos.map((e, i) => ({ label: e.ejecutivo, data: e.valores, backgroundColor: CB_PALETA[i % CB_PALETA.length] })) },
+    type: 'pie',
+    plugins: CB_DL ? [CB_DL] : [],
+    data: { labels: R.dias.map(x => cbDiaCorto(x.dia)), datasets: [{ data: R.dias.map(x => x.n), backgroundColor: R.dias.map((_, i) => CB_PALETA[i % CB_PALETA.length]), borderWidth: 1, borderColor: '#fff' }] },
     options: { responsive: true, maintainAspectRatio: false,
-      scales: { x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } }, y: { stacked: true, beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 } } } },
-      plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } } }
+      plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 9 } } },
+        tooltip: { callbacks: { label: c => { const x = R.dias[c.dataIndex]; return ' ' + x.n + ' leads · ' + x.pct + '% · ' + x.montoFmt; } } },
+        datalabels: { font: { size: 9, weight: '600' }, color: '#fff', formatter: (v, c) => { const x = R.dias[c.dataIndex]; return x.pct >= 6 ? (x.n + '\\n' + x.montoFmt) : ''; } } } }
   });
 }
 
-function cbChartAvances(d) {
-  const ctx = cbCtx('cbChartAvances'); if (!ctx) return;
-  const S = (d.avances && d.avances.series) || [];
-  if ($('cbAvSub')) $('cbAvSub').textContent = d.avances ? '· ' + d.avances.total + ' avances totales' : '';
-  if (!S.length) return;
-  CB_CHARTS.avances = new Chart(ctx, {
-    type: 'line',
-    data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [{ label: 'Avances de etapa', data: S.map(x => x.n), borderColor: '#1D9E75', backgroundColor: 'rgba(29,158,117,.12)', fill: true, tension: .3, pointRadius: 2 }] },
-    options: { responsive: true, maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
-      plugins: { legend: { display: false } } }
-  });
-}
-
+// Desestimados por causa (categoría) — barras horizontales con etiqueta n.
 function cbChartDesMotivo(d) {
   const ctx = cbCtx('cbChartDesMotivo'); if (!ctx) return;
   const M = (d.desestimados && d.desestimados.porMotivo) || [];
   if (!M.length) return;
   CB_CHARTS.desMot = new Chart(ctx, {
     type: 'bar',
-    data: { labels: M.map(x => x.motivo.length > 24 ? x.motivo.slice(0, 24) + '…' : x.motivo), datasets: [{ data: M.map(x => x.n), backgroundColor: '#D4537E' }] },
+    plugins: CB_DL ? [CB_DL] : [],
+    data: { labels: M.map(x => x.motivo.length > 26 ? x.motivo.slice(0, 26) + '…' : x.motivo), datasets: [{ data: M.map(x => x.n), backgroundColor: '#D4537E' }] },
     options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      scales: { x: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => cbMM(M[c.dataIndex].monto) } } } }
+      scales: { x: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 9 }, precision: 0 }, grace: '15%' }, y: { grid: { display: false }, ticks: { font: { size: 9 } } } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ' ' + c.raw + ' · ' + M[c.dataIndex].montoFmt } },
+        datalabels: { anchor: 'end', align: 'right', font: { size: 10, weight: '600' }, color: '#334155', formatter: (v, c) => v + ' · ' + M[c.dataIndex].montoFmt } } }
   });
 }
 
+// Desestimados por última etapa — barras con etiqueta n + monto.
 function cbChartDesEtapa(d) {
   const ctx = cbCtx('cbChartDesEtapa'); if (!ctx) return;
   const E = (d.desestimados && d.desestimados.porEtapa) || [];
   if (!E.length) return;
   CB_CHARTS.desEt = new Chart(ctx, {
     type: 'bar',
+    plugins: CB_DL ? [CB_DL] : [],
     data: { labels: E.map(x => x.etapa), datasets: [{ data: E.map(x => x.n), backgroundColor: '#D85A30' }] },
     options: { responsive: true, maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => cbMM(E[c.dataIndex].monto) } } } }
+      scales: { y: { beginAtZero: true, grid: { color: CB_GRID }, ticks: { font: { size: 10 }, precision: 0 }, grace: '20%' }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ' ' + c.raw + ' · ' + E[c.dataIndex].montoFmt } },
+        datalabels: { anchor: 'end', align: 'top', font: { size: 10, weight: '600' }, color: '#334155', formatter: (v, c) => v + '\\n' + E[c.dataIndex].montoFmt, textAlign: 'center' } } }
   });
 }
 
-// ---- Análisis IA del comité (reutiliza el panel IA del dashboard B2B) ----
+// ---- Análisis IA ----
 async function analizarComiteB2BIA() {
   const box = $('cbIaBox'); if (!box) return;
   box.classList.remove('oculto');
