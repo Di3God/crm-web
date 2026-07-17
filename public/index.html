@@ -749,72 +749,89 @@
     </div>
   </section>
 
-  <!-- ===== COMITÉ COMERCIAL B2B ===== -->
+  <!-- ===== COMITÉ COMERCIAL B2B (estilo dashboard ejecutivo) ===== -->
   <section id="v-b2b-comite" class="vista">
-    <div class="barra com-barra">
-      <h2>📊 Resultados del comité · B2B</h2>
-      <div class="com-filtros">
-        <input type="date" id="cbDesde" onchange="cargarComiteB2B()" class="com-fecha">
-        <span class="com-flecha">→</span>
-        <input type="date" id="cbHasta" onchange="cargarComiteB2B()" class="com-fecha">
-        <select id="cbAsesor" onchange="cargarComiteB2B()" class="com-gp-sel"><option value="">Todo el equipo</option></select>
-        <button class="btn sec" onclick="cargarComiteB2B()">⟳</button>
-      </div>
-      <div class="com-botones">
-        <button class="btn sec soloAdmin oculto" onclick="abrirModuloLlamadas('b2b')" title="Llamadas Aircall B2B">📞 Llamadas</button>
-        <button class="btn" id="cbIaBtn" onclick="analizarComiteB2BIA()">🤖 Análisis IA</button>
-      </div>
-    </div>
-
-    <div id="cbCards" class="com-cards"></div>
-    <div id="cbIaBox" class="com-ia oculto"></div>
-
-    <!-- Alertas colapsadas por default -->
-    <div id="cbAlertas"></div>
-
-    <!-- Fila 1: Meta (Dante = equipo + individuales con meta) | Embudo vertical compacto -->
-    <div class="cb-grid-2a">
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">🎯 Avance frente a la meta <span class="bd-sub">monto que llega a Business Case este mes</span></div>
-        <div id="cbMeta"></div>
-      </div>
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">Embudo comercial <span class="bd-sub">clic en vivos o desestimados para el detalle</span></div>
-        <div id="cbEmbudo" class="cb-funnel"></div>
-      </div>
-    </div>
-
-    <!-- Fila 2: Llamadas | Horas por funcionario | Recibidos (pie) -->
-    <div class="cb-grid-3">
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">📞 Gestiones de llamada por día <span class="bd-sub" id="cbLlamSub"></span></div>
-        <div class="cb-canvas-wrap"><canvas id="cbChartLlamadas"></canvas></div>
-      </div>
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">🕐 ¿A qué hora se gestiona? <span class="bd-sub">gestiones por hora · por funcionario</span></div>
-        <div class="cb-canvas-wrap"><canvas id="cbChartHoras"></canvas></div>
-      </div>
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">📥 Leads recibidos por día <span class="bd-sub" id="cbRecSub"></span></div>
-        <div class="cb-canvas-wrap"><canvas id="cbChartRecibidos"></canvas></div>
-      </div>
-    </div>
-
-    <!-- Fila 3: Desestimados (causa + etapa + detalle) | Top riesgo angosto -->
-    <div class="cb-grid-2b">
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">🗑 Desestimados <span class="bd-sub" id="cbDesSub"></span></div>
-        <div class="cb-grid-des">
-          <div><div class="cb-mini-tit">Por causa</div><div class="cb-canvas-wrap cb-canvas-sm"><canvas id="cbChartDesMotivo"></canvas></div></div>
-          <div><div class="cb-mini-tit">Última etapa antes de caer</div><div class="cb-canvas-wrap cb-canvas-sm"><canvas id="cbChartDesEtapa"></canvas></div></div>
+    <div class="cbb-wrap">
+      <!-- HEADER oscuro -->
+      <div class="cbb-header">
+        <div class="cbb-brand">
+          <img src="logo.png" alt="TasaTop" class="cbb-logo">
+          <div><div class="cbb-tit">MiTasatop B2B</div><div class="cbb-sub">Dashboard Comité</div></div>
         </div>
-        <div class="cb-mini-tit" style="margin-top:10px">Detalle · monto y tiempo vivo</div>
-        <div id="cbDesLista" class="cb-des-lista"></div>
+        <div class="cbb-hfiltros">
+          <div class="cbb-hf"><label>Periodo</label>
+            <span class="cbb-hf-fechas">
+              <input type="date" id="cbDesde" onchange="cargarComiteB2B()">
+              <span>→</span>
+              <input type="date" id="cbHasta" onchange="cargarComiteB2B()">
+            </span>
+          </div>
+          <div class="cbb-hf"><label>Ejecutivo</label>
+            <select id="cbAsesor" onchange="cargarComiteB2B()"><option value="">Todos</option></select>
+          </div>
+          <button class="cbb-btn-refresh" onclick="cargarComiteB2B()" title="Actualizar">⟳</button>
+        </div>
+        <div class="cbb-hright">
+          <div class="cbb-upd">Última actualización<b id="cbbUpd">—</b></div>
+          <button class="cbb-btn-h soloAdmin oculto" onclick="abrirModuloLlamadas('b2b')">📞 Llamadas</button>
+        </div>
       </div>
-      <div class="com-panel com-panel-full">
-        <div class="com-panel-tit">⚠️ Top operaciones en riesgo <span class="bd-sub">no se pueden perder</span></div>
-        <div id="cbTopRiesgo"></div>
+
+      <!-- KPI CARDS -->
+      <div id="cbbKpis" class="cbb-kpis"></div>
+
+      <!-- FILA 2: Embudo | Meta BC | Alertas -->
+      <div class="cbb-row cbb-row2">
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Embudo comercial <span class="cbb-card-sub">clic en vivos / desest. para el detalle</span><span class="cbb-conv-head">Conversión<br>por etapa</span></div>
+          <div id="cbbEmbudo"></div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Meta Business Case · <span id="cbbMetaMes"></span></div>
+          <div id="cbbMeta"></div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Alertas IA <span id="cbbAlertN" class="cbb-badge-r"></span></div>
+          <div id="cbbAlertas" class="cbb-alertas"></div>
+        </div>
       </div>
+
+      <!-- FILA 3: Gestión diaria | Heatmap por hora | Distribución -->
+      <div class="cbb-row cbb-row3">
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Gestión diaria</div>
+          <div class="cbb-gd">
+            <div><div class="cbb-gd-head"><span>Llamadas por día</span><b id="cbbGdLlam" class="cbb-azul"></b></div><div class="cbb-mini-canvas"><canvas id="cbbChartLlam"></canvas></div></div>
+            <div><div class="cbb-gd-head"><span>Leads por día</span><b id="cbbGdLeads" class="cbb-morado"></b></div><div class="cbb-mini-canvas"><canvas id="cbbChartLeads"></canvas></div></div>
+          </div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Gestión por hora <span class="cbb-card-sub">gestiones por ejecutivo</span></div>
+          <div id="cbbHeat"></div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Distribución del pipeline</div>
+          <div class="cbb-dist"><div class="cbb-dist-canvas"><canvas id="cbbChartDist"></canvas><div class="cbb-dist-centro" id="cbbDistTotal"></div></div><div id="cbbDistLeyenda" class="cbb-dist-ley"></div></div>
+        </div>
+      </div>
+
+      <!-- FILA 4: Top ejecutivos | Desestimados | Insights IA -->
+      <div class="cbb-row cbb-row4">
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Top ejecutivos (desempeño)</div>
+          <div id="cbbTop"></div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">Desestimados <span id="cbbDesN" class="cbb-badge-r"></span></div>
+          <div id="cbbDes"></div>
+        </div>
+        <div class="cbb-card">
+          <div class="cbb-card-tit">🤖 Insights IA <button class="cbb-ia-btn" onclick="cbbCargarIA(true)">⟳</button></div>
+          <div id="cbbIA" class="cbb-ia"></div>
+        </div>
+      </div>
+
+      <div class="cbb-foot">MiTasatop B2B · <span id="cbbFoot"></span></div>
     </div>
   </section>
 

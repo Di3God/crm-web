@@ -700,6 +700,13 @@ module.exports = function (deps) {
     gLlam.forEach(g => { const d = diaLima(g.fecha); (llamMap[d] = llamMap[d] || { n: 0, emp: new Set() }); llamMap[d].n++; llamMap[d].emp.add(g.codigoSolicitud); });
     const seriesLlamadas = Object.keys(llamMap).sort().map(d => ({ dia: d, n: llamMap[d].n, empresas: llamMap[d].emp.size }));
     const empUnicas = new Set(gLlam.map(g => g.codigoSolicitud)).size;
+    // Llamadas por ejecutivo (para la tabla de desempeño).
+    const llamPorEjec = {};
+    gLlam.forEach(g => { const r = nombreCorto(g.responsable || respDe[g.codigoSolicitud] || '—'); llamPorEjec[r] = (llamPorEjec[r] || 0) + 1; });
+    // Serie de GESTIONES totales por día (sparkline del KPI).
+    const gestDiaMap = {};
+    gestRango.forEach(g => { const d = diaLima(g.fecha); gestDiaMap[d] = (gestDiaMap[d] || 0) + 1; });
+    const seriesGestiones = Object.keys(gestDiaMap).sort().map(d => ({ dia: d, n: gestDiaMap[d] }));
 
     // --- 2) GESTIONES por HORA × FUNCIONARIO (líneas) ---
     const horasEjes = []; for (let h = 0; h < 24; h++) horasEjes.push(h);
@@ -815,15 +822,22 @@ module.exports = function (deps) {
       return Object.assign({}, t, { diasEnEtapa: v ? v.diasEnEtapa : null, diasSinGestion: v ? v.diasSinGestion : null });
     });
 
+    // --- 7) SIN CONTACTO >48h (vivos sin gestión hace 2+ días o nunca) + conversión global ---
+    const sin48 = vivosEnr.filter(v => v.diasSinGestion == null || v.diasSinGestion >= 2);
+    const sinContacto48 = { n: sin48.length, monto: sin48.reduce((a, v) => a + v.monto, 0), montoFmt: fmtMM(sin48.reduce((a, v) => a + v.monto, 0)) };
+    const convGlobal = embudo.length && embudo[0].nAcum ? Math.round(embudo[embudo.length - 1].nAcum / embudo[0].nAcum * 1000) / 10 : 0;
+
     return {
       periodo: { desde: dDesde, hasta: dHasta, dias: dias.length }, asesor: asesor || null,
       ejecutivos: ejecutivos.map(e => ({ nombre: e, corto: nombreCorto(e) })),
       generado: new Date().toISOString(),
       meta, embudo, distribucion: base.distribucion,
-      kpis: base.kpis, salud: base.salud, topRiesgo,
+      kpis: base.kpis, salud: base.salud, topRiesgo, productividad: base.productividad,
+      conversionGlobal: convGlobal, sinContacto48,
       alertasCriticas: (base.alertas || []).filter(a => a.prioridad === 'critica').slice(0, 5),
       alertasAltas: (base.alertas || []).filter(a => a.prioridad === 'alta').slice(0, 5),
-      llamadas: { total: gLlam.length, empresasUnicas: empUnicas, series: seriesLlamadas },
+      llamadas: { total: gLlam.length, empresasUnicas: empUnicas, series: seriesLlamadas, porEjecutivo: llamPorEjec },
+      gestiones: { total: gestRango.length, series: seriesGestiones },
       gestionHoraria: { horas: horasEjes, porFuncionario: porHoraFunc, totales: porHoraTotales, horaPico, total: totalGest },
       desestimados: { resumen: desResumen, porMotivo: desMotivos, porEtapa: desEtapas },
       recibidos: { total: totalRec, montoTotal: nuevos.reduce((a, s) => a + (s.montoSolicitado != null ? Number(s.montoSolicitado) : (montoRangoFijo(s.montoRango) || 0)), 0), dias: recibidos }
