@@ -11012,7 +11012,19 @@ async function verNotasReunion(mundo, codigo) {
       });
       cuerpo += '</div>';
     }
+    // Re-transcribir (jefatura): útil si el transcript salió en el idioma equivocado.
+    if (YO && ['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(YO.rol) && (d.transcript.length || d.estado === 'sin_transcript' || d.estado === 'completado')) {
+      cuerpo += '<div style="margin-top:10px"><button class="btn sec" onclick="retranscribirReunion(\'' + mundo + '\',\'' + esc(cod) + '\')">🔄 Re-transcribir en español</button>' +
+        '<span style="font-size:11px;color:#94A3B8;margin-left:8px">usa la transcripción de Recall (recallai) sobre la grabación existente</span></div>';
+    }
     cuerpo += '</div>';
     mostrarRevModal('<div class="rev-modal-head">📝 Notas de la reunión</div><div class="rev-modal-body">' + cuerpo + '</div>', true);
   } catch (e) { alert('No se pudo cargar: ' + e.message); }
+}
+async function retranscribirReunion(mundo, codigo) {
+  if (!confirm('¿Pedir la re-transcripción en español de esta reunión? Tarda unos minutos.')) return;
+  try {
+    const r = await api('/api/reuniones/' + mundo + '/' + encodeURIComponent(codigo) + '/retranscribir', { method: 'POST' });
+    alert(r.mensaje || 'Pedido. Vuelve a abrir las notas en unos minutos.');
+  } catch (e) { alert('No se pudo: ' + e.message); }
 }

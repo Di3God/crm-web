@@ -8,8 +8,10 @@
 //   RECALL_API_KEY               (obligatoria para activar la integración)
 //   RECALL_API_URL               default https://us-west-2.recall.ai  (ajustar a la región de la cuenta)
 //   RECALL_BOT_NAME              default "Notas TasaTop"
-//   RECALL_TRANSCRIPT_PROVIDER   default "meeting_captions" (captions nativos de Meet, sin costo extra,
-//                                con nombre real del hablante) | "recallai" (transcripción de Recall, +$/h)
+//   RECALL_TRANSCRIPT_PROVIDER   default "recallai" (transcripción de Recall, +$0.15/h, precisa y con
+//                                idioma configurable) | "meeting_captions" (captions nativos de Meet,
+//                                gratis, pero usan el idioma configurado en el Meet del usuario)
+//   RECALL_LANGUAGE              default "es" (código de idioma para recallai; "auto" = detección)
 //
 // Después del deploy, configurar en el dashboard de Recall el webhook:
 //   https://<tu-dominio>/api/recall/webhook
@@ -19,7 +21,8 @@ module.exports = function () {
   const KEY = () => process.env.RECALL_API_KEY || null;
   const BASE = () => (process.env.RECALL_API_URL || 'https://us-west-2.recall.ai').replace(/\/+$/, '');
   const BOT_NAME = () => process.env.RECALL_BOT_NAME || 'Notas TasaTop';
-  const PROVIDER = () => process.env.RECALL_TRANSCRIPT_PROVIDER || 'meeting_captions';
+  const PROVIDER = () => process.env.RECALL_TRANSCRIPT_PROVIDER || 'recallai';
+  const LANG = () => process.env.RECALL_LANGUAGE || 'es';
 
   function configurado() { return !!KEY(); }
 
@@ -41,8 +44,16 @@ module.exports = function () {
   // Config de transcripción según proveedor elegido.
   function transcriptConfig() {
     const p = PROVIDER();
-    if (p === 'recallai') return { provider: { recallai_async: {} } };
-    return { provider: { meeting_captions: {} } }; // default: captions nativos (Meet los trae con nombre)
+    if (p === 'meeting_captions') return { provider: { meeting_captions: {} } };
+    // Default: transcripción async de Recall con idioma explícito (es) o auto-detección.
+    return { provider: { recallai_async: { language_code: LANG() } } };
+  }
+
+  // ---- Pedir transcripción async sobre una grabación existente (re-transcribir / fallback). ----
+  async function crearTranscriptAsync(recordingId, languageCode) {
+    return await llamarAPI('POST', '/api/v1/recording/' + recordingId + '/create_transcript/', {
+      provider: { recallai_async: { language_code: languageCode || LANG() } }
+    });
   }
 
   // ---- Crear bot programado. Devuelve { botId } o lanza error. ----
@@ -110,10 +121,11 @@ module.exports = function () {
     if (!url && bot && bot.media_shortcuts && bot.media_shortcuts.transcript && bot.media_shortcuts.transcript.data) {
       url = bot.media_shortcuts.transcript.data.download_url || null;
     }
-    if (!url) return { listo: false, estado: est, participantes: extraerParticipantes(bot) };
+    const recordingId = (recs[0] && recs[0].id) || null;
+    if (!url) return { listo: false, estado: est, participantes: extraerParticipantes(bot), recordingId };
 
     const r = await fetch(url);
-    if (!r.ok) return { listo: false, estado: est, participantes: extraerParticipantes(bot) };
+    if (!r.ok) return { listo: false, estado: est, participantes: extraerParticipantes(bot), recordingId };
     const raw = await r.json();
 
     // Normalizar: la API entrega una lista de segmentos { participant: {name}, words: [{text}] }
@@ -137,5 +149,5 @@ module.exports = function () {
     return { listo: turnos.length > 0, estado: est, participantes, turnos, texto };
   }
 
-  return { configurado, crearBot, estadoBot, cancelarBot, obtenerTranscript, estadoResumido };
+  return { configurado, crearBot, estadoBot, cancelarBot, obtenerTranscript, crearTranscriptAsync, estadoResumido };
 };

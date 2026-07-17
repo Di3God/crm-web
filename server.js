@@ -559,6 +559,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS reuniones_bots (
   actualizadoEn TEXT
 )`);
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_reubots_codigo ON reuniones_bots (mundo, codigo)"); } catch (e) { }
+try { db.exec("ALTER TABLE reuniones_bots ADD COLUMN asyncPedido INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDuplicadoActivo INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentena INTEGER DEFAULT 0"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN cuarentenaFecha TEXT"); } catch (e) { }
@@ -1610,8 +1611,17 @@ async function recallProcesarBot(fila) {
       }
       return true;
     }
-    // Terminó pero sin transcript (nadie habló / bot no admitido) → cerrar tras un margen.
+    // Terminó sin transcript disponible: pedir la transcripción ASYNC una sola vez (fallback /
+    // re-proceso), y recién rendirse si tras 3 h sigue sin nada.
     if (t && (t.estado === 'done' || t.estado === 'fatal')) {
+      if (t.estado === 'done' && t.recordingId && !fila.asyncPedido) {
+        try {
+          await recall.crearTranscriptAsync(t.recordingId);
+          db.prepare('UPDATE reuniones_bots SET asyncPedido=1, actualizadoEn=? WHERE id=?').run(ahora, fila.id);
+          console.log('[recall] transcripción async pedida para', fila.botId, '(recording ' + t.recordingId + ')');
+          return false; // el próximo ciclo del poller la descargará
+        } catch (e) { console.error('[recall] pedir async:', e.message); }
+      }
       const finHace = Date.now() - new Date(fila.joinAt).getTime();
       if (finHace > 3 * 3600000) {
         db.prepare('UPDATE reuniones_bots SET estado=?, participantes=?, actualizadoEn=? WHERE id=?')
@@ -7052,6 +7062,30 @@ app.get('/api/reuniones/:mundo/:codigo', (req, res) => {
     participantes, transcript, resumenIA: f.resumenIA || null, actualizadoEn: f.actualizadoEn });
 });
 
+// Re-transcribir la última reunión de un lead (ej. quedó en el idioma equivocado con captions).
+// POST /api/reuniones/:mundo/:codigo/retranscribir  (admin y jefes)
+app.post('/api/reuniones/:mundo/:codigo/retranscribir', async (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  if (!recall.configurado()) return res.status(422).json({ error: 'Recall no configurado' });
+  const mundo = req.params.mundo === 'b2b' ? 'b2b' : 'b2c';
+  const fila = db.prepare("SELECT * FROM reuniones_bots WHERE mundo=? AND codigo=? AND botId IS NOT NULL ORDER BY id DESC LIMIT 1").get(mundo, req.params.codigo);
+  if (!fila) return res.status(404).json({ error: 'No hay bot para este lead' });
+  try {
+    const t = await recall.obtenerTranscript(fila.botId);
+    if (!t || !t.recordingId) return res.status(422).json({ error: 'La grabación ya no está disponible en Recall (retención de 7 días)' });
+    await recall.crearTranscriptAsync(t.recordingId);
+    const ahora = new Date().toISOString();
+    db.prepare("UPDATE reuniones_bots SET estado='programado', asyncPedido=1, resumenIA=NULL, actualizadoEn=? WHERE id=?").run(ahora, fila.id);
+    auditar(req, 'reunion_retranscribir', req.params.codigo, mundo + ' · bot ' + fila.botId);
+    // Procesar en unos minutos (la transcripción async tarda). El poller también lo recogerá.
+    setTimeout(() => { const f2 = db.prepare('SELECT * FROM reuniones_bots WHERE id=?').get(fila.id); if (f2) recallProcesarBot(f2); }, 4 * 60 * 1000);
+    res.json({ ok: true, mensaje: 'Re-transcripción en español pedida; estará lista en unos minutos.' });
+  } catch (e) {
+    console.error('[recall] retranscribir:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Webhook de Recall (configurar https://<dominio>/api/recall/webhook en su dashboard).
 // Ante cualquier evento de un bot conocido, se dispara el procesamiento inmediato.
 app.post('/api/recall/webhook', express.json({ limit: '2mb' }), (req, res) => {
@@ -9186,7 +9220,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.448 (CALENDAR B2B + BOTS DE NOTAS RECALL.AI para B2C y B2B: (1) Google Calendar B2B: al agendar una reunión (fecha+hora) en el kanban se crea/actualiza el evento en el calendario del funcionario responsable con Meet e invitación al cliente si tiene email; columnas gcalEventId/gcalMeetLink en b2b_solicitudes; el evento se cancela al descartar la solicitud. (2) Integración Recall.ai (una sola cuenta TasaTop, cobro por hora de bot, reuniones simultáneas sin conflicto): nuevo módulo recall.js; al agendarse una reunión virtual (B2C vía gestiones de gestora, B2B vía panel de reunión) se despacha un bot Notas TasaTop programado al Meet; tabla reuniones_bots; el bot se reprograma al reprogramar y se cancela si la reunión se cae o el lead se descarta; poller cada 5 min + webhook POST /api/recall/webhook (excluido del auth de sesión, con RECALL_WEBHOOK_SECRET opcional ?s=) descargan el transcript DIARIZADO CON NOMBRES REALES de participantes y la lista de quiénes entraron. (3) Resumen IA automático de la reunión (resumenReunionComercial en ia-reportes: Resumen/Acuerdos/Objeciones/Próximos pasos) guardado en la solicitud. (4) Visor 📝 Notas de la reunión: botón en el panel de Reunión comercial B2B y chip Notas IA junto al enlace de Meet en la ficha B2C, con estado, participantes, resumen y transcripción. Variables Railway: RECALL_API_KEY (obligatoria), RECALL_API_URL (default us-west-2, ajustar región), RECALL_BOT_NAME, RECALL_TRANSCRIPT_PROVIDER (meeting_captions default), RECALL_WEBHOOK_SECRET (opcional). Configurar webhook en dashboard Recall: https://<dominio>/api/recall/webhook?s=<secreto>. Degradación limpia sin las variables. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.449 (FIX transcripción en español — Recall: el default meeting_captions usaba los subtítulos nativos de Meet que estaban en INGLÉS y produjo texto sin sentido en la primera prueba. Ahora: (1) el provider default es recallai (transcripción async de Recall, +$0.15/h) con language_code configurable vía RECALL_LANGUAGE (default es; auto = detección); meeting_captions queda como opción vía RECALL_TRANSCRIPT_PROVIDER. (2) Fallback automático: si un bot termina done sin transcript disponible, el poller pide UNA VEZ la transcripción async sobre la grabación (create_transcript) y la descarga en el siguiente ciclo (columna asyncPedido). (3) Botón 🔄 Re-transcribir en español en el visor de notas (jefatura) + endpoint POST /api/reuniones/:mundo/:codigo/retranscribir: re-pide la transcripción recallai_async en español sobre la grabación existente (retención Recall: 7 días) — sirve para recuperar la demo de hoy sin repetir la reunión; el resumen IA se regenera. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
