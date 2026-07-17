@@ -2938,7 +2938,7 @@ app.post('/api/llamadas/backfill-transcripciones', soloAdmin, async (req, res) =
     try {
       const r = await fetch('https://api.aircall.io/v1/calls/' + ll.aircall_id + '/transcription', { headers: { authorization: auth } });
       if (r.status === 404) { out.sinTranscripcion++; continue; }
-      if (!r.ok) { out.errores++; continue; }
+      if (!r.ok) { out.errores++; if (out._primerError === undefined) { out._primerError = 'HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200); } continue; }
       const j = await r.json();
       const t = j.transcription || j;
       const utt = (t.content && t.content.utterances) || t.utterances || [];
@@ -2947,7 +2947,7 @@ app.post('/api/llamadas/backfill-transcripciones', soloAdmin, async (req, res) =
       db.prepare('UPDATE llamadas SET transcripcion=? WHERE id=?').run(texto.slice(0, 60000), ll.id);
       out.conTranscripcion++;
       await new Promise(rs => setTimeout(rs, 300)); // respetar rate limit de Aircall
-    } catch (e) { out.errores++; }
+    } catch (e) { out.errores++; if (out._primerError === undefined) out._primerError = 'catch: ' + e.message; }
   }
   auditar(req, 'aircall_backfill_trans', null, out.conTranscripcion + ' transcripciones');
   res.json({ ok: true, ...out });
@@ -8939,7 +8939,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.437 (Transcripcion por API Aircall - solucion robusta: como transcription.created NO llega a este webhook pero call.comm_assets_generated SI (avisa que grabacion/transcripcion estan listas), ahora al recibir ese evento el CRM jala la transcripcion por la API de Aircall (GET /calls/:id/transcription) con reintentos (0s, 20s, 60s, 180s por si tarda) y la guarda con hablantes Asesor/Cliente. Nueva funcion jalarTranscripcionAircall reutilizable. Requiere AIRCALL_API_ID + AIRCALL_API_TOKEN en Railway. Ya no depende del webhook transcription.created. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.438 (Diagnostico backfill transcripciones: el backfill ahora devuelve _primerError con el detalle exacto del primer fallo (HTTP status + cuerpo, o mensaje del catch) para saber por que Aircall rechaza - 401 credenciales, 403 permisos, 404 sin transcripcion, etc. Server: restart) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
