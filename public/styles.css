@@ -3396,7 +3396,7 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-wrap { background:#EDF1F7; border-radius:16px; padding:12px; }
 
 /* HEADER oscuro */
-.cbb-header{display:flex;align-items:center;gap:18px;background:#0B1526;border-radius:12px;padding:12px 18px;margin-bottom:12px;flex-wrap:wrap}
+.cbb-header{display:flex;align-items:center;gap:18px;background:#0B1526;border-radius:12px;padding:12px 18px;margin-bottom:12px;flex-wrap:wrap;position:sticky;top:6px;z-index:60;box-shadow:0 6px 20px rgba(11,21,38,.25)}
 .cbb-brand{display:flex;align-items:center;gap:10px}
 .cbb-logo{width:38px;height:38px;border-radius:9px;background:#fff;object-fit:contain;padding:4px}
 .cbb-tit{color:#fff;font-weight:700;font-size:16px;line-height:1.1}
@@ -3413,8 +3413,8 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-btn-h{background:#16233C;border:1px solid #24344F;color:#E5ECF6;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer}
 
 /* KPI CARDS */
-.cbb-kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:12px}
-@media(max-width:1500px){.cbb-kpis{grid-template-columns:repeat(4,1fr)}}
+.cbb-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px}
+@media(max-width:1200px){.cbb-kpis{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:800px){.cbb-kpis{grid-template-columns:repeat(2,1fr)}}
 .cbb-kpi{background:#fff;border-radius:12px;padding:11px 13px;border:1px solid #E4EAF3;position:relative;overflow:hidden}
 .cbb-kpi-top{display:flex;align-items:center;gap:7px;margin-bottom:5px}
@@ -3504,13 +3504,14 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-gd-head{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:#64748B;margin-bottom:4px}
 .cbb-gd-head b{font-size:17px}
 .cbb-azul{color:#2563EB}.cbb-morado{color:#7C3AED}
-.cbb-mini-canvas{position:relative;height:150px}
+.cbb-mini-canvas{position:relative;height:150px;overflow:hidden}
 
 /* HEATMAP */
-.cbb-heat{display:grid;gap:3px;align-items:center}
-.cbb-heat-h{font-size:8.5px;color:#93A1B8;text-align:center;white-space:nowrap}
-.cbb-heat-ej{font-size:11px;color:#334155;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:4px}
-.cbb-heat-c{height:24px;border-radius:5px;background:#F1F5FA;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#fff;font-weight:700}
+.cbb-heat-scroll{overflow-x:auto;padding-bottom:4px}
+.cbb-heat{display:grid;gap:3px;align-items:center;min-width:max-content}
+.cbb-heat-h{font-size:8.5px;color:#93A1B8;text-align:center;white-space:nowrap;min-width:26px}
+.cbb-heat-ej{font-size:11px;color:#334155;font-weight:600;white-space:nowrap;padding-right:6px;position:sticky;left:0;background:#fff}
+.cbb-heat-c{height:24px;min-width:26px;border-radius:5px;background:#F1F5FA;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#fff;font-weight:700}
 .cbb-heat-ley{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:9px;font-size:9.5px;color:#93A1B8}
 .cbb-heat-grad{width:120px;height:8px;border-radius:4px;background:linear-gradient(90deg,#DBEAFE,#2563EB)}
 
@@ -3557,3 +3558,12 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-ia-btn{margin-left:auto;border:1px solid #E4EAF3;background:#fff;border-radius:7px;font-size:12px;width:24px;height:24px;cursor:pointer;color:#64748B}
 
 .cbb-foot{text-align:center;font-size:10.5px;color:#93A1B8;padding:4px 0 2px}
+
+/* Insights IA v1.443: secciones y plan de acción */
+.cbb-ia-sec{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#7C8AA5;margin:8px 0 4px}
+.cbb-ia-sec:first-child{margin-top:0}
+.cbb-ia-prosa{font-size:11.5px;line-height:1.55;color:#334155}
+.cbb-ia-plan{background:#F6F8FC;border-left:3px solid #7C3AED;border-radius:0 8px 8px 0;padding:6px 9px;margin-bottom:5px;display:flex;flex-direction:column;gap:1px}
+.cbb-ia-plan b{font-size:11px;color:#7C3AED}
+.cbb-ia-plan span{font-size:11.5px;color:#1E293B;line-height:1.4}
+.cbb-ia-plan small{font-size:10px;color:#93A1B8}

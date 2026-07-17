@@ -172,6 +172,8 @@ module.exports = function (deps) {
 
     // --- Base: solicitudes vivas + gestiones agrupadas (2 queries, no N+1) ---
     let vivas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    // soloAsignados (Comité): fuera los sin responsable — son tickets bajos (< S/100k) que no entran al tablero ejecutivo.
+    if (opts.soloAsignados) vivas = vivas.filter(s => s.responsableActual && String(s.responsableActual).trim());
     if (asesorFiltro) vivas = vivas.filter(s => s.responsableActual === asesorFiltro);
     const codigos = vivas.map(s => s.codigo);
     const enScope = new Set(codigos);
@@ -674,8 +676,9 @@ module.exports = function (deps) {
     const [ini] = rangoDia(dDesde);
     const [, fin] = rangoDia(dHasta);
 
-    // Dashboard base (estado vivo + KPIs del periodo). Reutiliza toda la lógica ya probada.
-    const base = construirDashboard({ desde: dDesde, hasta: dHasta, asesor });
+    // Dashboard base (estado vivo + KPIs del periodo). SOLO ASIGNADOS: los sin responsable
+    // son tickets bajos (<S/100k) y no entran al comité.
+    const base = construirDashboard({ desde: dDesde, hasta: dHasta, asesor, soloAsignados: true });
 
     const dias = [];
     for (let d = dDesde; d <= dHasta; d = diaMas(d, 1)) { dias.push(d); if (dias.length > 120) break; }
@@ -687,12 +690,14 @@ module.exports = function (deps) {
     const ejecutivos = [...new Set(funcionariosB2B())];
     const nombreCorto = n => primerNombre(n || '—');
 
-    // --- META: global = equipo (Dante); individuales SOLO quienes tienen meta asignada > 0 ---
+    // --- META: global = equipo (Dante); individuales SOLO quienes tienen meta asignada > 0.
+    //     enCamino: monto del funcionario que ya está en Reunión comercial o más allá (potencial hacia BC). ---
     const meta = Object.assign({}, base.meta);
     meta.individuales = (meta.individuales || []).filter(i => Number(i.monto) > 0);
 
     // --- 1) GESTIONES DE LLAMADA por día (solo días CON registros) + empresas únicas ---
     let gestRango = db.prepare("SELECT codigoSolicitud, responsable, canal, fecha FROM b2b_gestiones WHERE fecha>=? AND fecha<?").all(ini, fin);
+    gestRango = gestRango.filter(g => respDe[g.codigoSolicitud] && String(respDe[g.codigoSolicitud]).trim()); // solo leads asignados
     if (asesor) gestRango = gestRango.filter(g => g.responsable === asesor || (codsAsesor && codsAsesor.has(g.codigoSolicitud)));
     const esLlamada = g => /llamada/i.test(String(g.canal || ''));
     const gLlam = gestRango.filter(esLlamada);
@@ -725,6 +730,7 @@ module.exports = function (deps) {
 
     // --- 3) LEADS RECIBIDOS por día (pie: cantidad + monto) ---
     let nuevos = db.prepare("SELECT codigo, responsableActual, montoSolicitado, montoRango, fechaIngreso FROM b2b_solicitudes WHERE fechaIngreso>=? AND fechaIngreso<?").all(ini, fin);
+    nuevos = nuevos.filter(s => s.responsableActual && String(s.responsableActual).trim()); // solo asignados
     if (asesor) nuevos = nuevos.filter(s => s.responsableActual === asesor);
     const recMap = {};
     nuevos.forEach(s => {
@@ -738,6 +744,7 @@ module.exports = function (deps) {
 
     // --- 4) DESESTIMADOS: categoría de motivo + última etapa + tiempo vivo + lista ---
     let desRows = db.prepare("SELECT codigo, razonSocial, nombreComercial, contacto, responsableActual, montoSolicitado, montoRango, motivoDescarte, resultadoCredito, resultadoGarantia, resultadoFinanzas, sunatEstado, fechaIngreso FROM b2b_solicitudes WHERE (COALESCE(archivado,0)=1 OR estado='No elegible')").all();
+    desRows = desRows.filter(s => s.responsableActual && String(s.responsableActual).trim()); // solo asignados
     if (asesor) desRows = desRows.filter(s => s.responsableActual === asesor);
     const descAud = {};
     db.prepare("SELECT objetivo, fecha FROM auditoria WHERE accion IN ('b2b_descartar','b2b_descartar_duplicado') ORDER BY fecha ASC").all()
@@ -776,6 +783,7 @@ module.exports = function (deps) {
 
     // --- 5) EMBUDO con vivos / desestimados / monto + LISTAS clicables por etapa ---
     let vivasFull = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    vivasFull = vivasFull.filter(s => s.responsableActual && String(s.responsableActual).trim()); // solo asignados
     if (asesor) vivasFull = vivasFull.filter(s => s.responsableActual === asesor);
     const gestUlt = {};
     if (vivasFull.length) {
@@ -821,6 +829,15 @@ module.exports = function (deps) {
       const v = vivosEnr.find(x => x.codigo === t.codigo);
       return Object.assign({}, t, { diasEnEtapa: v ? v.diasEnEtapa : null, diasSinGestion: v ? v.diasSinGestion : null });
     });
+
+    // --- 6b) EN CAMINO por funcionario: monto en Reunión comercial y Finanzas (potencial hacia BC).
+    //     Business case NO se incluye: ya cuenta como "logrado" en la meta (evita doble conteo). ---
+    const EN_CAMINO_ET = ['Reunion comercial', 'Filtro finanzas'];
+    const enCaminoPor = {};
+    vivosEnr.forEach(v => { if (EN_CAMINO_ET.includes(ETAPAS_ORD[v.idx])) { enCaminoPor[v.responsable] = (enCaminoPor[v.responsable] || 0) + v.monto; } });
+    meta.individuales = meta.individuales.map(i => { const c = enCaminoPor[nombreCorto(i.nombre)] || 0; return Object.assign({}, i, { enCamino: c, enCaminoFmt: fmtMM(c) }); });
+    const enCaminoEquipo = Object.values(enCaminoPor).reduce((a, b) => a + b, 0);
+    meta.enCaminoEquipo = enCaminoEquipo; meta.enCaminoEquipoFmt = fmtMM(enCaminoEquipo);
 
     // --- 7) SIN CONTACTO >48h (vivos sin gestión hace 2+ días o nunca) + conversión global ---
     const sin48 = vivosEnr.filter(v => v.diasSinGestion == null || v.diasSinGestion >= 2);

@@ -217,6 +217,37 @@ async function analizarOperacionB2B(D) {
   return await llamar(instruccion, 1000);
 }
 
+
+// COMITÉ EJECUTIVO B2B (v1.443): análisis estratégico para el Comité Comercial
+// (lun/mié/vie 9am, lo conduce Dante). Salida en 3 secciones parseables por el
+// front: ###PANORAMA / ###DIAGNOSTICO / ###PLAN. Español impecable, tono de
+// asesor estratégico senior, plan de acción con responsable + acción + plazo.
+async function analizarComiteEjecutivoB2B(D) {
+  const K = D.kpis || {};
+  const M = (D.meta && D.meta.global) || D.meta || {};
+  const emb = (D.embudo || []).map(f => `  ${f.etapa}: ${f.nAcum} acumulado (${f.montoAcumFmt}) · conv. desde anterior ${f.convDesdeAnterior}% · vivos en etapa ${f.vivos} (${f.montoVivosFmt}) · desestimados aquí ${f.desest}`).join('\n');
+  const prod = (D.productividad || []).filter(p => p.asignados > 0)
+    .map(p => `  ${p.ejecutivo}: ${p.asignados} leads, 3x3 ${p.cumpl3x3 != null ? p.cumpl3x3 + '%' : 's/d'}, pipeline ${p.pipelineFmt}, en Business Case ${p.businessCase}`).join('\n');
+  const alertas = [...(D.alertasCriticas || []), ...(D.alertasAltas || [])].slice(0, 8).map(a => `  [${a.prioridad}] ${a.texto}`).join('\n') || '  (sin alertas)';
+  const X = D.desestimados || {}; const XR = X.resumen || {};
+  const motivos = (X.porMotivo || []).slice(0, 5).map(m => `  ${m.motivo}: ${m.n} (${m.montoFmt})`).join('\n') || '  —';
+  const inds = ((D.meta && D.meta.individuales) || []).map(i => `  ${i.nombre}: meta ${i.montoFmt}, logrado ${i.logradoFmt}, en Reunión+ ${i.enCaminoFmt || 'S/ 0'}`).join('\n') || '  (sin metas individuales)';
+  const instruccion = `Eres el asesor estratégico senior del COMITÉ COMERCIAL B2B de TasaTop (financiamiento empresarial con garantía inmobiliaria, Perú). El comité lo conduce Dante (Jefe B2B) los lunes, miércoles y viernes a las 9:00. Periodo analizado: ${D.periodo ? D.periodo.desde + ' al ' + D.periodo.hasta : 's/d'}.\n\n` +
+    `SITUACIÓN:\n` +
+    `- Pipeline vivo (solo leads asignados): ${K.pipeline ? K.pipeline.montoFmt : 's/d'} en ${K.pipeline ? K.pipeline.n : 0} solicitudes. Conversión Solicitud→Business Case: ${D.conversionGlobal != null ? D.conversionGlobal + '%' : 's/d'}.\n` +
+    `- Meta del mes (equipo, a cargo de Dante): ${M.logradoFmt || 'S/ 0'} de ${M.montoFmt || 's/d'} (${M.pct != null ? M.pct + '%' : 's/d'}), quedan ${D.meta ? D.meta.diasRestantes : 's/d'} días. Monto en Reunión comercial o más allá (potencial): ${D.meta ? D.meta.enCaminoEquipoFmt : 'S/ 0'}.\n` +
+    `- Contactabilidad: ${K.contactabilidad ? K.contactabilidad.pct + '%' : 's/d'} (${K.contactabilidad ? K.contactabilidad.efectivos : 0} efectivos, ${K.contactabilidad ? K.contactabilidad.sinContacto : 0} sin contacto). Cumplimiento 3x3: ${K.cumpl3x3 ? K.cumpl3x3.pct + '%' : 's/d'}.\n` +
+    `- Gestiones de llamada del periodo: ${D.llamadas ? D.llamadas.total : 0} sobre ${D.llamadas ? D.llamadas.empresasUnicas : 0} empresas únicas. Leads sin gestión hace más de 48 h: ${D.sinContacto48 ? D.sinContacto48.n + ' (' + D.sinContacto48.montoFmt + ')' : 's/d'}.\n\n` +
+    `EMBUDO (acumulado):\n${emb}\n\nMETAS INDIVIDUALES:\n${inds}\n\nEJECUTIVOS:\n${prod || '  s/d'}\n\nALERTAS:\n${alertas}\n\n` +
+    `DESESTIMADOS DEL PERIODO: ${XR.total || 0} (${XR.montoFmt || 'S/ 0'}), tiempo de vida promedio ${XR.diasVivoProm != null ? XR.diasVivoProm + ' días' : 's/d'}. Causas principales:\n${motivos}\n\n` +
+    `Redacta el análisis del comité en ESPAÑOL IMPECABLE (ortografía y tildes perfectas), tono ejecutivo y estratégico, sin relleno. Devuelve EXACTAMENTE este formato con los tres marcadores en líneas propias:\n` +
+    `###PANORAMA\n(2-3 oraciones de prosa: lectura estratégica del estado — dónde está la plata, qué tan sano es el ritmo hacia la meta, el riesgo principal. No repitas cifras que no aporten a la conclusión.)\n` +
+    `###DIAGNOSTICO\n(3-4 líneas, cada una empieza con "- ": causas raíz ordenadas por impacto en soles, no síntomas. Vincula el problema con su consecuencia en la meta.)\n` +
+    `###PLAN\n(3-5 líneas, cada una con el formato "Responsable | Acción concreta | Resultado esperado y plazo". Usa los nombres reales de arriba (Dante, Shirley, Bony, Luis). Prioriza por monto recuperable. Acciones que se puedan verificar en el siguiente comité.)\n` +
+    `No inventes datos ni nombres. Si algo está en cero, di qué decisión requiere en lugar de solo describirlo.`;
+  return await llamar(instruccion, 1200);
+}
+
 // Call scoring: analiza la transcripción de una llamada comercial y devuelve un puntaje
 // por dimensión + hallazgos. Devuelve texto formateado (o null si falla/no configurado).
 async function scoringLlamada(transcripcion, ctx) {
@@ -238,4 +269,4 @@ async function scoringLlamada(transcripcion, ctx) {
   return await llamar(prompt, 700);
 }
 
-module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B, scoringLlamada };
+module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B, analizarComiteEjecutivoB2B, scoringLlamada };

@@ -10641,14 +10641,10 @@ function cbbRenderKpis(d) {
   const K = d.kpis || {}, M = d.meta || {}, G = M.global || M;
   const R = (d.desestimados && d.desestimados.resumen) || {};
   const cards = [
-    { ico: '💰', col: 'azul', lbl: 'Pipeline comercial', val: (K.pipeline ? K.pipeline.montoFmt : '—'), sub: (K.pipeline ? K.pipeline.n + ' solicitudes vivas' : '') },
+    { ico: '💰', col: 'azul', lbl: 'Pipeline comercial', val: (K.pipeline ? K.pipeline.montoFmt : '—'), sub: (K.pipeline ? K.pipeline.n + ' solicitudes asignadas' : '') },
     { ico: '🎯', col: 'morado', lbl: 'Business Case (meta)', val: (G.logradoFmt || 'S/ 0'), sub: (G.pct != null ? G.pct + '% de ' + G.montoFmt : 'sin meta asignada') },
-    { ico: '⏬', col: 'verde', lbl: 'Conversión total', val: (d.conversionGlobal != null ? d.conversionGlobal + ' %' : '—'), sub: 'Solicitud → Business Case' },
-    { ico: '📋', col: 'amarillo', lbl: 'Cumplimiento 3x3', val: (K.cumpl3x3 ? K.cumpl3x3.pct + ' %' : '—'), sub: (K.cumpl3x3 ? K.cumpl3x3.atrasados + ' atrasados · ' + K.cumpl3x3.vencidos + ' vencidos' : '') },
     { ico: '👥', col: 'teal', lbl: 'Contactabilidad', val: (K.contactabilidad ? K.contactabilidad.pct + ' %' : '—'), sub: (K.contactabilidad ? K.contactabilidad.efectivos + ' efectivos · ' + K.contactabilidad.sinContacto + ' sin contacto' : '') },
     { ico: '📞', col: 'azul', lbl: 'Llamadas', val: (d.llamadas ? d.llamadas.total : 0), sub: (d.llamadas ? d.llamadas.empresasUnicas + ' empresas únicas' : ''), spark: 'cbbSpk1' },
-    { ico: '👤', col: 'morado', lbl: 'Gestiones', val: (d.gestiones ? d.gestiones.total : 0), sub: 'del periodo', spark: 'cbbSpk2' },
-    { ico: '⏰', col: 'rojo', lbl: 'Sin contacto > 48h', val: (d.sinContacto48 ? d.sinContacto48.n : 0), sub: (d.sinContacto48 ? d.sinContacto48.montoFmt + ' en juego' : ''), rojo: d.sinContacto48 && d.sinContacto48.n > 0 },
     { ico: '🗑', col: 'rosa', lbl: 'Desestimados', val: (R.total || 0), sub: (R.montoFmt || 'S/ 0') + (R.diasVivoProm != null ? ' · ' + R.diasVivoProm + 'd vivos prom' : '') }
   ];
   $('cbbKpis').innerHTML = cards.map(c =>
@@ -10668,7 +10664,6 @@ function cbbSparks(d) {
     });
   };
   mk('cbbSpk1', (d.llamadas && d.llamadas.series) || [], CBB.azul);
-  mk('cbbSpk2', (d.gestiones && d.gestiones.series) || [], CBB.morado);
 }
 
 // ---------- EMBUDO estilo mockup ----------
@@ -10731,14 +10726,16 @@ function cbbRenderMeta(d) {
     $('cbbMetaMes').textContent = mes.length === 2 ? (MESES[Number(mes[1])] + ' ' + mes[0]) : '';
   }
   const pct = G.pct != null ? G.pct : 0;
-  // Proyección run-rate: logrado / días transcurridos × días del mes.
   const diasRest = M.diasRestantes != null ? M.diasRestantes : 0;
   const hoyDia = new Date(new Date(d.generado).getTime() - 5 * 3600000).getUTCDate();
   const diasMes = hoyDia + diasRest;
-  const proy = hoyDia > 0 ? Math.round((G.logrado || 0) / hoyDia * diasMes) : 0;
+  // Proyección = run-rate del logrado + lo que ya está en Reunión comercial o más allá (potencial real).
+  const enCamino = M.enCaminoEquipo || 0;
+  const runrate = hoyDia > 0 ? Math.round((G.logrado || 0) / hoyDia * diasMes) : 0;
+  const proy = runrate + enCamino;
   const pctProy = G.monto > 0 ? Math.round(proy / G.monto * 100) : 0;
   const deficit = (G.monto || 0) - proy;
-  const donCol = pct >= 80 ? CBB.verde : pct >= 40 ? CBB.amarillo : CBB.verde;
+  const donCol = pct >= 80 ? '#10B981' : pct >= 40 ? '#F59E0B' : '#10B981';
   let html = '<div class="cbb-meta-grid">' +
     '<div class="cbb-meta-izq">' +
       '<div class="cbb-meta-l1">Objetivo mensual <span class="cbb-meta-resp">· equipo a cargo de Dante (Jefe B2B)</span></div>' +
@@ -10749,25 +10746,25 @@ function cbbRenderMeta(d) {
     '</div>' +
     '<div class="cbb-donut" style="background:conic-gradient(' + donCol + ' ' + (pct * 3.6) + 'deg, #E8EDF5 0)"><div class="cbb-donut-in"><b>' + pct + '%</b><span>cumplido</span></div></div>' +
     '</div>' +
-    '<div class="cbb-proy"><div class="cbb-proy-l">Proyección a cierre de mes <span class="cbb-card-sub">run-rate: ritmo actual × días del mes</span></div>' +
+    '<div class="cbb-proy"><div class="cbb-proy-l">Proyección a cierre <span class="cbb-card-sub">run-rate + ' + cbMM(enCamino) + ' ya en Reunión comercial o más allá</span></div>' +
       '<div class="cbb-proy-val">' + cbMM(proy) + ' <span class="cbb-proy-pct">' + pctProy + '% del objetivo</span></div>' +
       '<div class="cbb-proy-track"><div class="cbb-proy-fill" style="width:' + Math.min(100, pctProy) + '%"></div></div>' +
-      (deficit > 0 && G.monto > 0 ? '<div class="cbb-deficit">Déficit esperado <b>-' + cbMM(deficit) + '</b> · ' + (-Math.round(deficit / G.monto * 100)) + '% del objetivo</div>' : (G.monto > 0 ? '<div class="cbb-superavit">Proyección cubre la meta ✓</div>' : '')) +
+      (deficit > 0 && G.monto > 0 ? '<div class="cbb-deficit">Déficit esperado <b>-' + cbMM(deficit) + '</b> · ' + (-Math.round(deficit / G.monto * 100)) + '% del objetivo</div>' : (G.monto > 0 ? '<div class="cbb-superavit">La proyección cubre la meta ✓</div>' : '')) +
     '</div>';
-  // Top ejecutivo (solo con meta individual asignada)
   const inds = (M.individuales || []).filter(i => Number(i.monto) > 0);
   if (inds.length) {
     const medal = ['🥇', '🥈', '🥉'];
-    const ordenados = [...inds].sort((a, b) => (b.logrado || 0) - (a.logrado || 0));
+    // Ordenar por potencial (logrado + en Reunión+), no solo logrado.
+    const ordenados = [...inds].sort((a, b) => ((b.logrado || 0) + (b.enCamino || 0)) - ((a.logrado || 0) + (a.enCamino || 0)));
     html += '<div class="cbb-topej"><div class="cbb-topej-tit">Top ejecutivo (proyección)</div>' + ordenados.map((i, ix) => {
-      const proyI = hoyDia > 0 ? Math.round((i.logrado || 0) / hoyDia * diasMes) : 0;
-      const p = i.pct != null ? i.pct : 0;
+      const pot = (i.logrado || 0) + (i.enCamino || 0);
+      const pPot = i.monto > 0 ? Math.min(100, Math.round(pot / i.monto * 100)) : 0;
       const nom = primerNombre(i.nombre);
       return '<div class="cbb-ej"><span class="cbb-ej-med">' + (medal[ix] || '') + '</span>' +
         '<span class="cbb-avatar" style="background:' + CBB_SERIE[ix % CBB_SERIE.length] + '">' + esc(nom.slice(0, 1)) + '</span>' +
-        '<div class="cbb-ej-info"><b>' + esc(nom) + '</b><span>Proyección: ' + cbMM(proyI) + ' · meta ' + i.montoFmt + '</span>' +
-        '<div class="cbb-ej-track"><div class="cbb-ej-fill" style="width:' + Math.min(100, p) + '%"></div></div></div>' +
-        '<span class="cbb-ej-pct">' + p + '%</span></div>';
+        '<div class="cbb-ej-info"><b>' + esc(nom) + '</b><span>Logrado ' + (i.logradoFmt || 'S/ 0') + ' · en Reunión+ ' + (i.enCaminoFmt || 'S/ 0') + ' · meta ' + i.montoFmt + '</span>' +
+        '<div class="cbb-ej-track"><div class="cbb-ej-fill" style="width:' + pPot + '%"></div></div></div>' +
+        '<span class="cbb-ej-pct">' + pPot + '%</span></div>';
     }).join('') + '</div>';
   }
   cont.innerHTML = html;
@@ -10800,7 +10797,7 @@ function cbbRenderHeat(d) {
   const horas = []; for (let h = h0; h <= h1; h++) horas.push(h);
   const maxV = Math.max(1, ...activos.flatMap(f => horas.map(h => f.valores[h])));
   const hLbl = h => { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ' ' + ap; };
-  let html = '<div class="cbb-heat" style="grid-template-columns:70px repeat(' + horas.length + ',1fr)">';
+  let html = '<div class="cbb-heat-scroll"><div class="cbb-heat" style="grid-template-columns:70px repeat(' + horas.length + ',minmax(26px,1fr))">';
   html += '<div></div>' + horas.map(h => '<div class="cbb-heat-h">' + hLbl(h) + '</div>').join('');
   activos.forEach(f => {
     html += '<div class="cbb-heat-ej">' + esc(f.ejecutivo) + '</div>';
@@ -10810,7 +10807,7 @@ function cbbRenderHeat(d) {
       html += '<div class="cbb-heat-c" title="' + esc(f.ejecutivo) + ' · ' + hLbl(h) + ' · ' + v + ' gestiones" style="background:rgba(37,99,235,' + alpha.toFixed(2) + ')">' + (v || '') + '</div>';
     });
   });
-  html += '</div><div class="cbb-heat-ley"><span>Baja actividad</span><span class="cbb-heat-grad"></span><span>Alta actividad</span></div>';
+  html += '</div></div><div class="cbb-heat-ley"><span>Baja actividad</span><span class="cbb-heat-grad"></span><span>Alta actividad</span></div>';
   cont.innerHTML = html;
 }
 
@@ -10874,7 +10871,7 @@ function cbbChartLlam(d) {
     data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [{ data: S.map(x => x.n), backgroundColor: CBB.azul, borderRadius: 4 }] },
     options: { responsive: true, maintainAspectRatio: false,
       scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0 }, grace: '15%' }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } },
-      plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
+      plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
   });
 }
 function cbbChartLeads(d) {
@@ -10889,12 +10886,14 @@ function cbbChartLeads(d) {
       scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0 }, grace: '15%' }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } },
       plugins: { legend: { display: false },
         tooltip: { callbacks: { label: c => ' ' + c.raw + ' leads · ' + S[c.dataIndex].montoFmt } },
-        datalabels: { anchor: 'end', align: 'top', font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
+        datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
   });
 }
 function cbbChartDist(d) {
   const ctx = cbbCtx('cbbChartDist'); if (!ctx) return;
   const LBL = { 'Solicitud': 'Solicitud', 'Filtro credito': 'Crédito', 'Filtro garantia': 'Garantía', 'Reunion comercial': 'Reunión comercial', 'Filtro finanzas': 'Finanzas', 'Business case': 'Business Case' };
+  // Colores fijos por etapa (todos distinguibles, sin dos verdes).
+  const COLET = { 'Solicitud': '#2563EB', 'Filtro credito': '#7C3AED', 'Filtro garantia': '#10B981', 'Reunion comercial': '#F59E0B', 'Filtro finanzas': '#F97316', 'Business case': '#EC4899' };
   const D = (d.distribucion || []);
   const conMonto = D.filter(x => x.monto > 0);
   if (!conMonto.length) return;
@@ -10902,27 +10901,52 @@ function cbbChartDist(d) {
   if ($('cbbDistTotal')) $('cbbDistTotal').innerHTML = '<b>' + cbMM(total) + '</b><span>Total</span>';
   CB_CHARTS.dist = new Chart(ctx, {
     type: 'doughnut',
-    data: { labels: conMonto.map(x => LBL[x.etapa] || x.etapa), datasets: [{ data: conMonto.map(x => x.monto), backgroundColor: conMonto.map((_, i) => CBB_SERIE[i % CBB_SERIE.length]), borderWidth: 2, borderColor: '#fff' }] },
+    data: { labels: conMonto.map(x => LBL[x.etapa] || x.etapa), datasets: [{ data: conMonto.map(x => x.monto), backgroundColor: conMonto.map(x => COLET[x.etapa] || '#94A3B8'), borderWidth: 2, borderColor: '#fff' }] },
     options: { responsive: true, maintainAspectRatio: false, cutout: '68%',
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + cbMM(c.raw) + ' (' + Math.round(c.raw / total * 100) + '%)' } } } }
   });
-  if ($('cbbDistLeyenda')) $('cbbDistLeyenda').innerHTML = D.map((x, i) =>
-    '<div class="cbb-ley-row"><span class="cbb-ley-dot" style="background:' + (x.monto > 0 ? CBB_SERIE[conMonto.indexOf(x) % CBB_SERIE.length] : '#CBD5E1') + '"></span>' +
+  if ($('cbbDistLeyenda')) $('cbbDistLeyenda').innerHTML = D.map(x =>
+    '<div class="cbb-ley-row"><span class="cbb-ley-dot" style="background:' + (x.monto > 0 ? (COLET[x.etapa] || '#94A3B8') : '#CBD5E1') + '"></span>' +
     '<span class="cbb-ley-lbl">' + (LBL[x.etapa] || x.etapa) + '</span><span class="cbb-ley-val">' + x.montoFmt + ' (' + x.pct + '%)</span></div>').join('');
 }
 
-// ---------- INSIGHTS IA (auto, con caché del server) ----------
+// ---------- INSIGHTS IA (endpoint del comité, render por secciones) ----------
 async function cbbCargarIA(fresco) {
   const box = $('cbbIA'); if (!box) return;
   box.innerHTML = '<div class="cbb-ia-load">Analizando la operación…</div>';
+  const desde = $('cbDesde') ? $('cbDesde').value : '';
+  const hasta = $('cbHasta') ? $('cbHasta').value : '';
   try {
-    const r = await api('/api/b2b/dashboard/ia' + (fresco ? '?fresco=1' : ''));
+    const qs = ['desde=' + desde, 'hasta=' + hasta]; if (fresco) qs.push('fresco=1');
+    const r = await api('/api/b2b/comite/ia?' + qs.join('&'));
     if (r && r.disponible && r.texto) {
-      const lineas = String(r.texto).split(/\n+/).map(l => l.replace(/^[-•*\d.)\s]+/, '').trim()).filter(Boolean).slice(0, 8);
-      box.innerHTML = lineas.map(l => '<div class="cbb-ia-item"><span>✦</span><span>' + esc(l) + '</span></div>').join('') +
-        (r.cache ? '<div class="cbb-ia-cache">análisis en caché · ⟳ para regenerar</div>' : '');
+      box.innerHTML = cbbFormatearIA(r.texto) + (r.cache ? '<div class="cbb-ia-cache">análisis en caché · ⟳ para regenerar</div>' : '');
     } else {
       box.innerHTML = '<div class="vacio">' + esc((r && r.error) || 'IA no disponible.') + '</div>';
     }
   } catch (e) { box.innerHTML = '<div class="vacio">No se pudo generar: ' + esc(e.message) + '</div>'; }
+}
+// Parsea ###PANORAMA / ###DIAGNOSTICO / ###PLAN. El plan viene como "Responsable | Acción | Resultado y plazo".
+function cbbFormatearIA(texto) {
+  const secs = { PANORAMA: '', DIAGNOSTICO: '', PLAN: '' };
+  let actual = null;
+  String(texto).split(/\n/).forEach(l => {
+    const m = l.match(/^#{2,}\s*(PANORAMA|DIAGNOSTICO|DIAGNÓSTICO|PLAN)/i);
+    if (m) { actual = m[1].toUpperCase().replace('Ó', 'O'); return; }
+    if (actual) secs[actual] = (secs[actual] || '') + l + '\n';
+  });
+  if (!actual) return '<div class="cbb-ia-item"><span>✦</span><span>' + esc(texto).replace(/\n/g, '<br>') + '</span></div>';
+  const limpiar = t => String(t || '').trim();
+  let html = '';
+  if (limpiar(secs.PANORAMA)) html += '<div class="cbb-ia-sec">📊 Panorama</div><div class="cbb-ia-prosa">' + esc(limpiar(secs.PANORAMA)).replace(/\n/g, ' ') + '</div>';
+  const bullets = t => limpiar(t).split(/\n/).map(l => l.replace(/^[-•*\s]+/, '').trim()).filter(Boolean);
+  const diag = bullets(secs.DIAGNOSTICO);
+  if (diag.length) html += '<div class="cbb-ia-sec">🔍 Diagnóstico</div>' + diag.map(l => '<div class="cbb-ia-item"><span>▸</span><span>' + esc(l) + '</span></div>').join('');
+  const plan = bullets(secs.PLAN);
+  if (plan.length) html += '<div class="cbb-ia-sec">🎯 Plan de acción</div>' + plan.map(l => {
+    const p = l.split('|').map(x => x.trim());
+    if (p.length >= 3) return '<div class="cbb-ia-plan"><b>' + esc(p[0]) + '</b><span>' + esc(p[1]) + '</span><small>' + esc(p.slice(2).join(' · ')) + '</small></div>';
+    return '<div class="cbb-ia-item"><span>▸</span><span>' + esc(l) + '</span></div>';
+  }).join('');
+  return html;
 }

@@ -6611,6 +6611,31 @@ app.get('/api/b2b/comite', soloB2B, (req, res) => {
   catch (e) { console.error('[b2b/comite]', e.stack || e.message); res.status(500).json({ error: e.message }); }
 });
 
+// INSIGHTS IA del Comité B2B: análisis estratégico con plan de acción (caché 10 min).
+// GET /api/b2b/comite/ia?desde&hasta&fresco=1
+let _iaComiteB2BCache = { texto: null, ts: 0, clave: '' };
+app.get('/api/b2b/comite/ia', soloB2B, async (req, res) => {
+  if (!req.user || !['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  try {
+    if (!iaReportes.configurado()) return res.json({ disponible: false, error: 'Falta ANTHROPIC_API_KEY en Railway' });
+    const clave = (req.query.desde || '') + '|' + (req.query.hasta || '');
+    const fresco = req.query.fresco === '1';
+    if (!fresco && _iaComiteB2BCache.texto && _iaComiteB2BCache.clave === clave && (Date.now() - _iaComiteB2BCache.ts) < 10 * 60000) {
+      return res.json({ disponible: true, texto: _iaComiteB2BCache.texto, generado: new Date(_iaComiteB2BCache.ts).toISOString(), cache: true });
+    }
+    const D = dashB2B.construirComiteB2B({ desde: req.query.desde, hasta: req.query.hasta });
+    const texto = await iaReportes.analizarComiteEjecutivoB2B(D);
+    if (!texto) return res.json({ disponible: false, error: 'La IA no respondió; intenta de nuevo' });
+    _iaComiteB2BCache = { texto, ts: Date.now(), clave };
+    res.json({ disponible: true, texto, generado: new Date().toISOString(), cache: false });
+  } catch (e) {
+    console.error('[b2b/comite/ia]', e.stack || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Funcionarios B2B (para el modal de asignar metas).
 app.get('/api/b2b/funcionarios', soloB2B, (req, res) => {
   try { res.json({ funcionarios: dashB2B.funcionariosB2B() }); }
@@ -8949,7 +8974,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.442 (Comité B2B rediseñado estilo dashboard ejecutivo: header oscuro navy con filtros de periodo y ejecutivo + última actualización; 8 KPI cards con iconos pastel (pipeline, meta BC, conversión total, 3x3, contactabilidad, llamadas y gestiones con sparklines de serie real, sin contacto >48h, desestimados); embudo comercial con icono/color por etapa, conversión por etapa y links vivos/desestimados clicables; Meta Business Case con donut de cumplimiento, proyección a cierre por run-rate real (logrado/días transcurridos × días del mes) con déficit esperado, y Top ejecutivo solo con meta individual asignada (avatares con iniciales); panel de Alertas IA con badge y ver todas; Gestión diaria (llamadas/día y leads/día con etiquetas); HEATMAP de gestión por hora × ejecutivo con leyenda de intensidad; Distribución del pipeline (donut con total al centro y leyenda); tabla Top ejecutivos (pipeline, leads, llamadas, conversión a BC, 3x3 con barra); panel DESESTIMADOS (reemplaza salud comercial por redundante) con causas, última etapa en chips y detalle en modal; Insights IA auto-cargados desde el endpoint con caché. Solo admin y jefes (menú y endpoint restringidos). Sin datos inventados: sparklines solo donde hay serie diaria real y proyección run-rate en vez de IA ficticia. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.443 (Ajustes Comité B2B: (1) KPI cards reducidas a 5: Pipeline, Business Case, Contactabilidad, Llamadas y Desestimados. (2) TODO el dashboard excluye solicitudes SIN ASIGNAR (tickets bajos <S/100k): pipeline, embudo, distribución, contactabilidad, desestimados, recibidos, gestiones, heatmap y tabla de desempeño (adiós fila Sin asignar); nuevo parámetro soloAsignados en construirDashboard. (3) Cabecera sin logo, título Dashboard B2B, y STICKY: al scrollear queda fijada con los filtros visibles. (4) Fix de gráficos entrecruzados al ampliar: heatmap con scroll horizontal propio, celdas mínimas de 26px y nombre del ejecutivo sticky; datalabels con clamp; canvas con overflow contenido. (5) Insights IA renovados: nueva función analizarComiteEjecutivoB2B con tono estratégico, español impecable y PLAN DE ACCIÓN estructurado (Responsable | Acción | Resultado y plazo), endpoint /api/b2b/comite/ia con caché 10 min y render por secciones (Panorama, Diagnóstico, Plan). (6) Donut de distribución con colores fijos por etapa, sin verdes duplicados (Garantía verde, Finanzas naranja). (7) Top ejecutivo (proyección) ahora considera el monto en Reunión comercial y Finanzas (enCamino) por funcionario: la barra pinta el potencial logrado+enCamino, y la proyección del equipo suma run-rate + enCamino sin doble conteo de BC. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
