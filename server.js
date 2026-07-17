@@ -809,6 +809,8 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     // Formato real de Aircall: { resource, event, timestamp, token, data: {...} }
     const tipo = ev.event || '';
     const c = ev.data || {};
+    // DIAGNÓSTICO (v1.436): registrar TODO evento que llega, para verificar qué manda Aircall.
+    console.log('[aircall-webhook] evento recibido:', tipo, '· resource:', ev.resource || '?', '· data.id:', (c.id || c.call_id || '?'));
     // Evento dedicado de buzón: si Aircall lo dispara, marcamos esa llamada como NO contestada (buzón) con certeza.
     if (tipo === 'call.voicemail_left') {
       const vid = String(c.id || '');
@@ -822,6 +824,7 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     // --- Eventos de INTELIGENCIA DE CONVERSACIÓN de Aircall ---
     // transcription.created: llega la transcripción completa de la llamada (con hablantes).
     if (tipo === 'transcription.created') {
+      console.log('[aircall-webhook] transcription.created RAW:', JSON.stringify(ev).slice(0, 1500));
       const callId = String(c.call_id || (c.call && c.call.id) || c.id || '');
       let texto = '';
       try {
@@ -8898,7 +8901,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.435 (Llamadas en dos mundos + backfill de transcripciones: (1) el modulo de llamadas ahora tambien esta en B2C > Comite (boton Llamadas, solo admin) mostrando SOLO a las GP (Lourdes, Mafer, Dora, Henry - Henry aparece aunque aun no tenga cuenta Aircall); el de B2B sigue con Shirley/Bony/Luis; parametro mundo=b2b|b2c. (2) BACKFILL de transcripciones pasadas: POST /api/llamadas/backfill-transcripciones (solo admin) las pide a la API de Aircall para las llamadas contestadas sin transcripcion de los ultimos 30 dias (max 90); requiere AIRCALL_API_ID + AIRCALL_API_TOKEN en Railway (Aircall > Integrations > API keys). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.436 (DIAGNOSTICO webhook Aircall: ahora se loguea CADA evento que llega ([aircall-webhook] evento recibido: TIPO) para verificar si transcription.created esta llegando o no. Cuando llega transcription.created se loguea su estructura cruda completa (RAW) para confirmar el formato exacto del payload de Aircall y ajustar el parser si difiere. Sin cambios funcionales - solo visibilidad para cazar por que la transcripcion no aparece. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
