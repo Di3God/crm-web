@@ -799,6 +799,27 @@ app.get('/api/usuarios', (req, res) => {
 const BUZON_IDS = new Map();
 //   POST /api/webhooks/aircall/:token   (token = variable de entorno AIRCALL_WEBHOOK_TOKEN)
 // Match del lead por numero de telefono (ultimos 9 digitos).
+// Consulta la transcripción de una llamada por la API de Aircall y la guarda.
+// Requiere AIRCALL_API_ID + AIRCALL_API_TOKEN. Devuelve true si la guardó.
+async function jalarTranscripcionAircall(aircallId) {
+  const id = process.env.AIRCALL_API_ID, tok = process.env.AIRCALL_API_TOKEN;
+  if (!id || !tok || !aircallId) return false;
+  try {
+    const auth = 'Basic ' + Buffer.from(id + ':' + tok).toString('base64');
+    const r = await fetch('https://api.aircall.io/v1/calls/' + aircallId + '/transcription', { headers: { authorization: auth } });
+    if (!r.ok) { if (r.status !== 404) console.log('[aircall] transcripción API', aircallId, 'status', r.status); return false; }
+    const j = await r.json();
+    const t = j.transcription || j;
+    const utt = (t.content && t.content.utterances) || t.utterances || [];
+    let texto = utt.map(u => ((u.participant_type === 'internal' || u.speaker === 'agent') ? 'Asesor' : 'Cliente') + ': ' + (u.text || '')).join('\n');
+    if (!texto) texto = JSON.stringify(t).slice(0, 30000);
+    const upd = db.prepare('UPDATE llamadas SET transcripcion=? WHERE aircall_id=?').run(texto.slice(0, 60000), String(aircallId));
+    if (!upd.changes) db.prepare('INSERT OR IGNORE INTO llamadas (aircall_id, fecha, transcripcion) VALUES (?,?,?)').run(String(aircallId), new Date().toISOString(), texto.slice(0, 60000));
+    console.log('[aircall] transcripción jalada por API para', aircallId, '(' + texto.length + ' chars)');
+    return true;
+  } catch (e) { console.error('[aircall] jalarTranscripcion:', e.message); return false; }
+}
+
 app.post('/api/webhooks/aircall/:token', (req, res) => {
   const esperado = process.env.AIRCALL_WEBHOOK_TOKEN || '';
   if (!esperado || req.params.token !== esperado) {
@@ -811,6 +832,23 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     const c = ev.data || {};
     // DIAGNÓSTICO (v1.436): registrar TODO evento que llega, para verificar qué manda Aircall.
     console.log('[aircall-webhook] evento recibido:', tipo, '· resource:', ev.resource || '?', '· data.id:', (c.id || c.call_id || '?'));
+
+    // call.comm_assets_generated: Aircall avisa que los recursos (grabación/transcripción) están listos.
+    // Aprovechamos ESE evento (que sí llega a este webhook) para jalar la transcripción por API.
+    if (tipo === 'call.comm_assets_generated') {
+      const cid = String(c.id || c.call_id || '');
+      if (cid) {
+        // Reintentos: a veces la transcripción tarda unos segundos más en estar disponible por API.
+        (async () => {
+          for (const espera of [0, 20000, 60000, 180000]) {
+            if (espera) await new Promise(r => setTimeout(r, espera));
+            const ok = await jalarTranscripcionAircall(cid);
+            if (ok) break;
+          }
+        })();
+      }
+      return res.json({ ok: true, evento: 'comm_assets_generated', id: cid });
+    }
     // Evento dedicado de buzón: si Aircall lo dispara, marcamos esa llamada como NO contestada (buzón) con certeza.
     if (tipo === 'call.voicemail_left') {
       const vid = String(c.id || '');
@@ -8901,7 +8939,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.436 (DIAGNOSTICO webhook Aircall: ahora se loguea CADA evento que llega ([aircall-webhook] evento recibido: TIPO) para verificar si transcription.created esta llegando o no. Cuando llega transcription.created se loguea su estructura cruda completa (RAW) para confirmar el formato exacto del payload de Aircall y ajustar el parser si difiere. Sin cambios funcionales - solo visibilidad para cazar por que la transcripcion no aparece. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.437 (Transcripcion por API Aircall - solucion robusta: como transcription.created NO llega a este webhook pero call.comm_assets_generated SI (avisa que grabacion/transcripcion estan listas), ahora al recibir ese evento el CRM jala la transcripcion por la API de Aircall (GET /calls/:id/transcription) con reintentos (0s, 20s, 60s, 180s por si tarda) y la guarda con hablantes Asesor/Cliente. Nueva funcion jalarTranscripcionAircall reutilizable. Requiere AIRCALL_API_ID + AIRCALL_API_TOKEN en Railway. Ya no depende del webhook transcription.created. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
