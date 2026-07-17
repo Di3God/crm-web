@@ -528,6 +528,11 @@ try { db.exec("ALTER TABLE leads ADD COLUMN conjunto TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN anuncio TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN adId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE llamadas ADD COLUMN codigoB2B TEXT"); } catch (e) { } // v1.397: match B2B del webhook Aircall
+// v1.433: inteligencia de conversación de Aircall (transcripción, resumen, sentimiento, score IA)
+try { db.exec("ALTER TABLE llamadas ADD COLUMN transcripcion TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE llamadas ADD COLUMN resumenAircall TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE llamadas ADD COLUMN sentimiento TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE llamadas ADD COLUMN scoreIA TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN origenCreacion TEXT"); } catch (e) { }
 // Campos nuevos del formulario B2C (Meta): DNI + 2 preguntas iniciales.
 try { db.exec("ALTER TABLE leads ADD COLUMN dni TEXT"); } catch (e) { }
@@ -814,6 +819,42 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       }
       return res.json({ ok: true, evento: 'voicemail_left', id: vid });
     }
+    // --- Eventos de INTELIGENCIA DE CONVERSACIÓN de Aircall ---
+    // transcription.created: llega la transcripción completa de la llamada (con hablantes).
+    if (tipo === 'transcription.created') {
+      const callId = String(c.call_id || (c.call && c.call.id) || c.id || '');
+      let texto = '';
+      try {
+        // El contenido viene en c.content.utterances: [{ start_time, text, participant_type: 'internal'|'external', ... }]
+        const utt = (c.content && c.content.utterances) || c.utterances || [];
+        texto = utt.map(u => {
+          const quien = (u.participant_type === 'internal' || u.speaker === 'agent') ? 'Asesor' : 'Cliente';
+          return quien + ': ' + (u.text || '');
+        }).join('\n');
+      } catch (e) { }
+      if (!texto) texto = JSON.stringify(c).slice(0, 30000); // respaldo: guardar el crudo si el formato cambia
+      if (callId) {
+        const r = db.prepare('UPDATE llamadas SET transcripcion=? WHERE aircall_id=?').run(texto.slice(0, 60000), callId);
+        // Si la transcripción llegó ANTES que call.ended, crear la fila mínima para no perderla.
+        if (!r.changes) db.prepare('INSERT OR IGNORE INTO llamadas (aircall_id, fecha, transcripcion) VALUES (?,?,?)').run(callId, new Date().toISOString(), texto.slice(0, 60000));
+        console.log('[aircall] transcription.created para llamada', callId, '(' + texto.length + ' chars)');
+      }
+      return res.json({ ok: true, evento: 'transcription', callId });
+    }
+    // summary.created: el resumen que genera la IA de Aircall.
+    if (tipo === 'summary.created') {
+      const callId = String(c.call_id || (c.call && c.call.id) || c.id || '');
+      const resumen = (c.content && (c.content.summary || c.content.text)) || c.summary || c.text || JSON.stringify(c).slice(0, 4000);
+      if (callId) db.prepare('UPDATE llamadas SET resumenAircall=? WHERE aircall_id=?').run(String(resumen).slice(0, 8000), callId);
+      return res.json({ ok: true, evento: 'summary', callId });
+    }
+    // sentiment.created: el sentimiento detectado (positivo/negativo/neutral).
+    if (tipo === 'sentiment.created') {
+      const callId = String(c.call_id || (c.call && c.call.id) || c.id || '');
+      const senti = (c.content && (c.content.value || c.content.sentiment)) || c.value || c.sentiment || JSON.stringify(c).slice(0, 500);
+      if (callId) db.prepare('UPDATE llamadas SET sentimiento=? WHERE aircall_id=?').run(String(senti).slice(0, 500), callId);
+      return res.json({ ok: true, evento: 'sentiment', callId });
+    }
     // Registramos solo call.ended: trae todos los datos (duracion, answered_at, etc.).
     // call.created/hungup se ignoran para no guardar registros incompletos.
     if (tipo !== 'call.ended') {
@@ -871,12 +912,18 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
     const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
     const aircallId = String(c.id || ('ac-' + Date.now()));
 
-    db.prepare(`INSERT OR IGNORE INTO llamadas
+    const rIns = db.prepare(`INSERT OR IGNORE INTO llamadas
       (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo, codigoB2B)
       VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(aircallId, lead ? lead.codigo : null, numeroLead || null, direccion,
            contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 16000),
            solB2B ? solB2B.codigo : null);
+    // Si la fila ya existía (creada por una transcripción que llegó antes), completar los datos de la llamada.
+    if (!rIns.changes) {
+      db.prepare('UPDATE llamadas SET codigo=?, telefono=?, direccion=?, contestada=?, duracion=?, agente=?, fecha=?, crudo=?, codigoB2B=? WHERE aircall_id=?')
+        .run(lead ? lead.codigo : null, numeroLead || null, direccion, contestada, duracion, agente, fecha,
+             JSON.stringify(ev).slice(0, 16000), solB2B ? solB2B.codigo : null, aircallId);
+    }
 
     console.log('[aircall] Llamada', direccion, contestada ? 'contestada' : 'no contestada',
       duracion + 's', '->', lead ? lead.codigo : 'sin match B2C', solB2B ? ('· B2B ' + solB2B.codigo) : '', numeroLead);
@@ -2761,6 +2808,71 @@ app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
   }
   auditar(req, 'gcal_backfill', null, resultados.creados + ' eventos creados');
   res.json({ ok: true, ...resultados });
+});
+
+// MÓDULO DE LLAMADAS (Aircall): consulta con filtros por fecha y agente, cliente vinculado
+// (lead B2C por 'codigo' o solicitud B2B por 'codigoB2B') y resumen por agente.
+app.get('/api/llamadas', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u) return res.status(401).json({ error: 'Sesión inválida' });
+  if (!['admin', 'jefa', 'jefe_b2b'].includes(u.rol)) return res.status(403).json({ error: 'Solo administradores o jefes' });
+  const desde = String(req.query.desde || '').slice(0, 10);
+  const hasta = String(req.query.hasta || '').slice(0, 10);
+  const agente = (req.query.agente || '').trim();
+  // Ventana en hora Perú: [desde 00:00, hasta 24:00).
+  const hoyPeruYMD = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
+  const d0 = /^\d{4}-\d{2}-\d{2}$/.test(desde) ? desde : hoyPeruYMD;
+  const d1 = /^\d{4}-\d{2}-\d{2}$/.test(hasta) ? hasta : d0;
+  const ini = new Date(new Date(d0 + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
+  const fin = new Date(new Date(d1 + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
+  let filas = db.prepare("SELECT id, aircall_id, codigo, codigoB2B, telefono, direccion, contestada, duracion, agente, fecha, sentimiento, (transcripcion IS NOT NULL) AS tieneTrans, (scoreIA IS NOT NULL) AS tieneScore FROM llamadas WHERE fecha>=? AND fecha<? ORDER BY fecha DESC LIMIT 1000").all(ini, fin);
+  if (agente) filas = filas.filter(l => l.agente === agente);
+  // Enriquecer con el nombre del cliente (lead B2C o solicitud B2B).
+  filas.forEach(l => {
+    l.cliente = null; l.mundo = null;
+    if (l.codigo) { const x = db.prepare('SELECT nombre FROM leads WHERE codigo=?').get(l.codigo); if (x) { l.cliente = x.nombre; l.mundo = 'B2C'; } }
+    if (!l.cliente && l.codigoB2B) { const x = db.prepare('SELECT razonSocial, contacto FROM b2b_solicitudes WHERE codigo=?').get(l.codigoB2B); if (x) { l.cliente = x.razonSocial || x.contacto; l.mundo = 'B2B'; } }
+  });
+  // Resumen por agente: llamadas, únicos, contestadas, tiempo total, más larga.
+  const porAgente = {};
+  filas.forEach(l => {
+    const a = l.agente || 'Sin agente';
+    const p = porAgente[a] = porAgente[a] || { llamadas: 0, unicos: new Set(), contestadas: 0, segTotal: 0, masLarga: 0 };
+    p.llamadas++; p.unicos.add(l.codigo || l.codigoB2B || l.telefono || String(l.id));
+    if (l.contestada) p.contestadas++;
+    p.segTotal += (l.duracion || 0);
+    if ((l.duracion || 0) > p.masLarga) p.masLarga = l.duracion || 0;
+  });
+  const resumen = Object.entries(porAgente).map(([a, p]) => ({ agente: a, llamadas: p.llamadas, unicos: p.unicos.size, contestadas: p.contestadas, segTotal: p.segTotal, masLarga: p.masLarga })).sort((x, y) => y.llamadas - x.llamadas);
+  const agentes = db.prepare("SELECT DISTINCT agente FROM llamadas WHERE agente IS NOT NULL ORDER BY agente").all().map(r => r.agente);
+  res.json({ llamadas: filas, resumen, agentes, desde: d0, hasta: d1 });
+});
+
+// Detalle de inteligencia de una llamada: transcripción, resumen Aircall, sentimiento, score IA.
+app.get('/api/llamadas/:id/inteligencia', (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b'].includes(u.rol)) return res.status(403).json({ error: 'Solo administradores o jefes' });
+  const l = db.prepare('SELECT id, aircall_id, agente, codigo, codigoB2B, duracion, fecha, transcripcion, resumenAircall, sentimiento, scoreIA FROM llamadas WHERE id=?').get(req.params.id);
+  if (!l) return res.status(404).json({ error: 'Llamada no encontrada' });
+  res.json(l);
+});
+
+// Genera (o regenera) el CALL SCORING con IA sobre la transcripción de la llamada.
+app.post('/api/llamadas/:id/score', async (req, res) => {
+  const u = usuarioDeSesion(req);
+  if (!u || !['admin', 'jefa', 'jefe_b2b'].includes(u.rol)) return res.status(403).json({ error: 'Solo administradores o jefes' });
+  const l = db.prepare('SELECT * FROM llamadas WHERE id=?').get(req.params.id);
+  if (!l) return res.status(404).json({ error: 'Llamada no encontrada' });
+  if (!l.transcripcion) return res.status(422).json({ error: 'Esta llamada no tiene transcripción aún' });
+  if (!iaReportes.configurado()) return res.status(422).json({ error: 'Falta ANTHROPIC_API_KEY en Railway' });
+  let cliente = null;
+  if (l.codigo) { const x = db.prepare('SELECT nombre FROM leads WHERE codigo=?').get(l.codigo); if (x) cliente = x.nombre; }
+  if (!cliente && l.codigoB2B) { const x = db.prepare('SELECT razonSocial, contacto FROM b2b_solicitudes WHERE codigo=?').get(l.codigoB2B); if (x) cliente = x.razonSocial || x.contacto; }
+  const score = await iaReportes.scoringLlamada(l.transcripcion, { asesor: l.agente, cliente });
+  if (!score) return res.status(500).json({ error: 'No se pudo generar el score' });
+  db.prepare('UPDATE llamadas SET scoreIA=? WHERE id=?').run(score, l.id);
+  auditar(req, 'llamada_score_ia', String(l.id), l.agente || '');
+  res.json({ ok: true, score });
 });
 
 app.post('/api/gestiones', (req, res) => {
@@ -8749,7 +8861,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.431 (Calendar afinado: (1) al elegir/cambiar la fecha de reunion los horarios libres aparecen AUTOMATICAMENTE (sin clic en el boton). (2) Horario ampliado 9:00am a 8:00pm (23 slots de 30 min). (3) El evento se crea recien al GUARDAR la gestion (ya era asi, confirmado). (4) El Enlace Reunion aparece solo, sin el titulo Respuestas del formulario (el titulo solo sale si hay respuestas reales del form). (5) BACKFILL: POST /api/gcal/backfill (solo admin) crea eventos para los leads YA agendados con reunion futura y sin evento - mismo formato que un agendamiento nuevo. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.433 (TRANSCRIPCION + CALL SCORING Aircall: el webhook ahora procesa los eventos de inteligencia de conversacion del plan de Aircall: transcription.created (guarda la transcripcion con hablantes Asesor/Cliente, robusto al orden de llegada vs call.ended), summary.created (resumen de Aircall) y sentiment.created. En el modulo de Llamadas cada llamada con transcripcion muestra boton para abrir el modal de Inteligencia: transcripcion completa + resumen + sentimiento + boton Generar call scoring con IA (Claude via ia-reportes: score /100 en 5 dimensiones - apertura, descubrimiento, valor, objeciones, cierre - mas lo mejor, a mejorar y siguiente paso; se guarda en scoreIA). Endpoints: GET /api/llamadas/:id/inteligencia y POST /api/llamadas/:id/score. IMPORTANTE: activar los toggles transcription/summary/sentiment.created en el webhook de Aircall apuntando al MISMO endpoint. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

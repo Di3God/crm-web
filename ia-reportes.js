@@ -217,4 +217,25 @@ async function analizarOperacionB2B(D) {
   return await llamar(instruccion, 1000);
 }
 
-module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B };
+// Call scoring: analiza la transcripción de una llamada comercial y devuelve un puntaje
+// por dimensión + hallazgos. Devuelve texto formateado (o null si falla/no configurado).
+async function scoringLlamada(transcripcion, ctx) {
+  if (!configurado() || !transcripcion) return null;
+  const c = ctx || {};
+  const prompt = 'Eres un coach comercial senior de TasaTop (crowdlending con garantía inmobiliaria, Perú). ' +
+    'Analiza esta transcripción de llamada comercial y devuelve un CALL SCORING conciso en este formato EXACTO:\n\n' +
+    '*📊 Score total: X/100*\n' +
+    '• Apertura y rapport: X/20 — (1 línea)\n' +
+    '• Descubrimiento de necesidades: X/20 — (1 línea)\n' +
+    '• Presentación de valor: X/20 — (1 línea)\n' +
+    '• Manejo de objeciones: X/20 — (1 línea)\n' +
+    '• Cierre y siguiente paso: X/20 — (1 línea)\n' +
+    '*💡 Lo mejor:* (1 línea)\n' +
+    '*⚠️ A mejorar:* (1 línea concreta y accionable)\n' +
+    '*🎯 Siguiente paso acordado:* (lo que quedó pactado, o "no se pactó")\n\n' +
+    (c.asesor ? 'Asesor: ' + c.asesor + '. ' : '') + (c.cliente ? 'Cliente: ' + c.cliente + '. ' : '') +
+    'El hablante "Asesor" es el vendedor y "Cliente" es el prospecto.\n\nTRANSCRIPCIÓN:\n' + String(transcripcion).slice(0, 24000);
+  return await llamar(prompt, 700);
+}
+
+module.exports = { configurado, interpretarGestion, interpretarPlanes, interpretarMarketing, interpretarPerformance, interpretarComite, analizarOperacionB2B, scoringLlamada };
