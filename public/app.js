@@ -10393,14 +10393,16 @@ function elegirHorario(iso) {
 }
 
 // ---- Módulo de llamadas Aircall (filtro fecha/agente, cliente, duración, horario) ----
-async function abrirModuloLlamadas() {
+let LLAM_MUNDO = 'b2b';
+async function abrirModuloLlamadas(mundo) {
+  LLAM_MUNDO = mundo === 'b2c' ? 'b2c' : 'b2b';
   const hoy = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
   const ov = document.createElement('div');
   ov.className = 'modal-ov act'; ov.id = 'ovLlamadas';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
   ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:860px;width:100%;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.25)">' +
     '<div style="background:#0F2A4A;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">' +
-      '<div><div style="font-weight:800;font-size:15px">📞 Llamadas Aircall</div><div style="font-size:12px;color:#9DB8D8">Por funcionario · cliente · duración · horario</div></div>' +
+      '<div><div style="font-weight:800;font-size:15px">📞 Llamadas Aircall</div><div style="font-size:12px;color:#9DB8D8">' + (LLAM_MUNDO === 'b2c' ? 'GPs B2C' : 'Funcionarios B2B') + ' · cliente · duración · horario</div></div>' +
       '<button onclick="document.getElementById(\'ovLlamadas\').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">×</button></div>' +
     '<div style="padding:12px 20px;border-bottom:1px solid #EEF1F5;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       '<input type="date" id="llamDesde" class="mtr-in" value="' + hoy + '" style="width:auto">' +
@@ -10421,7 +10423,7 @@ async function cargarLlamadas() {
   try {
     const desde = document.getElementById('llamDesde').value, hasta = document.getElementById('llamHasta').value;
     const agente = document.getElementById('llamAgente').value;
-    const d = await api('/api/llamadas?desde=' + desde + '&hasta=' + hasta + (agente ? '&agente=' + encodeURIComponent(agente) : ''));
+    const d = await api('/api/llamadas?mundo=' + LLAM_MUNDO + '&desde=' + desde + '&hasta=' + hasta + (agente ? '&agente=' + encodeURIComponent(agente) : ''));
     // Poblar el select de agentes (una vez).
     const sel = document.getElementById('llamAgente');
     if (sel && sel.options.length <= 1 && d.agentes) d.agentes.forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = a; sel.appendChild(o); });
@@ -10438,7 +10440,7 @@ async function cargarLlamadas() {
         const hora = String(dt.getUTCDate()).padStart(2,'0') + '/' + String(dt.getUTCMonth()+1).padStart(2,'0') + ' ' + String(dt.getUTCHours()).padStart(2,'0') + ':' + String(dt.getUTCMinutes()).padStart(2,'0');
         const cliente = l.cliente ? (l.cliente + (l.mundo ? ' <span style="font-size:9.5px;background:#EEF1F5;border-radius:6px;padding:1px 5px;color:#5B7290">' + l.mundo + '</span>' : '')) : '<span style="color:#8AA0B8">no vinculado</span>';
         const ia = l.tieneTrans
-          ? '<button class="btn-sunat b2b-acc" onclick="verInteligenciaLlamada(' + l.id + ')">' + (l.tieneScore ? '🤖 Score' : '📝 Transcripción') + '</button>'
+          ? '<button class="btn-sunat b2b-acc" onclick="verInteligenciaLlamada(' + l.id + ')">📝 Transcripción</button>'
           : '<span style="color:#C9D4E0;font-size:11px">—</span>';
         return '<tr><td>' + hora + '</td><td>' + (l.agente || '—') + '</td><td>' + cliente + '</td><td>' + (l.telefono || '—') + '</td>' +
           '<td>' + (l.direccion === 'outbound' ? '📤' : '📥') + '</td>' +
@@ -10460,8 +10462,6 @@ async function verInteligenciaLlamada(id) {
         '<div><div style="font-weight:800;font-size:14px">🧠 Inteligencia de la llamada</div><div style="font-size:11.5px;color:#9DB8D8">' + (l.agente || '') + ' · ' + fmtDur(l.duracion) + (l.sentimiento ? ' · Sentimiento: ' + l.sentimiento : '') + '</div></div>' +
         '<button onclick="verCerrarIntelLlam()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">×</button></div>' +
       '<div style="padding:14px 20px;overflow-y:auto">' +
-        (l.scoreIA ? '<div style="background:#F0F6FD;border:1px solid #CFE3FA;border-radius:10px;padding:12px;margin-bottom:12px;white-space:pre-wrap;font-size:12.5px;line-height:1.55">' + l.scoreIA.replace(/\\*/g,'') + '</div>' : '') +
-        '<button class="btn" id="btnScoreIA" onclick="generarScoreLlamada(' + l.id + ')" style="margin-bottom:12px">' + (l.scoreIA ? '🔄 Regenerar score' : '🤖 Generar call scoring con IA') + '</button>' +
         (l.resumenAircall ? '<div style="font-size:10.5px;font-weight:800;color:#8AA0B8;text-transform:uppercase;margin-bottom:4px">Resumen Aircall</div><div style="font-size:12.5px;color:#41566E;margin-bottom:12px">' + l.resumenAircall + '</div>' : '') +
         '<div style="font-size:10.5px;font-weight:800;color:#8AA0B8;text-transform:uppercase;margin-bottom:4px">Transcripción</div>' +
         '<pre style="background:#F7F8FA;border:1px solid #EEF1F5;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow-y:auto;margin:0;font-family:inherit">' + (l.transcripcion || 'Sin transcripción.') + '</pre>' +

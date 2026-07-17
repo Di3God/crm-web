@@ -2826,6 +2826,13 @@ app.get('/api/llamadas', (req, res) => {
   const ini = new Date(new Date(d0 + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
   const fin = new Date(new Date(d1 + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
   let filas = db.prepare("SELECT id, aircall_id, codigo, codigoB2B, telefono, direccion, contestada, duracion, agente, fecha, sentimiento, (transcripcion IS NOT NULL) AS tieneTrans, (scoreIA IS NOT NULL) AS tieneScore FROM llamadas WHERE fecha>=? AND fecha<? ORDER BY fecha DESC LIMIT 1000").all(ini, fin);
+  // Este módulo se usa en B2B (Centro de Operaciones) y B2C (Comité): el parámetro mundo
+  // define qué agentes mostrar. B2B = funcionario_b2b/asistente_creditos; B2C = gestoras (GP).
+  const mundo = (req.query.mundo === 'b2c') ? 'b2c' : 'b2b';
+  const roles = mundo === 'b2c' ? ['gestora'] : ['funcionario_b2b', 'asistente_creditos'];
+  const ph = roles.map(() => '?').join(',');
+  const agentesB2B = new Set(db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN (" + ph + ")").all(...roles).map(x => x.nombre));
+  filas = filas.filter(l => agentesB2B.has(l.agente));
   if (agente) filas = filas.filter(l => l.agente === agente);
   // Enriquecer con el nombre del cliente (lead B2C o solicitud B2B).
   filas.forEach(l => {
@@ -2844,7 +2851,7 @@ app.get('/api/llamadas', (req, res) => {
     if ((l.duracion || 0) > p.masLarga) p.masLarga = l.duracion || 0;
   });
   const resumen = Object.entries(porAgente).map(([a, p]) => ({ agente: a, llamadas: p.llamadas, unicos: p.unicos.size, contestadas: p.contestadas, segTotal: p.segTotal, masLarga: p.masLarga })).sort((x, y) => y.llamadas - x.llamadas);
-  const agentes = db.prepare("SELECT DISTINCT agente FROM llamadas WHERE agente IS NOT NULL ORDER BY agente").all().map(r => r.agente);
+  const agentes = Array.from(agentesB2B).sort();
   res.json({ llamadas: filas, resumen, agentes, desde: d0, hasta: d1 });
 });
 
@@ -2873,6 +2880,36 @@ app.post('/api/llamadas/:id/score', async (req, res) => {
   db.prepare('UPDATE llamadas SET scoreIA=? WHERE id=?').run(score, l.id);
   auditar(req, 'llamada_score_ia', String(l.id), l.agente || '');
   res.json({ ok: true, score });
+});
+
+// BACKFILL de transcripciones pasadas desde la API de Aircall (solo admin).
+// Requiere variables Railway: AIRCALL_API_ID + AIRCALL_API_TOKEN (Aircall → Integrations → API keys).
+// Recorre las llamadas contestadas sin transcripción de los últimos N días y las pide una a una.
+app.post('/api/llamadas/backfill-transcripciones', soloAdmin, async (req, res) => {
+  const id = process.env.AIRCALL_API_ID, tok = process.env.AIRCALL_API_TOKEN;
+  if (!id || !tok) return res.status(422).json({ error: 'Configura AIRCALL_API_ID y AIRCALL_API_TOKEN en Railway' });
+  const dias = Math.min(Number((req.body || {}).dias) || 30, 90);
+  const desde = new Date(Date.now() - dias * 86400000).toISOString();
+  const pendientes = db.prepare("SELECT id, aircall_id FROM llamadas WHERE transcripcion IS NULL AND contestada=1 AND duracion>0 AND fecha>=? ORDER BY fecha DESC LIMIT 200").all(desde);
+  const auth = 'Basic ' + Buffer.from(id + ':' + tok).toString('base64');
+  const out = { revisadas: pendientes.length, conTranscripcion: 0, sinTranscripcion: 0, errores: 0 };
+  for (const ll of pendientes) {
+    try {
+      const r = await fetch('https://api.aircall.io/v1/calls/' + ll.aircall_id + '/transcription', { headers: { authorization: auth } });
+      if (r.status === 404) { out.sinTranscripcion++; continue; }
+      if (!r.ok) { out.errores++; continue; }
+      const j = await r.json();
+      const t = j.transcription || j;
+      const utt = (t.content && t.content.utterances) || t.utterances || [];
+      let texto = utt.map(u => ((u.participant_type === 'internal' || u.speaker === 'agent') ? 'Asesor' : 'Cliente') + ': ' + (u.text || '')).join('\n');
+      if (!texto) texto = JSON.stringify(t).slice(0, 30000);
+      db.prepare('UPDATE llamadas SET transcripcion=? WHERE id=?').run(texto.slice(0, 60000), ll.id);
+      out.conTranscripcion++;
+      await new Promise(rs => setTimeout(rs, 300)); // respetar rate limit de Aircall
+    } catch (e) { out.errores++; }
+  }
+  auditar(req, 'aircall_backfill_trans', null, out.conTranscripcion + ' transcripciones');
+  res.json({ ok: true, ...out });
 });
 
 app.post('/api/gestiones', (req, res) => {
@@ -8861,7 +8898,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.433 (TRANSCRIPCION + CALL SCORING Aircall: el webhook ahora procesa los eventos de inteligencia de conversacion del plan de Aircall: transcription.created (guarda la transcripcion con hablantes Asesor/Cliente, robusto al orden de llegada vs call.ended), summary.created (resumen de Aircall) y sentiment.created. En el modulo de Llamadas cada llamada con transcripcion muestra boton para abrir el modal de Inteligencia: transcripcion completa + resumen + sentimiento + boton Generar call scoring con IA (Claude via ia-reportes: score /100 en 5 dimensiones - apertura, descubrimiento, valor, objeciones, cierre - mas lo mejor, a mejorar y siguiente paso; se guarda en scoreIA). Endpoints: GET /api/llamadas/:id/inteligencia y POST /api/llamadas/:id/score. IMPORTANTE: activar los toggles transcription/summary/sentiment.created en el webhook de Aircall apuntando al MISMO endpoint. Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.435 (Llamadas en dos mundos + backfill de transcripciones: (1) el modulo de llamadas ahora tambien esta en B2C > Comite (boton Llamadas, solo admin) mostrando SOLO a las GP (Lourdes, Mafer, Dora, Henry - Henry aparece aunque aun no tenga cuenta Aircall); el de B2B sigue con Shirley/Bony/Luis; parametro mundo=b2b|b2c. (2) BACKFILL de transcripciones pasadas: POST /api/llamadas/backfill-transcripciones (solo admin) las pide a la API de Aircall para las llamadas contestadas sin transcripcion de los ultimos 30 dias (max 90); requiere AIRCALL_API_ID + AIRCALL_API_TOKEN en Railway (Aircall > Integrations > API keys). Server: restart. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
