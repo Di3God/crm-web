@@ -532,6 +532,10 @@ async function arrancar() {
   if (YO.rol === 'admin') {
     document.querySelectorAll('.soloAdmin, .asignador').forEach(e => e.classList.remove('oculto'));
   }
+  // Módulo de llamadas B2B: admin y Jefe B2B (Dante). El endpoint /api/llamadas permite ambos.
+  if (['admin', 'jefe_b2b'].includes(YO.rol)) {
+    document.querySelectorAll('.soloLlamadasB2B').forEach(e => e.classList.remove('oculto'));
+  }
   // Jefa de Ventas: ve y asigna toda la cartera, pero no carga/archiva/auditoria.
   if (YO.rol === 'jefa') {
     document.querySelectorAll('.asignador').forEach(e => e.classList.remove('oculto'));
