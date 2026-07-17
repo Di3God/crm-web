@@ -8939,7 +8939,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.438 (Diagnostico backfill transcripciones: el backfill ahora devuelve _primerError con el detalle exacto del primer fallo (HTTP status + cuerpo, o mensaje del catch) para saber por que Aircall rechaza - 401 credenciales, 403 permisos, 404 sin transcripcion, etc. Server: restart) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.439 (Ajustes visuales Centro de llamadas: (1) titulo del modal ahora dice Centro de llamadas (antes Llamadas Aircall). (2) encabezado de la tabla con letras BLANCAS sobre el fondo azul (antes gris ilegible). (3) columna IA renombrada a Transcp, boton Ver. (4) columna Dir ahora muestra Ent (entrante, verde) / Sal (saliente, azul) en vez del icono. Aplica a B2B y B2C. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

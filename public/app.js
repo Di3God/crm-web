@@ -10402,7 +10402,7 @@ async function abrirModuloLlamadas(mundo) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
   ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:860px;width:100%;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.25)">' +
     '<div style="background:#0F2A4A;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">' +
-      '<div><div style="font-weight:800;font-size:15px">📞 Llamadas Aircall</div><div style="font-size:12px;color:#9DB8D8">' + (LLAM_MUNDO === 'b2c' ? 'GPs B2C' : 'Funcionarios B2B') + ' · cliente · duración · horario</div></div>' +
+      '<div><div style="font-weight:800;font-size:15px">📞 Centro de llamadas</div><div style="font-size:12px;color:#9DB8D8">' + (LLAM_MUNDO === 'b2c' ? 'GPs B2C' : 'Funcionarios B2B') + ' · cliente · duración · horario</div></div>' +
       '<button onclick="document.getElementById(\'ovLlamadas\').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">×</button></div>' +
     '<div style="padding:12px 20px;border-bottom:1px solid #EEF1F5;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       '<input type="date" id="llamDesde" class="mtr-in" value="' + hoy + '" style="width:auto">' +
@@ -10434,16 +10434,19 @@ async function cargarLlamadas() {
       '<b>' + r.agente.split(' ')[0] + '</b>: ' + r.llamadas + ' llam · ' + r.unicos + ' únicos · ' + r.contestadas + ' ✓ · ' + fmtDur(r.segTotal) + ' total · ⏱ ' + fmtDur(r.masLarga) + '</span>').join('') || '<span style="font-size:12px;color:#8AA0B8">Sin llamadas en el rango.</span>';
     // Tabla.
     if (!(d.llamadas || []).length) { tabla.innerHTML = '<div class="vacio">No hay llamadas en este rango.</div>'; return; }
-    tabla.innerHTML = '<table class="mt-tabla" style="width:100%"><thead><tr><th>Hora</th><th>Funcionario</th><th>Cliente</th><th>Teléfono</th><th>Dir</th><th>¿Contestó?</th><th>Duración</th><th>IA</th></tr></thead><tbody>' +
+    tabla.innerHTML = '<table class="mt-tabla" style="width:100%"><thead><tr style="background:#0F2A4A"><th style="color:#fff">Hora</th><th style="color:#fff">Funcionario</th><th style="color:#fff">Cliente</th><th style="color:#fff">Teléfono</th><th style="color:#fff">Dir</th><th style="color:#fff">¿Contestó?</th><th style="color:#fff">Duración</th><th style="color:#fff">Transcp</th></tr></thead><tbody>' +
       d.llamadas.map(l => {
         const dt = new Date(new Date(l.fecha).getTime() - 5*3600000);
         const hora = String(dt.getUTCDate()).padStart(2,'0') + '/' + String(dt.getUTCMonth()+1).padStart(2,'0') + ' ' + String(dt.getUTCHours()).padStart(2,'0') + ':' + String(dt.getUTCMinutes()).padStart(2,'0');
         const cliente = l.cliente ? (l.cliente + (l.mundo ? ' <span style="font-size:9.5px;background:#EEF1F5;border-radius:6px;padding:1px 5px;color:#5B7290">' + l.mundo + '</span>' : '')) : '<span style="color:#8AA0B8">no vinculado</span>';
         const ia = l.tieneTrans
-          ? '<button class="btn-sunat b2b-acc" onclick="verInteligenciaLlamada(' + l.id + ')">📝 Transcripción</button>'
+          ? '<button class="btn-sunat b2b-acc" onclick="verInteligenciaLlamada(' + l.id + ')">📝 Ver</button>'
           : '<span style="color:#C9D4E0;font-size:11px">—</span>';
+        const dir = l.direccion === 'outbound'
+          ? '<span style="font-size:11px;font-weight:700;color:#0B72E8">Sal</span>'
+          : '<span style="font-size:11px;font-weight:700;color:#0F7B52">Ent</span>';
         return '<tr><td>' + hora + '</td><td>' + (l.agente || '—') + '</td><td>' + cliente + '</td><td>' + (l.telefono || '—') + '</td>' +
-          '<td>' + (l.direccion === 'outbound' ? '📤' : '📥') + '</td>' +
+          '<td>' + dir + '</td>' +
           '<td>' + (l.contestada ? '<span style="color:#0F7B52;font-weight:700">Sí</span>' : '<span style="color:#C0392B">No</span>') + '</td>' +
           '<td><b>' + fmtDur(l.duracion) + '</b></td><td>' + ia + '</td></tr>';
       }).join('') + '</tbody></table>';
