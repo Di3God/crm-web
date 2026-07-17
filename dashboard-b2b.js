@@ -811,12 +811,43 @@ module.exports = function (deps) {
     const capEt = { 'SUNAT (RUC)': 'Solicitud', 'Solicitud': 'Solicitud', 'Crédito': 'Filtro credito', 'Garantía': 'Filtro garantia', 'Reunión': 'Reunion comercial', 'Finanzas': 'Filtro finanzas' };
     const desPorEtapa = {}; ETAPAS_ORD.forEach(e => desPorEtapa[e] = []);
     desEnr.forEach(x => { const e = capEt[x.etapaCaida] || 'Solicitud'; desPorEtapa[e].push(x); });
+    // Fechas de LLEGADA a cada etapa por lead (primera transición "→ etapa" en la auditoría histórica).
+    const llegadas = {}; // codigo -> { etapaKey: fechaISO }
+    const DEST_A_ETAPA = {}; ETAPAS_ORD.forEach(e => DEST_A_ETAPA[norm ? norm(e) : e.toLowerCase()] = e);
+    const normEt = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const mapDest = t => { const n = normEt(t); return ETAPAS_ORD.find(e => normEt(e) === n || normEt(ETQ[e]) === n) || null; };
+    db.prepare("SELECT objetivo, detalle, fecha FROM auditoria WHERE accion IN ('b2b_kanban_mover','b2b_kanban_forzar','b2b_avanzar_etapa') ORDER BY fecha ASC").all()
+      .forEach(a => {
+        const m = String(a.detalle || '').match(/(?:→|->)\s*(.+)$/);
+        if (!m) return;
+        const et = mapDest(m[1]); if (!et) return;
+        (llegadas[a.objetivo] = llegadas[a.objetivo] || {});
+        if (!llegadas[a.objetivo][et]) llegadas[a.objetivo][et] = a.fecha;
+      });
+    const ingresoDe = {}; vivasFull.forEach(s => ingresoDe[s.codigo] = s.fechaIngreso);
+    const fechaEtapaDe = {}; vivasFull.forEach(s => { const et = etapaKanbanB2B(s); fechaEtapaDe[s.codigo] = sellarFechaEtapa(s, et); });
+
     const embudo = ETAPAS_ORD.map((e, i) => {
       const alc = vivosEnr.filter(v => v.idx >= i);
       const vivosAqui = [...vivosPorEtapa[e]].sort((a, b) => b.monto - a.monto);
       const desAqui = [...desPorEtapa[e]].sort((a, b) => b.monto - a.monto);
       const nAcumPrev = i === 0 ? null : vivosEnr.filter(v => v.idx >= i - 1).length;
+      // ⏳ Estancamiento: días promedio EN la etapa de los vivos que están en ella hoy.
+      const enEtapaDias = vivosAqui.map(v => v.diasEnEtapa).filter(x => x != null);
+      const promEnEtapa = enEtapaDias.length ? Math.round(prom(enEtapaDias) * 10) / 10 : null;
+      // 🚀 Velocidad de llegada: días desde el ingreso hasta ALCANZAR esta etapa,
+      //    sobre todos los vivos que la alcanzaron (llegada por auditoría; fallback: fechaEtapa si es su etapa actual).
+      const llegadaDias = i === 0 ? [] : alc.map(v => {
+        const ing = ingresoDe[v.codigo]; if (!ing) return null;
+        let f = (llegadas[v.codigo] || {})[e];
+        if (!f && v.idx === i) f = fechaEtapaDe[v.codigo];
+        if (!f) return null;
+        const dd = (new Date(f) - new Date(ing)) / 86400000;
+        return dd >= 0 ? dd : null;
+      }).filter(x => x != null);
+      const promLlegada = llegadaDias.length ? Math.round(prom(llegadaDias) * 10) / 10 : null;
       return { id: e, etapa: ETQ[e], nAcum: alc.length, montoAcum: alc.reduce((a, v) => a + v.monto, 0), montoAcumFmt: fmtMM(alc.reduce((a, v) => a + v.monto, 0)),
+        promEnEtapa, promLlegada, nLlegadaMuestra: llegadaDias.length,
         pctDelTotal: vivosEnr.length ? Math.round(alc.length / vivosEnr.length * 100) : 0,
         convDesdeAnterior: i === 0 ? 100 : (nAcumPrev ? Math.round(alc.length / nAcumPrev * 100) : 0),
         vivos: vivosAqui.length, montoVivos: vivosAqui.reduce((a, v) => a + v.monto, 0), montoVivosFmt: fmtMM(vivosAqui.reduce((a, v) => a + v.monto, 0)),
@@ -836,8 +867,11 @@ module.exports = function (deps) {
     const enCaminoPor = {};
     vivosEnr.forEach(v => { if (EN_CAMINO_ET.includes(ETAPAS_ORD[v.idx])) { enCaminoPor[v.responsable] = (enCaminoPor[v.responsable] || 0) + v.monto; } });
     meta.individuales = meta.individuales.map(i => { const c = enCaminoPor[nombreCorto(i.nombre)] || 0; return Object.assign({}, i, { enCamino: c, enCaminoFmt: fmtMM(c) }); });
-    const enCaminoEquipo = Object.values(enCaminoPor).reduce((a, b) => a + b, 0);
+    // La proyección del EQUIPO solo suma el enCamino de quienes TIENEN meta individual
+    // (Shirley y Bony); los leads de Dante u otros sin meta no cuentan para la estimación.
+    const enCaminoEquipo = meta.individuales.reduce((a, i) => a + (i.enCamino || 0), 0);
     meta.enCaminoEquipo = enCaminoEquipo; meta.enCaminoEquipoFmt = fmtMM(enCaminoEquipo);
+    meta.enCaminoDe = meta.individuales.map(i => primerNombre(i.nombre)).join(' y ');
 
     // --- 7) SIN CONTACTO >48h (vivos sin gestión hace 2+ días o nunca) + conversión global ---
     const sin48 = vivosEnr.filter(v => v.diasSinGestion == null || v.diasSinGestion >= 2);

@@ -10648,11 +10648,12 @@ function cbbRenderKpis(d) {
     { ico: '🗑', col: 'rosa', lbl: 'Desestimados', val: (R.total || 0), sub: (R.montoFmt || 'S/ 0') + (R.diasVivoProm != null ? ' · ' + R.diasVivoProm + 'd vivos prom' : '') }
   ];
   $('cbbKpis').innerHTML = cards.map(c =>
-    '<div class="cbb-kpi"><div class="cbb-kpi-top"><span class="cbb-kpi-ico cbb-ico-' + c.col + '">' + c.ico + '</span><span class="cbb-kpi-lbl">' + c.lbl + '</span></div>' +
-    '<div class="cbb-kpi-val' + (c.rojo ? ' cbb-val-rojo' : '') + '">' + c.val + '</div>' +
-    (c.sub ? '<div class="cbb-kpi-sub">' + c.sub + '</div>' : '') +
-    (c.spark ? '<div class="cbb-kpi-spark"><canvas id="' + c.spark + '"></canvas></div>' : '') +
-    '</div>').join('');
+    '<div class="cbb-kpi"><div class="cbb-kpi-izq">' +
+      '<div class="cbb-kpi-lbl">' + c.lbl + '</div>' +
+      '<div class="cbb-kpi-val' + (c.rojo ? ' cbb-val-rojo' : '') + '">' + c.val + '</div>' +
+      (c.sub ? '<div class="cbb-kpi-sub">' + c.sub + '</div>' : '') +
+      (c.spark ? '<div class="cbb-kpi-spark"><canvas id="' + c.spark + '"></canvas></div>' : '') +
+    '</div><span class="cbb-kpi-ico cbb-ico-' + c.col + '">' + c.ico + '</span></div>').join('');
 }
 function cbbSparks(d) {
   const mk = (id, serie, color) => {
@@ -10673,12 +10674,20 @@ function cbbRenderEmbudo(d) {
   if (!emb.length || !emb[0].nAcum) { cont.innerHTML = '<div class="vacio">Sin solicitudes vivas.</div>'; return; }
   const SUB = { 'Solicitud/SUNAT': 'Leads recibidos', 'Crédito': 'Evaluación crediticia', 'Garantía': 'Evaluación de garantías', 'Reunión': 'Reunión comercial', 'Finanzas': 'Estructuración financiera', 'Business Case': 'Presentado a comité' };
   const ICO = { 'Solicitud/SUNAT': '📄', 'Crédito': '💳', 'Garantía': '🏠', 'Reunión': '🤝', 'Finanzas': '📊', 'Business Case': '🏆' };
-  const COL = { 'Solicitud/SUNAT': CBB.azul, 'Crédito': CBB.morado, 'Garantía': CBB.teal, 'Reunión': CBB.amarillo, 'Finanzas': CBB.verde, 'Business Case': CBB.rosa };
+  const COL = { 'Solicitud/SUNAT': CBB.azul, 'Crédito': CBB.morado, 'Garantía': CBB.verde, 'Reunión': CBB.amarillo, 'Finanzas': '#F97316', 'Business Case': CBB.rosa };
   const maxN = Math.max(1, emb[0].nAcum);
-  cont.innerHTML = emb.map((f, i) => {
+  // Cabecera de las columnas de tiempo
+  let html = '<div class="cbb-emb-head"><span></span><span></span><span></span><span></span>' +
+    '<span class="cbb-emb-th">⏳ En etapa<small>estancamiento</small></span>' +
+    '<span class="cbb-emb-th">🚀 Llegada<small>desde el ingreso</small></span>' +
+    '<span class="cbb-emb-th">Conv.<small>por etapa</small></span></div>';
+  html += emb.map((f, i) => {
     const w = Math.max(3, Math.round(f.nAcum / maxN * 100));
     const conv = f.convDesdeAnterior;
     const convCls = i === 0 ? '' : (conv >= 60 ? 'cbb-conv-ok' : conv >= 25 ? 'cbb-conv-med' : 'cbb-conv-bad');
+    const est = f.promEnEtapa != null ? f.promEnEtapa : null;
+    const estCls = est == null ? '' : est >= 7 ? 'cbb-t-mal' : est >= 4 ? 'cbb-t-med' : 'cbb-t-ok';
+    const lleg = f.promLlegada != null ? f.promLlegada : null;
     return '<div class="cbb-emb-fila">' +
       '<div class="cbb-emb-ico" style="background:' + COL[f.etapa] + '18;color:' + COL[f.etapa] + '">' + ICO[f.etapa] + '</div>' +
       '<div class="cbb-emb-info"><div class="cbb-emb-nom">' + f.etapa + '</div><div class="cbb-emb-sub">' + SUB[f.etapa] + '</div></div>' +
@@ -10688,9 +10697,12 @@ function cbbRenderEmbudo(d) {
           (f.vivos > 0 ? '<span class="cbb-lk-v" onclick="cbVerEtapa(\'' + f.id + '\',\'vivos\')">' + f.vivos + ' vivos · ' + f.montoVivosFmt + '</span>' : '') +
           (f.desest > 0 ? '<span class="cbb-lk-d" onclick="cbVerEtapa(\'' + f.id + '\',\'desest\')">✕ ' + f.desest + ' · ' + f.montoDesestFmt + '</span>' : '') +
         '</div></div>' +
+      '<div class="cbb-emb-t ' + estCls + '">' + (est != null ? est + ' d' : '—') + '</div>' +
+      '<div class="cbb-emb-t cbb-t-lleg">' + (lleg != null ? lleg + ' d' : (i === 0 ? '·' : '—')) + '</div>' +
       '<div class="cbb-emb-conv ' + convCls + '">' + (i === 0 ? '<small>' + f.montoAcumFmt + '</small>' : conv + '%<small>' + f.montoAcumFmt + '</small>') + '</div>' +
       '</div>';
   }).join('');
+  cont.innerHTML = html;
 }
 
 // Modal detalle vivos/desestimados (se conserva del diseño anterior).
@@ -10746,7 +10758,7 @@ function cbbRenderMeta(d) {
     '</div>' +
     '<div class="cbb-donut" style="background:conic-gradient(' + donCol + ' ' + (pct * 3.6) + 'deg, #E8EDF5 0)"><div class="cbb-donut-in"><b>' + pct + '%</b><span>cumplido</span></div></div>' +
     '</div>' +
-    '<div class="cbb-proy"><div class="cbb-proy-l">Proyección a cierre <span class="cbb-card-sub">run-rate + ' + cbMM(enCamino) + ' ya en Reunión comercial o más allá</span></div>' +
+    '<div class="cbb-proy"><div class="cbb-proy-l">Proyección a cierre <span class="cbb-card-sub">run-rate + ' + cbMM(enCamino) + ' en Reunión+ de ' + esc(M.enCaminoDe || 'los funcionarios con meta') + '</span></div>' +
       '<div class="cbb-proy-val">' + cbMM(proy) + ' <span class="cbb-proy-pct">' + pctProy + '% del objetivo</span></div>' +
       '<div class="cbb-proy-track"><div class="cbb-proy-fill" style="width:' + Math.min(100, pctProy) + '%"></div></div>' +
       (deficit > 0 && G.monto > 0 ? '<div class="cbb-deficit">Déficit esperado <b>-' + cbMM(deficit) + '</b> · ' + (-Math.round(deficit / G.monto * 100)) + '% del objetivo</div>' : (G.monto > 0 ? '<div class="cbb-superavit">La proyección cubre la meta ✓</div>' : '')) +
@@ -10796,9 +10808,10 @@ function cbbRenderHeat(d) {
   if (h0 < 0) { h0 = 8; h1 = 18; }
   const horas = []; for (let h = h0; h <= h1; h++) horas.push(h);
   const maxV = Math.max(1, ...activos.flatMap(f => horas.map(h => f.valores[h])));
-  const hLbl = h => { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ' ' + ap; };
-  let html = '<div class="cbb-heat-scroll"><div class="cbb-heat" style="grid-template-columns:70px repeat(' + horas.length + ',minmax(26px,1fr))">';
-  html += '<div></div>' + horas.map(h => '<div class="cbb-heat-h">' + hLbl(h) + '</div>').join('');
+  const hLbl = h => { const ap = h < 12 ? 'AM' : 'PM'; const hh = h % 12 === 0 ? 12 : h % 12; return hh + ap; };
+  const saltoLbl = horas.length > 12 ? 2 : 1; // muchas horas → etiqueta cada 2 para que quepa sin scroll
+  let html = '<div class="cbb-heat" style="grid-template-columns:64px repeat(' + horas.length + ',minmax(0,1fr))">';
+  html += '<div></div>' + horas.map((h, ix) => '<div class="cbb-heat-h">' + (ix % saltoLbl === 0 ? hLbl(h) : '') + '</div>').join('');
   activos.forEach(f => {
     html += '<div class="cbb-heat-ej">' + esc(f.ejecutivo) + '</div>';
     horas.forEach(h => {
@@ -10807,7 +10820,7 @@ function cbbRenderHeat(d) {
       html += '<div class="cbb-heat-c" title="' + esc(f.ejecutivo) + ' · ' + hLbl(h) + ' · ' + v + ' gestiones" style="background:rgba(37,99,235,' + alpha.toFixed(2) + ')">' + (v || '') + '</div>';
     });
   });
-  html += '</div></div><div class="cbb-heat-ley"><span>Baja actividad</span><span class="cbb-heat-grad"></span><span>Alta actividad</span></div>';
+  html += '</div><div class="cbb-heat-ley"><span>Baja actividad</span><span class="cbb-heat-grad"></span><span>Alta actividad</span></div>';
   cont.innerHTML = html;
 }
 
@@ -10870,8 +10883,8 @@ function cbbChartLlam(d) {
     type: 'bar', plugins: CB_DL ? [CB_DL] : [],
     data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [{ data: S.map(x => x.n), backgroundColor: CBB.azul, borderRadius: 4 }] },
     options: { responsive: true, maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0 }, grace: '15%' }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } },
-      plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
+      scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0, maxTicksLimit: 5 }, grace: '18%' }, x: { grid: { display: false }, ticks: { font: { size: 8.5 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } } },
+      plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 8.5, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
   });
 }
 function cbbChartLeads(d) {
@@ -10883,10 +10896,10 @@ function cbbChartLeads(d) {
     type: 'bar', plugins: CB_DL ? [CB_DL] : [],
     data: { labels: S.map(x => cbDiaCorto(x.dia)), datasets: [{ data: S.map(x => x.n), backgroundColor: CBB.morado, borderRadius: 4 }] },
     options: { responsive: true, maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0 }, grace: '15%' }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } },
+      scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { font: { size: 9 }, precision: 0, maxTicksLimit: 5 }, grace: '18%' }, x: { grid: { display: false }, ticks: { font: { size: 8.5 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } } },
       plugins: { legend: { display: false },
         tooltip: { callbacks: { label: c => ' ' + c.raw + ' leads · ' + S[c.dataIndex].montoFmt } },
-        datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 9, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
+        datalabels: { anchor: 'end', align: 'top', clamp: true, clip: false, font: { size: 8.5, weight: '600' }, color: '#475569', formatter: v => v || '' } } }
   });
 }
 function cbbChartDist(d) {
@@ -10910,7 +10923,8 @@ function cbbChartDist(d) {
     '<span class="cbb-ley-lbl">' + (LBL[x.etapa] || x.etapa) + '</span><span class="cbb-ley-val">' + x.montoFmt + ' (' + x.pct + '%)</span></div>').join('');
 }
 
-// ---------- INSIGHTS IA (endpoint del comité, render por secciones) ----------
+// ---------- INSIGHTS IA (endpoint del comité, acotado al recuadro + modal) ----------
+let CBB_IA_HTML = '';
 async function cbbCargarIA(fresco) {
   const box = $('cbbIA'); if (!box) return;
   box.innerHTML = '<div class="cbb-ia-load">Analizando la operación…</div>';
@@ -10920,11 +10934,20 @@ async function cbbCargarIA(fresco) {
     const qs = ['desde=' + desde, 'hasta=' + hasta]; if (fresco) qs.push('fresco=1');
     const r = await api('/api/b2b/comite/ia?' + qs.join('&'));
     if (r && r.disponible && r.texto) {
-      box.innerHTML = cbbFormatearIA(r.texto) + (r.cache ? '<div class="cbb-ia-cache">análisis en caché · ⟳ para regenerar</div>' : '');
+      CBB_IA_HTML = cbbFormatearIA(r.texto);
+      box.innerHTML = '<div class="cbb-ia-clip">' + CBB_IA_HTML + '</div>' +
+        '<div class="cbb-ia-ver" onclick="cbbVerIAModal()">Ver análisis completo →</div>' +
+        (r.cache ? '<div class="cbb-ia-cache">análisis en caché · ⟳ para regenerar</div>' : '');
     } else {
+      CBB_IA_HTML = '';
       box.innerHTML = '<div class="vacio">' + esc((r && r.error) || 'IA no disponible.') + '</div>';
     }
   } catch (e) { box.innerHTML = '<div class="vacio">No se pudo generar: ' + esc(e.message) + '</div>'; }
+}
+function cbbVerIAModal() {
+  if (!CBB_IA_HTML) return;
+  mostrarRevModal('<div class="rev-modal-head">🤖 Insights IA · Comité Comercial B2B</div>' +
+    '<div class="rev-modal-body cbb-ia-modal">' + CBB_IA_HTML + '</div>', true);
 }
 // Parsea ###PANORAMA / ###DIAGNOSTICO / ###PLAN. El plan viene como "Responsable | Acción | Resultado y plazo".
 function cbbFormatearIA(texto) {

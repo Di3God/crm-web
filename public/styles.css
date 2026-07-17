@@ -3396,7 +3396,7 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-wrap { background:#EDF1F7; border-radius:16px; padding:12px; }
 
 /* HEADER oscuro */
-.cbb-header{display:flex;align-items:center;gap:18px;background:#0B1526;border-radius:12px;padding:12px 18px;margin-bottom:12px;flex-wrap:wrap;position:sticky;top:6px;z-index:60;box-shadow:0 6px 20px rgba(11,21,38,.25)}
+.cbb-header{display:flex;align-items:center;gap:18px;background:#0B1526;border-radius:12px;padding:12px 18px;margin-bottom:12px;flex-wrap:wrap;position:sticky;top:60px;z-index:45;box-shadow:0 6px 20px rgba(11,21,38,.25)}
 .cbb-brand{display:flex;align-items:center;gap:10px}
 .cbb-logo{width:38px;height:38px;border-radius:9px;background:#fff;object-fit:contain;padding:4px}
 .cbb-tit{color:#fff;font-weight:700;font-size:16px;line-height:1.1}
@@ -3416,15 +3416,15 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px}
 @media(max-width:1200px){.cbb-kpis{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:800px){.cbb-kpis{grid-template-columns:repeat(2,1fr)}}
-.cbb-kpi{background:#fff;border-radius:12px;padding:11px 13px;border:1px solid #E4EAF3;position:relative;overflow:hidden}
-.cbb-kpi-top{display:flex;align-items:center;gap:7px;margin-bottom:5px}
-.cbb-kpi-ico{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:none}
+.cbb-kpi{background:#fff;border-radius:12px;padding:9px 13px;border:1px solid #E4EAF3;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:64px}
+.cbb-kpi-izq{min-width:0;flex:1}
+.cbb-kpi-ico{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none}
 .cbb-ico-azul{background:#E7EFFE}.cbb-ico-morado{background:#F1EAFD}.cbb-ico-verde{background:#E3F7EF}.cbb-ico-amarillo{background:#FEF3DF}.cbb-ico-teal{background:#DFF6F3}.cbb-ico-rojo{background:#FDE8E8}.cbb-ico-rosa{background:#FCE7F1}
 .cbb-kpi-lbl{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:#7C8AA5;font-weight:600;line-height:1.2}
-.cbb-kpi-val{font-size:21px;font-weight:800;color:#0B1526;line-height:1.1}
+.cbb-kpi-val{font-size:19px;font-weight:800;color:#0B1526;line-height:1.1;margin-top:1px}
 .cbb-val-rojo{color:#EF4444}
 .cbb-kpi-sub{font-size:10.5px;color:#93A1B8;margin-top:2px}
-.cbb-kpi-spark{height:26px;margin-top:5px}
+.cbb-kpi-spark{height:20px;margin-top:3px}
 
 /* Filas de cards */
 .cbb-row{display:grid;gap:12px;margin-bottom:12px}
@@ -3439,7 +3439,13 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-conv-head{margin-left:auto;font-size:9px;color:#93A1B8;text-transform:uppercase;letter-spacing:.05em;text-align:center;line-height:1.2}
 
 /* EMBUDO */
-.cbb-emb-fila{display:grid;grid-template-columns:34px 148px 44px 1fr 92px;gap:9px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5FA}
+.cbb-emb-head{display:grid;grid-template-columns:34px 148px 44px 1fr 62px 62px 82px;gap:9px;padding-bottom:2px}
+.cbb-emb-th{font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#93A1B8;text-align:center;display:flex;flex-direction:column;line-height:1.2}
+.cbb-emb-th small{font-weight:500;text-transform:none;letter-spacing:0;color:#B6C0D2;font-size:8.5px}
+.cbb-emb-fila{display:grid;grid-template-columns:34px 148px 44px 1fr 62px 62px 82px;gap:9px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5FA}
+.cbb-emb-t{text-align:center;font-size:13px;font-weight:800}
+.cbb-t-ok{color:#10B981}.cbb-t-med{color:#F59E0B}.cbb-t-mal{color:#EF4444}
+.cbb-t-lleg{color:#2563EB}
 .cbb-emb-fila:last-child{border-bottom:none}
 .cbb-emb-ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
 .cbb-emb-nom{font-size:12px;font-weight:700;color:#1E293B;text-transform:uppercase;letter-spacing:.02em}
@@ -3507,11 +3513,10 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-mini-canvas{position:relative;height:150px;overflow:hidden}
 
 /* HEATMAP */
-.cbb-heat-scroll{overflow-x:auto;padding-bottom:4px}
-.cbb-heat{display:grid;gap:3px;align-items:center;min-width:max-content}
-.cbb-heat-h{font-size:8.5px;color:#93A1B8;text-align:center;white-space:nowrap;min-width:26px}
-.cbb-heat-ej{font-size:11px;color:#334155;font-weight:600;white-space:nowrap;padding-right:6px;position:sticky;left:0;background:#fff}
-.cbb-heat-c{height:24px;min-width:26px;border-radius:5px;background:#F1F5FA;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#fff;font-weight:700}
+.cbb-heat{display:grid;gap:3px;align-items:center;width:100%}
+.cbb-heat-h{font-size:8px;color:#93A1B8;text-align:center;white-space:nowrap;overflow:hidden}
+.cbb-heat-ej{font-size:10.5px;color:#334155;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:5px}
+.cbb-heat-c{height:22px;min-width:0;border-radius:4px;background:#F1F5FA;display:flex;align-items:center;justify-content:center;font-size:8.5px;color:#fff;font-weight:700;overflow:hidden}
 .cbb-heat-ley{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:9px;font-size:9.5px;color:#93A1B8}
 .cbb-heat-grad{width:120px;height:8px;border-radius:4px;background:linear-gradient(90deg,#DBEAFE,#2563EB)}
 
@@ -3567,3 +3572,14 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-ia-plan b{font-size:11px;color:#7C3AED}
 .cbb-ia-plan span{font-size:11.5px;color:#1E293B;line-height:1.4}
 .cbb-ia-plan small{font-size:10px;color:#93A1B8}
+
+/* Insights IA v1.444: acotado al recuadro + modal */
+.cbb-ia-clip{max-height:300px;overflow:hidden;position:relative}
+.cbb-ia-clip::after{content:'';position:absolute;left:0;right:0;bottom:0;height:34px;background:linear-gradient(transparent,#fff)}
+.cbb-ia-ver{color:#2563EB;font-size:11.5px;font-weight:700;cursor:pointer;margin-top:6px}
+.cbb-ia-ver:hover{text-decoration:underline}
+.cbb-ia-modal{padding:14px 16px}
+.cbb-ia-modal .cbb-ia-sec{font-size:11px}
+.cbb-ia-modal .cbb-ia-prosa,.cbb-ia-modal .cbb-ia-item span:last-child,.cbb-ia-modal .cbb-ia-plan span{font-size:13px}
+/* Gestión diaria alineada */
+.cbb-gd-head b{min-width:34px;text-align:right}
