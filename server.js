@@ -2060,6 +2060,8 @@ app.get('/api/catalogos', (req, res) => {
     gpBD.forEach(n => set.add(n));
     // Mantener las de la lista base primero (orden histórico) y añadir las nuevas al final.
     asesoresDin = [...L.ASESORES.filter(a => gpBD.includes(a) || true), ...gpBD.filter(n => !L.ASESORES.includes(n))];
+    // El admin logueado puede asignarse leads a sí mismo (modo prueba): aparece al final del selector.
+    if (req.user && req.user.rol === 'admin' && !asesoresDin.includes(req.user.nombre)) asesoresDin = [...asesoresDin, req.user.nombre];
   } catch (e) { asesoresDin = L.ASESORES; }
   res.json({
     asesores: asesoresDin, canales: L.CANALES, fuentes: L.FUENTES,
@@ -2177,8 +2179,13 @@ app.post('/api/leads/importar/confirmar', soloAdmin, (req, res) => {
 app.put('/api/leads/asignar', puedeAsignar, (req, res) => {
   const { codigos, asesor } = req.body;
   if (!Array.isArray(codigos) || !codigos.length) return res.status(400).json({ error: 'Faltan codigos' });
-  if (!L.ASESORES.includes(asesor)) {
-    return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + L.ASESORES.join(', ') });
+  // Válidos: lista base + gestoras activas de la BD (fix: antes una GP nueva de BD no pasaba
+  // la validación) + el propio ADMIN (modo prueba: se asigna leads a sí mismo y el evento de
+  // Calendar/bot de notas se crea en su propio calendario).
+  const gpBD = db.prepare("SELECT nombre FROM usuarios WHERE rol='gestora' AND activo=1").all().map(r => r.nombre);
+  const esAdminMismo = req.user && req.user.rol === 'admin' && asesor === req.user.nombre;
+  if (!L.ASESORES.includes(asesor) && !gpBD.includes(asesor) && !esAdminMismo) {
+    return res.status(400).json({ error: 'Asesor no valido. Opciones: ' + [...new Set([...L.ASESORES, ...gpBD])].join(', ') });
   }
   const ahora = new Date().toISOString();
   const st = db.prepare('UPDATE leads SET asesor = ?, fechaAsignacion = ? WHERE codigo = ?');
@@ -9220,7 +9227,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.449 (FIX transcripción en español — Recall: el default meeting_captions usaba los subtítulos nativos de Meet que estaban en INGLÉS y produjo texto sin sentido en la primera prueba. Ahora: (1) el provider default es recallai (transcripción async de Recall, +$0.15/h) con language_code configurable vía RECALL_LANGUAGE (default es; auto = detección); meeting_captions queda como opción vía RECALL_TRANSCRIPT_PROVIDER. (2) Fallback automático: si un bot termina done sin transcript disponible, el poller pide UNA VEZ la transcripción async sobre la grabación (create_transcript) y la descarga en el siguiente ciclo (columna asyncPedido). (3) Botón 🔄 Re-transcribir en español en el visor de notas (jefatura) + endpoint POST /api/reuniones/:mundo/:codigo/retranscribir: re-pide la transcripción recallai_async en español sobre la grabación existente (retención Recall: 7 días) — sirve para recuperar la demo de hoy sin repetir la reunión; el resumen IA se regenera. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.450 (Modo prueba de agendamiento para el admin: (1) el ADMIN puede asignarse leads B2C a sí mismo — aparece al final del selector de asesores del catálogo y la validación de /api/leads/asignar lo acepta; con el lead asignado a su nombre, al registrar Agendó reunión el evento de Google Calendar se crea EN SU PROPIO calendario (el lookup por nombre resuelve su correo de usuario), le llega la invitación con Meet, y el bot de notas Recall se programa normalmente. (2) FIX latente: la validación de asignar solo aceptaba la lista estática de logic.js, por lo que una gestora nueva creada en la BD no podía recibir leads; ahora acepta lista base + gestoras activas de BD. Las métricas de gestoras (pulso, ranking, comité) no se contaminan: filtran por rol gestora. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

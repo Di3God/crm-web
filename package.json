@@ -1,6 +1,6 @@
 {
   "name": "crm-tasatop-web",
-  "version": "1.449.0",
+  "version": "1.450.0",
   "description": "CRM comercial Tasatop - version web",
   "main": "index.js",
   "scripts": {
