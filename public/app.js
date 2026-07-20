@@ -1273,11 +1273,24 @@ function kanbanCard(l) {
         (fechaCorta ? ' · ' + fechaCorta : '') + '</span>' +
       '</div>'
     : '';
-  return '<div class="kcard" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
+  // v1.456 CARTERA ACTIVA: la tarjeta se distingue con borde dorado, badge ♻️ y su historial de inversión.
+  let kCartera = '';
+  if (l.esCartera) {
+    const p = [];
+    if (l.carteraMontoInvertido) p.push('💰 ' + fmtSoles(l.carteraMontoInvertido));
+    if (l.carteraOperaciones) p.push('📊 ' + l.carteraOperaciones + ' op' + (l.carteraOperaciones === 1 ? '' : 's'));
+    if (l.carteraVencimiento) {
+      const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
+      p.push('📅 ' + (d >= 0 ? 'vence en ' + d + 'd' : 'venció hace ' + Math.abs(d) + 'd'));
+    }
+    kCartera = '<div class="kcartera">' + (p.length ? p.join(' · ') : 'Cliente de cartera') + '</div>';
+  }
+  return '<div class="kcard' + (l.esCartera ? ' kcard-cartera' : '') + '" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
     ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)">' +
     '<div class="kcard-top">' +
       '<span class="kprio ' + prioCls + '">' + l.prioridad + '</span>' +
-      (esLeadNuevo(l) ? '<span class="kbadge-nuevo">Nuevo</span>' : '') +
+      (l.esCartera ? '<span class="kbadge-cartera" title="Cliente de cartera activa: ya invirtió con TasaTop">♻️ CARTERA</span>' : '') +
+      (esLeadNuevo(l) && !l.esCartera ? '<span class="kbadge-nuevo">Nuevo</span>' : '') +
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
     '</div>' +
@@ -1286,6 +1299,7 @@ function kanbanCard(l) {
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
       (l.telefono ? ' · <span class="ktel">' + l.telefono + '</span>' : '') + '</div>' +
+    kCartera +
     (l.email ? '<div class="kmail" title="Copiar correo" onclick="event.stopPropagation();copiarCorreo(this,\'' + String(l.email).replace(/'/g, "\\'") + '\')"><span class="kmail-txt">✉ ' + l.email + '</span><span class="kmail-copy">⧉</span></div>' : '') +
     lineaAccion +
     (chips ? '<div class="kchips">' + chips + '</div>' : (estadoCalif ? '<div class="kchips">' + estadoCalif + '</div>' : '')) +
@@ -1708,9 +1722,32 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     `<span class="chip-est" style="background:#EEF1F5;color:#555">Prioridad ${gLead.prioridad}</span>` +
     `<span class="sep">·</span><span class="dato"><b id="gSubScore">Score ${gLead.score}/100</b></span>` +
     `<span class="sep">·</span><span class="dato">Prob. <b id="gSubProb">${gLead.probabilidad}%</b></span>` +
-    `<span class="sep">·</span><span class="dato">GP ${gLead.asesor || 'sin asignar'}</span>`;
-  // Pistas del formulario Meta (lo que el lead respondió al registrarse): ayudan a calificar.
+    `<span class="sep">·</span><span class="dato">GP ${gLead.asesor || 'sin asignar'}</span>` +
+    (gLead.esCartera ? `<span class="sep">·</span><span class="chip-cartera">♻️ CARTERA ACTIVA</span>` : '');
+  // v1.456: contexto de CARTERA ACTIVA — historial de inversión visible al gestionar.
   const pistasForm = [];
+  if (gLead.esCartera) {
+    const c = [];
+    if (gLead.carteraMontoInvertido) c.push('💰 Invertido histórico: <b>' + fmtSoles(gLead.carteraMontoInvertido) + '</b>');
+    if (gLead.carteraMontoVigente) c.push('📈 Vigente: <b>' + fmtSoles(gLead.carteraMontoVigente) + '</b>');
+    if (gLead.carteraOperaciones) c.push('📊 <b>' + gLead.carteraOperaciones + '</b> operación' + (gLead.carteraOperaciones === 1 ? '' : 'es'));
+    if (gLead.carteraUltimaInversion) c.push('🕘 Última inversión: <b>' + fmtFecha(gLead.carteraUltimaInversion) + '</b>');
+    if (gLead.carteraVencimiento) {
+      const d = Math.ceil((new Date(gLead.carteraVencimiento) - new Date()) / 86400000);
+      c.push('📅 Vence: <b>' + fmtFecha(gLead.carteraVencimiento) + '</b> (' + (d >= 0 ? 'en ' + d + ' días' : 'hace ' + Math.abs(d) + ' días') + ')');
+    }
+    const cuerpo = c.length ? c.join(' &nbsp;·&nbsp; ') : 'Cliente de cartera activa — aún sin datos de inversión cargados.';
+    const nota = gLead.carteraNotas ? '<div class="cart-modal-nota">📝 ' + esc(gLead.carteraNotas) + '</div>' : '';
+    const cont = document.getElementById('gCarteraBox');
+    if (cont) {
+      cont.innerHTML = '<div class="cart-modal"><div class="cart-modal-tit">♻️ Cliente de cartera activa · ya invirtió con TasaTop</div>' +
+        '<div class="cart-modal-datos">' + cuerpo + '</div>' + nota + '</div>';
+      cont.style.display = '';
+    }
+  } else {
+    const cont = document.getElementById('gCarteraBox');
+    if (cont) { cont.innerHTML = ''; cont.style.display = 'none'; }
+  }
   if (gLead.dni) pistasForm.push('🪪 DNI ' + gLead.dni);
   if (gLead.interesInvertir) pistasForm.push('💡 Le interesa: ' + gLead.interesInvertir);
   if (gLead.listo7dias) {

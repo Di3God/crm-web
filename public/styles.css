@@ -3601,3 +3601,17 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cart-pill { background: #FEF3C7; color: #92700A; border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 11.5px; }
 .cart-drop { border: 2px dashed #E8D08A; border-radius: 10px; padding: 18px; text-align: center; color: #92700A; background: #FFFDF7; cursor: pointer; font-size: 13px; }
 .cart-drop:hover { background: #FEF9E7; }
+
+/* Tarjeta KANBAN de cartera activa (v1.456) */
+.kcard-cartera { border-left: 4px solid #D4A017 !important; background: linear-gradient(180deg, #FFFBEB 0%, #fff 42%); }
+.kcard-cartera:hover { background: linear-gradient(180deg, #FEF3C7 0%, #fff 46%); }
+.kbadge-cartera { background: linear-gradient(135deg, #D4A017, #B8860B); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .02em; border-radius: 5px; padding: 2px 5px; white-space: nowrap; }
+.kcartera { font-size: 10.5px; color: #92700A; background: #FEF9E7; border-radius: 6px; padding: 3px 7px; margin: 4px 0 2px; font-weight: 600; }
+
+/* Contexto de CARTERA ACTIVA en el modal de gestión (v1.456) */
+.chip-cartera { background: linear-gradient(135deg, #D4A017, #B8860B); color: #fff; font-size: 10.5px; font-weight: 800; border-radius: 6px; padding: 2px 8px; letter-spacing: .02em; }
+.cart-modal { background: linear-gradient(135deg, #FFFBEB, #FEF9E7); border: 1px solid #EBD9A0; border-left: 4px solid #D4A017; border-radius: 10px; padding: 9px 13px; margin: 8px 0 2px; }
+.cart-modal-tit { font-size: 11px; font-weight: 800; color: #92700A; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.cart-modal-datos { font-size: 12.5px; color: #5C4708; line-height: 1.6; }
+.cart-modal-datos b { color: #7A5C00; }
+.cart-modal-nota { font-size: 11.5px; color: #92700A; margin-top: 5px; font-style: italic; }
