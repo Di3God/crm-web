@@ -3615,3 +3615,33 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cart-modal-datos { font-size: 12.5px; color: #5C4708; line-height: 1.6; }
 .cart-modal-datos b { color: #7A5C00; }
 .cart-modal-nota { font-size: 11.5px; color: #92700A; margin-top: 5px; font-style: italic; }
+
+/* ===== CARTERA v1.457: tiers, temperatura y bimoneda ===== */
+.kcart-tier { font-size: 8.5px; font-weight: 800; border-radius: 4px; padding: 1px 5px; margin-left: 5px; letter-spacing: .03em; vertical-align: middle; }
+.t-top { background: linear-gradient(135deg,#B8860B,#8B6914); color: #fff; }
+.t-alto { background: #D4A017; color: #fff; }
+.t-medio { background: #FDE68A; color: #78500A; }
+.t-base { background: #F3F4F6; color: #6B7280; }
+.kcart-temp { font-size: 9.5px; font-weight: 700; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.tm-caliente { background: #FEE2E2; color: #B91C1C; }
+.tm-tibio { background: #FEF3C7; color: #92700A; }
+.tm-frio { background: #E0F2FE; color: #0369A1; }
+/* Tarjeta kanban */
+.kcart-monto { font-size: 12px; font-weight: 800; color: #7A5C00; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.kcart-sub { font-size: 10px; color: #92700A; margin-top: 1px; }
+.kcart-venc { font-size: 10px; color: #92700A; margin-top: 2px; font-weight: 600; }
+.kcart-venc.urge { color: #B91C1C; }
+/* Modal de gestión */
+.cart-modal-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 7px; }
+.cart-modal-tot { font-size: 11.5px; color: #7A5C00; margin-left: auto; }
+.cart-mons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.cart-mon { background: #fff; border: 1px solid #EBD9A0; border-radius: 8px; padding: 6px 12px; min-width: 130px; }
+.cart-mon-usd { border-color: #A7D8B4; background: #F7FDF9; }
+.cart-mon-lbl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: #92700A; font-weight: 700; }
+.cart-mon-usd .cart-mon-lbl { color: #17795E; }
+.cart-mon-val { font-size: 16px; font-weight: 800; color: #5C4708; line-height: 1.15; }
+.cart-mon-usd .cart-mon-val { color: #14634E; }
+.cart-mon-sub { font-size: 10.5px; color: #92700A; }
+.cart-mon-usd .cart-mon-sub { color: #17795E; }
+.cart-linea { font-size: 12.5px; color: #5C4708; line-height: 1.7; }
+.cart-linea b { color: #7A5C00; }

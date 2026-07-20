@@ -574,6 +574,15 @@ try { db.exec("ALTER TABLE leads ADD COLUMN carteraNotas TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraEstado TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraLiberadoEn TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN esDemo INTEGER DEFAULT 0"); } catch (e) { } // v1.455: clientes ficticios de simulación
+// v1.457: cartera BIMONEDA — soles y dólares por separado + última inversión.
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraSoles REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraOpsSoles INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraTicketSoles REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraDolares REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraOpsDolares INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraTicketDolares REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraMonedaPref TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraUltMonto REAL"); } catch (e) { }
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_leads_cartera ON leads (esCartera, carteraEstado, asesor)"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
@@ -7119,8 +7128,13 @@ function carteraNum(v) {
   return isFinite(n) ? n : null;
 }
 function carteraFecha(v) {
-  if (!v) return null;
+  if (v == null || v === '') return null;
   const s = String(v).trim();
+  // Fecha serial de Excel (ej. 46121 = 09-abr-2026): días desde 1899-12-30.
+  if (/^\d{5}$/.test(s)) {
+    const n = parseInt(s, 10);
+    if (n > 20000 && n < 60000) return new Date(Date.UTC(1899, 11, 30) + n * 86400000).toISOString().slice(0, 10);
+  }
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[0];
   m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (m) return m[3] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0');
@@ -7147,12 +7161,25 @@ app.post('/api/cartera/importar', (req, res) => {
       const gestora = carteraResolverGestora(f.gestora);
       if (!gestora) { out.errores.push('Fila ' + (i + 2) + ' (' + nombre + '): sin gestora'); return; }
       if (!activas.includes(gestora)) out.gestorasNoReconocidas.add(String(f.gestora || '') + ' → ' + gestora);
+      // v1.457: bimoneda. El total y las operaciones se consolidan para los indicadores del CRM;
+      // los detalles por moneda se guardan aparte para mostrarlos tal cual.
+      const soles = carteraNum(f.monto_invertido_soles);
+      const dolares = carteraNum(f.monto_invertido_dolares);
+      const opsS = carteraNum(f.operaciones_soles);
+      const opsD = carteraNum(f.operaciones_dolares);
+      const totalOps = (opsS || 0) + (opsD || 0);
+      // Monto consolidado en soles (referencia interna para ordenar/priorizar): $ a 3.75.
+      const totalRef = (soles || 0) + (dolares || 0) * 3.75;
       const datos = {
         esCartera: 1,
-        carteraMontoInvertido: carteraNum(f.monto_invertido),
+        carteraMontoInvertido: carteraNum(f.monto_invertido) != null ? carteraNum(f.monto_invertido) : (totalRef || null),
         carteraMontoVigente: carteraNum(f.monto_vigente),
-        carteraOperaciones: carteraNum(f.operaciones),
-        carteraUltimaInversion: carteraFecha(f.ultima_inversion),
+        carteraOperaciones: totalOps || carteraNum(f.operaciones),
+        carteraSoles: soles, carteraOpsSoles: opsS, carteraTicketSoles: carteraNum(f.ticket_prom_soles),
+        carteraDolares: dolares, carteraOpsDolares: opsD, carteraTicketDolares: carteraNum(f.ticket_prom_dolares),
+        carteraMonedaPref: (f.moneda ? String(f.moneda).trim() : null),
+        carteraUltMonto: carteraNum(f.monto_ult_inv),
+        carteraUltimaInversion: carteraFecha(f.ini_ult_inv || f.ultima_inversion),
         carteraVencimiento: carteraFecha(f.vencimiento),
         carteraNotas: (f.notas ? String(f.notas).trim() : null),
         email: (f.email ? String(f.email).trim() : null),
@@ -7168,19 +7195,27 @@ app.post('/api/cartera/importar', (req, res) => {
         db.prepare(`UPDATE leads SET esCartera=1, asesor=COALESCE(?, asesor), fechaAsignacion=COALESCE(fechaAsignacion, ?),
           email=COALESCE(?, email), dni=COALESCE(?, dni), carteraMontoInvertido=COALESCE(?, carteraMontoInvertido),
           carteraMontoVigente=COALESCE(?, carteraMontoVigente), carteraOperaciones=COALESCE(?, carteraOperaciones),
+          carteraSoles=COALESCE(?, carteraSoles), carteraOpsSoles=COALESCE(?, carteraOpsSoles), carteraTicketSoles=COALESCE(?, carteraTicketSoles),
+          carteraDolares=COALESCE(?, carteraDolares), carteraOpsDolares=COALESCE(?, carteraOpsDolares), carteraTicketDolares=COALESCE(?, carteraTicketDolares),
+          carteraMonedaPref=COALESCE(?, carteraMonedaPref), carteraUltMonto=COALESCE(?, carteraUltMonto),
           carteraUltimaInversion=COALESCE(?, carteraUltimaInversion), carteraVencimiento=COALESCE(?, carteraVencimiento),
           carteraNotas=COALESCE(?, carteraNotas), carteraEstado=COALESCE(carteraEstado,'reserva'), archivado=0
           WHERE codigo=?`).run(gestora, ahora, datos.email, datos.dni, datos.carteraMontoInvertido, datos.carteraMontoVigente,
-          datos.carteraOperaciones, datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas, existente.codigo);
+          datos.carteraOperaciones, datos.carteraSoles, datos.carteraOpsSoles, datos.carteraTicketSoles,
+          datos.carteraDolares, datos.carteraOpsDolares, datos.carteraTicketDolares, datos.carteraMonedaPref, datos.carteraUltMonto,
+          datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas, existente.codigo);
         out.actualizados++;
       } else {
         const codigo = generarCodigo();
         db.prepare(`INSERT INTO leads (codigo, nombre, telefono, email, fuente, campana, asesor, fechaCarga, fechaAsignacion,
-          dni, esCartera, carteraMontoInvertido, carteraMontoVigente, carteraOperaciones, carteraUltimaInversion,
-          carteraVencimiento, carteraNotas, carteraEstado)
-          VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,'reserva')`).run(codigo, nombre, telRaw, datos.email, 'Cartera activa',
+          dni, esCartera, carteraMontoInvertido, carteraMontoVigente, carteraOperaciones,
+          carteraSoles, carteraOpsSoles, carteraTicketSoles, carteraDolares, carteraOpsDolares, carteraTicketDolares,
+          carteraMonedaPref, carteraUltMonto, carteraUltimaInversion, carteraVencimiento, carteraNotas, carteraEstado)
+          VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'reserva')`).run(codigo, nombre, telRaw, datos.email, 'Cartera activa',
           'Renovación cartera', gestora, ahora, ahora, datos.dni, datos.carteraMontoInvertido, datos.carteraMontoVigente,
-          datos.carteraOperaciones, datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas);
+          datos.carteraOperaciones, datos.carteraSoles, datos.carteraOpsSoles, datos.carteraTicketSoles,
+          datos.carteraDolares, datos.carteraOpsDolares, datos.carteraTicketDolares, datos.carteraMonedaPref,
+          datos.carteraUltMonto, datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas);
         out.creados++;
       }
       out.porGestora[gestora] = (out.porGestora[gestora] || 0) + 1;
@@ -7209,10 +7244,12 @@ function carteraLiberar(n, motivo, topeSinGestionar) {
     const pend = db.prepare(`SELECT COUNT(*) c FROM leads l WHERE l.asesor=? AND COALESCE(l.esCartera,0)=0
       AND COALESCE(l.archivado,0)=0 AND NOT EXISTS (SELECT 1 FROM gestiones g WHERE g.codigo=l.codigo)`).get(g).c;
     if (pend >= tope) { console.log('[cartera] ' + g + ': ' + pend + ' leads de marketing sin gestionar (tope ' + tope + '), no se libera cartera hoy'); return; }
+    // Prioridad: vencimiento próximo → mayor monto invertido → última inversión más reciente
+    // (un cliente que invirtió hace poco está más "caliente" que uno de hace 2 años).
     const cand = db.prepare(`SELECT codigo FROM leads WHERE esCartera=1 AND COALESCE(carteraEstado,'reserva')='reserva'
       AND asesor=? AND COALESCE(archivado,0)=0
       ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
-               COALESCE(carteraMontoInvertido,0) DESC, id ASC LIMIT ?`).all(g, n);
+               COALESCE(carteraMontoInvertido,0) DESC, carteraUltimaInversion DESC, id ASC LIMIT ?`).all(g, n);
     cand.forEach(c => {
       db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?) WHERE codigo=?").run(ahora, ahora, c.codigo);
       total++;
@@ -7228,7 +7265,8 @@ app.get('/api/cartera/lista', (req, res) => {
   const estado = req.query.estado === 'liberado' ? 'liberado' : 'reserva';
   const gestora = req.query.gestora || null;
   let filas = db.prepare(`SELECT codigo, nombre, telefono, email, asesor, esDemo, carteraEstado, carteraLiberadoEn,
-      carteraMontoInvertido, carteraOperaciones, carteraVencimiento
+      carteraMontoInvertido, carteraOperaciones, carteraVencimiento, carteraSoles, carteraDolares,
+      carteraUltimaInversion, carteraMonedaPref
     FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0 AND COALESCE(carteraEstado,'reserva')=?
     ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
              COALESCE(carteraMontoInvertido,0) DESC, id ASC`).all(estado);
@@ -9575,7 +9613,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.456 (CARTERA ACTIVA visible en TODAS las vistas: en v1.454 el distintivo solo se aplicó a la tabla de leads, por lo que en el TABLERO KANBAN las tarjetas de cartera se veían igual que un lead frío. Ahora: (1) Tarjeta kanban con borde izquierdo dorado, degradado ámbar, badge ♻️ CARTERA en la cabecera (reemplaza al chip Nuevo, que era confuso en clientes que ya invirtieron) y línea de historial: monto invertido, número de operaciones y días al vencimiento. (2) MODAL DE GESTIÓN: chip ♻️ CARTERA ACTIVA en la cabecera y panel dorado con el contexto completo antes de registrar la gestión — invertido histórico, monto vigente, operaciones, fecha de última inversión, vencimiento con días restantes y notas del cliente; así la GP ve con quién habla sin salir del modal. (3) La tabla de leads mantiene su fila dorada de v1.454. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.457 (CARTERA ACTIVA BIMONEDA — nuevo formato del Excel con soles y dólares por separado: (1) Nuevas columnas carteraSoles/OpsSoles/TicketSoles, carteraDolares/OpsDolares/TicketDolares, carteraMonedaPref y carteraUltMonto; el importador mapea monto_invertido_soles, operaciones_soles, ticket_prom_soles, sus equivalentes en dólares, ini_ult_inv, monto_ult_inv y moneda, manteniendo compatibilidad con el formato anterior. (2) Las FECHAS SERIALES DE EXCEL (46121) se convierten automáticamente a fecha real (2026-04-09). (3) Consolidado interno para ordenar y clasificar: total en soles referenciales con dólar a 3.75 y suma de operaciones de ambas monedas. (4) Indicadores nuevos de potencial, calculados en un helper único para que tarjeta, kanban y modal digan lo mismo: TIER por volumen histórico (TOP 1MM+, ALTO 300K+, MEDIO 100K+, BASE) y TEMPERATURA por antigüedad de la última inversión (🔥 Activo hasta 90d, 🌡 Tibio hasta 180d, ❄️ Dormido +180d) — esta última es la señal de urgencia real de la campaña. (5) KANBAN: monto bimoneda destacado (S/ X + $ Y), badge de tier, operaciones, ticket promedio, temperatura y vencimiento. (6) MODAL DE GESTIÓN: cajas separadas por moneda con volumen, operaciones y ticket de cada una, más última inversión con monto y antigüedad, ticket promedio ponderado y vencimiento. (7) Tabla de leads con la misma línea resumida. (8) El goteo diario ahora desempata por última inversión más reciente. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

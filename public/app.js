@@ -1276,14 +1276,18 @@ function kanbanCard(l) {
   // v1.456 CARTERA ACTIVA: la tarjeta se distingue con borde dorado, badge ♻️ y su historial de inversión.
   let kCartera = '';
   if (l.esCartera) {
-    const p = [];
-    if (l.carteraMontoInvertido) p.push('💰 ' + fmtSoles(l.carteraMontoInvertido));
-    if (l.carteraOperaciones) p.push('📊 ' + l.carteraOperaciones + ' op' + (l.carteraOperaciones === 1 ? '' : 's'));
-    if (l.carteraVencimiento) {
-      const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
-      p.push('📅 ' + (d >= 0 ? 'vence en ' + d + 'd' : 'venció hace ' + Math.abs(d) + 'd'));
-    }
-    kCartera = '<div class="kcartera">' + (p.length ? p.join(' · ') : 'Cliente de cartera') + '</div>';
+    const tier = cartTier(l), temp = cartTemp(l), ops = cartOpsTotal(l), tk = cartTicketProm(l);
+    const montos = cartMontosCorto(l);
+    kCartera = '<div class="kcartera">' +
+      (montos ? '<div class="kcart-monto">💼 ' + montos + '<span class="kcart-tier t-' + tier.k + '" title="' + tier.tip + '">' + tier.txt + '</span></div>' : '') +
+      '<div class="kcart-sub">' +
+        (ops ? ops + ' op' + (ops === 1 ? '' : 's') : '') +
+        (tk ? ' · ticket ' + cartFmtMoneda(tk, 'S/') : '') +
+        (temp ? ' · <span class="kcart-temp tm-' + temp.k + '" title="' + temp.tip + '">' + temp.txt + '</span>' : '') +
+      '</div>' +
+      (l.carteraVencimiento ? (() => { const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
+        return '<div class="kcart-venc' + (d <= 15 ? ' urge' : '') + '">📅 ' + (d >= 0 ? 'vence en ' + d + 'd' : 'venció hace ' + Math.abs(d) + 'd') + '</div>'; })() : '') +
+      '</div>';
   }
   return '<div class="kcard' + (l.esCartera ? ' kcard-cartera' : '') + '" draggable="true" data-cod="' + l.codigo + '" data-etapa="' + l.etapa + '"' +
     ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)">' +
@@ -1503,14 +1507,14 @@ function celdaLead(l) {
   // v1.454 CARTERA ACTIVA: badge dorado + datos de inversión visibles para la GP.
   let cartera = '';
   if (l.esCartera) {
+    const montos = cartMontosCorto(l), ops = cartOpsTotal(l), temp = cartTemp(l), tier = cartTier(l);
     const partes = [];
-    if (l.carteraMontoInvertido) partes.push('💰 ' + fmtSoles(l.carteraMontoInvertido) + ' invertido');
-    if (l.carteraOperaciones) partes.push('📊 ' + l.carteraOperaciones + (l.carteraOperaciones === 1 ? ' operación' : ' operaciones'));
-    if (l.carteraVencimiento) {
-      const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
-      partes.push('📅 vence ' + (d >= 0 ? 'en ' + d + 'd' : 'hace ' + Math.abs(d) + 'd'));
-    }
-    cartera = '<div class="lead-cartera-datos">' + (partes.length ? partes.join(' · ') : 'Cliente de cartera · sin datos de inversión aún') + '</div>';
+    if (montos) partes.push('💼 ' + montos);
+    if (ops) partes.push(ops + ' op' + (ops === 1 ? '' : 's'));
+    if (temp) partes.push(temp.txt + ' ' + temp.dias + 'd');
+    cartera = '<div class="lead-cartera-datos" title="' + (tier.tip) + '">' +
+      (partes.length ? partes.join(' · ') : 'Cliente de cartera · sin datos de inversión aún') +
+      (montos ? ' <span class="kcart-tier t-' + tier.k + '">' + tier.txt + '</span>' : '') + '</div>';
   }
   return '<div class="lead-cell' + (l.esCartera ? ' es-cartera' : '') + '">' +
     '<div class="lead-nom"' + nomTipAttr(l) + '>' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
@@ -1727,21 +1731,34 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
   // v1.456: contexto de CARTERA ACTIVA — historial de inversión visible al gestionar.
   const pistasForm = [];
   if (gLead.esCartera) {
-    const c = [];
-    if (gLead.carteraMontoInvertido) c.push('💰 Invertido histórico: <b>' + fmtSoles(gLead.carteraMontoInvertido) + '</b>');
-    if (gLead.carteraMontoVigente) c.push('📈 Vigente: <b>' + fmtSoles(gLead.carteraMontoVigente) + '</b>');
-    if (gLead.carteraOperaciones) c.push('📊 <b>' + gLead.carteraOperaciones + '</b> operación' + (gLead.carteraOperaciones === 1 ? '' : 'es'));
-    if (gLead.carteraUltimaInversion) c.push('🕘 Última inversión: <b>' + fmtFecha(gLead.carteraUltimaInversion) + '</b>');
-    if (gLead.carteraVencimiento) {
-      const d = Math.ceil((new Date(gLead.carteraVencimiento) - new Date()) / 86400000);
-      c.push('📅 Vence: <b>' + fmtFecha(gLead.carteraVencimiento) + '</b> (' + (d >= 0 ? 'en ' + d + ' días' : 'hace ' + Math.abs(d) + ' días') + ')');
-    }
-    const cuerpo = c.length ? c.join(' &nbsp;·&nbsp; ') : 'Cliente de cartera activa — aún sin datos de inversión cargados.';
-    const nota = gLead.carteraNotas ? '<div class="cart-modal-nota">📝 ' + esc(gLead.carteraNotas) + '</div>' : '';
+    const l = gLead, tier = cartTier(l), temp = cartTemp(l), ops = cartOpsTotal(l), tk = cartTicketProm(l);
+    // Cajas por moneda (17 clientes operan en ambas: cada una con su volumen, ops y ticket).
+    const cajas = [];
+    if (Number(l.carteraSoles) > 0) cajas.push('<div class="cart-mon"><div class="cart-mon-lbl">Soles</div>' +
+      '<div class="cart-mon-val">' + cartFmtMoneda(l.carteraSoles, 'S/') + '</div>' +
+      '<div class="cart-mon-sub">' + (l.carteraOpsSoles || 0) + ' ops' + (l.carteraTicketSoles ? ' · ticket ' + cartFmtMoneda(l.carteraTicketSoles, 'S/') : '') + '</div></div>');
+    if (Number(l.carteraDolares) > 0) cajas.push('<div class="cart-mon cart-mon-usd"><div class="cart-mon-lbl">Dólares</div>' +
+      '<div class="cart-mon-val">' + cartFmtMoneda(l.carteraDolares, '$') + '</div>' +
+      '<div class="cart-mon-sub">' + (l.carteraOpsDolares || 0) + ' ops' + (l.carteraTicketDolares ? ' · ticket ' + cartFmtMoneda(l.carteraTicketDolares, '$') : '') + '</div></div>');
+    // Última inversión: el gancho de la conversación.
+    const ult = [];
+    if (l.carteraUltMonto) ult.push('<b>' + cartFmtMoneda(l.carteraUltMonto, l.carteraMonedaPref === '$' ? '$' : 'S/') + '</b>');
+    if (l.carteraUltimaInversion) ult.push(fmtFecha(l.carteraUltimaInversion) + (temp ? ' · hace ' + temp.dias + ' días' : ''));
+    const vencTxt = l.carteraVencimiento ? (() => { const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
+      return '<div class="cart-linea">📅 <b>Vence:</b> ' + fmtFecha(l.carteraVencimiento) + ' (' + (d >= 0 ? 'en ' + d + ' días' : 'hace ' + Math.abs(d) + ' días') + ')</div>'; })() : '';
     const cont = document.getElementById('gCarteraBox');
     if (cont) {
-      cont.innerHTML = '<div class="cart-modal"><div class="cart-modal-tit">♻️ Cliente de cartera activa · ya invirtió con TasaTop</div>' +
-        '<div class="cart-modal-datos">' + cuerpo + '</div>' + nota + '</div>';
+      cont.innerHTML = '<div class="cart-modal">' +
+        '<div class="cart-modal-head"><span class="cart-modal-tit">♻️ Cliente de cartera activa</span>' +
+          '<span class="kcart-tier t-' + tier.k + '" title="' + tier.tip + '">' + tier.txt + '</span>' +
+          (temp ? '<span class="kcart-temp tm-' + temp.k + '" title="' + temp.tip + '">' + temp.txt + '</span>' : '') +
+          '<span class="cart-modal-tot">Total histórico: <b>' + cartMontosCorto(l) + '</b>' + (ops ? ' en ' + ops + ' operaciones' : '') + '</span></div>' +
+        (cajas.length ? '<div class="cart-mons">' + cajas.join('') + '</div>' : '<div class="cart-linea">Aún sin datos de inversión cargados.</div>') +
+        (ult.length ? '<div class="cart-linea">🕘 <b>Última inversión:</b> ' + ult.join(' · ') + '</div>' : '') +
+        (tk ? '<div class="cart-linea">🎯 <b>Ticket promedio:</b> ' + cartFmtMoneda(tk, 'S/') + ' por operación</div>' : '') +
+        vencTxt +
+        (l.carteraNotas ? '<div class="cart-modal-nota">📝 ' + esc(l.carteraNotas) + '</div>' : '') +
+        '</div>';
       cont.style.display = '';
     }
   } else {
@@ -11094,10 +11111,21 @@ const CART_MAPA = {
   telefono: ['telefono', 'celular', 'movil', 'fono', 'numero', 'telefonos'],
   gestora: ['gestora', 'gestor', 'asesor', 'asesora', 'gp', 'responsable', 'ejecutivo'],
   email: ['email', 'correo', 'mail', 'correoelectronico'],
+  // v1.457: bimoneda
+  monto_invertido_soles: ['montoinvertidosoles', 'montosoles', 'invertidosoles', 'montoinvertidos'],
+  operaciones_soles: ['operacionessoles', 'opssoles', 'noperacionessoles'],
+  ticket_prom_soles: ['ticketpromsoles', 'ticketpromediosoles', 'ticketsoles'],
+  monto_invertido_dolares: ['montoinvertidodolares', 'montodolares', 'invertidodolares', 'montoinvertidousd', 'montousd'],
+  operaciones_dolares: ['operacionesdolares', 'opsdolares', 'noperacionesdolares', 'operacionesusd'],
+  ticket_prom_dolares: ['ticketpromdolares', 'ticketpromediodolares', 'ticketdolares', 'ticketusd'],
+  ini_ult_inv: ['iniultinv', 'iniciooultimainversion', 'fechaultimainversion', 'ultimainversion', 'ultimaoperacion', 'inicioultinv'],
+  monto_ult_inv: ['montoultinv', 'montoultimainversion', 'ultimomonto'],
+  moneda: ['moneda', 'monedapref', 'monedaprincipal'],
+  // compatibilidad con el formato anterior
   monto_invertido: ['montoinvertido', 'monto', 'montototal', 'inversion', 'totalinvertido', 'montohistorico'],
   monto_vigente: ['montovigente', 'vigente', 'saldo', 'montoactual'],
   operaciones: ['operaciones', 'noperaciones', 'numoperaciones', 'cantidadoperaciones', 'ops'],
-  ultima_inversion: ['ultimainversion', 'fechaultimainversion', 'ultimaoperacion'],
+  ultima_inversion: ['ultimainversionfecha'],
   vencimiento: ['vencimiento', 'fechavencimiento', 'vence', 'proximovencimiento'],
   notas: ['notas', 'nota', 'observacion', 'observaciones', 'comentario'],
   dni: ['dni', 'documento', 'numerodocumento', 'doc']
@@ -11141,6 +11169,10 @@ function cartLeerArchivo(input) {
         if (!nombre) continue;
         CART_FILAS.push({
           nombre, telefono: val(fila, 'telefono'), gestora: val(fila, 'gestora'), email: val(fila, 'email'),
+          monto_invertido_soles: val(fila, 'monto_invertido_soles'), operaciones_soles: val(fila, 'operaciones_soles'),
+          ticket_prom_soles: val(fila, 'ticket_prom_soles'), monto_invertido_dolares: val(fila, 'monto_invertido_dolares'),
+          operaciones_dolares: val(fila, 'operaciones_dolares'), ticket_prom_dolares: val(fila, 'ticket_prom_dolares'),
+          ini_ult_inv: val(fila, 'ini_ult_inv'), monto_ult_inv: val(fila, 'monto_ult_inv'), moneda: val(fila, 'moneda'),
           monto_invertido: val(fila, 'monto_invertido'), monto_vigente: val(fila, 'monto_vigente'),
           operaciones: val(fila, 'operaciones'), ultima_inversion: val(fila, 'ultima_inversion'),
           vencimiento: val(fila, 'vencimiento'), notas: val(fila, 'notas'), dni: val(fila, 'dni')
@@ -11300,4 +11332,50 @@ async function cartBorrarDemo() {
     alert(r.eliminados + ' clientes ficticios eliminados.');
     cartCargarLista(); cartCargarResumen();
   } catch (e) { alert('No se pudo: ' + e.message); }
+}
+
+// ============================================================
+// ===== CARTERA: helpers de presentación (v1.457) ============
+// Un solo lugar decide qué es "lo relevante" de un cliente de
+// cartera, para que tarjeta, kanban y modal digan lo mismo.
+// ============================================================
+function cartFmtMoneda(n, moneda) {
+  n = Number(n) || 0;
+  const simb = moneda === '$' ? '$ ' : 'S/ ';
+  if (n >= 1000000) return simb + (Math.round(n / 100000) / 10) + ' MM';
+  if (n >= 1000) return simb + Math.round(n / 1000) + ' K';
+  return simb + Math.round(n).toLocaleString('es-PE');
+}
+// Total consolidado en soles (referencia interna: $ a 3.75) para ordenar y clasificar.
+function cartTotalRef(l) { return (Number(l.carteraSoles) || 0) + (Number(l.carteraDolares) || 0) * 3.75; }
+// Tier por volumen histórico — define cuánta atención merece.
+function cartTier(l) {
+  const t = cartTotalRef(l);
+  if (t >= 1000000) return { k: 'top', txt: 'TOP', tip: 'Cliente TOP: más de S/ 1 MM invertido históricamente' };
+  if (t >= 300000) return { k: 'alto', txt: 'ALTO', tip: 'Alto volumen: S/ 300 K a S/ 1 MM invertidos' };
+  if (t >= 100000) return { k: 'medio', txt: 'MEDIO', tip: 'Volumen medio: S/ 100 K a S/ 300 K invertidos' };
+  return { k: 'base', txt: 'BASE', tip: 'Menos de S/ 100 K invertidos históricamente' };
+}
+// Temperatura por antigüedad de la última inversión: es la señal de urgencia real.
+function cartTemp(l) {
+  if (!l.carteraUltimaInversion) return null;
+  const d = Math.floor((new Date() - new Date(l.carteraUltimaInversion)) / 86400000);
+  if (d <= 90) return { k: 'caliente', txt: '🔥 Activo', dias: d, tip: 'Invirtió hace ' + d + ' días: cliente vigente' };
+  if (d <= 180) return { k: 'tibio', txt: '🌡 Tibio', dias: d, tip: 'Última inversión hace ' + d + ' días' };
+  return { k: 'frio', txt: '❄️ Dormido', dias: d, tip: 'Sin invertir hace ' + d + ' días: prioridad de reactivación' };
+}
+// Línea corta de montos: respeta la bimoneda (17 clientes operan en ambas).
+function cartMontosCorto(l) {
+  const p = [];
+  if (Number(l.carteraSoles) > 0) p.push(cartFmtMoneda(l.carteraSoles, 'S/'));
+  if (Number(l.carteraDolares) > 0) p.push(cartFmtMoneda(l.carteraDolares, '$'));
+  if (!p.length && l.carteraMontoInvertido) p.push(cartFmtMoneda(l.carteraMontoInvertido, 'S/'));
+  return p.join(' + ');
+}
+function cartOpsTotal(l) { return (Number(l.carteraOpsSoles) || 0) + (Number(l.carteraOpsDolares) || 0) || (Number(l.carteraOperaciones) || 0); }
+// Ticket promedio ponderado: cuánto suele poner por operación (define el pitch de renovación).
+function cartTicketProm(l) {
+  const ops = cartOpsTotal(l);
+  if (!ops) return null;
+  return cartTotalRef(l) / ops;
 }
