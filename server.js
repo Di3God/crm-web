@@ -246,6 +246,26 @@ if (db.prepare('SELECT COUNT(*) AS c FROM usuarios').get().c === 0) {
   crearUsuario('jdelgado@tasatop.com', 'Jenny Delgado', 'jefa', '12345678');
   crearUsuario('mlujan@tasatop.com', 'Mafer Lujan', 'gestora', '12345678');
   crearUsuario('bortega@tasatop.com', 'Breezy Ortega', 'gestora', '12345678');
+  // v1.452: Breezy Ortega ya no labora — baja one-shot (no recibe leads ni aparece en el bot;
+  // si a futuro se reactiva desde el panel, esta migración no vuelve a correr).
+  try {
+    // Autosuficiente: la tabla app_config y la columna autoasignar se crean después del seed,
+    // así que se garantizan aquí (idempotente) antes de usarlas.
+    db.exec("CREATE TABLE IF NOT EXISTS app_config (clave TEXT PRIMARY KEY, valor TEXT)");
+    try { db.exec("ALTER TABLE usuarios ADD COLUMN autoasignar INTEGER DEFAULT 1"); } catch (e2) { }
+    if (!db.prepare("SELECT 1 FROM app_config WHERE clave='mig_breezy_baja_v1452'").get()) {
+      db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE nombre='Breezy Ortega'").run();
+      db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('mig_breezy_baja_v1452',?)").run(new Date().toISOString());
+      console.log('[usuarios] Breezy Ortega dada de baja (activo=0, autoasignar=0)');
+    }
+    // v1.453: los mensajes del grupo B2B consideran solo a Bony (Shirley y Luis ya no están en el
+    // equipo). One-shot: Diego puede cambiar la selección desde el modal del Resumen de gestión B2B.
+    if (!db.prepare("SELECT 1 FROM app_config WHERE clave='mig_resumen_bony_v1453'").get()) {
+      db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('b2b_resumen_asesores',?)").run(JSON.stringify(['Bony Segil']));
+      db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('mig_resumen_bony_v1453',?)").run(new Date().toISOString());
+      console.log('[WA-B2B] resumen automático configurado solo para Bony Segil');
+    }
+  } catch (e) { console.error('[usuarios] baja Breezy:', e.message); }
   crearUsuario('lvillavicencio@tasatop.com', 'Lourdes Villavicencio', 'gestora', '12345678');
   console.log('Usuarios creados (clave inicial 12345678): 2 admin, 1 jefa, 3 GP');
 }
@@ -9116,28 +9136,41 @@ function enColaVerificacionB2B(codigo, responsable, nombre) {
 }
 function esHorarioLaboralWA() {
   const a = peruAhora(), d = a.getUTCDay(), h = a.getUTCHours();
-  return d >= 1 && d <= 6 && h >= 9 && h < 18; // Lunes a Sábado, 9am-6pm Perú
+  return d >= 1 && d <= 5 && h >= 9 && h < 18; // Lunes a VIERNES, 9am-6pm Perú (v1.452)
 }
+// v1.452: B2C — DOS recordatorios de no gestión (30 min y 1 hora), solo L-V 9am-6pm.
+// v1.453: DESACTIVADO a pedido — ya no se avisa cuando un lead queda sin atender; la alerta de
+// Nuevo lead (con datos y monto) se mantiene 24/7. Reactivar: quitar el return de la línea siguiente.
 setInterval(() => {
+  return; // ← recordatorios de no-gestión B2C apagados (v1.453)
   const ahora = Date.now();
   for (let i = WA_PENDIENTES.length - 1; i >= 0; i--) {
     const p = WA_PENDIENTES[i];
-    if (ahora - p.ts < 10 * 60 * 1000) continue;   // aún no cumple 10 min
-    WA_PENDIENTES.splice(i, 1);                      // procesar una sola vez
+    const min = (ahora - p.ts) / 60000;
+    if (min < 30) continue;                          // aún no cumple 30 min
     try {
       const tocado = db.prepare('SELECT 1 FROM gestiones WHERE codigo = ? LIMIT 1').get(p.codigo);
-      if (tocado) continue;                          // ya fue atendido -> silencio
-      if (!esHorarioLaboralWA()) continue;           // fuera de horario -> nada (lo recoge el saludo 9am)
-      const lead = db.prepare('SELECT archivado FROM leads WHERE codigo = ?').get(p.codigo);
-      if (!lead || lead.archivado) continue;         // lead ya no aplica
+      if (tocado) { WA_PENDIENTES.splice(i, 1); continue; }   // ya fue atendido -> silencio
+      const lead = db.prepare('SELECT archivado, nombre FROM leads WHERE codigo = ?').get(p.codigo);
+      if (!lead || lead.archivado) { WA_PENDIENTES.splice(i, 1); continue; }
+      if (!esHorarioLaboralWA()) { WA_PENDIENTES.splice(i, 1); continue; } // fuera de horario: lo recoge el saludo 9am
       const gpCorto = String(p.asesor).trim().split(/\s+/)[0] || p.asesor;
-      enviarAlertaWA(`⚠️ *Sin atender (10 min)* — ${p.nombre}\n👤 ${gpCorto}, ¡no lo dejes enfriar! ⏱`);
+      const nombre = lead.nombre || p.nombre; // nombre de la persona, fresco de BD
+      if (!p.aviso1) {
+        p.aviso1 = true;                             // 1er recordatorio (30 min); queda en cola para el 2º
+        enviarAlertaWA(`⚠️ *Sin atender (30 min)* — ${nombre}\n👤 ${gpCorto}, ¡no lo dejes enfriar! ⏱`);
+      } else if (min >= 60) {
+        WA_PENDIENTES.splice(i, 1);                  // 2º y último recordatorio (1 hora)
+        enviarAlertaWA(`⚠️ *Sin atender (1 hora)* — ${nombre}\n👤 ${gpCorto}, ¡sigue sin gestión, no lo pierdas! ⏱`);
+      }
     } catch (e) { /* silencioso */ }
   }
 }, 60 * 1000);
 
 // v1.447: verificación B2B — SEGUNDO recordatorio a la HORA sin gestión, alerta al grupo B2B.
+// v1.453: DESACTIVADO a pedido — mismo criterio que B2C. Reactivar: quitar el return.
 setInterval(() => {
+  return; // ← recordatorios de no-gestión B2B apagados (v1.453)
   const ahora = Date.now();
   for (let i = WA_PENDIENTES_B2B.length - 1; i >= 0; i--) {
     const p = WA_PENDIENTES_B2B[i];
@@ -9227,7 +9260,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.450 (Modo prueba de agendamiento para el admin: (1) el ADMIN puede asignarse leads B2C a sí mismo — aparece al final del selector de asesores del catálogo y la validación de /api/leads/asignar lo acepta; con el lead asignado a su nombre, al registrar Agendó reunión el evento de Google Calendar se crea EN SU PROPIO calendario (el lookup por nombre resuelve su correo de usuario), le llega la invitación con Meet, y el bot de notas Recall se programa normalmente. (2) FIX latente: la validación de asignar solo aceptaba la lista estática de logic.js, por lo que una gestora nueva creada en la BD no podía recibir leads; ahora acepta lista base + gestoras activas de BD. Las métricas de gestoras (pulso, ranking, comité) no se contaminan: filtran por rol gestora. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.453 (Ajustes bot WhatsApp: (1) RECORDATORIOS DE NO GESTIÓN APAGADOS en B2C y B2B — ya no se envía ningún Sin atender (30 min / 1 hora); los 4 puntos de disparo quedaron con return comentado para reactivación en una línea. La alerta de INGRESO de lead con datos y monto (Nuevo lead B2C / Nueva oportunidad B2B) se mantiene 24/7 tal cual. (2) B2B mantiene sus 3 cortes: arranque 9am + resumen de gestión 1pm y 6pm (los cortes tipo plan ya estaban desactivados desde antes; no hay mensajes duplicados). (3) Los mensajes del grupo B2B consideran SOLO A BONY: config b2b_resumen_asesores seteada one-shot a Bony Segil, y el ARRANQUE 9am ahora también respeta esa selección (pipeline, reuniones de hoy, priorizados y carga por asesor filtrados a los seleccionados — antes solo filtraban los resúmenes 1pm/6pm); la selección se cambia desde el modal del Resumen de gestión B2B en el CRM (solo admin). (4) Todo lo demás se mantiene: L-V para mensajes operativos, leads nuevos 24/7, marketing intacto, Breezy fuera. Front: no requiere Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

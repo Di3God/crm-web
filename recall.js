@@ -58,16 +58,26 @@ module.exports = function () {
 
   // ---- Crear bot programado. Devuelve { botId } o lanza error. ----
   // joinAtISO: instante UTC en que el bot debe entrar (usar la hora de inicio de la reunión).
+  // Si la reunión es inminente o ya empezó, se omite join_at para que el bot entre DE INMEDIATO.
+  // Si la API rechaza el recording_config del provider (4xx), se reintenta con payload mínimo:
+  // el bot graba igual y la transcripción en español se pide después vía create_transcript (async).
   async function crearBot({ meetingUrl, joinAtISO, metadata }) {
-    const body = {
-      meeting_url: meetingUrl,
-      bot_name: BOT_NAME(),
-      join_at: joinAtISO || undefined,
-      recording_config: { transcript: transcriptConfig() },
-      metadata: metadata || {}
-    };
-    const j = await llamarAPI('POST', '/api/v1/bot/', body);
-    return { botId: j.id || null, crudo: j };
+    let joinAt;
+    if (joinAtISO) {
+      const t = new Date(joinAtISO).getTime();
+      if (isFinite(t) && t > Date.now() + 2 * 60 * 1000) joinAt = new Date(t).toISOString();
+    }
+    const base = { meeting_url: meetingUrl, bot_name: BOT_NAME(), metadata: metadata || {} };
+    if (joinAt) base.join_at = joinAt;
+    try {
+      const j = await llamarAPI('POST', '/api/v1/bot/', Object.assign({}, base, { recording_config: { transcript: transcriptConfig() } }));
+      return { botId: j.id || null, crudo: j };
+    } catch (e) {
+      if (!(e.status >= 400 && e.status < 500)) throw e; // errores de red/5xx: propagar
+      console.error('[recall] create con transcript config rechazado (' + e.status + '), reintentando con payload mínimo:', String(e.message).slice(0, 200));
+      const j = await llamarAPI('POST', '/api/v1/bot/', base);
+      return { botId: j.id || null, crudo: j, sinTranscriptConfig: true };
+    }
   }
 
   // ---- Consultar estado del bot. ----

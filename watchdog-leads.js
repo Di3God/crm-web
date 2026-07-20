@@ -79,6 +79,8 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha }) {
     if (!JID()) { console.log('[REPORTES] WA_GRUPO_MKT_JID no configurado: reportes por franja desactivados'); return; }
     setInterval(async () => {
       try {
+        const _d = new Date(Date.now() + LIMA_OFF).getUTCDay();
+        if (_d === 0 || _d === 6) return; // sábado/domingo: silencio (v1.452)
         const now = new Date(Date.now() + LIMA_OFF);
         const hhmm = now.toISOString().slice(11, 16);
         if (!CORTES[hhmm]) return;

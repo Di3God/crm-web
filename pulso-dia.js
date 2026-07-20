@@ -13,6 +13,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, construirRankingDia,
   const peruDia = iso => new Date(new Date(iso).getTime() + LIMA_OFF).toISOString().slice(0, 10);
   const primerNom = n => String(n || '').trim().split(/\s+/)[0];
   const esDomingoPeru = () => new Date(Date.now() + LIMA_OFF).getUTCDay() === 0;
+  const esDiaLaboralPeru = () => { const d = new Date(Date.now() + LIMA_OFF).getUTCDay(); return d >= 1 && d <= 5; }; // v1.452: L-V
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
   function selloFecha() { const d = new Date(Date.now() + LIMA_OFF); return DIAS[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + MESES[d.getUTCMonth()]; }
@@ -233,6 +234,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, construirRankingDia,
   function iniciarCortes() {
     setInterval(async () => {
       try {
+        if (!esDiaLaboralPeru()) return; // sábado/domingo: silencio (v1.452)
         if (esDomingoPeru()) return;
         const now = new Date(Date.now() + LIMA_OFF);
         const corte = CORTES[now.toISOString().slice(11, 16)];

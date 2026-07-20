@@ -214,10 +214,12 @@ module.exports = function ({ db, consolidarLead, enviarAlertaWA, peruFecha, cons
   }
 
   // Scheduler: revisa cada minuto la hora Peru; envia cada corte una sola vez al dia.
+  const esDiaLaboralPeru = () => { const d = new Date(Date.now() + LIMA_OFF).getUTCDay(); return d >= 1 && d <= 5; }; // v1.452
   const CORTES = { '09:00': '9am', '13:00': '1pm', '18:00': '6pm' };
   function iniciarCortes() {
     setInterval(async () => {
       try {
+        if (!esDiaLaboralPeru()) return; // sábado/domingo: silencio (v1.452)
         if (esDomingoPeru()) return; // domingos no se envía nada
         const now = new Date(Date.now() + LIMA_OFF);
         const hhmm = now.toISOString().slice(11, 16);

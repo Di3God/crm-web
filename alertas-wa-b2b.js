@@ -321,12 +321,16 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   }
 
   // ---------- Corte 9am: Arranque del día ----------
-  function plan9am() {
-    const cards = materialB2B();
+  function plan9am(asesores) {
+    let cards = materialB2B();
+    // v1.453: si hay asesores configurados (b2b_resumen_asesores), el arranque solo considera
+    // sus leads — no se menciona a personas que ya no están en el equipo.
+    if (Array.isArray(asesores) && asesores.length) cards = cards.filter(c => c.resp && asesores.includes(c.resp));
     if (!cards.length) return null;
     const totalM = cards.reduce((a, c) => a + (c.monto || 0), 0);
     const nuevas = cards.filter(c => c.col === 'Solicitud').length;
-    const reusList = reunionesHoy();
+    let reusList = reunionesHoy();
+    if (Array.isArray(asesores) && asesores.length) reusList = reusList.filter(r => r.resp && asesores.includes(r.resp));
     const reus = reusList.length;
     const vencidosList = cards.filter(c => c.sla && c.sla.vencido);
     const vencidos = vencidosList.length;
@@ -416,7 +420,10 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   }
 
   // Programa una verificación a los 30 min de llegar el lead. Si sigue sin gestión, lanza alerta.
+  // v1.453: DESACTIVADO a pedido (ya no se avisa cuando un lead queda sin atender; la alerta de
+  // ingreso con datos y monto se mantiene). Para reactivar, elimina el return de la línea siguiente.
   function programarAlertaSinAtender(codigo) {
+    return; // ← recordatorios de no-gestión apagados (v1.453)
     const TREINTA_MIN = 30 * 60 * 1000;
     setTimeout(() => {
       try {
@@ -432,6 +439,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         const clave = 'wa_b2b_sinatender_' + codigo;
         if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return;
         db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
+        if (!enHorarioLaboralPeru()) return; // fuera de L-V 9-18: silencio (lo recoge el arranque 9am)
         // Nombre de la PERSONA (contacto) — no la razón social — para hablarle de tú a tú.
         const persona = f.contacto || f.razonSocial || f.nombreComercial || f.codigo;
         const quien = f.responsableActual ? primerNom(f.responsableActual) : 'Equipo';
@@ -454,11 +462,17 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   }
 
   // Scheduler: 9am y 6pm hora Perú, un envío por corte y por día.
+  // v1.452: los mensajes operativos del bot solo van de lunes a viernes (las alertas de
+  // NUEVA OPORTUNIDAD siguen 24/7). 9am-6pm para recordatorios de no gestión.
+  const esDiaLaboralPeru = () => { const d = new Date(Date.now() + LIMA_OFF).getUTCDay(); return d >= 1 && d <= 5; };
+  const enHorarioLaboralPeru = () => { const a = new Date(Date.now() + LIMA_OFF); const d = a.getUTCDay(), h = a.getUTCHours(); return d >= 1 && d <= 5 && h >= 9 && h < 18; };
+
   const CORTES = { '09:00': '9am', '13:00': '1pm', '18:00': '6pm' };
   function iniciarCortes() {
     setInterval(async () => {
       try {
         if (!JID()) return;
+        if (!esDiaLaboralPeru()) return; // sábado/domingo: silencio (v1.452)
         const now = new Date(Date.now() + LIMA_OFF);
         const corte = CORTES[now.toISOString().slice(11, 16)];
         if (!corte) return;
@@ -487,6 +501,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     setInterval(async () => {
       try {
         if (!JID()) return;
+        if (!esDiaLaboralPeru()) return; // sábado/domingo: silencio (v1.452)
         const now = new Date(Date.now() + LIMA_OFF);
         const corte = CORTES[now.toISOString().slice(11, 16)];
         if (!corte) return;
@@ -498,7 +513,7 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         try { const c = db.prepare("SELECT valor FROM app_config WHERE clave='b2b_resumen_asesores'").get(); if (c && c.valor) { const arr = JSON.parse(c.valor); if (Array.isArray(arr) && arr.length) asesores = arr; } } catch (e) {}
         // 9am = ARRANQUE del día (lo que hay por gestionar, no métricas en cero).
         // 1pm y 6pm = RESUMEN de gestión con métricas por asesor.
-        const txt = corte === '9am' ? plan9am() : resumenGestionPorAsesor({ asesores });
+        const txt = corte === '9am' ? plan9am(asesores) : resumenGestionPorAsesor({ asesores });
         if (txt) await enviarAlertaB2BWA(txt);
         console.log('[WA-B2B] ' + (corte === '9am' ? 'arranque' : 'resumen gestión') + ' ' + corte + ' enviado');
       } catch (e) { console.error('[WA-B2B] resumen gestión falló:', e.message); }
@@ -508,9 +523,11 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
   // Barrido de respaldo: cada 5 min busca leads que llegaron hace 30-75 min, siguen sin gestión
   // y aún no se les avisó. Cubre el caso de que el servidor se reinicie y se pierda el setTimeout.
   function iniciarWatchdogSinAtender() {
+    return; // v1.453: recordatorios de no-gestión apagados a pedido; reactivar quitando este return
     setInterval(() => {
       try {
         if (!JID()) return;
+        if (!enHorarioLaboralPeru()) return; // solo L-V 9-18 (v1.452)
         const ahora = Date.now();
         const hace30 = new Date(ahora - 30 * 60 * 1000).toISOString();
         const hace75 = new Date(ahora - 75 * 60 * 1000).toISOString();
