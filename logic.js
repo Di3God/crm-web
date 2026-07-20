@@ -255,7 +255,7 @@ function calcularScoreCierre({ fondos, montoConfirmadoRango, criterio, competenc
 }
 
 // ---------- Etapa derivada del ultimo resultado ----------
-function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
+function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion, esCartera }) {
   const r = ultimoResultado;
   if (!r || r === 'Sin gestion') return 'Contactabilidad 3x5';
   if (r === 'Venta ganada') return 'Cerrado ganado';
@@ -266,6 +266,11 @@ function calcularEtapa({ ultimoResultado, estadoReunion, tieneCalificacion }) {
       ['Agendada', 'Reprogramada'].includes(estadoReunion)) return 'Agendado - pendiente reunion';
   // Seguimiento post contacto: aun no hay reunion, se mantiene en calificado.
   if (r === 'Seguimiento post contacto') return 'Calificado - pendiente agendar';
+  // CARTERA ACTIVA (v1.454): el cliente ya conoce el producto, así que un contacto efectivo
+  // lo deja listo para agendar/negociar sin pasar por "por calificar" (embudo abreviado).
+  if (esCartera && ['Respondio - sin calificar', 'Respondio - calificado', 'Respondio - pidio informacion', 'Respondio - interesado'].includes(r)) {
+    return 'Calificado - pendiente agendar';
+  }
   // Si el ultimo resultado significativo es "respondio sin calificar", el lead esta
   // en Contactado aunque arrastre algun dato suelto de calificacion (no debe saltar a Calificado).
   if (r === 'Respondio - sin calificar') return 'Contactado - por calificar';
@@ -623,7 +628,7 @@ function consolidarLead(lead, gestiones) {
   }
   let etapa = calcularEtapa({
     ultimoResultado: ultSignificativo ? ultSignificativo.resultado : (ult ? ult.resultado : 'Sin gestion'),
-    estadoReunion, tieneCalificacion
+    estadoReunion, tieneCalificacion, esCartera: !!lead.esCartera
   });
   // ANTI-RETROCESO (v1.385): un lead no puede retroceder de etapa. Solo sale de su avance
   // máximo si se GANA o se PIERDE. Si la última gestión mapea a una etapa inferior a la

@@ -32,6 +32,7 @@
         <button class="mundo-item oculto" id="mi-chat" onclick="navB2C('chat')">Mensajería</button>
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
+        <button class="mundo-item oculto" id="mi-cartera" onclick="navB2C('cartera')">♻️ Cartera Activa</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
         <button class="mundo-item oculto" id="mi-comite" onclick="navB2C('comite')">📊 Comité</button>
         <button class="mundo-item oculto" id="mi-supervisor" onclick="navB2C('supervisor')">Supervisor</button>
@@ -746,6 +747,67 @@
           <div id="opsMetas"></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ===== CARTERA ACTIVA (v1.454) ===== -->
+  <section id="v-cartera" class="vista">
+    <h2>♻️ Cartera Activa</h2>
+    <p class="sub">Clientes que ya invirtieron con TasaTop. Se liberan por goteo a la bandeja de cada GP para no canibalizar los leads de marketing.</p>
+
+    <div class="cart-box">
+      <div class="cart-tit">📥 Importar clientes</div>
+      <div class="cart-drop" onclick="document.getElementById('cartFile').click()">
+        Haz clic para elegir el Excel o CSV<br>
+        <small style="color:#B08C2E">Obligatorias: nombre · telefono · gestora — el resto es opcional</small>
+      </div>
+      <input type="file" id="cartFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="cartLeerArchivo(this)">
+      <div id="cartPreview" style="margin-top:10px"></div>
+    </div>
+
+    <div class="cart-box">
+      <div class="cart-tit">⏱ Goteo diario <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— cuántos clientes se sueltan a cada GP cada mañana</span></div>
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <label style="font-size:12px">Por gestora<br><input type="number" id="cartN" min="1" max="50" value="5" style="width:80px"></label>
+        <label style="font-size:12px">Hora<br><input type="time" id="cartHora" value="08:30" style="width:110px"></label>
+        <label style="font-size:12px">Tope de leads de marketing sin gestionar<br><input type="number" id="cartTope" min="1" max="999" value="10" style="width:90px"></label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;padding-bottom:6px"><input type="checkbox" id="cartActivo" checked style="width:auto"> Goteo automático activo</label>
+        <button class="btn" onclick="cartGuardarConfig()">💾 Guardar</button>
+        <button class="btn sec" onclick="cartLiberarYa()">🚀 Liberar ahora</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--muted);margin-top:8px">Si una GP tiene el tope o más de leads de marketing sin gestionar, ese día no recibe cartera. Prioridad: vencimiento más próximo, luego mayor monto invertido.</p>
+    </div>
+
+    <div class="cart-box">
+      <div class="cart-tit">📊 Estado por gestora</div>
+      <div id="cartResumen"></div>
+    </div>
+
+    <div class="cart-box" style="border-color:#C7E0F4;background:#F7FBFF">
+      <div class="cart-tit">🧪 Simulación <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— probar el flujo sin tocar la base real</span></div>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <label style="font-size:12px">Clientes ficticios<br><input type="number" id="cartDemoN" min="1" max="20" value="3" style="width:76px"></label>
+        <label style="font-size:12px">Para<br><select id="cartDemoG" style="min-width:160px"><option value="">Repartir entre todas</option></select></label>
+        <button class="btn sec" onclick="cartCrearDemo()">➕ Crear ficticios</button>
+        <button class="btn sec" style="color:#C0392B;border-color:#F5C6C6" onclick="cartBorrarDemo()">🗑 Eliminar todos los ficticios</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--muted);margin-top:8px">Los ficticios llevan el prefijo <b>[DEMO]</b> y datos de inversión de ejemplo. Se crean en reserva: libéralos abajo para verlos en la bandeja de la GP, y elimínalos cuando termines.</p>
+    </div>
+
+    <div class="cart-box">
+      <div class="cart-tit">📋 Clientes
+        <select id="cartFiltroEstado" onchange="cartCargarLista()" style="font-weight:500;font-size:12px;min-width:150px">
+          <option value="reserva">En reserva (esperando)</option>
+          <option value="liberado">Liberados (en bandeja)</option>
+        </select>
+        <select id="cartFiltroG" onchange="cartCargarLista()" style="font-weight:500;font-size:12px;min-width:170px"><option value="">Todas las gestoras</option></select>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn sec" onclick="cartSelTodos(true)">Marcar todos</button>
+        <button class="btn sec" onclick="cartSelTodos(false)">Desmarcar</button>
+        <button class="btn" id="cartBtnAccion" onclick="cartAccionSeleccion()">🚀 Liberar seleccionados</button>
+      </div>
+      <div id="cartLista"></div>
     </div>
   </section>
 

@@ -562,6 +562,19 @@ try { db.exec("ALTER TABLE leads ADD COLUMN listo7dias TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
 // v1.448: Calendar B2B + bots de notas (Recall) para B2C y B2B.
+// v1.454: CARTERA ACTIVA — clientes que ya invirtieron; se trabajan para renovar/ampliar líneas.
+try { db.exec("ALTER TABLE leads ADD COLUMN esCartera INTEGER DEFAULT 0"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraMontoInvertido REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraMontoVigente REAL"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraOperaciones INTEGER"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraUltimaInversion TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraVencimiento TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraNotas TEXT"); } catch (e) { }
+// Estado del goteo: 'reserva' (esperando su turno) | 'liberado' (ya en la bandeja de la GP)
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraEstado TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraLiberadoEn TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN esDemo INTEGER DEFAULT 0"); } catch (e) { } // v1.455: clientes ficticios de simulación
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_leads_cartera ON leads (esCartera, carteraEstado, asesor)"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
 db.exec(`CREATE TABLE IF NOT EXISTS reuniones_bots (
@@ -2879,6 +2892,12 @@ app.put('/api/b2c/pscore/pesos', (req, res) => {
 
 app.get('/api/leads', (req, res) => {
   let leads = db.prepare('SELECT * FROM leads WHERE COALESCE(archivado,0) = 0').all();
+  // v1.454 CARTERA: los que están en 'reserva' (esperando su turno del goteo) NO aparecen en la
+  // bandeja — así no se canibalizan los leads de marketing. Jefatura puede verlos con ?cartera=reserva.
+  const verCartera = req.query.cartera || '';
+  if (verCartera === 'reserva') leads = leads.filter(l => l.esCartera && (l.carteraEstado || 'reserva') === 'reserva');
+  else if (verCartera === 'todas') { /* sin filtro */ }
+  else leads = leads.filter(l => !l.esCartera || l.carteraEstado === 'liberado');
   if (!veTodo(req.user)) {
     leads = leads.filter(l => l.asesor === req.user.nombre);
   } else {
@@ -7075,6 +7094,302 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
   res.json({ ok: true, reunion: datos, avanzo });
 });
 
+// ============================================================
+// ===== CARTERA ACTIVA (v1.454) ==============================
+// Clientes que ya invirtieron con TasaTop. Se importan como leads
+// diferenciados (badge ♻️), se liberan por goteo (5/día por gestora)
+// y usan un embudo abreviado: pueden pasar directo a Contactado o
+// Negociación porque ya conocen el producto.
+// ============================================================
+const CARTERA_INICIALES = { 'ML': 'Mafer Lujan', 'LV': 'Lourdes Villavicencio', 'DB': 'Dora Barreto', 'HG': 'Henry Guerrero', 'CP': 'Cristian Povis' };
+function carteraResolverGestora(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (CARTERA_INICIALES[s.toUpperCase()]) return CARTERA_INICIALES[s.toUpperCase()];
+  const activas = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol='gestora'").all().map(r => r.nombre);
+  const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const exacta = activas.find(n => norm(n) === norm(s));
+  if (exacta) return exacta;
+  const parcial = activas.find(n => norm(n).startsWith(norm(s)) || norm(s).startsWith(norm(n).split(' ')[0]));
+  return parcial || s; // se devuelve tal cual: el importador reporta las no reconocidas
+}
+function carteraNum(v) {
+  if (v == null || v === '') return null;
+  const n = parseFloat(String(v).replace(/[^\d.,-]/g, '').replace(/,/g, ''));
+  return isFinite(n) ? n : null;
+}
+function carteraFecha(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[0];
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (m) return m[3] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0');
+  const d = new Date(s); return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+
+// POST /api/cartera/importar  { filas: [{nombre, telefono, gestora, email, ...}], liberarPrimeros: n }
+// Importa (o actualiza) clientes de cartera. Todos entran en 'reserva' salvo los primeros N por gestora.
+app.post('/api/cartera/importar', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const filas = (req.body && Array.isArray(req.body.filas)) ? req.body.filas : [];
+  if (!filas.length) return res.status(400).json({ error: 'Sin filas para importar' });
+  const liberarPrimeros = Number(req.body.liberarPrimeros || 0);
+  const ahora = new Date().toISOString();
+  const out = { creados: 0, actualizados: 0, errores: [], gestorasNoReconocidas: new Set(), porGestora: {} };
+  const activas = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol='gestora'").all().map(r => r.nombre);
+
+  filas.forEach((f, i) => {
+    try {
+      const nombre = String(f.nombre || '').trim();
+      const telRaw = String(f.telefono || '').trim();
+      const tel = telRaw.replace(/[^\d+]/g, '');
+      if (!nombre || !tel) { out.errores.push('Fila ' + (i + 2) + ': falta nombre o teléfono'); return; }
+      const gestora = carteraResolverGestora(f.gestora);
+      if (!gestora) { out.errores.push('Fila ' + (i + 2) + ' (' + nombre + '): sin gestora'); return; }
+      if (!activas.includes(gestora)) out.gestorasNoReconocidas.add(String(f.gestora || '') + ' → ' + gestora);
+      const datos = {
+        esCartera: 1,
+        carteraMontoInvertido: carteraNum(f.monto_invertido),
+        carteraMontoVigente: carteraNum(f.monto_vigente),
+        carteraOperaciones: carteraNum(f.operaciones),
+        carteraUltimaInversion: carteraFecha(f.ultima_inversion),
+        carteraVencimiento: carteraFecha(f.vencimiento),
+        carteraNotas: (f.notas ? String(f.notas).trim() : null),
+        email: (f.email ? String(f.email).trim() : null),
+        dni: (f.dni || f.DNI ? String(f.dni || f.DNI).trim() : null)
+      };
+      // ¿Ya existe por teléfono (últimos 9 dígitos) o DNI? → se convierte a cartera, no se duplica.
+      const tel9 = tel.replace(/\D/g, '').slice(-9);
+      let existente = null;
+      if (tel9.length >= 8) existente = db.prepare("SELECT * FROM leads WHERE replace(replace(replace(telefono,' ',''),'-',''),'+','') LIKE ? LIMIT 1").get('%' + tel9);
+      if (!existente && datos.dni) existente = db.prepare('SELECT * FROM leads WHERE dni = ? LIMIT 1').get(datos.dni);
+
+      if (existente) {
+        db.prepare(`UPDATE leads SET esCartera=1, asesor=COALESCE(?, asesor), fechaAsignacion=COALESCE(fechaAsignacion, ?),
+          email=COALESCE(?, email), dni=COALESCE(?, dni), carteraMontoInvertido=COALESCE(?, carteraMontoInvertido),
+          carteraMontoVigente=COALESCE(?, carteraMontoVigente), carteraOperaciones=COALESCE(?, carteraOperaciones),
+          carteraUltimaInversion=COALESCE(?, carteraUltimaInversion), carteraVencimiento=COALESCE(?, carteraVencimiento),
+          carteraNotas=COALESCE(?, carteraNotas), carteraEstado=COALESCE(carteraEstado,'reserva'), archivado=0
+          WHERE codigo=?`).run(gestora, ahora, datos.email, datos.dni, datos.carteraMontoInvertido, datos.carteraMontoVigente,
+          datos.carteraOperaciones, datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas, existente.codigo);
+        out.actualizados++;
+      } else {
+        const codigo = generarCodigo();
+        db.prepare(`INSERT INTO leads (codigo, nombre, telefono, email, fuente, campana, asesor, fechaCarga, fechaAsignacion,
+          dni, esCartera, carteraMontoInvertido, carteraMontoVigente, carteraOperaciones, carteraUltimaInversion,
+          carteraVencimiento, carteraNotas, carteraEstado)
+          VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,'reserva')`).run(codigo, nombre, telRaw, datos.email, 'Cartera activa',
+          'Renovación cartera', gestora, ahora, ahora, datos.dni, datos.carteraMontoInvertido, datos.carteraMontoVigente,
+          datos.carteraOperaciones, datos.carteraUltimaInversion, datos.carteraVencimiento, datos.carteraNotas);
+        out.creados++;
+      }
+      out.porGestora[gestora] = (out.porGestora[gestora] || 0) + 1;
+    } catch (e) { out.errores.push('Fila ' + (i + 2) + ': ' + e.message); }
+  });
+
+  // Liberación inicial opcional (primeros N por gestora, priorizados).
+  let liberados = 0;
+  if (liberarPrimeros > 0) liberados = carteraLiberar(liberarPrimeros, 'importación');
+  auditar(req, 'cartera_importar', null, out.creados + ' creados, ' + out.actualizados + ' actualizados' + (liberados ? ', ' + liberados + ' liberados' : ''));
+  res.json({ ok: true, creados: out.creados, actualizados: out.actualizados, liberados,
+    porGestora: out.porGestora, gestorasNoReconocidas: [...out.gestorasNoReconocidas], errores: out.errores.slice(0, 20) });
+});
+
+// Libera hasta N leads de cartera por gestora (los que están en reserva).
+// Prioriza: vencimiento más próximo → mayor monto invertido → más antiguo en reserva.
+// Seguridad anti-canibalización: si la gestora tiene 'topeSinGestionar' o más leads NO cartera
+// sin gestión, ese día no recibe cartera.
+function carteraLiberar(n, motivo, topeSinGestionar) {
+  const tope = topeSinGestionar != null ? topeSinGestionar : 10;
+  const ahora = new Date().toISOString();
+  let total = 0;
+  const gestoras = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol='gestora'").all().map(r => r.nombre);
+  gestoras.forEach(g => {
+    // Leads de marketing sin ninguna gestión (los perecibles): si hay muchos, no se suelta cartera.
+    const pend = db.prepare(`SELECT COUNT(*) c FROM leads l WHERE l.asesor=? AND COALESCE(l.esCartera,0)=0
+      AND COALESCE(l.archivado,0)=0 AND NOT EXISTS (SELECT 1 FROM gestiones g WHERE g.codigo=l.codigo)`).get(g).c;
+    if (pend >= tope) { console.log('[cartera] ' + g + ': ' + pend + ' leads de marketing sin gestionar (tope ' + tope + '), no se libera cartera hoy'); return; }
+    const cand = db.prepare(`SELECT codigo FROM leads WHERE esCartera=1 AND COALESCE(carteraEstado,'reserva')='reserva'
+      AND asesor=? AND COALESCE(archivado,0)=0
+      ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
+               COALESCE(carteraMontoInvertido,0) DESC, id ASC LIMIT ?`).all(g, n);
+    cand.forEach(c => {
+      db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?) WHERE codigo=?").run(ahora, ahora, c.codigo);
+      total++;
+    });
+    if (cand.length) console.log('[cartera] ' + g + ': ' + cand.length + ' liberados (' + motivo + ')');
+  });
+  return total;
+}
+
+// GET /api/cartera/lista?estado=reserva|liberado&gestora= — clientes de cartera para el panel.
+app.get('/api/cartera/lista', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const estado = req.query.estado === 'liberado' ? 'liberado' : 'reserva';
+  const gestora = req.query.gestora || null;
+  let filas = db.prepare(`SELECT codigo, nombre, telefono, email, asesor, esDemo, carteraEstado, carteraLiberadoEn,
+      carteraMontoInvertido, carteraOperaciones, carteraVencimiento
+    FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0 AND COALESCE(carteraEstado,'reserva')=?
+    ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
+             COALESCE(carteraMontoInvertido,0) DESC, id ASC`).all(estado);
+  if (gestora) filas = filas.filter(f => f.asesor === gestora);
+  // Para los liberados: marcar si ya tienen gestión (no se pueden devolver sin perder trabajo).
+  if (estado === 'liberado') {
+    filas = filas.map(f => {
+      const g = db.prepare('SELECT COUNT(*) c FROM gestiones WHERE codigo=?').get(f.codigo).c;
+      return Object.assign({}, f, { gestiones: g });
+    });
+  }
+  res.json({ estado, total: filas.length, filas: filas.slice(0, 400) });
+});
+
+// POST /api/cartera/liberar-seleccion { codigos: [] } — libera clientes específicos (simulación dirigida).
+app.post('/api/cartera/liberar-seleccion', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const codigos = (req.body && Array.isArray(req.body.codigos)) ? req.body.codigos : [];
+  if (!codigos.length) return res.status(400).json({ error: 'Sin códigos' });
+  const ahora = new Date().toISOString();
+  let n = 0;
+  const upd = db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?) WHERE codigo=? AND esCartera=1");
+  codigos.forEach(c => { const r = upd.run(ahora, ahora, c); if (r.changes) n++; });
+  auditar(req, 'cartera_liberar_seleccion', null, n + ' liberados');
+  res.json({ ok: true, liberados: n });
+});
+
+// POST /api/cartera/devolver { codigos: [] } — devuelve a reserva (solo si NO tienen gestiones).
+app.post('/api/cartera/devolver', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const codigos = (req.body && Array.isArray(req.body.codigos)) ? req.body.codigos : [];
+  if (!codigos.length) return res.status(400).json({ error: 'Sin códigos' });
+  let devueltos = 0; const bloqueados = [];
+  codigos.forEach(c => {
+    const g = db.prepare('SELECT COUNT(*) n FROM gestiones WHERE codigo=?').get(c).n;
+    if (g > 0) { // ya lo trabajaron: no se borra el avance
+      const l = db.prepare('SELECT nombre FROM leads WHERE codigo=?').get(c);
+      bloqueados.push((l && l.nombre ? l.nombre : c) + ' (' + g + ' gestión' + (g === 1 ? '' : 'es') + ')');
+      return;
+    }
+    const r = db.prepare("UPDATE leads SET carteraEstado='reserva', carteraLiberadoEn=NULL WHERE codigo=? AND esCartera=1").run(c);
+    if (r.changes) devueltos++;
+  });
+  auditar(req, 'cartera_devolver', null, devueltos + ' devueltos a reserva' + (bloqueados.length ? ', ' + bloqueados.length + ' bloqueados por tener gestión' : ''));
+  res.json({ ok: true, devueltos, bloqueados });
+});
+
+// POST /api/cartera/demo { n, gestora } — crea clientes FICTICIOS marcados esDemo=1 para simular.
+app.post('/api/cartera/demo', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const n = Math.max(1, Math.min(20, Number(req.body && req.body.n) || 3));
+  const gestoraPedida = req.body && req.body.gestora ? String(req.body.gestora) : null;
+  const activas = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol='gestora'").all().map(r => r.nombre);
+  if (!activas.length) return res.status(422).json({ error: 'No hay gestoras activas' });
+  const NOMBRES = ['Ricardo Palma Soler', 'Carmen Zavala Ríos', 'Alonso Vera Quispe', 'Patricia Mendoza Luna', 'Fernando Ríos Tello',
+    'Silvia Castro Meza', 'Joaquín Herrera Paz', 'Verónica Salas Nieto', 'Martín Delgado Cruz', 'Elena Ballón Vargas'];
+  const ahora = new Date().toISOString();
+  const creados = [];
+  for (let i = 0; i < n; i++) {
+    const gestora = gestoraPedida || activas[i % activas.length];
+    const nombre = '[DEMO] ' + NOMBRES[i % NOMBRES.length];
+    const codigo = generarCodigo();
+    const tel = '9' + String(10000000 + Math.floor(Math.random() * 89999999));
+    const monto = [15000, 30000, 45000, 80000, 120000][i % 5];
+    const ops = [2, 3, 5, 7, 12][i % 5];
+    const venc = new Date(Date.now() + (10 + i * 7) * 86400000).toISOString().slice(0, 10);
+    const ultima = new Date(Date.now() - (30 + i * 15) * 86400000).toISOString().slice(0, 10);
+    db.prepare(`INSERT INTO leads (codigo, nombre, telefono, email, fuente, campana, asesor, fechaCarga, fechaAsignacion,
+        esCartera, esDemo, carteraMontoInvertido, carteraMontoVigente, carteraOperaciones, carteraUltimaInversion,
+        carteraVencimiento, carteraNotas, carteraEstado)
+        VALUES (?,?,?,?,?,?,?,?,?,1,1,?,?,?,?,?,?,'reserva')`).run(codigo, nombre, tel, 'demo' + i + '@ejemplo.com',
+        'Cartera activa', 'Simulación', gestora, ahora, ahora, monto, Math.round(monto * 0.6), ops, ultima, venc,
+        'Cliente ficticio para simulación — se puede eliminar sin afectar la base real');
+    creados.push({ codigo, nombre, gestora });
+  }
+  auditar(req, 'cartera_demo_crear', null, n + ' clientes ficticios');
+  res.json({ ok: true, creados });
+});
+
+// DELETE /api/cartera/demo — elimina TODOS los clientes ficticios (y sus gestiones de prueba).
+app.delete('/api/cartera/demo', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const demos = db.prepare('SELECT codigo FROM leads WHERE esDemo=1').all();
+  demos.forEach(d => {
+    db.prepare('DELETE FROM gestiones WHERE codigo=?').run(d.codigo);
+    db.prepare('DELETE FROM leads WHERE codigo=?').run(d.codigo);
+  });
+  auditar(req, 'cartera_demo_borrar', null, demos.length + ' clientes ficticios eliminados');
+  res.json({ ok: true, eliminados: demos.length });
+});
+
+// GET /api/cartera/resumen — estado del goteo por gestora.
+app.get('/api/cartera/resumen', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const filas = db.prepare(`SELECT asesor,
+      SUM(CASE WHEN COALESCE(carteraEstado,'reserva')='reserva' THEN 1 ELSE 0 END) reserva,
+      SUM(CASE WHEN carteraEstado='liberado' THEN 1 ELSE 0 END) liberados,
+      COUNT(*) total
+    FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0 GROUP BY asesor ORDER BY asesor`).all();
+  const cfg = db.prepare("SELECT valor FROM app_config WHERE clave='cartera_goteo'").get();
+  let goteo = { activo: true, porGestora: 5, hora: '08:30', tope: 10 };
+  try { if (cfg && cfg.valor) goteo = Object.assign(goteo, JSON.parse(cfg.valor)); } catch (e) { }
+  res.json({ porGestora: filas, goteo });
+});
+
+// POST /api/cartera/liberar { n } — liberación manual inmediata (admin/jefa).
+app.post('/api/cartera/liberar', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
+  const n = Math.max(1, Math.min(50, Number(req.body && req.body.n) || 5));
+  const liberados = carteraLiberar(n, 'manual · ' + req.user.nombre, 9999); // manual ignora el tope
+  auditar(req, 'cartera_liberar', null, n + ' por gestora → ' + liberados + ' liberados');
+  res.json({ ok: true, liberados });
+});
+
+// POST /api/cartera/config { activo, porGestora, hora, tope } — configura el goteo diario.
+app.post('/api/cartera/config', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const b = req.body || {};
+  const cfg = { activo: b.activo !== false, porGestora: Math.max(1, Math.min(50, Number(b.porGestora) || 5)),
+    hora: /^\d{2}:\d{2}$/.test(b.hora) ? b.hora : '08:30', tope: Math.max(1, Math.min(999, Number(b.tope) || 10)) };
+  db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('cartera_goteo',?)").run(JSON.stringify(cfg));
+  auditar(req, 'cartera_config', null, JSON.stringify(cfg));
+  res.json({ ok: true, goteo: cfg });
+});
+
+// PUT /api/leads/:codigo/cartera { esCartera, montoInvertido, ... } — convertir un lead existente
+// a cartera activa (o quitarle la marca) y editar sus datos de inversión.
+app.put('/api/leads/:codigo/cartera', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'gestora'].includes(req.user.rol)) return res.status(403).json({ error: 'Sin permiso' });
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(req.params.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
+  const b = req.body || {};
+  const es = b.esCartera === false ? 0 : 1;
+  db.prepare(`UPDATE leads SET esCartera=?, carteraEstado=CASE WHEN ?=1 THEN COALESCE(carteraEstado,'liberado') ELSE NULL END,
+      carteraMontoInvertido=?, carteraMontoVigente=?, carteraOperaciones=?, carteraUltimaInversion=?, carteraVencimiento=?, carteraNotas=?
+      WHERE codigo=?`).run(es, es, carteraNum(b.montoInvertido), carteraNum(b.montoVigente), carteraNum(b.operaciones),
+      carteraFecha(b.ultimaInversion), carteraFecha(b.vencimiento), b.notas ? String(b.notas).trim() : null, req.params.codigo);
+  auditar(req, es ? 'cartera_marcar' : 'cartera_desmarcar', req.params.codigo, es ? 'convertido a cartera activa' : 'quitado de cartera');
+  res.json({ ok: true });
+});
+
+// Goteo automático diario: a la hora configurada libera N por gestora (solo L-V).
+setInterval(() => {
+  try {
+    const cfg = db.prepare("SELECT valor FROM app_config WHERE clave='cartera_goteo'").get();
+    let g = { activo: true, porGestora: 5, hora: '08:30', tope: 10 };
+    try { if (cfg && cfg.valor) g = Object.assign(g, JSON.parse(cfg.valor)); } catch (e) { }
+    if (!g.activo) return;
+    const a = peruAhora(), dia = a.getUTCDay();
+    if (dia === 0 || dia === 6) return; // solo L-V
+    const hhmm = String(a.getUTCHours()).padStart(2, '0') + ':' + String(a.getUTCMinutes()).padStart(2, '0');
+    if (hhmm !== g.hora) return;
+    const clave = 'cartera_goteo_' + a.toISOString().slice(0, 10);
+    if (db.prepare('SELECT 1 FROM app_config WHERE clave=?').get(clave)) return; // ya corrió hoy
+    db.prepare('INSERT OR REPLACE INTO app_config (clave,valor) VALUES (?,?)').run(clave, new Date().toISOString());
+    const n = carteraLiberar(g.porGestora, 'goteo diario', g.tope);
+    console.log('[cartera] goteo diario: ' + n + ' leads liberados');
+  } catch (e) { console.error('[cartera] goteo:', e.message); }
+}, 60 * 1000);
+
 // ===== Reuniones con bot de notas (Recall): estado, transcript y resumen =====
 // GET /api/reuniones/:mundo/:codigo — última reunión con bot del lead/solicitud.
 app.get('/api/reuniones/:mundo/:codigo', (req, res) => {
@@ -9260,7 +9575,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.453 (Ajustes bot WhatsApp: (1) RECORDATORIOS DE NO GESTIÓN APAGADOS en B2C y B2B — ya no se envía ningún Sin atender (30 min / 1 hora); los 4 puntos de disparo quedaron con return comentado para reactivación en una línea. La alerta de INGRESO de lead con datos y monto (Nuevo lead B2C / Nueva oportunidad B2B) se mantiene 24/7 tal cual. (2) B2B mantiene sus 3 cortes: arranque 9am + resumen de gestión 1pm y 6pm (los cortes tipo plan ya estaban desactivados desde antes; no hay mensajes duplicados). (3) Los mensajes del grupo B2B consideran SOLO A BONY: config b2b_resumen_asesores seteada one-shot a Bony Segil, y el ARRANQUE 9am ahora también respeta esa selección (pipeline, reuniones de hoy, priorizados y carga por asesor filtrados a los seleccionados — antes solo filtraban los resúmenes 1pm/6pm); la selección se cambia desde el modal del Resumen de gestión B2B en el CRM (solo admin). (4) Todo lo demás se mantiene: L-V para mensajes operativos, leads nuevos 24/7, marketing intacto, Breezy fuera. Front: no requiere Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.455 (CARTERA ACTIVA · simulación y control manual: (1) Tabla de clientes con filtro por estado (en reserva / liberados) y por gestora, con checkboxes: liberar clientes ESPECÍFICOS a la bandeja (no solo los primeros N del goteo) — GET /api/cartera/lista y POST /api/cartera/liberar-seleccion. (2) DEVOLVER A RESERVA: quita de la bandeja un cliente ya liberado — POST /api/cartera/devolver; blindaje: si el lead YA tiene gestiones registradas se bloquea y se informa cuáles, para no borrar trabajo hecho. (3) CLIENTES FICTICIOS de simulación: POST /api/cartera/demo crea hasta 20 leads [DEMO] marcados con esDemo=1, con datos de inversión de ejemplo (monto, operaciones, vencimiento escalonado) repartidos entre las gestoras activas o asignados a una; DELETE /api/cartera/demo los elimina todos junto con sus gestiones de prueba sin tocar la base real. La tabla los resalta con badge DEMO. (4) Nueva columna esDemo en leads. Flujo de prueba: crear ficticios → liberar → verlos en la bandeja de la GP con tarjeta dorada → gestionar → devolver o eliminar. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -574,14 +574,14 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-comite', 'mi-b2b-dia', 'mi-b2b-ops']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-cartera', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-comite', 'mi-b2b-dia', 'mi-b2b-ops']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
   } else if (r === 'gestora') {
     verMundo('B2C'); ver(['mi-leads']); mundoInicial = 'B2C';
   } else if (r === 'jefa') {
-    verMundo('B2C'); verMundo('Mkt'); ver(['mi-leads', 'mi-dash', 'mi-comite', 'mi-brutos', 'mi-releads', 'mi-supervisor']); ver(['mi-mkt-atrib']); mundoInicial = 'B2C';
+    verMundo('B2C'); verMundo('Mkt'); ver(['mi-leads', 'mi-dash', 'mi-comite', 'mi-brutos', 'mi-releads', 'mi-cartera', 'mi-supervisor']); ver(['mi-mkt-atrib']); mundoInicial = 'B2C';
   } else if (r === 'asistente_creditos' || r === 'funcionario_b2b') {
     verMundo('B2B'); ver(['mi-b2b-sol', 'mi-b2b-dia']); mundoInicial = 'B2B';
   } else if (r === 'jefe_creditos') {
@@ -646,6 +646,7 @@ function ir(v) {
   if (v === 'cohortes') cargarCohortes();
   if (v === 'brutos') cargarBrutos();
   if (v === 'releads') cargarReleads();
+  if (v === 'cartera') { cartCargarResumen(); cartCargarLista(); }
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
@@ -1439,7 +1440,7 @@ function render() {
       : (puedeAsig ? '<button class="btn sec" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();abrirAsignarUno(\'' + l.codigo + '\',\'' + (l.nombre||'').replace(/'/g,'') + '\')">Asignar</button>' : '—');
     const dia3x5 = l.diasDesdeAsignacion ? l.diasDesdeAsignacion + '/5' : '—';
     const tel = (l.telefono || '').replace(/[^0-9]/g, '');
-    return '<tr class="fila">' +
+    return '<tr class="fila' + (l.esCartera ? ' fila-cartera' : '') + '">' +
       chk +
       '<td onclick="abrirGestion(\'' + l.codigo + '\')"><span class="chip ' + (PRIO_CLASE[l.prioridad] || 'p-Baja') + '">' + l.prioridad + '</span></td>' +
       // Lead enriquecido: nombre + canal/fuente + estado de contacto
@@ -1485,12 +1486,25 @@ function celdaLead(l) {
     if (l.intentos > 0) estadoHtml = '<div class="lead-intentos">' + l.intentos + (l.intentos === 1 ? ' intento' : ' intentos') + '</div>';
     else estadoHtml = '<div class="lead-estado">Sin contacto</div>';
   }
-  return '<div class="lead-cell">' +
+  // v1.454 CARTERA ACTIVA: badge dorado + datos de inversión visibles para la GP.
+  let cartera = '';
+  if (l.esCartera) {
+    const partes = [];
+    if (l.carteraMontoInvertido) partes.push('💰 ' + fmtSoles(l.carteraMontoInvertido) + ' invertido');
+    if (l.carteraOperaciones) partes.push('📊 ' + l.carteraOperaciones + (l.carteraOperaciones === 1 ? ' operación' : ' operaciones'));
+    if (l.carteraVencimiento) {
+      const d = Math.ceil((new Date(l.carteraVencimiento) - new Date()) / 86400000);
+      partes.push('📅 vence ' + (d >= 0 ? 'en ' + d + 'd' : 'hace ' + Math.abs(d) + 'd'));
+    }
+    cartera = '<div class="lead-cartera-datos">' + (partes.length ? partes.join(' · ') : 'Cliente de cartera · sin datos de inversión aún') + '</div>';
+  }
+  return '<div class="lead-cell' + (l.esCartera ? ' es-cartera' : '') + '">' +
     '<div class="lead-nom"' + nomTipAttr(l) + '>' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
+      (l.esCartera ? '<span class="badge-cartera" title="Cliente de cartera activa: ya invirtió con TasaTop">♻️ CARTERA</span>' : '') +
       (esLeadNuevo(l) ? '<span class="badge-nuevo">Nuevo</span>' : '') + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
     (correo ? '<div class="lead-fuente" title="' + correo + '">✉ ' + correo + '</div>' : '') +
-    estadoHtml +
+    cartera + estadoHtml +
   '</div>';
 }
 // Fecha relativa: "Hoy 10am", "Ayer", "Hace 3 días"
@@ -11026,5 +11040,227 @@ async function retranscribirReunion(mundo, codigo) {
   try {
     const r = await api('/api/reuniones/' + mundo + '/' + encodeURIComponent(codigo) + '/retranscribir', { method: 'POST' });
     alert(r.mensaje || 'Pedido. Vuelve a abrir las notas en unos minutos.');
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+
+// ============================================================
+// ===== CARTERA ACTIVA (v1.454) ==============================
+// Importador de Excel/CSV, control del goteo diario y resumen.
+// ============================================================
+let CART_FILAS = [];
+// Mapeo tolerante de cabeceras: acepta variantes con/sin tilde y sinónimos.
+function cartNormCol(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+}
+const CART_MAPA = {
+  nombre: ['nombre', 'nombres', 'cliente', 'nombrecompleto', 'razonsocial'],
+  telefono: ['telefono', 'celular', 'movil', 'fono', 'numero', 'telefonos'],
+  gestora: ['gestora', 'gestor', 'asesor', 'asesora', 'gp', 'responsable', 'ejecutivo'],
+  email: ['email', 'correo', 'mail', 'correoelectronico'],
+  monto_invertido: ['montoinvertido', 'monto', 'montototal', 'inversion', 'totalinvertido', 'montohistorico'],
+  monto_vigente: ['montovigente', 'vigente', 'saldo', 'montoactual'],
+  operaciones: ['operaciones', 'noperaciones', 'numoperaciones', 'cantidadoperaciones', 'ops'],
+  ultima_inversion: ['ultimainversion', 'fechaultimainversion', 'ultimaoperacion'],
+  vencimiento: ['vencimiento', 'fechavencimiento', 'vence', 'proximovencimiento'],
+  notas: ['notas', 'nota', 'observacion', 'observaciones', 'comentario'],
+  dni: ['dni', 'documento', 'numerodocumento', 'doc']
+};
+function cartDetectarCols(cabeceras) {
+  const out = {};
+  cabeceras.forEach((h, i) => {
+    const n = cartNormCol(h);
+    if (!n) return;
+    for (const [campo, alias] of Object.entries(CART_MAPA)) {
+      if (out[campo] != null) continue;
+      if (alias.includes(n)) { out[campo] = i; return; }
+    }
+  });
+  return out;
+}
+function cartLeerArchivo(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  const lector = new FileReader();
+  lector.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false });
+      if (!filas.length) throw new Error('El archivo está vacío');
+      // La cabecera es la primera fila con al menos 2 celdas con texto.
+      let iHead = 0;
+      for (let i = 0; i < Math.min(5, filas.length); i++) {
+        const llenas = (filas[i] || []).filter(c => String(c || '').trim()).length;
+        if (llenas >= 2) { iHead = i; break; }
+      }
+      const cols = cartDetectarCols(filas[iHead] || []);
+      if (cols.nombre == null || cols.telefono == null || cols.gestora == null) {
+        throw new Error('Faltan columnas obligatorias (nombre, telefono, gestora). Detectadas: ' + Object.keys(cols).join(', '));
+      }
+      const val = (fila, campo) => cols[campo] != null ? String(fila[cols[campo]] == null ? '' : fila[cols[campo]]).trim() : '';
+      CART_FILAS = [];
+      for (let i = iHead + 1; i < filas.length; i++) {
+        const fila = filas[i] || [];
+        const nombre = val(fila, 'nombre');
+        if (!nombre) continue;
+        CART_FILAS.push({
+          nombre, telefono: val(fila, 'telefono'), gestora: val(fila, 'gestora'), email: val(fila, 'email'),
+          monto_invertido: val(fila, 'monto_invertido'), monto_vigente: val(fila, 'monto_vigente'),
+          operaciones: val(fila, 'operaciones'), ultima_inversion: val(fila, 'ultima_inversion'),
+          vencimiento: val(fila, 'vencimiento'), notas: val(fila, 'notas'), dni: val(fila, 'dni')
+        });
+      }
+      cartPintarPreview(cols);
+    } catch (err) {
+      $('cartPreview').innerHTML = '<div class="vacio" style="color:#C0392B">No se pudo leer: ' + esc(err.message) + '</div>';
+    }
+  };
+  lector.readAsArrayBuffer(f);
+  input.value = '';
+}
+function cartPintarPreview(cols) {
+  if (!CART_FILAS.length) { $('cartPreview').innerHTML = '<div class="vacio">Sin filas con nombre.</div>'; return; }
+  const porG = {};
+  CART_FILAS.forEach(f => { const g = f.gestora || '(sin gestora)'; porG[g] = (porG[g] || 0) + 1; });
+  const sinTel = CART_FILAS.filter(f => !f.telefono).length;
+  const detectadas = Object.keys(cols).join(', ');
+  $('cartPreview').innerHTML =
+    '<div style="font-size:13px;margin-bottom:6px"><b>' + CART_FILAS.length + ' clientes</b> listos para importar' +
+      (sinTel ? ' · <span style="color:#C0392B">' + sinTel + ' sin teléfono (se omitirán)</span>' : '') + '</div>' +
+    '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Columnas detectadas: ' + esc(detectadas) + '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+      Object.entries(porG).map(([g, n]) => '<span class="cart-pill">' + esc(g) + ': ' + n + '</span>').join('') + '</div>' +
+    '<label style="font-size:12.5px;display:flex;align-items:center;gap:6px;margin-bottom:8px">' +
+      '<input type="checkbox" id="cartLiberarYa" style="width:auto" checked> Liberar los primeros ' +
+      '<input type="number" id="cartLiberarN" value="5" min="0" max="50" style="width:64px;margin:0 4px"> por gestora de inmediato</label>' +
+    '<button class="btn" onclick="cartImportar()">📥 Importar ' + CART_FILAS.length + ' clientes</button>';
+}
+async function cartImportar() {
+  if (!CART_FILAS.length) return;
+  const liberar = $('cartLiberarYa') && $('cartLiberarYa').checked ? Number($('cartLiberarN').value || 0) : 0;
+  if (!confirm('¿Importar ' + CART_FILAS.length + ' clientes de cartera activa?' + (liberar ? ' Se liberarán ' + liberar + ' por gestora de inmediato.' : ''))) return;
+  $('cartPreview').innerHTML = '<div class="vacio">Importando…</div>';
+  try {
+    const r = await api('/api/cartera/importar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filas: CART_FILAS, liberarPrimeros: liberar }) });
+    let html = '<div style="font-size:13px;color:#0F7B52;font-weight:700">✓ ' + r.creados + ' creados · ' + r.actualizados + ' actualizados' + (r.liberados ? ' · ' + r.liberados + ' liberados' : '') + '</div>';
+    if (r.porGestora) html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' + Object.entries(r.porGestora).map(([g, n]) => '<span class="cart-pill">' + esc(g) + ': ' + n + '</span>').join('') + '</div>';
+    if (r.gestorasNoReconocidas && r.gestorasNoReconocidas.length) html += '<div style="font-size:12px;color:#B7791F;margin-top:8px">⚠ Gestoras no reconocidas exactamente: ' + r.gestorasNoReconocidas.map(esc).join(' · ') + '</div>';
+    if (r.errores && r.errores.length) html += '<div style="font-size:12px;color:#C0392B;margin-top:8px">Errores:<br>' + r.errores.map(esc).join('<br>') + '</div>';
+    $('cartPreview').innerHTML = html;
+    CART_FILAS = [];
+    cartCargarResumen();
+  } catch (e) { $('cartPreview').innerHTML = '<div class="vacio" style="color:#C0392B">Error: ' + esc(e.message) + '</div>'; }
+}
+async function cartCargarResumen() {
+  try {
+    const d = await api('/api/cartera/resumen');
+    // Poblar selectores de gestora (una sola vez).
+    ['cartDemoG', 'cartFiltroG'].forEach(id => {
+      const s = $(id);
+      if (s && s.options.length <= 1 && d.porGestora) {
+        d.porGestora.forEach(f => { if (f.asesor) s.add(new Option(primerNombre(f.asesor), f.asesor)); });
+      }
+    });
+    if (d.goteo) {
+      if ($('cartN')) $('cartN').value = d.goteo.porGestora;
+      if ($('cartHora')) $('cartHora').value = d.goteo.hora;
+      if ($('cartTope')) $('cartTope').value = d.goteo.tope;
+      if ($('cartActivo')) $('cartActivo').checked = d.goteo.activo !== false;
+    }
+    const filas = d.porGestora || [];
+    if (!filas.length) { $('cartResumen').innerHTML = '<div class="vacio">Aún no hay clientes de cartera importados.</div>'; return; }
+    const tot = filas.reduce((a, f) => ({ reserva: a.reserva + f.reserva, liberados: a.liberados + f.liberados, total: a.total + f.total }), { reserva: 0, liberados: 0, total: 0 });
+    $('cartResumen').innerHTML = '<table class="cart-tabla"><thead><tr><th>Gestora</th><th style="text-align:center">En reserva</th><th style="text-align:center">Liberados</th><th style="text-align:center">Total</th><th>Avance</th></tr></thead><tbody>' +
+      filas.map(f => {
+        const pct = f.total ? Math.round(f.liberados / f.total * 100) : 0;
+        return '<tr><td><b>' + esc(f.asesor || 'Sin asignar') + '</b></td>' +
+          '<td style="text-align:center">' + f.reserva + '</td>' +
+          '<td style="text-align:center;color:#0F7B52;font-weight:700">' + f.liberados + '</td>' +
+          '<td style="text-align:center">' + f.total + '</td>' +
+          '<td><div class="prob"><div class="track"><div class="fill" style="width:' + pct + '%;background:#D4A017"></div></div><b>' + pct + '%</b></div></td></tr>';
+      }).join('') +
+      '<tr style="background:#FEF9E7"><td><b>TOTAL</b></td><td style="text-align:center"><b>' + tot.reserva + '</b></td><td style="text-align:center"><b>' + tot.liberados + '</b></td><td style="text-align:center"><b>' + tot.total + '</b></td><td></td></tr>' +
+      '</tbody></table>';
+  } catch (e) { $('cartResumen').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+async function cartGuardarConfig() {
+  try {
+    await api('/api/cartera/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activo: $('cartActivo').checked, porGestora: Number($('cartN').value), hora: $('cartHora').value, tope: Number($('cartTope').value) }) });
+    alert('Configuración guardada.');
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+async function cartLiberarYa() {
+  const n = Number($('cartN').value) || 5;
+  if (!confirm('¿Liberar ' + n + ' clientes de cartera por gestora ahora mismo?')) return;
+  try {
+    const r = await api('/api/cartera/liberar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n }) });
+    alert(r.liberados + ' clientes liberados a las bandejas.');
+    cartCargarResumen();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+
+// ===== CARTERA · Simulación y control manual (v1.455) =====
+async function cartCargarLista() {
+  const estado = $('cartFiltroEstado') ? $('cartFiltroEstado').value : 'reserva';
+  const gestora = $('cartFiltroG') ? $('cartFiltroG').value : '';
+  const btn = $('cartBtnAccion');
+  if (btn) btn.innerHTML = estado === 'reserva' ? '🚀 Liberar seleccionados' : '↩ Devolver a reserva';
+  try {
+    const d = await api('/api/cartera/lista?estado=' + estado + (gestora ? '&gestora=' + encodeURIComponent(gestora) : ''));
+    if (!d.filas.length) { $('cartLista').innerHTML = '<div class="vacio">Sin clientes en esta vista.</div>'; return; }
+    const fmtV = v => { if (!v) return '—'; const dd = Math.ceil((new Date(v) - new Date()) / 86400000); return dd >= 0 ? 'en ' + dd + 'd' : 'hace ' + Math.abs(dd) + 'd'; };
+    $('cartLista').innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">' + d.total + ' cliente' + (d.total === 1 ? '' : 's') + (d.total > 400 ? ' (mostrando 400)' : '') + '</div>' +
+      '<div style="max-height:420px;overflow-y:auto"><table class="cart-tabla"><thead><tr>' +
+      '<th style="width:28px"></th><th>Cliente</th><th>Gestora</th><th>Invertido</th><th style="text-align:center">Ops</th><th>Vence</th>' +
+      (estado === 'liberado' ? '<th style="text-align:center">Gestiones</th>' : '') + '</tr></thead><tbody>' +
+      d.filas.map(f => {
+        const bloq = estado === 'liberado' && f.gestiones > 0;
+        return '<tr' + (f.esDemo ? ' style="background:#F0F7FF"' : '') + '>' +
+          '<td><input type="checkbox" class="cartSel" value="' + f.codigo + '" style="width:auto"' + (bloq ? ' disabled title="Ya tiene gestiones"' : '') + '></td>' +
+          '<td><b>' + esc(f.nombre) + '</b>' + (f.esDemo ? ' <span class="cart-pill" style="background:#DBEAFE;color:#1E40AF">DEMO</span>' : '') +
+            '<div style="font-size:11px;color:var(--muted)">' + esc(f.telefono || '') + '</div></td>' +
+          '<td>' + esc(primerNombre(f.asesor || '—')) + '</td>' +
+          '<td>' + (f.carteraMontoInvertido ? fmtSoles(f.carteraMontoInvertido) : '—') + '</td>' +
+          '<td style="text-align:center">' + (f.carteraOperaciones || '—') + '</td>' +
+          '<td>' + fmtV(f.carteraVencimiento) + '</td>' +
+          (estado === 'liberado' ? '<td style="text-align:center">' + (f.gestiones > 0 ? '<b style="color:#0F7B52">' + f.gestiones + '</b>' : '0') + '</td>' : '') +
+          '</tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { $('cartLista').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+function cartSelTodos(v) { document.querySelectorAll('.cartSel:not(:disabled)').forEach(c => c.checked = v); }
+async function cartAccionSeleccion() {
+  const codigos = [...document.querySelectorAll('.cartSel:checked')].map(c => c.value);
+  if (!codigos.length) return alert('Marca al menos un cliente.');
+  const estado = $('cartFiltroEstado').value;
+  const esLiberar = estado === 'reserva';
+  if (!confirm('¿' + (esLiberar ? 'Liberar' : 'Devolver a reserva') + ' ' + codigos.length + ' cliente(s)?')) return;
+  try {
+    const r = await api('/api/cartera/' + (esLiberar ? 'liberar-seleccion' : 'devolver'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codigos })
+    });
+    let msg = esLiberar ? (r.liberados + ' liberados a la bandeja.') : (r.devueltos + ' devueltos a reserva.');
+    if (r.bloqueados && r.bloqueados.length) msg += '\n\nNo se devolvieron (ya tienen gestión):\n' + r.bloqueados.join('\n');
+    alert(msg);
+    cartCargarLista(); cartCargarResumen();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+async function cartCrearDemo() {
+  const n = Number($('cartDemoN').value) || 3;
+  const gestora = $('cartDemoG').value || null;
+  try {
+    const r = await api('/api/cartera/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n, gestora }) });
+    alert(r.creados.length + ' clientes ficticios creados en reserva:\n' + r.creados.map(c => '· ' + c.nombre + ' → ' + primerNombre(c.gestora)).join('\n') + '\n\nMárcalos abajo y libéralos para verlos en la bandeja.');
+    $('cartFiltroEstado').value = 'reserva';
+    cartCargarLista(); cartCargarResumen();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+async function cartBorrarDemo() {
+  if (!confirm('¿Eliminar TODOS los clientes ficticios [DEMO] y sus gestiones de prueba?\n\nLos 169 clientes reales no se tocan.')) return;
+  try {
+    const r = await api('/api/cartera/demo', { method: 'DELETE' });
+    alert(r.eliminados + ' clientes ficticios eliminados.');
+    cartCargarLista(); cartCargarResumen();
   } catch (e) { alert('No se pudo: ' + e.message); }
 }

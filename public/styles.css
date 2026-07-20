@@ -3584,3 +3584,20 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cbb-ia-modal .cbb-ia-prosa,.cbb-ia-modal .cbb-ia-item span:last-child,.cbb-ia-modal .cbb-ia-plan span{font-size:13px}
 /* Gestión diaria alineada */
 .cbb-gd-head b{min-width:34px;text-align:right}
+
+/* ===== CARTERA ACTIVA (v1.454) — clientes que ya invirtieron ===== */
+.fila-cartera > td:first-child, .fila-cartera > td:nth-child(2) { position: relative; }
+.fila-cartera { background: linear-gradient(90deg, #FFFBEB 0%, #FFFDF7 55%, transparent 100%); }
+.fila-cartera:hover { background: linear-gradient(90deg, #FEF3C7 0%, #FFFBEB 55%, transparent 100%); }
+.fila-cartera > td:first-child { box-shadow: inset 3px 0 0 #D4A017; }
+.badge-cartera { background: linear-gradient(135deg, #D4A017, #B8860B); color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: .03em; border-radius: 6px; padding: 2px 6px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
+.lead-cartera-datos { font-size: 11px; color: #92700A; background: #FEF9E7; border-radius: 6px; padding: 2px 7px; margin-top: 3px; display: inline-block; font-weight: 600; }
+/* Panel de cartera (importador y goteo) */
+.cart-box { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.cart-tit { font-size: 13px; font-weight: 800; color: var(--navy-2); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.cart-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+.cart-tabla th { background: #FEF9E7; color: #92700A; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; text-align: left; }
+.cart-tabla td { padding: 6px 8px; border-bottom: 1px solid #F5F8FC; }
+.cart-pill { background: #FEF3C7; color: #92700A; border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 11.5px; }
+.cart-drop { border: 2px dashed #E8D08A; border-radius: 10px; padding: 18px; text-align: center; color: #92700A; background: #FFFDF7; cursor: pointer; font-size: 13px; }
+.cart-drop:hover { background: #FEF9E7; }
