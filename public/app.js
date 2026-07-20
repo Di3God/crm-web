@@ -261,8 +261,8 @@ function mtDiasSemana() {
 
 function abrirMetas() {
   const sel = $('mtAsesor');
-  sel.innerHTML = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto']
-    .map(g => '<option>' + g + '</option>').join('');
+  // v1.459: lista dinámica desde el catálogo (excluye bajas como Breezy Ortega e incluye altas nuevas).
+  sel.innerHTML = (CAT.asesores || []).map(g => '<option>' + g + '</option>').join('');
   const now = new Date();
   $('mtMes').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   $('mtError').classList.remove('act');
@@ -489,7 +489,7 @@ async function verMetas() {
   const mes = $('vmMes').value; if (!mes) return;
   try {
     const d = await api('/api/metas/resumen?mes=' + encodeURIComponent(mes));
-    const gps = ['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'];
+    const gps = (CAT.asesores || []); // v1.459: dinámico
     const cols = MT_METRICAS.concat([{ k: 'monto', corto: 'Monto' }]);
     const fmt = (c, v) => v == null ? '·' : (c.k === 'monto' ? 'S/ ' + Number(v).toLocaleString('es-PE') : v);
     let h = '<div style="overflow-x:auto"><table class="mt-tabla"><thead><tr><th>Gestor</th>';
@@ -3080,7 +3080,7 @@ function avSetProy(p) { AV_PROY = p; $('avProySimple').classList.toggle('act', p
 function renderScopeAv() {
   const cont = $('avScope'); if (!cont) return;
   if (!veTodoJS()) { cont.innerHTML = ''; return; }
-  const opts = [['EQUIPO', 'Equipo']].concat(['Mafer Lujan', 'Breezy Ortega', 'Lourdes Villavicencio', 'Dora Barreto'].map(g => [g, g.split(' ')[0]]));
+  const opts = [['EQUIPO', 'Equipo']].concat((CAT.asesores || []).map(g => [g, g.split(' ')[0]])); // v1.459: dinámico
   cont.innerHTML = opts.map(([v, l]) => '<button class="av-chip' + (AV_DATA.scope === v ? ' act' : '') + '" onclick="avSetScope(\'' + v + '\')">' + l + '</button>').join('');
 }
 function avPct(num, den) { return den > 0 ? Math.round(num / den * 100) + '%' : '\u2014'; }

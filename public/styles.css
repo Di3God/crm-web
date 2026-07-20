@@ -3663,3 +3663,12 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cart-kpi-sub { font-size: 10.5px; color: #92700A; }
 .cart-kpi.usd .cart-kpi-sub { color: #17795E; }
 .cart-kpi.alerta .cart-kpi-sub { color: #0369A1; }
+
+/* ===== KANBAN B2C a ancho completo (v1.459), como el B2B =====
+   Solo cuando el kanban está visible: en vista tabla el ancho acotado se conserva. */
+body:has(#contKanban[style*="block"]) #v-leads.vista.act { max-width: none; }
+body:has(#contKanban[style*="block"]) .content { max-width: none; }
+/* Las columnas se reparten TODO el ancho; min-width menor para que las 7 quepan sin scroll. */
+#contKanban .kanban { width: 100%; }
+#contKanban .kcol { min-width: 0; }
+@media (min-width: 1600px) { #contKanban .kanban { gap: 14px; } }
