@@ -7266,7 +7266,8 @@ app.get('/api/cartera/lista', (req, res) => {
   const gestora = req.query.gestora || null;
   let filas = db.prepare(`SELECT codigo, nombre, telefono, email, asesor, esDemo, carteraEstado, carteraLiberadoEn,
       carteraMontoInvertido, carteraOperaciones, carteraVencimiento, carteraSoles, carteraDolares,
-      carteraUltimaInversion, carteraMonedaPref
+      carteraOpsSoles, carteraOpsDolares, carteraTicketSoles, carteraTicketDolares,
+      carteraUltMonto, carteraUltimaInversion, carteraMonedaPref
     FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0 AND COALESCE(carteraEstado,'reserva')=?
     ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
              COALESCE(carteraMontoInvertido,0) DESC, id ASC`).all(estado);
@@ -7369,7 +7370,21 @@ app.get('/api/cartera/resumen', (req, res) => {
   const cfg = db.prepare("SELECT valor FROM app_config WHERE clave='cartera_goteo'").get();
   let goteo = { activo: true, porGestora: 5, hora: '08:30', tope: 10 };
   try { if (cfg && cfg.valor) goteo = Object.assign(goteo, JSON.parse(cfg.valor)); } catch (e) { }
-  res.json({ porGestora: filas, goteo });
+  // v1.458: totales bimoneda reales (sin mezclar) + perfil por antigüedad de la última inversión.
+  const t = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(carteraSoles),0) soles, COALESCE(SUM(carteraDolares),0) dolares,
+      COALESCE(SUM(carteraOpsSoles),0) opsS, COALESCE(SUM(carteraOpsDolares),0) opsD
+    FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0`).get();
+  const hoy = new Date();
+  const corte = d => new Date(hoy.getTime() - d * 86400000).toISOString().slice(0, 10);
+  const temp = db.prepare(`SELECT
+      SUM(CASE WHEN carteraUltimaInversion >= ? THEN 1 ELSE 0 END) activos,
+      SUM(CASE WHEN carteraUltimaInversion < ? AND carteraUltimaInversion >= ? THEN 1 ELSE 0 END) tibios,
+      SUM(CASE WHEN carteraUltimaInversion < ? THEN 1 ELSE 0 END) dormidos,
+      COALESCE(SUM(CASE WHEN carteraUltimaInversion < ? THEN carteraSoles ELSE 0 END),0) solesDormidos,
+      COALESCE(SUM(CASE WHEN carteraUltimaInversion < ? THEN carteraDolares ELSE 0 END),0) dolaresDormidos
+    FROM leads WHERE esCartera=1 AND COALESCE(archivado,0)=0 AND carteraUltimaInversion IS NOT NULL`)
+    .get(corte(90), corte(90), corte(180), corte(180), corte(180), corte(180));
+  res.json({ porGestora: filas, goteo, totales: t, temperatura: temp });
 });
 
 // POST /api/cartera/liberar { n } — liberación manual inmediata (admin/jefa).
@@ -9613,7 +9628,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.457 (CARTERA ACTIVA BIMONEDA — nuevo formato del Excel con soles y dólares por separado: (1) Nuevas columnas carteraSoles/OpsSoles/TicketSoles, carteraDolares/OpsDolares/TicketDolares, carteraMonedaPref y carteraUltMonto; el importador mapea monto_invertido_soles, operaciones_soles, ticket_prom_soles, sus equivalentes en dólares, ini_ult_inv, monto_ult_inv y moneda, manteniendo compatibilidad con el formato anterior. (2) Las FECHAS SERIALES DE EXCEL (46121) se convierten automáticamente a fecha real (2026-04-09). (3) Consolidado interno para ordenar y clasificar: total en soles referenciales con dólar a 3.75 y suma de operaciones de ambas monedas. (4) Indicadores nuevos de potencial, calculados en un helper único para que tarjeta, kanban y modal digan lo mismo: TIER por volumen histórico (TOP 1MM+, ALTO 300K+, MEDIO 100K+, BASE) y TEMPERATURA por antigüedad de la última inversión (🔥 Activo hasta 90d, 🌡 Tibio hasta 180d, ❄️ Dormido +180d) — esta última es la señal de urgencia real de la campaña. (5) KANBAN: monto bimoneda destacado (S/ X + $ Y), badge de tier, operaciones, ticket promedio, temperatura y vencimiento. (6) MODAL DE GESTIÓN: cajas separadas por moneda con volumen, operaciones y ticket de cada una, más última inversión con monto y antigüedad, ticket promedio ponderado y vencimiento. (7) Tabla de leads con la misma línea resumida. (8) El goteo diario ahora desempata por última inversión más reciente. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.458 (Panel de Cartera Activa con visibilidad bimoneda completa: en v1.457 los datos por moneda YA se guardaban, pero la tabla del panel mostraba solo el consolidado en soles referenciales (dólar a 3.75), lo que ocultaba las operaciones y tickets en dólares. Ahora: (1) La tabla del panel tiene COLUMNAS SEPARADAS por moneda —Soles y Dólares, cada una con su monto, número de operaciones y ticket promedio, en su color— más una columna de ÚLTIMA INVERSIÓN con monto, fecha y chip de temperatura, y badge de TIER junto al nombre. (2) El endpoint /api/cartera/lista devuelve todos los campos por moneda. (3) NUEVO RESUMEN EJECUTIVO arriba del panel: clientes y operaciones totales, invertido en soles y en dólares por separado (sin mezclar monedas), y el perfil de reactivación —🔥 Activos (menos de 90 días), 🌡 Tibios (90-180), ❄️ Dormidos (+180 días)— con el monto bimoneda pendiente de reactivar, que es el verdadero objetivo de la campaña. (4) Los totales de la vista filtrada también se muestran en bimoneda. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

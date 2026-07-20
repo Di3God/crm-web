@@ -11236,6 +11236,24 @@ async function cartCargarResumen() {
       if ($('cartTope')) $('cartTope').value = d.goteo.tope;
       if ($('cartActivo')) $('cartActivo').checked = d.goteo.activo !== false;
     }
+    // Resumen ejecutivo de la cartera (bimoneda real + perfil de reactivación).
+    const box = $('cartResumenEjec');
+    if (box && d.totales && d.totales.n > 0) {
+      const T = d.totales, X = d.temperatura || {};
+      const card = (lbl, val, sub, cls) => '<div class="cart-kpi ' + (cls || '') + '"><div class="cart-kpi-lbl">' + lbl + '</div>' +
+        '<div class="cart-kpi-val">' + val + '</div>' + (sub ? '<div class="cart-kpi-sub">' + sub + '</div>' : '') + '</div>';
+      const dorm = (X.dormidos || 0);
+      const montoDorm = (X.solesDormidos ? cartFmtMoneda(X.solesDormidos, 'S/') : '') + (X.solesDormidos && X.dolaresDormidos ? ' + ' : '') + (X.dolaresDormidos ? cartFmtMoneda(X.dolaresDormidos, '$') : '');
+      box.innerHTML = '<div class="cart-tit">💼 Cartera total</div><div class="cart-kpis">' +
+        card('Clientes', T.n, (T.opsS + T.opsD) + ' operaciones históricas') +
+        card('Invertido en soles', cartFmtMoneda(T.soles, 'S/'), T.opsS + ' operaciones') +
+        card('Invertido en dólares', cartFmtMoneda(T.dolares, '$'), T.opsD + ' operaciones', 'usd') +
+        card('🔥 Activos', (X.activos || 0), 'invirtieron hace menos de 90 días', 'ok') +
+        card('🌡 Tibios', (X.tibios || 0), 'entre 90 y 180 días') +
+        card('❄️ Dormidos', dorm, (montoDorm ? montoDorm + ' por reactivar' : 'más de 180 días'), 'alerta') +
+        '</div>';
+      box.style.display = '';
+    }
     const filas = d.porGestora || [];
     if (!filas.length) { $('cartResumen').innerHTML = '<div class="vacio">Aún no hay clientes de cartera importados.</div>'; return; }
     const tot = filas.reduce((a, f) => ({ reserva: a.reserva + f.reserva, liberados: a.liberados + f.liberados, total: a.total + f.total }), { reserva: 0, liberados: 0, total: 0 });
@@ -11279,19 +11297,38 @@ async function cartCargarLista() {
     const d = await api('/api/cartera/lista?estado=' + estado + (gestora ? '&gestora=' + encodeURIComponent(gestora) : ''));
     if (!d.filas.length) { $('cartLista').innerHTML = '<div class="vacio">Sin clientes en esta vista.</div>'; return; }
     const fmtV = v => { if (!v) return '—'; const dd = Math.ceil((new Date(v) - new Date()) / 86400000); return dd >= 0 ? 'en ' + dd + 'd' : 'hace ' + Math.abs(dd) + 'd'; };
-    $('cartLista').innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">' + d.total + ' cliente' + (d.total === 1 ? '' : 's') + (d.total > 400 ? ' (mostrando 400)' : '') + '</div>' +
+    // Totales de la vista (bimoneda real, sin mezclar).
+    const tS = d.filas.reduce((a, f) => a + (Number(f.carteraSoles) || 0), 0);
+    const tD = d.filas.reduce((a, f) => a + (Number(f.carteraDolares) || 0), 0);
+    $('cartLista').innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">' + d.total + ' cliente' + (d.total === 1 ? '' : 's') +
+      (d.total > 400 ? ' (mostrando 400)' : '') +
+      (tS || tD ? ' · <b style="color:#7A5C00">' + (tS ? cartFmtMoneda(tS, 'S/') : '') + (tS && tD ? ' + ' : '') + (tD ? cartFmtMoneda(tD, '$') : '') + '</b> en cartera' : '') + '</div>' +
       '<div style="max-height:420px;overflow-y:auto"><table class="cart-tabla"><thead><tr>' +
-      '<th style="width:28px"></th><th>Cliente</th><th>Gestora</th><th>Invertido</th><th style="text-align:center">Ops</th><th>Vence</th>' +
-      (estado === 'liberado' ? '<th style="text-align:center">Gestiones</th>' : '') + '</tr></thead><tbody>' +
+      '<th style="width:28px"></th><th>Cliente</th><th>Gestora</th>' +
+      '<th>Soles <small style="font-weight:400;text-transform:none">(ops · ticket)</small></th>' +
+      '<th>Dólares <small style="font-weight:400;text-transform:none">(ops · ticket)</small></th>' +
+      '<th>Última inversión</th><th>Vence</th>' +
+      (estado === 'liberado' ? '<th style="text-align:center">Gest.</th>' : '') + '</tr></thead><tbody>' +
       d.filas.map(f => {
         const bloq = estado === 'liberado' && f.gestiones > 0;
+        const tier = cartTier(f), temp = cartTemp(f);
+        const colS = Number(f.carteraSoles) > 0
+          ? '<b>' + fmtSoles(f.carteraSoles) + '</b><div style="font-size:10.5px;color:var(--muted)">' + (f.carteraOpsSoles || 0) + ' ops' + (f.carteraTicketSoles ? ' · ' + cartFmtMoneda(f.carteraTicketSoles, 'S/') : '') + '</div>'
+          : '<span style="color:#C9D4E0">—</span>';
+        const colD = Number(f.carteraDolares) > 0
+          ? '<b style="color:#14634E">' + cartFmtMoneda(f.carteraDolares, '$') + '</b><div style="font-size:10.5px;color:#17795E">' + (f.carteraOpsDolares || 0) + ' ops' + (f.carteraTicketDolares ? ' · ' + cartFmtMoneda(f.carteraTicketDolares, '$') : '') + '</div>'
+          : '<span style="color:#C9D4E0">—</span>';
+        const colU = f.carteraUltimaInversion
+          ? (f.carteraUltMonto ? '<b>' + cartFmtMoneda(f.carteraUltMonto, f.carteraMonedaPref === '$' ? '$' : 'S/') + '</b>' : '') +
+            '<div style="font-size:10.5px;color:var(--muted)">' + fmtFecha(f.carteraUltimaInversion) + (temp ? ' · <span class="kcart-temp tm-' + temp.k + '">' + temp.txt + '</span>' : '') + '</div>'
+          : '<span style="color:#C9D4E0">—</span>';
         return '<tr' + (f.esDemo ? ' style="background:#F0F7FF"' : '') + '>' +
           '<td><input type="checkbox" class="cartSel" value="' + f.codigo + '" style="width:auto"' + (bloq ? ' disabled title="Ya tiene gestiones"' : '') + '></td>' +
-          '<td><b>' + esc(f.nombre) + '</b>' + (f.esDemo ? ' <span class="cart-pill" style="background:#DBEAFE;color:#1E40AF">DEMO</span>' : '') +
+          '<td><b>' + esc(f.nombre) + '</b><span class="kcart-tier t-' + tier.k + '" title="' + tier.tip + '">' + tier.txt + '</span>' +
+            (f.esDemo ? ' <span class="cart-pill" style="background:#DBEAFE;color:#1E40AF">DEMO</span>' : '') +
             '<div style="font-size:11px;color:var(--muted)">' + esc(f.telefono || '') + '</div></td>' +
           '<td>' + esc(primerNombre(f.asesor || '—')) + '</td>' +
-          '<td>' + (f.carteraMontoInvertido ? fmtSoles(f.carteraMontoInvertido) : '—') + '</td>' +
-          '<td style="text-align:center">' + (f.carteraOperaciones || '—') + '</td>' +
+          '<td>' + colS + '</td><td>' + colD + '</td><td>' + colU + '</td>' +
           '<td>' + fmtV(f.carteraVencimiento) + '</td>' +
           (estado === 'liberado' ? '<td style="text-align:center">' + (f.gestiones > 0 ? '<b style="color:#0F7B52">' + f.gestiones + '</b>' : '0') + '</td>' : '') +
           '</tr>';

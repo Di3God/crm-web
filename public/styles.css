@@ -3645,3 +3645,21 @@ body.night #resumPreview { background: #0B141A !important; border-color: #2A3849
 .cart-mon-usd .cart-mon-sub { color: #17795E; }
 .cart-linea { font-size: 12.5px; color: #5C4708; line-height: 1.7; }
 .cart-linea b { color: #7A5C00; }
+
+/* Resumen ejecutivo de cartera (v1.458) */
+.cart-kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+@media (max-width: 1100px) { .cart-kpis { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 640px) { .cart-kpis { grid-template-columns: repeat(2, 1fr); } }
+.cart-kpi { background: #FFFDF7; border: 1px solid #EBD9A0; border-radius: 10px; padding: 9px 12px; }
+.cart-kpi.usd { background: #F7FDF9; border-color: #A7D8B4; }
+.cart-kpi.ok { background: #F6FBF8; border-color: #B7E0C7; }
+.cart-kpi.alerta { background: #F0F9FF; border-color: #A5D8F3; }
+.cart-kpi-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #92700A; font-weight: 700; }
+.cart-kpi.usd .cart-kpi-lbl { color: #17795E; }
+.cart-kpi.alerta .cart-kpi-lbl { color: #0369A1; }
+.cart-kpi-val { font-size: 19px; font-weight: 800; color: #5C4708; line-height: 1.2; }
+.cart-kpi.usd .cart-kpi-val { color: #14634E; }
+.cart-kpi.alerta .cart-kpi-val { color: #075985; }
+.cart-kpi-sub { font-size: 10.5px; color: #92700A; }
+.cart-kpi.usd .cart-kpi-sub { color: #17795E; }
+.cart-kpi.alerta .cart-kpi-sub { color: #0369A1; }
