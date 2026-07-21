@@ -119,6 +119,11 @@ async function actualizarEvento(correoGestora, eventId, datos) {
     const patch = { ...fechas };
     if (datos.titulo) patch.summary = datos.titulo;
     if (datos.descripcion != null) patch.description = datos.descripcion;
+    // v1.470: propagar invitados también al reprogramar. Sin esto, un evento creado antes de
+    // que existieran los invitados fijos nunca los incorporaría, y jefatura no vería la reunión.
+    if (Array.isArray(datos.invitados) && datos.invitados.length) {
+      patch.attendees = datos.invitados.filter(Boolean).map(email => ({ email }));
+    }
     const r = await fetch(CAL_API + '/calendars/primary/events/' + encodeURIComponent(eventId) + '?sendUpdates=all', {
       method: 'PATCH',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },

@@ -1668,6 +1668,18 @@ const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruF
 const cw = require('./chatwoot');
 const bienvenida = require('./bienvenida-auto.js')({ db, cw, normalizarCelular: L.normalizarCelular });
 const gcal = require('./google-calendar.js');
+// v1.470: invitados fijos en todo agendamiento automático, para que jefatura vea las reuniones
+// del equipo en su propio calendario. Configurables por si cambian los responsables.
+const INVITADOS_FIJOS_B2C = ['jnazario@tasatop.com', 'jdelgado@tasatop.com'];
+const INVITADOS_FIJOS_B2B = ['jnazario@tasatop.com', 'dleon@tasatop.com'];
+// Arma la lista final: cliente + jefatura + el propio gestor, sin duplicados ni vacíos.
+function invitadosEvento(correoCliente, correoGestor, mundo) {
+  const fijos = mundo === 'b2b' ? INVITADOS_FIJOS_B2B : INVITADOS_FIJOS_B2C;
+  const lista = [correoCliente, ...fijos, correoGestor]
+    .filter(x => x && String(x).includes('@'))
+    .map(x => String(x).trim().toLowerCase());
+  return [...new Set(lista)];
+}
 const gmailApi = require('./gmail.js'); // v1.461: envío desde el Gmail de cada GP
 if (gcal.configurado()) console.log('[gcal] Google Calendar configurado: eventos automáticos activos');
 else console.log('[gcal] GOOGLE_CALENDAR_CREDENTIALS no configurado: eventos de calendario desactivados');
@@ -3104,9 +3116,8 @@ app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
       const n = await gcal.crearEvento(correo, {
         fechaISO: cons.fechaReunion,
         titulo: 'Hablemos de Inversiones - ' + (lead.nombre || lead.codigo),
-        descripcion: 'Agendado desde MiTasatop.\nCódigo de inversionista: ' + lead.codigo +
-          (lead.nombre ? '\nCliente: ' + lead.nombre : '') + (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
-        invitados: lead.email ? [lead.email] : []
+        descripcion: 'Agendado desde MiTasatop.',
+        invitados: invitadosEvento(lead.email, correo, 'b2c')
       });
       if (n) {
         db.prepare('UPDATE leads SET gcalEventId=?, gcalMeetLink=? WHERE codigo=?').run(n.eventId, n.meetLink, lead.codigo);
@@ -3427,10 +3438,8 @@ app.post('/api/gestiones', (req, res) => {
         const datos = {
           fechaISO: g.fechaReunion,
           titulo: 'Hablemos de Inversiones - ' + (lead.nombre || g.codigo),
-          descripcion: 'Agendado desde MiTasatop.\nCódigo de inversionista: ' + g.codigo +
-            (lead.nombre ? '\nCliente: ' + lead.nombre : '') +
-            (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
-          invitados: lead.email ? [lead.email] : []
+          descripcion: 'Agendado desde MiTasatop.',
+          invitados: invitadosEvento(lead.email, correoGestora, 'b2c')
         };
         if (leadFresco.gcalEventId && g.resultado === 'Reprogramo reunion') {
           const r = await gcal.actualizarEvento(correoGestora, leadFresco.gcalEventId, datos);
@@ -7252,12 +7261,12 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
         const dts = {
           fechaISO,
           titulo: 'Reunión comercial Tasatop - ' + empresa,
-          descripcion: 'Agendado desde MiTasatop (B2B).\nCódigo: ' + s.codigo +
-            '\nEmpresa: ' + empresa + (sol.contacto ? '\nContacto: ' + sol.contacto : '') +
-            (sol.telefono ? '\nTeléfono: ' + sol.telefono : '') +
+          // Sin datos del cliente en la descripción; se conserva la logística de la reunión
+          // (modalidad y lugar) porque es lo que el equipo necesita ver en el calendario.
+          descripcion: 'Agendado desde MiTasatop.' +
             (datos.modalidad ? '\nModalidad: ' + datos.modalidad : '') + (datos.lugar ? '\nLugar: ' + datos.lugar : '') +
             '\n\nEsta reunión puede ser transcrita con fines de calidad y seguimiento comercial.',
-          invitados: sol.email && String(sol.email).includes('@') ? [sol.email] : []
+          invitados: invitadosEvento(sol.email, correoFunc, 'b2b')
         };
         let eventId = sol.gcalEventId, meetLink = null;
         if (eventId) {
@@ -10242,7 +10251,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.469 (ATRIBUCIÓN DE LLAMADAS POR DESTINATARIO — corrige el enfoque de v1.468: un alias fijo cuenta→persona era incorrecto para cuentas COMPARTIDAS, porque mandaba todas las llamadas de esa cuenta a una sola persona, incluidas las legítimas de la otra (Henry es B2C y Luis era B2B: comparten cuenta pero llaman a clientes distintos). Ahora la atribución se decide LLAMADA POR LLAMADA según a quién se llamó: si el número corresponde a un LEAD B2C, la llamada cuenta para el asesor de ese lead; si corresponde a una SOLICITUD B2B, para su responsable; y solo si el número no se pudo vincular a ningún cliente se recurre al alias configurado, y en último caso al agente que reporta el proveedor. Resultado verificado con una cuenta compartida: de 5 llamadas, 2 se atribuyeron a Henry (sus leads B2C), 1 a Mafer (su lead), 1 a Bony (solicitud B2B) y solo la no vinculada quedó en la cuenta original — todo automático, sin configurar nada. El panel de administración ahora muestra, por cada cuenta, cómo se reparten sus llamadas entre las personas reales, qué porcentaje se atribuye solo por el destinatario y cuántas quedan sin vincular; el selector de alias pasó a ser un respaldo que aplica únicamente a esas últimas. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.470 (Agendamiento automático: descripción limpia e invitados de jefatura por defecto. (1) La descripción del evento de Google Calendar ahora dice únicamente Agendado desde MiTasatop — se eliminaron el código de inversionista, el nombre del cliente y su teléfono, que quedaban expuestos a todos los invitados del evento. En B2B se conserva solo la logística (modalidad y lugar) y el aviso de transcripción, que es lo que el equipo necesita ver. (2) INVITADOS FIJOS en todo agendamiento automático: en B2C entran jnazario@tasatop.com y jdelgado@tasatop.com; en B2B, jnazario@tasatop.com y dleon@tasatop.com. Además se agrega SIEMPRE al propio gestor de la reunión, de modo que el evento aparece en su calendario aunque el evento se cree en su nombre. La lista se arma con un helper central (invitadosEvento) que descarta vacíos, normaliza y deduplica, así que si la GP es la propia jefa no se duplica su correo. (3) FIX en google-calendar.js: actualizarEvento no enviaba invitados, por lo que al REPROGRAMAR una reunión los invitados fijos nunca se incorporaban a eventos creados antes de esta versión; ahora se propagan también en la actualización. Aplica a los tres puntos de agendamiento: backfill masivo, registro de gestión (Agendó/Reprogramó reunión) y agenda B2B. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
