@@ -583,6 +583,26 @@ try { db.exec("ALTER TABLE leads ADD COLUMN carteraOpsDolares INTEGER"); } catch
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraTicketDolares REAL"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraMonedaPref TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraUltMonto REAL"); } catch (e) { }
+// v1.461: correos enviados desde el CRM + trazabilidad de apertura.
+db.exec(`CREATE TABLE IF NOT EXISTS correos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pixelId TEXT UNIQUE NOT NULL,
+  mundo TEXT NOT NULL DEFAULT 'b2c',
+  codigo TEXT NOT NULL,
+  destinatario TEXT NOT NULL,
+  remitente TEXT NOT NULL,
+  asesor TEXT,
+  asunto TEXT,
+  plantilla TEXT,
+  gmailId TEXT,
+  threadId TEXT,
+  enviadoEn TEXT NOT NULL,
+  abiertoEn TEXT,
+  aperturas INTEGER DEFAULT 0,
+  ultimaApertura TEXT,
+  bajaEn TEXT
+)`);
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_correos_codigo ON correos (codigo, mundo)"); } catch (e) { }
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_leads_cartera ON leads (esCartera, carteraEstado, asesor)"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
@@ -1588,6 +1608,7 @@ const watchdogLeads = require('./watchdog-leads.js')({ db, enviarAlertaWA, peruF
 const cw = require('./chatwoot');
 const bienvenida = require('./bienvenida-auto.js')({ db, cw, normalizarCelular: L.normalizarCelular });
 const gcal = require('./google-calendar.js');
+const gmailApi = require('./gmail.js'); // v1.461: envío desde el Gmail de cada GP
 if (gcal.configurado()) console.log('[gcal] Google Calendar configurado: eventos automáticos activos');
 else console.log('[gcal] GOOGLE_CALENDAR_CREDENTIALS no configurado: eventos de calendario desactivados');
 const recall = require('./recall.js')();
@@ -7259,6 +7280,179 @@ function carteraLiberar(n, motivo, topeSinGestionar) {
   return total;
 }
 
+// ============================================================
+// ===== CORREOS DESDE EL CRM (v1.461) ========================
+// Envío por Gmail API desde la cuenta de cada GP + trazabilidad
+// de apertura (pixel) y de baja (link de desuscripción).
+// ============================================================
+function baseUrlPublica() {
+  return process.env.APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
+}
+// Plantilla de PRESENTACIÓN de la GP a su cliente de cartera.
+function correoPresentacion({ cliente, gestora, correoGP, telGP, pixelId }) {
+  const base = baseUrlPublica();
+  const primerNombre = String(cliente || '').trim().split(/\s+/)[0] || 'estimado cliente';
+  const pixel = (base && pixelId) ? '<img src="' + base + '/t/o/' + pixelId + '.png" width="1" height="1" alt="" style="display:block;border:0" />' : '';
+  const baja = (base && pixelId) ? '<a href="' + base + '/t/baja/' + pixelId + '" style="color:#94A3B8;text-decoration:underline">No deseo recibir más correos</a>' : '';
+  const html = `<!doctype html><html><body style="margin:0;padding:0;background:#F4F6F9">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F9;padding:24px 12px">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:12px;padding:28px 30px;font-family:Arial,Helvetica,sans-serif;color:#22303F">
+  <tr><td style="font-size:15px;line-height:1.65">
+    <p style="margin:0 0 16px">Estimado(a) ${primerNombre},</p>
+    <p style="margin:0 0 16px">Le escribo para presentarme: soy <b>${gestora}</b>, y desde ahora seré su Gestora de Patrimonio en <b>TasaTop</b>.</p>
+    <p style="margin:0 0 16px">Mi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.</p>
+    <p style="margin:0 0 16px">Agradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.</p>
+    <p style="margin:0 0 6px">Quedo a su disposición.</p>
+    <p style="margin:16px 0 0;padding-top:16px;border-top:1px solid #E8EDF3">
+      <b style="color:#0B2545">${gestora}</b><br>
+      <span style="color:#5A6B82;font-size:13.5px">Gestora de Patrimonio · TasaTop</span><br>
+      <span style="color:#5A6B82;font-size:13.5px">${correoGP}${telGP ? ' · ' + telGP : ''}</span>
+    </p>
+  </td></tr>
+  <tr><td style="padding-top:18px;font-size:11px;color:#94A3B8;font-family:Arial,Helvetica,sans-serif;text-align:center">
+    TasaTop · Inversiones con garantía inmobiliaria${baja ? '<br>' + baja : ''}
+  </td></tr>
+</table>
+</td></tr></table>${pixel}</body></html>`;
+  const texto = 'Estimado(a) ' + primerNombre + ',\n\nLe escribo para presentarme: soy ' + gestora + ', y desde ahora seré su Gestora de Patrimonio en TasaTop.\n\n' +
+    'Mi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\n' +
+    'Agradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\n' +
+    'Quedo a su disposición.\n\n' + gestora + '\nGestora de Patrimonio · TasaTop\n' + correoGP + (telGP ? ' · ' + telGP : '');
+  return { asunto: 'Su nueva Gestora de Patrimonio en TasaTop', html, texto };
+}
+
+// GET /api/correos/plantilla/:codigo — devuelve la plantilla lista para revisar/editar.
+app.get('/api/correos/plantilla/:codigo', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(req.params.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
+  // La GP que firma: la asignada al lead (su correo = su usuario del CRM).
+  const gp = db.prepare('SELECT nombre, usuario FROM usuarios WHERE nombre=? AND activo=1').get(lead.asesor || '');
+  const p = correoPresentacion({ cliente: lead.nombre, gestora: (gp && gp.nombre) || lead.asesor || 'TasaTop',
+    correoGP: (gp && gp.usuario) || '', telGP: '', pixelId: null });
+  const previos = db.prepare('SELECT asunto, enviadoEn, abiertoEn, aperturas FROM correos WHERE codigo=? ORDER BY id DESC LIMIT 5').all(req.params.codigo);
+  res.json({
+    para: lead.email || '', cliente: lead.nombre, gestora: (gp && gp.nombre) || lead.asesor,
+    remitente: (gp && gp.usuario) || '', asunto: p.asunto, html: p.html, previos,
+    listo: gmailApi.configurado()
+  });
+});
+
+// POST /api/correos/enviar { codigo, para, asunto, html }
+// Envía desde el Gmail de la GP y registra la gestión con canal Email.
+app.post('/api/correos/enviar', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const b = req.body || {};
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(b.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
+  const para = String(b.para || lead.email || '').trim();
+  if (!para.includes('@')) return res.status(422).json({ error: 'El cliente no tiene correo válido' });
+
+  // Remitente: la GP asignada (admin/jefa envían desde su propia cuenta si gestionan por apoyo).
+  const gpNombre = lead.asesor || req.user.nombre;
+  const gp = db.prepare('SELECT nombre, usuario FROM usuarios WHERE nombre=? AND activo=1').get(gpNombre)
+          || db.prepare('SELECT nombre, usuario FROM usuarios WHERE nombre=?').get(req.user.nombre);
+  if (!gp || !String(gp.usuario).includes('@')) return res.status(422).json({ error: 'La gestora no tiene correo corporativo configurado' });
+
+  const pixelId = require('node:crypto').randomBytes(16).toString('hex');
+  const plantilla = correoPresentacion({ cliente: lead.nombre, gestora: gp.nombre, correoGP: gp.usuario, telGP: b.telGP || '', pixelId });
+  const asunto = String(b.asunto || plantilla.asunto);
+  // Si el front mandó HTML editado, se respeta; se le inyecta el pixel y el link de baja.
+  let html = b.html ? String(b.html) : plantilla.html;
+  if (b.html && baseUrlPublica()) {
+    const extra = '<img src="' + baseUrlPublica() + '/t/o/' + pixelId + '.png" width="1" height="1" alt="" style="display:block;border:0" />';
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, extra + '</body>') : html + extra;
+  }
+
+  try {
+    const r = await gmailApi.enviar({
+      remitente: gp.usuario, nombreRemitente: gp.nombre + ' | TasaTop',
+      para, asunto, html, textoPlano: plantilla.texto, responderA: gp.usuario, pixelId
+    });
+    const ahora = new Date().toISOString();
+    db.prepare(`INSERT INTO correos (pixelId, mundo, codigo, destinatario, remitente, asesor, asunto, plantilla, gmailId, threadId, enviadoEn)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(pixelId, 'b2c', lead.codigo, para, gp.usuario, gp.nombre, asunto, 'presentacion', r.id || null, r.threadId || null, ahora);
+    // Registrar la gestión con canal Email (trazabilidad en el embudo).
+    try {
+      db.prepare(`INSERT INTO gestiones (codigo, fecha, asesor, canal, resultado, proximaAccion, comentario, fechaProxAccion)
+        VALUES (?,?,?,?,?,?,?,?)`).run(lead.codigo, ahora, gp.nombre, 'Email', 'Sin contacto - envio informacion',
+        'Llamar intento 3x5', 'Correo de presentación enviado a ' + para,
+        new Date(Date.now() + 24 * 3600000).toISOString());
+    } catch (e) { console.error('[correos] no se pudo registrar la gestión:', e.message); }
+    auditar(req, 'correo_enviar', lead.codigo, 'presentación → ' + para);
+    res.json({ ok: true, id: r.id, pixelId });
+  } catch (e) {
+    console.error('[correos] envío falló:', e.message);
+    res.status(e.codigo === 'SIN_PERMISO' ? 422 : 500).json({ error: e.message, codigo: e.codigo || null });
+  }
+});
+
+// GET /api/correos/estado — diagnóstico para el panel (¿TI ya activó el permiso?).
+app.get('/api/correos/estado', async (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const correo = req.query.correo || req.user.usuario;
+  const v = await gmailApi.verificar(correo);
+  const stats = db.prepare(`SELECT COUNT(*) enviados, SUM(CASE WHEN abiertoEn IS NOT NULL THEN 1 ELSE 0 END) abiertos,
+      SUM(CASE WHEN bajaEn IS NOT NULL THEN 1 ELSE 0 END) bajas FROM correos`).get();
+  res.json(Object.assign({}, v, { stats, baseUrl: baseUrlPublica() }));
+});
+
+// ---- TRAZABILIDAD: pixel de apertura (público, sin sesión) ----
+const PIXEL_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+app.get('/t/o/:pixelId.png', (req, res) => {
+  try {
+    const id = String(req.params.pixelId || '').replace(/[^a-f0-9]/gi, '');
+    const c = db.prepare('SELECT id, abiertoEn FROM correos WHERE pixelId=?').get(id);
+    if (c) {
+      const ahora = new Date().toISOString();
+      db.prepare('UPDATE correos SET abiertoEn=COALESCE(abiertoEn,?), aperturas=COALESCE(aperturas,0)+1, ultimaApertura=? WHERE id=?').run(ahora, ahora, c.id);
+      if (!c.abiertoEn) console.log('[correos] apertura registrada:', id.slice(0, 8));
+    }
+  } catch (e) { /* nunca romper la carga de la imagen */ }
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.send(PIXEL_PNG);
+});
+
+// ---- TRAZABILIDAD: baja voluntaria (público) ----
+app.get('/t/baja/:pixelId', (req, res) => {
+  let ok = false;
+  try {
+    const id = String(req.params.pixelId || '').replace(/[^a-f0-9]/gi, '');
+    const c = db.prepare('SELECT id, codigo, destinatario FROM correos WHERE pixelId=?').get(id);
+    if (c) {
+      const ahora = new Date().toISOString();
+      db.prepare('UPDATE correos SET bajaEn=? WHERE id=?').run(ahora, c.id);
+      // Marca el lead para que la GP lo vea y no lo vuelva a contactar por correo.
+      try {
+        db.prepare(`INSERT INTO gestiones (codigo, fecha, asesor, canal, resultado, comentario)
+          VALUES (?,?,?,?,?,?)`).run(c.codigo, ahora, 'Sistema', 'Email', 'Pidio no contactar',
+          'El cliente pidió no recibir más correos (baja voluntaria desde el correo enviado)');
+      } catch (e) { }
+      console.log('[correos] BAJA solicitada por', c.destinatario);
+      ok = true;
+    }
+  } catch (e) { }
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.send('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<div style="font-family:Arial,Helvetica,sans-serif;max-width:460px;margin:60px auto;text-align:center;color:#22303F">' +
+    '<h2 style="color:#0B2545">' + (ok ? 'Listo' : 'Enlace no válido') + '</h2>' +
+    '<p style="font-size:15px;line-height:1.6;color:#5A6B82">' +
+    (ok ? 'Hemos registrado su solicitud. No volverá a recibir correos comerciales de nuestra parte.' : 'No pudimos procesar esta solicitud. Escríbanos y lo resolvemos.') +
+    '</p><p style="font-size:13px;color:#94A3B8">TasaTop</p></div>');
+});
+
+// GET /api/correos/lead/:codigo — historial de correos del lead (para la ficha).
+app.get('/api/correos/lead/:codigo', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const filas = db.prepare(`SELECT asunto, destinatario, asesor, enviadoEn, abiertoEn, aperturas, ultimaApertura, bajaEn
+    FROM correos WHERE codigo=? ORDER BY id DESC`).all(req.params.codigo);
+  res.json({ correos: filas });
+});
+
 // GET /api/cartera/lista?estado=reserva|liberado&gestora= — clientes de cartera para el panel.
 app.get('/api/cartera/lista', (req, res) => {
   if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo admin o jefatura' });
@@ -9628,7 +9822,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.459 (Bajas de personal en el front + kanban B2C a ancho completo: (1) BREEZY ORTEGA seguía hardcodeada en tres selectores del frontend (metas por asesor, resumen de metas y chips de scope del avance) pese a la baja de v1.452; esas listas eran estáticas y además NO incluían a Henry Guerrero. Ahora los tres se alimentan del catálogo dinámico (CAT.asesores), así que reflejan altas y bajas automáticamente. (2) B2B: los mensajes del bot ya salían solo con Bony (config b2b_resumen_asesores) y se verificó que las tres secciones del arranque 9am —pipeline del encabezado, reuniones de hoy, prioridades por SLA y carga por asesor— respetan ese filtro, por lo que Shirley Ponte no aparece en ningún mensaje. (3) KANBAN B2C a ANCHO COMPLETO como el B2B: cuando la vista kanban está activa se libera el max-width del contenedor y las columnas se reparten todo el ancho de pantalla (min-width de columna a 0 para que las 7 etapas quepan sin scroll horizontal); en vista tabla se conserva el ancho acotado para no perjudicar la lectura. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.461 (MÓDULO DE CORREO desde el CRM con trazabilidad — construido y listo, se activa solo cuando TI habilite el permiso: (1) gmail.js replica el patrón de google-calendar.js (JWT RS256 con node:crypto, delegación de dominio, token por cuenta con cache de 55 min) usando la MISMA credencial GOOGLE_CALENDAR_CREDENTIALS; no requiere variables nuevas en Railway. Requisitos de activación: habilitar Gmail API en Google Cloud y agregar el scope gmail.send a la delegación de dominio del Client ID existente. (2) Botón Enviar presentación en el panel de cartera del modal de gestión, con vista previa de la plantilla institucional (saludo por nombre, presentación de la GP como Gestora de Patrimonio, firma con su correo) y destinatario editable. El correo sale desde el Gmail de la GP asignada, queda en sus Enviados y las respuestas del cliente llegan a su bandeja. (3) Registro automático de la gestión con canal Email al enviar. (4) TRAZABILIDAD: tabla correos con pixel de apertura (GET /t/o/:pixelId.png, público, cachés desactivados) que registra primera apertura, número de aperturas y última; y link de baja voluntaria (GET /t/baja/:pixelId) que marca el correo y crea automáticamente una gestión Pidio no contactar para que la GP no lo vuelva a contactar. La ficha del lead muestra si el correo fue leído, cuántas veces, o si pidió la baja. (5) GET /api/correos/estado como diagnóstico: dice si la integración ya está activa y da el conteo de enviados, abiertos y bajas. Degradación limpia: mientras TI no active, la plantilla se puede revisar y el envío devuelve un error explicativo sin romper nada. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

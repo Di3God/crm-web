@@ -1302,7 +1302,7 @@ function kanbanCard(l) {
       (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
-      (l.telefono ? ' · <span class="ktel">' + l.telefono + '</span>' : '') + '</div>' +
+      (l.telefono ? ' · <span class="ktel ktel-call" title="Llamar por Aircall" onclick="event.stopPropagation();accionLlamar(\'' + l.codigo + '\')">' + l.telefono + '</span>' : '') + '</div>' +
     kCartera +
     (l.email ? '<div class="kmail" title="Copiar correo" onclick="event.stopPropagation();copiarCorreo(this,\'' + String(l.email).replace(/'/g, "\\'") + '\')"><span class="kmail-txt">✉ ' + l.email + '</span><span class="kmail-copy">⧉</span></div>' : '') +
     lineaAccion +
@@ -1748,6 +1748,9 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
       return '<div class="cart-linea">📅 <b>Vence:</b> ' + fmtFecha(l.carteraVencimiento) + ' (' + (d >= 0 ? 'en ' + d + ' días' : 'hace ' + Math.abs(d) + ' días') + ')</div>'; })() : '';
     const cont = document.getElementById('gCarteraBox');
     if (cont) {
+      const btnMail = l.email
+        ? '<button class="btn sec cart-btn-mail" onclick="abrirCorreoPresentacion(\'' + l.codigo + '\')">✉️ Enviar presentación</button>'
+        : '<span class="cart-sin-mail">Sin correo registrado</span>';
       cont.innerHTML = '<div class="cart-modal">' +
         '<div class="cart-modal-head"><span class="cart-modal-tit">♻️ Cliente de cartera activa</span>' +
           '<span class="kcart-tier t-' + tier.k + '" title="' + tier.tip + '">' + tier.txt + '</span>' +
@@ -1758,7 +1761,17 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
         (tk ? '<div class="cart-linea">🎯 <b>Ticket promedio:</b> ' + cartFmtMoneda(tk, 'S/') + ' por operación</div>' : '') +
         vencTxt +
         (l.carteraNotas ? '<div class="cart-modal-nota">📝 ' + esc(l.carteraNotas) + '</div>' : '') +
+        '<div class="cart-modal-acc">' + btnMail + '<span id="cartMailEstado" class="cart-mail-estado"></span></div>' +
         '</div>';
+      // Historial de correos (si ya se le envió algo, se muestra al costado del botón).
+      api('/api/correos/lead/' + l.codigo).then(d => {
+        const el = document.getElementById('cartMailEstado');
+        if (!el || !d.correos || !d.correos.length) return;
+        const c = d.correos[0];
+        el.innerHTML = c.bajaEn ? '<b style="color:#B91C1C">✋ Pidió no recibir correos</b>'
+          : (c.abiertoEn ? '<b style="color:#0F7B52">✓ Leído</b> ' + fechaRelativa(c.abiertoEn) + (c.aperturas > 1 ? ' · ' + c.aperturas + ' veces' : '')
+            : '📤 Enviado ' + fechaRelativa(c.enviadoEn) + ' · <span style="color:#94A3B8">sin abrir aún</span>');
+      }).catch(() => {});
       cont.style.display = '';
     }
   } else {
@@ -11415,4 +11428,59 @@ function cartTicketProm(l) {
   const ops = cartOpsTotal(l);
   if (!ops) return null;
   return cartTotalRef(l) / ops;
+}
+
+// ============================================================
+// ===== CORREO DE PRESENTACIÓN (v1.461) ======================
+// ============================================================
+let CORREO_COD = null;
+async function abrirCorreoPresentacion(codigo) {
+  CORREO_COD = codigo;
+  let d;
+  try { d = await api('/api/correos/plantilla/' + codigo); }
+  catch (e) { return alert('No se pudo preparar el correo: ' + e.message); }
+  const aviso = d.listo ? '' :
+    '<div class="corr-aviso">⚠️ La integración con Gmail aún no está activa. Puedes revisar y copiar el texto, pero el envío fallará hasta que TI habilite el permiso.</div>';
+  const previos = (d.previos && d.previos.length)
+    ? '<div class="corr-previos">Ya se le envió ' + d.previos.length + ' correo(s). Último: ' + fmtFecha(d.previos[0].enviadoEn) +
+      (d.previos[0].abiertoEn ? ' · <b style="color:#0F7B52">leído</b>' : ' · sin abrir') + '</div>'
+    : '';
+  const html =
+    '<div class="corr-wrap">' +
+      '<div class="corr-head">✉️ Correo de presentación</div>' +
+      aviso + previos +
+      '<div class="corr-campos">' +
+        '<label>Para<input id="corrPara" type="email" value="' + esc(d.para || '') + '"></label>' +
+        '<label>De<input id="corrDe" type="text" value="' + esc(d.remitente || '') + '" disabled title="Sale desde el Gmail de la gestora asignada"></label>' +
+      '</div>' +
+      '<label class="corr-lbl">Asunto<input id="corrAsunto" type="text" value="' + esc(d.asunto || '') + '"></label>' +
+      '<div class="corr-lbl">Vista previa <small>(así lo verá el cliente)</small></div>' +
+      '<div class="corr-prev">' + d.html + '</div>' +
+      '<div class="corr-btns">' +
+        '<button class="btn sec" onclick="cerrarCorreo()">Cancelar</button>' +
+        '<button class="btn" id="corrEnviar" onclick="enviarCorreoPresentacion()">✉️ Enviar ahora</button>' +
+      '</div>' +
+    '</div>';
+  let ov = document.getElementById('corrOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'corrOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = html;
+  ov.classList.add('act');
+}
+function cerrarCorreo() { const ov = document.getElementById('corrOverlay'); if (ov) ov.classList.remove('act'); }
+async function enviarCorreoPresentacion() {
+  const btn = document.getElementById('corrEnviar');
+  const para = document.getElementById('corrPara').value.trim();
+  const asunto = document.getElementById('corrAsunto').value.trim();
+  if (!para.includes('@')) return alert('Revisa el correo del cliente.');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+  try {
+    await api('/api/correos/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo: CORREO_COD, para, asunto }) });
+    cerrarCorreo();
+    alert('Correo enviado. Quedó registrado como gestión con canal Email.');
+    if (typeof cargarLeads === 'function') cargarLeads();
+  } catch (e) {
+    alert('No se pudo enviar: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✉️ Enviar ahora'; }
+  }
 }
