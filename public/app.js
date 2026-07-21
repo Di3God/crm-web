@@ -11770,25 +11770,29 @@ async function cargarAliasAgentes() {
   const box = $('aliasAgentes'); if (!box) return;
   try {
     const d = await api('/api/agentes-alias');
-    const opciones = (p) => '<option value="">— sin reatribuir —</option>' +
+    const opciones = (p) => '<option value="">— no aplica —</option>' +
       (d.personas || []).map(n => '<option value="' + esc(n) + '"' + (n === p ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
-    const filas = [];
-    // Reatribuciones activas
-    (d.alias || []).forEach(a => filas.push({ agente: a.agente, personaReal: a.personaReal, nota: a.nota, activo: true }));
-    // Cuentas huérfanas detectadas (agentes que no son usuarios activos)
-    (d.huerfanos || []).forEach(h => filas.push({ agente: h.agente, personaReal: '', nota: h.n + ' llamadas · última ' + fmtFecha(h.ultima), activo: false }));
-    if (!filas.length) {
-      box.innerHTML = '<div class="vacio" style="font-size:12.5px">Todas las cuentas coinciden con personas activas. No hay nada que reatribuir.</div>';
-      return;
-    }
-    box.innerHTML = '<table class="cart-tabla"><thead><tr><th>Cuenta de teléfono</th><th>Las llamadas son de…</th><th>Detalle</th><th></th></tr></thead><tbody>' +
-      filas.map(f =>
-        '<tr' + (f.activo ? ' style="background:#F6FBF8"' : '') + '>' +
-        '<td><b>' + esc(f.agente) + '</b>' + (f.activo ? ' <span class="cart-pill" style="background:#D1FAE5;color:#065F46">reatribuida</span>' : '') + '</td>' +
-        '<td><select id="al-' + btoa(f.agente).replace(/[^a-zA-Z0-9]/g, '') + '" style="min-width:190px">' + opciones(f.personaReal) + '</select></td>' +
-        '<td style="font-size:11.5px;color:var(--muted)">' + esc(f.nota || '') + '</td>' +
-        '<td><button class="btn sec" onclick="guardarAliasAgente(\'' + esc(f.agente).replace(/'/g, "\\'") + '\')">Guardar</button></td>' +
-        '</tr>').join('') + '</tbody></table>';
+    const cuentas = d.cuentas || [];
+    if (!cuentas.length) { box.innerHTML = '<div class="vacio" style="font-size:12.5px">Aún no hay llamadas registradas.</div>'; return; }
+    box.innerHTML =
+      '<table class="cart-tabla"><thead><tr>' +
+      '<th>Cuenta</th><th>Cómo se reparten sus llamadas</th><th style="text-align:center">Sin vincular</th><th>Si no se vincula, atribuir a…</th><th></th>' +
+      '</tr></thead><tbody>' +
+      cuentas.map(c => {
+        const reparto = (c.reparto || []).map(r =>
+          '<span class="cart-pill" style="background:#EEF6FF;color:#1E4E79">' + esc(primerNombre(r.persona)) + ': ' + r.n + '</span>').join(' ');
+        const pct = c.total ? Math.round((c.total - c.sinVinculo) / c.total * 100) : 0;
+        return '<tr>' +
+          '<td><b>' + esc(c.agente) + '</b><div style="font-size:10.5px;color:var(--muted)">' + c.total + ' llamadas · última ' + fmtFecha(c.ultima) + '</div></td>' +
+          '<td>' + (reparto || '<span style="color:var(--muted)">—</span>') +
+            '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' + pct + '% se atribuye solo por el destinatario</div></td>' +
+          '<td style="text-align:center">' + (c.sinVinculo > 0
+            ? '<b style="color:#B7791F">' + c.sinVinculo + '</b>'
+            : '<span style="color:#0F7B52">0</span>') + '</td>' +
+          '<td><select id="al-' + btoa(c.agente).replace(/[^a-zA-Z0-9]/g, '') + '" style="min-width:180px">' + opciones(c.alias) + '</select></td>' +
+          '<td><button class="btn sec" onclick="guardarAliasAgente(\'' + esc(c.agente).replace(/'/g, "\\'") + '\')">Guardar</button></td>' +
+          '</tr>';
+      }).join('') + '</tbody></table>';
   } catch (e) { box.innerHTML = '<div class="vacio">No se pudo cargar.</div>'; }
 }
 async function guardarAliasAgente(agente) {
@@ -11802,7 +11806,7 @@ async function guardarAliasAgente(agente) {
     } else {
       const r = await api('/api/agentes-alias/' + encodeURIComponent(agente), { method: 'PUT',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personaReal: persona }) });
-      alert('Listo: ' + r.reatribuidas + ' llamada(s) ahora figuran a nombre de ' + persona + '.');
+      alert('Guardado.\n\nLas llamadas vinculadas a un lead o solicitud seguirán contando para el dueño de ese cliente.\nSolo las ' + r.sinVinculo + ' llamada(s) sin vincular se atribuirán a ' + persona + '.');
     }
     cargarAliasAgentes();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }

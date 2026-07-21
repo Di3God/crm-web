@@ -3119,24 +3119,31 @@ app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
   res.json({ ok: true, ...resultados });
 });
 
-// ---- v1.468: reatribución de llamadas cuando alguien usa la cuenta telefónica de otro ----
-// Devuelve la persona REAL detrás de una llamada. Prioridad:
-//  1) alias configurado (cuenta X → persona Y)
-//  2) el asesor dueño del lead al que se llamó (fuente más confiable: el número marcado)
-//  3) el agente tal cual viene del proveedor
+// ---- v1.469: atribución de llamadas POR DESTINATARIO, no por cuenta ----
+// Una misma cuenta telefónica puede ser usada por varias personas (ej. Henry —B2C— usando la
+// cuenta que era de Luis —B2B—). Un alias fijo sería incorrecto: mandaría TODAS las llamadas de
+// esa cuenta a una sola persona, incluidas las legítimas de la otra.
+// Por eso la atribución se decide LLAMADA POR LLAMADA, según a quién se llamó:
+//   1) Si la llamada está vinculada a un LEAD B2C  → cuenta para el asesor de ese lead.
+//   2) Si está vinculada a una SOLICITUD B2B       → cuenta para su responsable.
+//   3) Si no se pudo vincular a nadie (número sin match) → recién ahí se usa el alias
+//      configurado, y como último recurso el agente que reporta el proveedor.
+// Así Henry y Luis comparten cuenta sin pisarse: cada llamada suma a quien le corresponde.
 function agenteRealDe(ll, aliasMap) {
   if (!ll) return null;
-  const alias = aliasMap ? aliasMap[ll.agente] : db.prepare('SELECT personaReal FROM agentes_alias WHERE agente=?').get(ll.agente)?.personaReal;
-  if (alias) return alias;
-  // Sin alias: si la llamada está vinculada a un lead, atribuir a su asesor.
+  // 1) Lead B2C: el dueño del lead es quien hizo la llamada.
   if (ll.codigo) {
     const l = db.prepare('SELECT asesor FROM leads WHERE codigo=?').get(ll.codigo);
     if (l && l.asesor) return l.asesor;
   }
+  // 2) Solicitud B2B: su responsable.
   if (ll.codigoB2B) {
-    const s = db.prepare('SELECT responsableActual FROM b2b_solicitudes WHERE codigo=?').get(ll.codigoB2B);
-    if (s && s.responsableActual) return s.responsableActual;
+    const s = db.prepare('SELECT responsableActual, funcionario FROM b2b_solicitudes WHERE codigo=?').get(ll.codigoB2B);
+    if (s && (s.responsableActual || s.funcionario)) return s.responsableActual || s.funcionario;
   }
+  // 3) Sin vínculo: alias de respaldo (útil solo para cuentas de uso exclusivo).
+  const alias = aliasMap ? aliasMap[ll.agente] : db.prepare('SELECT personaReal FROM agentes_alias WHERE agente=?').get(ll.agente)?.personaReal;
+  if (alias) return alias;
   return ll.agente;
 }
 function aliasMapa() {
@@ -3149,12 +3156,25 @@ function aliasMapa() {
 app.get('/api/agentes-alias', (req, res) => {
   if (!req.user || !['admin', 'jefa', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
   const alias = db.prepare('SELECT * FROM agentes_alias ORDER BY agente').all();
-  // Agentes vistos en llamadas que NO son usuarios activos (candidatos a reatribuir).
-  const activos = new Set(db.prepare('SELECT nombre FROM usuarios WHERE activo=1').all().map(u => u.nombre));
-  const vistos = db.prepare("SELECT agente, COUNT(*) n, MAX(fecha) ultima FROM llamadas WHERE agente IS NOT NULL GROUP BY agente ORDER BY n DESC").all();
-  const huerfanos = vistos.filter(v => !activos.has(v.agente) && !alias.some(a => a.agente === v.agente));
   const personas = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('gestora','funcionario_b2b','asistente_creditos','jefa','jefe_b2b','admin') ORDER BY nombre").all().map(u => u.nombre);
-  res.json({ alias, huerfanos, personas, vistos });
+  // v1.469: por cada cuenta, cuántas llamadas se atribuyen solas (vinculadas a un lead o
+  // solicitud) y cuántas quedan sin dueño (número sin match) — esas son las que necesitan alias.
+  const cuentas = db.prepare(`SELECT agente,
+      COUNT(*) total,
+      SUM(CASE WHEN codigo IS NOT NULL THEN 1 ELSE 0 END) b2c,
+      SUM(CASE WHEN codigo IS NULL AND codigoB2B IS NOT NULL THEN 1 ELSE 0 END) b2b,
+      SUM(CASE WHEN codigo IS NULL AND codigoB2B IS NULL THEN 1 ELSE 0 END) sinVinculo,
+      MAX(fecha) ultima
+    FROM llamadas WHERE agente IS NOT NULL GROUP BY agente ORDER BY total DESC`).all();
+  // A quién se atribuyen realmente las llamadas de cada cuenta (para que se vea el reparto).
+  cuentas.forEach(c => {
+    const filas = db.prepare(`SELECT codigo, codigoB2B, agente FROM llamadas WHERE agente=? LIMIT 500`).all(c.agente);
+    const conteo = {};
+    filas.forEach(f => { const p = agenteRealDe(f) || '(sin identificar)'; conteo[p] = (conteo[p] || 0) + 1; });
+    c.reparto = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([p, n]) => ({ persona: p, n }));
+    c.alias = (alias.find(a => a.agente === c.agente) || {}).personaReal || null;
+  });
+  res.json({ alias, personas, cuentas });
 });
 
 // PUT /api/agentes-alias/:agente { personaReal, nota, desde } — crear o actualizar (solo admin).
@@ -3167,12 +3187,11 @@ app.put('/api/agentes-alias/:agente', (req, res) => {
     VALUES (?,?,?,?,?,?)
     ON CONFLICT(agente) DO UPDATE SET personaReal=excluded.personaReal, nota=excluded.nota, desde=excluded.desde`)
     .run(req.params.agente, b.personaReal, b.nota || null, b.desde || null, ahora, req.user.nombre);
-  // Reatribuir el histórico de esa cuenta (desde la fecha indicada, si se dio).
-  const upd = b.desde
-    ? db.prepare('UPDATE llamadas SET agenteReal=? WHERE agente=? AND fecha>=?').run(b.personaReal, req.params.agente, b.desde)
-    : db.prepare('UPDATE llamadas SET agenteReal=? WHERE agente=?').run(b.personaReal, req.params.agente);
-  auditar(req, 'agente_alias', null, req.params.agente + ' → ' + b.personaReal + ' (' + upd.changes + ' llamadas)');
-  res.json({ ok: true, reatribuidas: upd.changes });
+  // v1.469: el alias NO reescribe el histórico. Solo aplica a las llamadas que no se pudieron
+  // vincular a ningún lead o solicitud; las vinculadas siempre las gana el dueño del destinatario.
+  const sinVinculo = db.prepare("SELECT COUNT(*) c FROM llamadas WHERE agente=? AND codigo IS NULL AND codigoB2B IS NULL").get(req.params.agente).c;
+  auditar(req, 'agente_alias', null, req.params.agente + ' → ' + b.personaReal);
+  res.json({ ok: true, sinVinculo });
 });
 
 // DELETE /api/agentes-alias/:agente — quitar la reatribución (solo admin).
@@ -3203,9 +3222,10 @@ app.get('/api/llamadas', (req, res) => {
   // v1.468: reatribuir a quien realmente hizo la llamada (alias de cuenta o dueño del lead).
   const _alias = aliasMapa();
   filas.forEach(l => {
-    l.agenteCuenta = l.agente;                    // quién figura en el proveedor
-    l.agente = l.agenteReal || agenteRealDe(l, _alias); // quién la hizo de verdad
+    l.agenteCuenta = l.agente;                    // quién figura en la cuenta del proveedor
+    l.agente = agenteRealDe(l, _alias);           // a quién le corresponde ESTA llamada
     l.reatribuida = l.agente !== l.agenteCuenta;
+    l.mundoLlamada = l.codigo ? 'B2C' : (l.codigoB2B ? 'B2B' : null);
   });
   // Este módulo se usa en B2B (Centro de Operaciones) y B2C (Comité): el parámetro mundo
   // define qué agentes mostrar. B2B = funcionario_b2b/asistente_creditos; B2C = gestoras (GP).
@@ -10222,7 +10242,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.468 (CUENTAS DE TELÉFONO COMPARTIDAS — reatribución de llamadas: cuando una GP hace llamadas desde una cuenta que figura a nombre de otra persona (caso Henry usando la cuenta que era de Luis Sanchez), sus llamadas no aparecían en el centro de llamadas ni en su resumen porque el filtro usaba el nombre del agente tal como lo reporta el proveedor. Ahora: (1) Nueva tabla agentes_alias que mapea cuenta → persona real, más la columna agenteReal en llamadas. (2) La reatribución sigue tres niveles de prioridad: alias configurado; si no hay alias, el asesor dueño del lead al que se llamó (o el responsable de la solicitud B2B) — el número marcado es la evidencia más confiable; y como último recurso el agente original. Esto significa que incluso sin configurar nada, una llamada vinculada a un lead ya se atribuye a su GP. (3) Panel de administración en la vista de Plantillas de correo: detecta automáticamente las cuentas que no corresponden a usuarios activos, muestra cuántas llamadas tienen y desde cuándo, y permite asignarlas a la persona real con un selector; al guardar se reatribuye todo el histórico de esa cuenta. (4) Las llamadas nuevas guardan el agente real desde el webhook, y el módulo marca cuáles fueron reatribuidas para que la jefatura vea la cuenta de origen. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.469 (ATRIBUCIÓN DE LLAMADAS POR DESTINATARIO — corrige el enfoque de v1.468: un alias fijo cuenta→persona era incorrecto para cuentas COMPARTIDAS, porque mandaba todas las llamadas de esa cuenta a una sola persona, incluidas las legítimas de la otra (Henry es B2C y Luis era B2B: comparten cuenta pero llaman a clientes distintos). Ahora la atribución se decide LLAMADA POR LLAMADA según a quién se llamó: si el número corresponde a un LEAD B2C, la llamada cuenta para el asesor de ese lead; si corresponde a una SOLICITUD B2B, para su responsable; y solo si el número no se pudo vincular a ningún cliente se recurre al alias configurado, y en último caso al agente que reporta el proveedor. Resultado verificado con una cuenta compartida: de 5 llamadas, 2 se atribuyeron a Henry (sus leads B2C), 1 a Mafer (su lead), 1 a Bony (solicitud B2B) y solo la no vinculada quedó en la cuenta original — todo automático, sin configurar nada. El panel de administración ahora muestra, por cada cuenta, cómo se reparten sus llamadas entre las personas reales, qué porcentaje se atribuye solo por el destinatario y cuántas quedan sin vincular; el selector de alias pasó a ser un respaldo que aplica únicamente a esas últimas. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
