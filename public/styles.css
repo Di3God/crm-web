@@ -3708,3 +3708,8 @@ body:has(#contKanban[style*="block"]) .content { max-width: none; }
 .corr-vars { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
 .corr-vars code { background: #EEF3F9; color: #1E4E79; border-radius: 4px; padding: 1px 5px; cursor: pointer; font-size: 11px; }
 .corr-vars code:hover { background: #DCE8F5; }
+
+/* Botón de correo en la tarjeta kanban (v1.464) — el de Gestionar cede ancho para que quepan 3 iconos */
+.kbtn-ic.ml { color: #B8860B; border-color: #EBD9A0; } .kbtn-ic.ml:hover { background: #FEF9E7; }
+.kbtns .kbtn.rg { flex: 1 1 auto; min-width: 0; }
+.kbtns .kbtn-ic { width: 30px; height: 30px; }

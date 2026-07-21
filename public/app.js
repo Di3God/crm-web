@@ -1303,7 +1303,7 @@ function kanbanCard(l) {
       (l.nombre || '—') + dotExperiencia(l.experienciaInv) + '</div>' +
     '<div class="kgp">' + fmtSoles(l.montoReal || l.montoPotencial) +
       (l.fechaAsignacion ? ' · <span class="kasig">' + fechaRelativa(l.fechaAsignacion) + '</span>' : '') +
-      (l.telefono ? ' · <span class="ktel ktel-call" title="Llamar por Aircall" onclick="event.stopPropagation();accionLlamar(\'' + l.codigo + '\')">' + l.telefono + '</span>' : '') + '</div>' +
+      (l.telefono ? ' · <span class="ktel">' + l.telefono + '</span>' : '') + '</div>' +
     kCartera +
     (l.email ? '<div class="kmail" title="Copiar correo" onclick="event.stopPropagation();copiarCorreo(this,\'' + String(l.email).replace(/'/g, "\\'") + '\')"><span class="kmail-txt">✉ ' + l.email + '</span><span class="kmail-copy">⧉</span></div>' : '') +
     lineaAccion +
@@ -1312,9 +1312,13 @@ function kanbanCard(l) {
       '<button class="kbtn rg" onclick="event.stopPropagation();accionRegistrar(\'' + l.codigo + '\')">Gestionar</button>' +
       '<button class="kbtn-ic ll" title="Llamar" onclick="event.stopPropagation();accionLlamar(\'' + l.codigo + '\')">' + ICO_TEL + '</button>' +
       '<button class="kbtn-ic wa" title="WhatsApp" onclick="event.stopPropagation();accionWhatsApp(\'' + l.codigo + '\')">' + ICO_WA + '</button>' +
+      (l.email ? '<button class="kbtn-ic ml" title="Enviar correo" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + l.codigo + '\')">' + ICO_MAIL + '</button>' : '') +
     '</div>' +
   '</div>';
 }
+
+// Icono de correo para la tarjeta (v1.464)
+const ICO_MAIL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>';
 
 // Icono segun la proxima accion
 // Iconos SVG azules para la proxima accion (telefono, calendario, avion, chat)
@@ -2424,7 +2428,7 @@ async function verTrazabilidad(codigo) {
       <div class="tz-ev-linea"><span class="tz-dot ${colorTipo[e.tipo]||'azul'}"></span>${last ? '' : '<span class="tz-rail"></span>'}</div>
       <div class="tz-ev-card">
         <div class="tz-ev-head"><span class="tz-ev-tipo ${colorTipo[e.tipo]||''}">${tipoLabel(e)}</span><span class="tz-ev-actor">${e.actor||''}</span></div>
-        <div class="tz-ev-tit">${e.titulo}${e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : ''}${e.verificada ? ' <span class="tz-verif" title="Llamada verificada por Aircall">✓ verificada</span>' : ''}</div>
+        <div class="tz-ev-tit">${e.titulo}${e.via === 'Aircall' ? ' <span class="tz-via">📞 Llamada</span>' : ''}${e.verificada ? ' <span class="tz-verif" title="Llamada verificada por el sistema">✓ verificada</span>' : ''}</div>
         ${e.sub ? `<div class="tz-ev-sub">${e.sub}</div>` : ''}
         ${derecha ? `<div class="tz-ev-badges">${derecha}</div>` : ''}
       </div>
@@ -4127,8 +4131,8 @@ function acDial(numero) {
   acEnsure();
   const p = $('acPhonePanel'); if (p) p.classList.remove('oculto');
   if ($('acFab')) $('acFab').classList.add('oculto');
-  if (!AC_PHONE) { acToast('El teléfono Aircall no está disponible. Recarga la página.'); return; }
-  if (!AC_LOGGED) { AC_PENDING = numero; acToast('Inicia sesión en el teléfono Aircall; tu llamada saldrá enseguida.'); return; }
+  if (!AC_PHONE) { acToast('El teléfono no está disponible. Recarga la página.'); return; }
+  if (!AC_LOGGED) { AC_PENDING = numero; acToast('Inicia sesión en el teléfono; tu llamada saldrá enseguida.'); return; }
   AC_PHONE.send('dial_number', { phone_number: numero }, (ok, data) => {
     if (!ok) acToast('No se pudo marcar: ' + ((data && (data.error || data.message)) || 'revisa el teléfono'));
   });
@@ -5061,7 +5065,7 @@ function b2bKanbanCard(c) {
     oxHtml +
     '<div class="kbtns">' +
       '<button class="kbtn rg" onclick="event.stopPropagation();b2bAccionGestionar(\'' + c.codigo + '\')">Gestionar</button>' +
-      '<button class="kbtn-ic ll" title="Llamar (Aircall)" onclick="event.stopPropagation();b2bAccionLlamar(\'' + c.codigo + '\')">' + ICO_TEL + '</button>' +
+      '<button class="kbtn-ic ll" title="Llamar" onclick="event.stopPropagation();b2bAccionLlamar(\'' + c.codigo + '\')">' + ICO_TEL + '</button>' +
       '<button class="kbtn-ic wa" title="WhatsApp" onclick="event.stopPropagation();b2bAccionWhatsApp(\'' + c.codigo + '\')">' + ICO_WA + '</button>' +
     '</div>' +
     '</div>';
@@ -6373,7 +6377,7 @@ async function toggleTimelineB2B() {
       '<div class="tz-ev-linea"><span class="tz-dot ' + (colorTipo[e.tipo] || 'azul') + '"></span>' + (last ? '' : '<span class="tz-rail"></span>') + '</div>' +
       '<div class="tz-ev-card">' +
         '<div class="tz-ev-head"><span class="tz-ev-tipo ' + (colorTipo[e.tipo] || '') + '">' + (tipoLbl[e.tipo] || e.tipo) + '</span><span class="tz-ev-actor">' + esc(e.actor) + '</span></div>' +
-        '<div class="tz-ev-tit">' + esc(e.titulo) + (e.via === 'Aircall' ? ' <span class="tz-via">📞 Aircall</span>' : '') + (e.verificada ? ' <span class="tz-verif" title="Llamada verificada por Aircall">✓ verificada</span>' : '') + '</div>' +
+        '<div class="tz-ev-tit">' + esc(e.titulo) + (e.via === 'Aircall' ? ' <span class="tz-via">📞 Llamada</span>' : '') + (e.verificada ? ' <span class="tz-verif" title="Llamada verificada por el sistema">✓ verificada</span>' : '') + '</div>' +
         (e.sub ? '<div class="tz-ev-sub">' + esc(e.sub) + '</div>' : '') +
         (e.prox ? '<div class="tz-ev-sub">➡ <b>' + esc(e.prox) + '</b>' + (e.fechaProx ? ' · 📅 ' + fmtFechaDos(e.fechaProx) : '') + '</div>' : '') +
         (derecha ? '<div class="tz-ev-badges">' + derecha + '</div>' : '') +
@@ -10558,7 +10562,7 @@ async function verInteligenciaLlamada(id) {
         '<div><div style="font-weight:800;font-size:14px">🧠 Inteligencia de la llamada</div><div style="font-size:11.5px;color:#9DB8D8">' + (l.agente || '') + ' · ' + fmtDur(l.duracion) + (l.sentimiento ? ' · Sentimiento: ' + l.sentimiento : '') + '</div></div>' +
         '<button onclick="verCerrarIntelLlam()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">×</button></div>' +
       '<div style="padding:14px 20px;overflow-y:auto">' +
-        (l.resumenAircall ? '<div style="font-size:10.5px;font-weight:800;color:#8AA0B8;text-transform:uppercase;margin-bottom:4px">Resumen Aircall</div><div style="font-size:12.5px;color:#41566E;margin-bottom:12px">' + l.resumenAircall + '</div>' : '') +
+        (l.resumenAircall ? '<div style="font-size:10.5px;font-weight:800;color:#8AA0B8;text-transform:uppercase;margin-bottom:4px">Resumen de la llamada</div><div style="font-size:12.5px;color:#41566E;margin-bottom:12px">' + l.resumenAircall + '</div>' : '') +
         '<div style="font-size:10.5px;font-weight:800;color:#8AA0B8;text-transform:uppercase;margin-bottom:4px">Transcripción</div>' +
         '<pre style="background:#F7F8FA;border:1px solid #EEF1F5;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow-y:auto;margin:0;font-family:inherit">' + (l.transcripcion || 'Sin transcripción.') + '</pre>' +
       '</div></div>';
@@ -11489,10 +11493,21 @@ async function enviarCorreoPresentacion() {
   if (!para.includes('@')) return alert('Revisa el correo del cliente.');
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
   try {
+    const clave = $('corrTpl') ? $('corrTpl').value : 'presentacion';
+    const nombreTpl = $('corrTpl') ? $('corrTpl').options[$('corrTpl').selectedIndex].text : 'Correo';
     await api('/api/correos/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ codigo: CORREO_COD, para, asunto, clave: ($('corrTpl') ? $('corrTpl').value : 'presentacion') }) });
+      body: JSON.stringify({ codigo: CORREO_COD, para, asunto, clave }) });
+    const cod = CORREO_COD;
     cerrarCorreo();
-    alert('Correo enviado. Quedó registrado como gestión con canal Email.');
+    // Abrir la gestión con canal Email para que la GP defina el próximo paso.
+    setTimeout(() => {
+      abrirGestion(cod, null, 'Email');
+      // Prellenar el comentario con lo que se envió (la GP puede completarlo).
+      setTimeout(() => {
+        const c = $('gResumen');
+        if (c && !c.value) { c.value = nombreTpl + ' enviado a ' + para; c.dispatchEvent(new Event('input')); }
+      }, 350);
+    }, 250);
     if (typeof cargarLeads === 'function') cargarLeads();
   } catch (e) {
     alert('No se pudo enviar: ' + e.message);
