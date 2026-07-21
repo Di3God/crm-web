@@ -8,9 +8,9 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
 
 function configurado() { return !!process.env.ANTHROPIC_API_KEY; }
 
-// Instrucción base (tono TasaTop). Se manda como system; el caching de Anthropic lo abarata al repetirse.
+// Instrucción base (tono Tasatop). Se manda como system; el caching de Anthropic lo abarata al repetirse.
 const SYSTEM = [
-  'Eres el analista comercial de TasaTop, una fintech peruana de crowdlending.',
+  'Eres el analista comercial de Tasatop, una fintech peruana de crowdlending.',
   'Escribes un mensaje breve para un grupo de WhatsApp del equipo comercial.',
   'Reglas estrictas:',
   '- Usa ÚNICAMENTE los números que te doy. NO inventes, no sumes, no estimes cifras nuevas.',
@@ -152,7 +152,7 @@ async function interpretarPerformance(panel, fechaTxt) {
   };
 
   const periodo = (panel.desde === panel.hasta) ? `del ${panel.desde}` : `del ${panel.desde} al ${panel.hasta}`;
-  const instruccion = `Eres analista de medios pagados (paid media) de TasaTop. Analiza el rendimiento de las campañas de Meta Ads ${periodo} (el gasto ya está consolidado). Esto es un análisis de MARKETING: enfócate en inversión, costo por lead, creatividades y eficiencia de pauta. NO analices la gestión comercial ni el embudo de ventas (eso es de otro equipo).\n` +
+  const instruccion = `Eres analista de medios pagados (paid media) de Tasatop. Analiza el rendimiento de las campañas de Meta Ads ${periodo} (el gasto ya está consolidado). Esto es un análisis de MARKETING: enfócate en inversión, costo por lead, creatividades y eficiencia de pauta. NO analices la gestión comercial ni el embudo de ventas (eso es de otro equipo).\n` +
     `\nDATOS (B2C y B2B son negocios distintos, analízalos POR SEPARADO, sin compararlos entre sí ni mezclar sus cifras):` +
     bloqueCanal('CANAL B2C', b2c) +
     bloqueCanal('CANAL B2B', b2b) +
@@ -175,7 +175,7 @@ async function interpretarComite(d, asesor) {
   const tpe = (d.tiempoPorEtapa || []).map(t => `  ${t.etapa}: ${t.horasProm}h promedio (n=${t.n})`).join('\n');
   const des = (d.desestimados || []).map(x => `  ${x.motivo}: ${x.n}`).join('\n') || '  (sin desestimados)';
   const rk = (d.ranking || []).map(g => `  ${g.gestor}: ${g.asignados} asignados, ${g.contactados} contactados (${g.pctContacto}%), ${g.calificados} calif, ${g.agendados} agend, ${g.ganados} ganados; 1er contacto ${g.t1erMed != null ? g.t1erMed + 'min' : 's/d'}, ${g.intentos1erProm != null ? g.intentos1erProm + ' intentos' : 's/d'}`).join('\n');
-  const instruccion = `Análisis para COMITÉ del equipo B2C (inversionistas) de TasaTop. Periodo ${d.desde} a ${d.hasta}.\n\n` +
+  const instruccion = `Análisis para COMITÉ del equipo B2C (inversionistas) de Tasatop. Periodo ${d.desde} a ${d.hasta}.\n\n` +
     `RESUMEN: ${R.totalLeads} leads trabajados, ${R.contactados} contactados (${R.contactabilidad}% contactabilidad), ${R.ganados} cerrados ganados (S/ ${R.montoGanado}), ${R.perdidos} desestimados. Tasa de cierre ${R.tasaCierre}%. ${R.hicieron3x5} completaron el 3x5 (15 intentos); ${R.con1masIntento} tienen al menos 1 intento.\n\n` +
     `VELOCIDAD: primer contacto en ${V.medianaMinPrimerContacto != null ? V.medianaMinPrimerContacto + ' min (mediana)' : 's/d'}, promedio ${V.promMinPrimerContacto != null ? V.promMinPrimerContacto + ' min' : 's/d'}; ${V.promIntentosPrimerContacto != null ? V.promIntentosPrimerContacto + ' intentos en promedio para lograr contacto' : ''}.\n\n` +
     `EMBUDO (conversión):\n${emb}\n\nTIEMPO POR ETAPA:\n${tpe || '  (sin datos)'}\n\nDESESTIMADOS POR MOTIVO:\n${des}\n\nRANKING POR GESTOR:\n${rk}\n\n` +
@@ -201,7 +201,7 @@ async function analizarOperacionB2B(D) {
   const X = D.desestimados || {};
   const motivosTxt = (X.motivos || []).map(m => `  ${m.motivo}: ${m.n}`).join('\n') || '  (sin descartes en el periodo)';
   const quienTxt = (X.porQuien || []).map(q => `  ${q.por}: ${q.n}`).join('\n') || '  —';
-  const instruccion = `Eres el analista del CENTRO DE OPERACIONES B2B de TasaTop (crédito empresarial con garantía inmobiliaria). Fecha: ${D.fecha}.\n\n` +
+  const instruccion = `Eres el analista del CENTRO DE OPERACIONES B2B de Tasatop (crédito empresarial con garantía inmobiliaria). Fecha: ${D.fecha}.\n\n` +
     `KPIs DEL PERIODO: ${K.nuevos ? K.nuevos.hoy : 0} leads nuevos (${K.nuevos ? (K.nuevos.delta >= 0 ? '+' : '') + K.nuevos.delta : 0} vs periodo anterior), ${K.gestionados ? K.gestionados.hoy : 0} gestionados, movimiento ${K.movimiento ? K.movimiento.avanzaron + '↑ ' + K.movimiento.retrocedieron + '↓' : 's/d'}. ` +
     `Cumplimiento 3x3: ${K.cumpl3x3 ? K.cumpl3x3.pct : 0}% (${K.cumpl3x3 ? K.cumpl3x3.exigibles : 0} exigibles, ${K.cumpl3x3 ? K.cumpl3x3.atrasados : 0} atrasados, ${K.cumpl3x3 ? K.cumpl3x3.vencidosIncumplidos || 0 : 0} vencidos SIN registrar intentos [grave], ${K.cumpl3x3 ? K.cumpl3x3.vencidosOk || 0 : 0} con intentos completos sin lograr contacto). ` +
     `Contactabilidad ${K.contactabilidad ? K.contactabilidad.pct : 0}%. Avanzaron sin contacto: ${K.avanzaronSinContacto ? K.avanzaronSinContacto.n : 0} (${K.avanzaronSinContacto ? K.avanzaronSinContacto.montoFmt : ''}). ` +
@@ -232,7 +232,7 @@ async function analizarComiteEjecutivoB2B(D) {
   const X = D.desestimados || {}; const XR = X.resumen || {};
   const motivos = (X.porMotivo || []).slice(0, 5).map(m => `  ${m.motivo}: ${m.n} (${m.montoFmt})`).join('\n') || '  —';
   const inds = ((D.meta && D.meta.individuales) || []).map(i => `  ${i.nombre}: meta ${i.montoFmt}, logrado ${i.logradoFmt}, en Reunión+ ${i.enCaminoFmt || 'S/ 0'}`).join('\n') || '  (sin metas individuales)';
-  const instruccion = `Eres el asesor estratégico senior del COMITÉ COMERCIAL B2B de TasaTop (financiamiento empresarial con garantía inmobiliaria, Perú). El comité lo conduce Dante (Jefe B2B) los lunes, miércoles y viernes a las 9:00. Periodo analizado: ${D.periodo ? D.periodo.desde + ' al ' + D.periodo.hasta : 's/d'}.\n\n` +
+  const instruccion = `Eres el asesor estratégico senior del COMITÉ COMERCIAL B2B de Tasatop (financiamiento empresarial con garantía inmobiliaria, Perú). El comité lo conduce Dante (Jefe B2B) los lunes, miércoles y viernes a las 9:00. Periodo analizado: ${D.periodo ? D.periodo.desde + ' al ' + D.periodo.hasta : 's/d'}.\n\n` +
     `SITUACIÓN:\n` +
     `- Pipeline vivo (solo leads asignados): ${K.pipeline ? K.pipeline.montoFmt : 's/d'} en ${K.pipeline ? K.pipeline.n : 0} solicitudes. Conversión Solicitud→Business Case: ${D.conversionGlobal != null ? D.conversionGlobal + '%' : 's/d'}.\n` +
     `- Meta del mes (equipo, a cargo de Dante): ${M.logradoFmt || 'S/ 0'} de ${M.montoFmt || 's/d'} (${M.pct != null ? M.pct + '%' : 's/d'}), quedan ${D.meta ? D.meta.diasRestantes : 's/d'} días. Monto en Reunión comercial o más allá (potencial): ${D.meta ? D.meta.enCaminoEquipoFmt : 'S/ 0'}.\n` +
@@ -257,7 +257,7 @@ async function resumenReunionComercial(transcriptTexto, contexto) {
   const quien = c.mundo === 'b2b'
     ? ('Empresa: ' + (c.empresa || '—') + (c.cliente ? ' · Contacto: ' + c.cliente : '') + (c.monto ? ' · Financiamiento solicitado: ' + c.monto : ''))
     : ('Inversionista potencial: ' + (c.cliente || '—') + (c.monto ? ' · Ticket estimado: ' + c.monto : ''));
-  const instruccion = `Eres el analista comercial senior de TasaTop (crowdlending con garantía inmobiliaria, Perú). Analiza la transcripción de una reunión ${c.mundo === 'b2b' ? 'de originación B2B (empresa que busca financiamiento)' : 'comercial B2C (captación de inversionista)'}.\n` +
+  const instruccion = `Eres el analista comercial senior de Tasatop (crowdlending con garantía inmobiliaria, Perú). Analiza la transcripción de una reunión ${c.mundo === 'b2b' ? 'de originación B2B (empresa que busca financiamiento)' : 'comercial B2C (captación de inversionista)'}.\n` +
     `${quien}\n` + (Array.isArray(c.participantes) && c.participantes.length ? 'Participantes: ' + c.participantes.join(', ') + '\n' : '') +
     `\nTRANSCRIPCIÓN (hablante: texto):\n${String(transcriptTexto || '').slice(0, 24000)}\n\n` +
     `Redacta en ESPAÑOL IMPECABLE y devuelve EXACTAMENTE este formato con los marcadores en líneas propias:\n` +
@@ -274,7 +274,7 @@ async function resumenReunionComercial(transcriptTexto, contexto) {
 async function scoringLlamada(transcripcion, ctx) {
   if (!configurado() || !transcripcion) return null;
   const c = ctx || {};
-  const prompt = 'Eres un coach comercial senior de TasaTop (crowdlending con garantía inmobiliaria, Perú). ' +
+  const prompt = 'Eres un coach comercial senior de Tasatop (crowdlending con garantía inmobiliaria, Perú). ' +
     'Analiza esta transcripción de llamada comercial y devuelve un CALL SCORING conciso en este formato EXACTO:\n\n' +
     '*📊 Score total: X/100*\n' +
     '• Apertura y rapport: X/20 — (1 línea)\n' +

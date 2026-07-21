@@ -1,5 +1,5 @@
 // ============================================================================
-// GMAIL API — envío de correos desde la cuenta de cada gestora (MiTasaTop CRM)
+// GMAIL API — envío de correos desde la cuenta de cada gestora (MiTasatop CRM)
 // ----------------------------------------------------------------------------
 // Usa la MISMA cuenta de servicio de Google Calendar (delegación de dominio):
 // el correo sale literalmente desde el Gmail de la GP, queda en su carpeta
@@ -89,7 +89,7 @@ function encabezado(txt) {
 
 // ---- Enviar un correo HTML desde la cuenta de la gestora ----
 // remitente: correo corporativo de la GP (usuario del CRM)
-// nombreRemitente: cómo firma (ej. "Mafer Lujan | TasaTop")
+// nombreRemitente: cómo firma (ej. "Mafer Lujan | Tasatop")
 // Devuelve { ok, id, threadId } o lanza error con .codigo
 async function enviar({ remitente, nombreRemitente, para, asunto, html, textoPlano, responderA, pixelId }) {
   if (!configurado()) { const e = new Error('Google no está configurado en Railway'); e.codigo = 'SIN_CONFIG'; throw e; }

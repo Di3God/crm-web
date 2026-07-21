@@ -1,5 +1,5 @@
 // ============================================================================
-// GOOGLE CALENDAR — integración con Google Workspace (MiTasaTop CRM)
+// GOOGLE CALENDAR — integración con Google Workspace (MiTasatop CRM)
 // ----------------------------------------------------------------------------
 // Crea/actualiza/cancela eventos en el calendario de cada gestora usando una
 // cuenta de servicio con DELEGACIÓN DE DOMINIO (el robot actúa "en nombre de"
@@ -90,7 +90,7 @@ async function crearEvento(correoGestora, datos) {
     if (!token) return null;
     const fechas = aFechas(datos.fechaISO);
     const body = {
-      summary: datos.titulo || 'Hablemos de Inversiones - TasaTop',
+      summary: datos.titulo || 'Hablemos de Inversiones - Tasatop',
       description: datos.descripcion || '',
       ...fechas,
       conferenceData: { createRequest: { requestId: 'crm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), conferenceSolutionKey: { type: 'hangoutsMeet' } } },

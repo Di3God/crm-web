@@ -27,8 +27,8 @@ module.exports = function ({ db, cw, normalizarCelular }) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_wabienv_tel ON wa_bienvenida(telefono);");
 
   const PLANTILLA_DEF = {
-    b2c: '¡Hola {nombre}! 👋 Gracias por tu interés en invertir con *TasaTop*. Somos la plataforma peruana de inversiones con respaldo inmobiliario. Un asesor de patrimonio te contactará en breve para resolver tus dudas. ¿Te gustaría que te expliquemos cómo funciona?',
-    b2b: '¡Hola {nombre}! 👋 Gracias por tu interés en el financiamiento empresarial de *TasaTop*. Uno de nuestros funcionarios de crédito revisará tu solicitud y te contactará a la brevedad. ¿En qué horario te resulta más cómodo conversar?'
+    b2c: '¡Hola {nombre}! 👋 Gracias por tu interés en invertir con *Tasatop*. Somos la plataforma peruana de inversiones con respaldo inmobiliario. Un asesor de patrimonio te contactará en breve para resolver tus dudas. ¿Te gustaría que te expliquemos cómo funciona?',
+    b2b: '¡Hola {nombre}! 👋 Gracias por tu interés en el financiamiento empresarial de *Tasatop*. Uno de nuestros funcionarios de crédito revisará tu solicitud y te contactará a la brevedad. ¿En qué horario te resulta más cómodo conversar?'
   };
 
   function getConfig() {

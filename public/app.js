@@ -1294,7 +1294,7 @@ function kanbanCard(l) {
     ' ondragstart="kDragStart(event)" ondragend="kDragEnd(event)">' +
     '<div class="kcard-top">' +
       '<span class="kprio ' + prioCls + '">' + l.prioridad + '</span>' +
-      (l.esCartera ? '<span class="kbadge-cartera" title="Cliente de cartera activa: ya invirtió con TasaTop">♻️ CARTERA</span>' : '') +
+      (l.esCartera ? '<span class="kbadge-cartera" title="Cliente de cartera activa: ya invirtió con Tasatop">♻️ CARTERA</span>' : '') +
       (esLeadNuevo(l) && !l.esCartera ? '<span class="kbadge-nuevo">Nuevo</span>' : '') +
       (vencida ? '<span class="kbadge-venc">Vencido</span>' : '') +
       '<span class="kprob">' + l.probabilidad + '%</span>' +
@@ -1519,7 +1519,7 @@ function celdaLead(l) {
   }
   return '<div class="lead-cell' + (l.esCartera ? ' es-cartera' : '') + '">' +
     '<div class="lead-nom"' + nomTipAttr(l) + '>' + (l.nombre || '—') + dotExperiencia(l.experienciaInv) +
-      (l.esCartera ? '<span class="badge-cartera" title="Cliente de cartera activa: ya invirtió con TasaTop">♻️ CARTERA</span>' : '') +
+      (l.esCartera ? '<span class="badge-cartera" title="Cliente de cartera activa: ya invirtió con Tasatop">♻️ CARTERA</span>' : '') +
       (esLeadNuevo(l) ? '<span class="badge-nuevo">Nuevo</span>' : '') + '</div>' +
     (asignado ? '<div class="lead-asig">' + asignado + '</div>' : '') +
     (correo ? '<div class="lead-fuente" title="' + correo + '">✉ ' + correo + '</div>' : '') +
@@ -3649,7 +3649,7 @@ function chatSinConversacion(codigo) {
 // Plantillas por etapa interna del lead. {n} = primer nombre del lead.
 const PLANTILLAS_WA = {
   'Contactabilidad 3x5': [
-    ['Saludo', 'Hola {n}, te saluda el equipo de TasaTop 🙌 Vi tu interés en hacer crecer tu capital con inversiones respaldadas. ¿Te parece si te cuento cómo funciona?'],
+    ['Saludo', 'Hola {n}, te saluda el equipo de Tasatop 🙌 Vi tu interés en hacer crecer tu capital con inversiones respaldadas. ¿Te parece si te cuento cómo funciona?'],
   ],
   'Contactado - por calificar': [
     ['Calificar', 'Hola {n}, para recomendarte la mejor opción cuéntame: ¿ya has invertido antes y qué monto tienes pensado destinar?'],
@@ -3883,7 +3883,7 @@ const FRASES_GANADO = [
   '🏆 ¡CERRASTE, {n}! Esto es lo que viniste a hacer. ¡Enorme!',
   '💰 ¡VENTA GANADA! {n}, te luciste. A celebrar este cierre',
   '🎉 ¡Cierre ganado! El esfuerzo se convirtió en resultado. ¡Bravo!',
-  '🔥 ¡Lo lograste, {n}! Un cliente más que confía en TasaTop',
+  '🔥 ¡Lo lograste, {n}! Un cliente más que confía en Tasatop',
   '🚀 ¡GANADO! Así se cierra. El equipo lo celebra contigo',
   '⭐ ¡Qué cierre, {n}! De esto se trata. Vas a ser imparable',
   '💪 ¡Venta cerrada! Tu constancia tenía premio. ¡Felicitaciones!',
@@ -4333,7 +4333,7 @@ async function copiarLlegadasImagen() {
   });
   // Pie
   ctx.fillStyle = '#9AA8B8'; ctx.font = '400 11px Arial, sans-serif';
-  ctx.fillText('TasaTop · MiTasaTop · ' + new Date().toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }), padX, H - 22);
+  ctx.fillText('Tasatop · MiTasatop · ' + new Date().toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }), padX, H - 22);
 
   // Copiar al portapapeles
   cv.toBlob(async blob => {
@@ -7568,7 +7568,7 @@ function bcReporteHTML() {
     '<div class="bcp-firma"><b>' + asesor + '</b>Elaborado por · Asesor Comercial</div>' +
     '<div class="bcp-firma"><b>&nbsp;</b>V°B Jefatura B2B</div>' +
     '<div class="bcp-firma"><b>&nbsp;</b>Comité de Créditos</div></div>';
-  const foot = '<div class="bcp-foot">Documento generado automáticamente por MiTasaTop CRM · ' + s.codigo + ' · ' + new Date().toLocaleString('es-PE') + ' · Uso interno</div>';
+  const foot = '<div class="bcp-foot">Documento generado automáticamente por MiTasatop CRM · ' + s.codigo + ' · ' + new Date().toLocaleString('es-PE') + ' · Uso interno</div>';
 
   const cab = '<div class="bcp-head"><div class="bcp-logo">TASATOP</div>' +
     '<div><div class="bcp-tit">BUSINESS CASE · CRÉDITO EMPRESARIAL</div>' +
@@ -7622,7 +7622,7 @@ function descargarWordBusinessCase() {
   const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
     '<head><meta charset="utf-8"><title>Business Case</title><style>' + estilos + '</style></head><body>' +
     '<h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1>' +
-    '<div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + ' · TasaTop CRM B2B</div>' +
+    '<div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + ' · Tasatop CRM B2B</div>' +
     inner + '</body></html>';
   const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
   const a = document.createElement('a');
@@ -7676,7 +7676,7 @@ function imprimirBusinessCase() {
   w.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Business Case · ' + (s.razonSocial || s.codigo) + '</title>' +
     (css ? '<link rel="stylesheet" href="' + css.href + '">' : '') +
     '<style>body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:24px;color:#1E293B;font-size:13px}.bc-print-head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0B5FFF;padding-bottom:10px;margin-bottom:14px}.bc-print-head h1{font-size:18px;margin:0}.bc-print-head .sub{color:#6B7A8D;font-size:12px}@media print{.reu-card-fl{display:none}}</style></head><body>' +
-    '<div class="bc-print-head"><div><h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1><div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + '</div></div><div class="sub"><b>TasaTop</b> · CRM B2B</div></div>' +
+    '<div class="bc-print-head"><div><h1>📑 Business Case · ' + (s.razonSocial || '') + '</h1><div class="sub">' + s.codigo + ' · RUC ' + (s.ruc || '—') + ' · generado el ' + new Date().toLocaleString('es-PE') + '</div></div><div class="sub"><b>Tasatop</b> · CRM B2B</div></div>' +
     inner + '</body></html>');
   w.document.close();
   setTimeout(() => { try { w.print(); } catch (e) {} }, 600);

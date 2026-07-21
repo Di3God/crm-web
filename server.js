@@ -306,7 +306,7 @@ try {
 crearUsuario('ehiga@tasatop.com', 'Eduardo Higa', 'jefe_creditos', '12345678');
 crearUsuario('lsanchez@tasatop.com', 'Luis Sanchez', 'asistente_creditos', '12345678');
 crearUsuario('dleon@tasatop.com', 'Dante Leon', 'jefe_b2b', '12345678');
-// Brillith Vásquez ya no trabaja en TasaTop: baja definitiva (no se recrea, se desactiva y se libera su carga).
+// Brillith Vásquez ya no trabaja en Tasatop: baja definitiva (no se recrea, se desactiva y se libera su carga).
 try {
   db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='bvasquez@tasatop.com'").run();
   // Liberar solicitudes B2B a su cargo → 'Sin asignar' para que jefatura las redistribuya.
@@ -319,6 +319,17 @@ try {
 try { db.prepare("UPDATE b2b_solicitudes SET responsableActual=NULL WHERE responsableActual='Carmen Martinez'").run(); } catch (e) {}
 crearUsuario('sponte@tasatop.com', 'Shirley Ponte', 'funcionario_b2b', '12345678');
 crearUsuario('bsegil@tasatop.com', 'Bony Segil', 'funcionario_b2b', '12345678');
+// v1.463: Shirley Ponte ya no trabaja en Tasatop — baja definitiva (mismo criterio que Brillith).
+// Se ejecuta DESPUÉS de los seeds porque crearUsuario la recrea en cada arranque.
+// Sus solicitudes B2B quedan Sin asignar para que jefatura las redistribuya; el histórico conserva su nombre.
+try {
+  db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='sponte@tasatop.com'").run();
+  db.prepare("UPDATE b2b_solicitudes SET responsableActual=NULL WHERE responsableActual LIKE 'Shirley%'").run();
+  db.prepare("UPDATE b2b_solicitudes SET funcionario=NULL WHERE funcionario LIKE 'Shirley%'").run();
+  db.prepare("UPDATE b2b_solicitudes SET asistente=NULL WHERE asistente LIKE 'Shirley%'").run();
+} catch (e) {}
+// Breezy Ortega (B2C) — refuerzo de la baja de v1.452 tras los seeds.
+try { db.prepare("UPDATE usuarios SET activo=0, autoasignar=0 WHERE usuario='bortega@tasatop.com'").run(); } catch (e) {}
 
 // ===== MÓDULO B2B (crowdlending empresarial) — Fase 1: solicitudes =====
 db.exec(`
@@ -3055,7 +3066,7 @@ app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
       const n = await gcal.crearEvento(correo, {
         fechaISO: cons.fechaReunion,
         titulo: 'Hablemos de Inversiones - ' + (lead.nombre || lead.codigo),
-        descripcion: 'Agendado desde MiTasaTop.\nCódigo de inversionista: ' + lead.codigo +
+        descripcion: 'Agendado desde MiTasatop.\nCódigo de inversionista: ' + lead.codigo +
           (lead.nombre ? '\nCliente: ' + lead.nombre : '') + (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
         invitados: lead.email ? [lead.email] : []
       });
@@ -3286,7 +3297,7 @@ app.post('/api/gestiones', (req, res) => {
         const datos = {
           fechaISO: g.fechaReunion,
           titulo: 'Hablemos de Inversiones - ' + (lead.nombre || g.codigo),
-          descripcion: 'Agendado desde MiTasaTop.\nCódigo de inversionista: ' + g.codigo +
+          descripcion: 'Agendado desde MiTasatop.\nCódigo de inversionista: ' + g.codigo +
             (lead.nombre ? '\nCliente: ' + lead.nombre : '') +
             (lead.telefono ? '\nTeléfono: ' + lead.telefono : ''),
           invitados: lead.email ? [lead.email] : []
@@ -7110,7 +7121,7 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
         const fechaISO = new Date(datos.fecha + 'T' + datos.hora + ':00-05:00').toISOString();
         const dts = {
           fechaISO,
-          titulo: 'Reunión comercial TasaTop - ' + empresa,
+          titulo: 'Reunión comercial Tasatop - ' + empresa,
           descripcion: 'Agendado desde MiTasatop (B2B).\nCódigo: ' + s.codigo +
             '\nEmpresa: ' + empresa + (sol.contacto ? '\nContacto: ' + sol.contacto : '') +
             (sol.telefono ? '\nTeléfono: ' + sol.telefono : '') +
@@ -7143,7 +7154,7 @@ app.put('/api/b2b/solicitudes/:codigo/reunion', soloB2B, (req, res) => {
 
 // ============================================================
 // ===== CARTERA ACTIVA (v1.454) ==============================
-// Clientes que ya invirtieron con TasaTop. Se importan como leads
+// Clientes que ya invirtieron con Tasatop. Se importan como leads
 // diferenciados (badge ♻️), se liberan por goteo (5/día por gestora)
 // y usan un embudo abreviado: pueden pasar directo a Contactado o
 // Negociación porque ya conocen el producto.
@@ -7309,19 +7320,19 @@ function baseUrlPublica() {
 const CORREO_PLANTILLAS_BASE = [
   { clave: 'presentacion', nombre: 'Presentación de la GP', orden: 10,
     descripcion: 'Primer contacto con un cliente de cartera, antes de llamarlo.',
-    asunto: 'Su nueva Gestora de Patrimonio en TasaTop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **TasaTop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
+    asunto: 'Su nueva Gestora de Patrimonio en Tasatop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **Tasatop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
   { clave: 'no_contesto', nombre: 'No contestó la llamada', orden: 20,
     descripcion: 'Se intentó llamar y no hubo respuesta.',
-    asunto: 'Intenté comunicarme con usted — {{gestora}}, TasaTop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe llamé hace un momento y no logré ubicarle. Soy **{{gestora}}**, su Gestora de Patrimonio en TasaTop.\n\nQuería conversar con usted sobre las operaciones disponibles y ver de qué manera podemos hacer crecer su inversión.\n\n¿Qué horario le resulta más cómodo para llamarle? Puede responder a este correo o escribirme directamente a {{telefono_gp}}.' },
+    asunto: 'Intenté comunicarme con usted — {{gestora}}, Tasatop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe llamé hace un momento y no logré ubicarle. Soy **{{gestora}}**, su Gestora de Patrimonio en Tasatop.\n\nQuería conversar con usted sobre las operaciones disponibles y ver de qué manera podemos hacer crecer su inversión.\n\n¿Qué horario le resulta más cómodo para llamarle? Puede responder a este correo o escribirme directamente a {{telefono_gp}}.' },
   { clave: 'info_producto', nombre: 'Envío de información', orden: 30,
     descripcion: 'El cliente pidió detalles del producto o de una operación.',
-    asunto: 'La información que me solicitó — TasaTop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nComo conversamos, le comparto la información sobre nuestras operaciones de inversión con **garantía inmobiliaria**.\n\nEn TasaTop financiamos a empresas que respaldan cada operación con un inmueble, lo que le permite invertir con un nivel de resguardo que difícilmente encuentra en otros instrumentos.\n\nQuedo atenta a sus consultas y con gusto le explico cualquier punto en detalle.' },
+    asunto: 'La información que me solicitó — Tasatop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nComo conversamos, le comparto la información sobre nuestras operaciones de inversión con **garantía inmobiliaria**.\n\nEn Tasatop financiamos a empresas que respaldan cada operación con un inmueble, lo que le permite invertir con un nivel de resguardo que difícilmente encuentra en otros instrumentos.\n\nQuedo atenta a sus consultas y con gusto le explico cualquier punto en detalle.' },
   { clave: 'confirma_reunion', nombre: 'Confirmación de reunión', orden: 40,
     descripcion: 'Se agendó una reunión y se confirma por escrito.',
-    asunto: 'Confirmación de nuestra reunión — TasaTop',
+    asunto: 'Confirmación de nuestra reunión — Tasatop',
     cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe confirmo nuestra reunión. Recibirá por separado la invitación con el enlace de videollamada.\n\nEn ese espacio revisaremos las operaciones vigentes, resolveré sus dudas y veremos juntos qué alternativa se ajusta mejor a lo que usted busca.\n\nSi necesita reprogramar, escríbame con confianza.' },
   { clave: 'post_reunion', nombre: 'Seguimiento post reunión', orden: 50,
     descripcion: 'Después de la reunión, para mantener el impulso.',
@@ -7333,7 +7344,7 @@ const CORREO_PLANTILLAS_BASE = [
     cuerpo: 'Estimado(a) {{primer_nombre}},\n\nHa pasado un tiempo desde su última inversión con nosotros y quería retomar el contacto.\n\nSoy **{{gestora}}**, su Gestora de Patrimonio. En estos meses hemos incorporado nuevas operaciones con garantía inmobiliaria y condiciones que creo que vale la pena que conozca.\n\nMe gustaría conversar unos minutos con usted para ponerle al día. ¿Le parece si le llamo esta semana?' },
   { clave: 'agradecimiento', nombre: 'Agradecimiento por inversión', orden: 70,
     descripcion: 'El cliente concretó una inversión.',
-    asunto: 'Gracias por su confianza — TasaTop',
+    asunto: 'Gracias por su confianza — Tasatop',
     cuerpo: 'Estimado(a) {{primer_nombre}},\n\nSu inversión quedó registrada. Gracias por seguir confiando en nosotros.\n\nEstaré atenta al desarrollo de la operación y le mantendré informado(a) en cada etapa. Ante cualquier consulta, escríbame directamente.\n\nUn gusto acompañarle en este proceso.' }
 ];
 function correoSembrarPlantillas() {
@@ -7348,7 +7359,7 @@ correoSembrarPlantillas();
 
 // Config visual del correo (logo, colores, pie) — editable por el admin.
 function correoConfig() {
-  const base = { logoUrl: '', pie: 'TasaTop · Inversiones con garantía inmobiliaria', mostrarLogo: true, colorFirma: '0B2545' };
+  const base = { logoUrl: '', pie: 'Tasatop · Inversiones con garantía inmobiliaria', mostrarLogo: true, colorFirma: '0B2545' };
   try {
     const r = db.prepare("SELECT valor FROM app_config WHERE clave='correo_config'").get();
     if (r && r.valor) return Object.assign(base, JSON.parse(r.valor));
@@ -7376,15 +7387,15 @@ function correoArmar({ plantilla, lead, gp, pixelId }) {
   const primerNombre = limpio.split(/\s+/)[0] || 'estimado cliente';
   const vars = {
     cliente: lead.nombre || '', primer_nombre: primerNombre,
-    gestora: gp.nombre || 'TasaTop', correo_gp: gp.usuario || '',
+    gestora: gp.nombre || 'Tasatop', correo_gp: gp.usuario || '',
     telefono_gp: gp.firmaTelefono || '', cargo_gp: gp.firmaCargo || 'Gestora de Patrimonio',
-    empresa: 'TasaTop'
+    empresa: 'Tasatop'
   };
   const asunto = correoRender(plantilla.asunto, vars);
   const cuerpoTxt = correoRender(plantilla.cuerpo, vars);
   const cuerpoHtml = correoTextoAHtml(cuerpoTxt);
-  const logo = (cfg.mostrarLogo && base)
-    ? '<tr><td style="padding-bottom:22px"><img src="' + base + '/logo-tasatop.png" alt="TasaTop" width="150" style="display:block;border:0;height:auto"></td></tr>'
+  const logoFirma = (cfg.mostrarLogo && base)
+    ? '<td align="right" valign="middle" style="width:120px;padding-left:14px"><img src="' + base + '/logo-tasatop.png" alt="Tasatop" width="110" style="display:block;border:0;height:auto"></td>'
     : '';
   const firmaExtra = gp.firmaExtra ? '<br><span style="color:#5A6B82;font-size:13px">' + String(gp.firmaExtra) + '</span>' : '';
   const tel = gp.firmaTelefono ? ' · ' + gp.firmaTelefono : '';
@@ -7393,18 +7404,19 @@ function correoArmar({ plantilla, lead, gp, pixelId }) {
   const html = '<!doctype html><html><body style="margin:0;padding:0;background:#F4F6F9">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F9;padding:24px 12px"><tr><td align="center">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:30px 32px;font-family:Arial,Helvetica,sans-serif;color:#22303F">' +
-    logo +
     '<tr><td style="font-size:15px;line-height:1.65">' + cuerpoHtml +
-      '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:20px;padding-top:16px;border-top:1px solid #E8EDF3;width:100%"><tr><td style="font-family:Arial,Helvetica,sans-serif">' +
+      // Firma: datos a la izquierda, logo Tasatop a la derecha, centrados entre sí.
+      '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:20px;padding-top:16px;border-top:1px solid #E8EDF3">' +
+      '<tr><td valign="middle" style="font-family:Arial,Helvetica,sans-serif">' +
         '<b style="color:#' + (cfg.colorFirma || '0B2545') + ';font-size:15px">' + (gp.nombre || '') + '</b><br>' +
-        '<span style="color:#5A6B82;font-size:13.5px">' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · TasaTop</span><br>' +
+        '<span style="color:#5A6B82;font-size:13.5px">' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · Tasatop</span><br>' +
         '<span style="color:#5A6B82;font-size:13.5px">' + (gp.usuario || '') + tel + '</span>' + firmaExtra +
-      '</td></tr></table>' +
+      '</td>' + logoFirma + '</tr></table>' +
     '</td></tr>' +
     '<tr><td style="padding-top:20px;font-size:11px;color:#94A3B8;text-align:center;font-family:Arial,Helvetica,sans-serif">' +
       String(cfg.pie || '') + baja + '</td></tr>' +
     '</table></td></tr></table>' + pixel + '</body></html>';
-  const texto = cuerpoTxt.replace(/\*\*/g, '') + '\n\n' + (gp.nombre || '') + '\n' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · TasaTop\n' + (gp.usuario || '') + tel;
+  const texto = cuerpoTxt.replace(/\*\*/g, '') + '\n\n' + (gp.nombre || '') + '\n' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · Tasatop\n' + (gp.usuario || '') + tel;
   return { asunto, html, texto };
 }
 
@@ -7420,26 +7432,26 @@ function correoPresentacion({ cliente, gestora, correoGP, telGP, pixelId }) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:12px;padding:28px 30px;font-family:Arial,Helvetica,sans-serif;color:#22303F">
   <tr><td style="font-size:15px;line-height:1.65">
     <p style="margin:0 0 16px">Estimado(a) ${primerNombre},</p>
-    <p style="margin:0 0 16px">Le escribo para presentarme: soy <b>${gestora}</b>, y desde ahora seré su Gestora de Patrimonio en <b>TasaTop</b>.</p>
+    <p style="margin:0 0 16px">Le escribo para presentarme: soy <b>${gestora}</b>, y desde ahora seré su Gestora de Patrimonio en <b>Tasatop</b>.</p>
     <p style="margin:0 0 16px">Mi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.</p>
     <p style="margin:0 0 16px">Agradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.</p>
     <p style="margin:0 0 6px">Quedo a su disposición.</p>
     <p style="margin:16px 0 0;padding-top:16px;border-top:1px solid #E8EDF3">
       <b style="color:#0B2545">${gestora}</b><br>
-      <span style="color:#5A6B82;font-size:13.5px">Gestora de Patrimonio · TasaTop</span><br>
+      <span style="color:#5A6B82;font-size:13.5px">Gestora de Patrimonio · Tasatop</span><br>
       <span style="color:#5A6B82;font-size:13.5px">${correoGP}${telGP ? ' · ' + telGP : ''}</span>
     </p>
   </td></tr>
   <tr><td style="padding-top:18px;font-size:11px;color:#94A3B8;font-family:Arial,Helvetica,sans-serif;text-align:center">
-    TasaTop · Inversiones con garantía inmobiliaria${baja ? '<br>' + baja : ''}
+    Tasatop · Inversiones con garantía inmobiliaria${baja ? '<br>' + baja : ''}
   </td></tr>
 </table>
 </td></tr></table>${pixel}</body></html>`;
-  const texto = 'Estimado(a) ' + primerNombre + ',\n\nLe escribo para presentarme: soy ' + gestora + ', y desde ahora seré su Gestora de Patrimonio en TasaTop.\n\n' +
+  const texto = 'Estimado(a) ' + primerNombre + ',\n\nLe escribo para presentarme: soy ' + gestora + ', y desde ahora seré su Gestora de Patrimonio en Tasatop.\n\n' +
     'Mi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\n' +
     'Agradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\n' +
-    'Quedo a su disposición.\n\n' + gestora + '\nGestora de Patrimonio · TasaTop\n' + correoGP + (telGP ? ' · ' + telGP : '');
-  return { asunto: 'Su nueva Gestora de Patrimonio en TasaTop', html, texto };
+    'Quedo a su disposición.\n\n' + gestora + '\nGestora de Patrimonio · Tasatop\n' + correoGP + (telGP ? ' · ' + telGP : '');
+  return { asunto: 'Su nueva Gestora de Patrimonio en Tasatop', html, texto };
 }
 
 // ---- ADMIN: gestión de plantillas ----
@@ -7527,7 +7539,7 @@ app.get('/api/correos/plantilla/:codigo', (req, res) => {
   if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
   // La GP que firma: la asignada al lead (su correo = su usuario del CRM).
   const gp = db.prepare('SELECT nombre, usuario, firmaCargo, firmaTelefono, firmaExtra FROM usuarios WHERE nombre=? AND activo=1').get(lead.asesor || '')
-          || { nombre: lead.asesor || 'TasaTop', usuario: '' };
+          || { nombre: lead.asesor || 'Tasatop', usuario: '' };
   const clave = req.query.clave || 'presentacion';
   const p = db.prepare('SELECT * FROM correo_plantillas WHERE clave=? AND activa=1').get(clave)
          || db.prepare('SELECT * FROM correo_plantillas WHERE activa=1 ORDER BY orden LIMIT 1').get();
@@ -7572,7 +7584,7 @@ app.post('/api/correos/enviar', async (req, res) => {
 
   try {
     const r = await gmailApi.enviar({
-      remitente: gp.usuario, nombreRemitente: gp.nombre + ' | TasaTop',
+      remitente: gp.usuario, nombreRemitente: gp.nombre + ' | Tasatop',
       para, asunto, html, textoPlano: plantilla.texto, responderA: gp.usuario, pixelId
     });
     const ahora = new Date().toISOString();
@@ -7645,7 +7657,7 @@ app.get('/t/baja/:pixelId', (req, res) => {
     '<h2 style="color:#0B2545">' + (ok ? 'Listo' : 'Enlace no válido') + '</h2>' +
     '<p style="font-size:15px;line-height:1.6;color:#5A6B82">' +
     (ok ? 'Hemos registrado su solicitud. No volverá a recibir correos comerciales de nuestra parte.' : 'No pudimos procesar esta solicitud. Escríbanos y lo resolvemos.') +
-    '</p><p style="font-size:13px;color:#94A3B8">TasaTop</p></div>');
+    '</p><p style="font-size:13px;color:#94A3B8">Tasatop</p></div>');
 });
 
 // GET /api/correos/lead/:codigo — historial de correos del lead (para la ficha).
@@ -9683,7 +9695,7 @@ function htmlRankingDia(r) {
         <th style="padding:6px 8px;text-align:left">Gestora</th><th style="padding:6px 8px">Puntos</th><th style="padding:6px 8px">Intentos</th><th style="padding:6px 8px">Conect.</th><th style="padding:6px 8px">Calif.</th><th style="padding:6px 8px">Agend.</th>
       </tr></thead><tbody>${filas}</tbody>
     </table>
-    <p style="color:#aaa;font-size:11px;margin-top:14px">MiTasaTop · enviado automáticamente al cierre del día (23:59 Perú)</p>
+    <p style="color:#aaa;font-size:11px;margin-top:14px">MiTasatop · enviado automáticamente al cierre del día (23:59 Perú)</p>
   </div>`;
 }
 
@@ -10025,7 +10037,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.462 (PLANTILLAS DE CORREO EDITABLES + logo TasaTop: (1) Nueva vista ✉️ Plantillas de correo (solo admin) para editar asunto y cuerpo de cada plantilla, el pie de página y la apariencia, con vista previa renderizada con datos reales. (2) SIETE PLANTILLAS SEMILLA, una por cada momento del embudo: presentación de la GP, no contestó la llamada, envío de información, confirmación de reunión, seguimiento post reunión, reactivación de cliente dormido y agradecimiento por inversión. La GP elige cuál usar desde un selector en el modal de envío y la vista previa se actualiza al instante. (3) VARIABLES que se resuelven al enviar: cliente, primer_nombre (ignora prefijos como [DEMO]), gestora, correo_gp, telefono_gp, cargo_gp; más formato simple con doble asterisco para negrita y línea en blanco para párrafo. (4) FIRMAS POR PERSONA editables por el admin (cargo, teléfono y línea extra) en la misma vista, aplicadas automáticamente al pie de cada correo. (5) LOGO de TasaTop extraído del SVG corporativo, compuesto con su máscara alfa y optimizado a PNG de 360px con transparencia (public/logo-tasatop.png), embebido por URL en la cabecera del correo y desactivable desde el panel. (6) El registro de gestión ahora nombra la plantilla usada y la tabla correos guarda su clave para métricas por tipo. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.463 (Correcciones de marca y bajas: (1) MARCA: 62 ocurrencias de la grafía incorrecta corregidas a Tasatop en todo el proyecto (server.js, app.js, index.html, gmail.js, ia-reportes.js, bienvenida-auto.js, recall.js, google-calendar.js) — plantillas de correo, firmas, mensajes del bot de WhatsApp, reportes de IA y textos de interfaz. (2) LOGO AL COSTADO DE LA FIRMA: antes iba suelto en la cabecera del correo; ahora la firma es una fila de dos celdas —datos de la GP a la izquierda, logo Tasatop a la derecha— ambas con valign middle para que queden alineadas verticalmente entre sí, con el logo a 110px de ancho. (3) BAJAS DEFINITIVAS de Shirley Ponte y Breezy Ortega: la migración anterior corría ANTES de los seeds de usuarios, que las recreaban en cada arranque; ahora la desactivación se ejecuta después de los seeds (mismo patrón probado con Brillith Vásquez), y las solicitudes B2B a cargo de Shirley quedan Sin asignar para que jefatura las redistribuya. Ambas desaparecen del panel de firmas, de los catálogos y de las asignaciones; sus registros históricos conservan el nombre. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

@@ -1,13 +1,13 @@
 // =============================================================
 // RECALL.AI — bots de notas para reuniones (B2C y B2B). v1.448
-// Una sola cuenta de TasaTop: el CRM despacha un bot por reunión
+// Una sola cuenta de Tasatop: el CRM despacha un bot por reunión
 // (soporta reuniones simultáneas sin conflicto; cada bot es una
 // instancia independiente). Cobro por hora de bot, prorrateado.
 //
 // Variables de entorno (Railway):
 //   RECALL_API_KEY               (obligatoria para activar la integración)
 //   RECALL_API_URL               default https://us-west-2.recall.ai  (ajustar a la región de la cuenta)
-//   RECALL_BOT_NAME              default "Notas TasaTop"
+//   RECALL_BOT_NAME              default "Notas Tasatop"
 //   RECALL_TRANSCRIPT_PROVIDER   default "recallai" (transcripción de Recall, +$0.15/h, precisa y con
 //                                idioma configurable) | "meeting_captions" (captions nativos de Meet,
 //                                gratis, pero usan el idioma configurado en el Meet del usuario)
@@ -20,7 +20,7 @@
 module.exports = function () {
   const KEY = () => process.env.RECALL_API_KEY || null;
   const BASE = () => (process.env.RECALL_API_URL || 'https://us-west-2.recall.ai').replace(/\/+$/, '');
-  const BOT_NAME = () => process.env.RECALL_BOT_NAME || 'Notas TasaTop';
+  const BOT_NAME = () => process.env.RECALL_BOT_NAME || 'Notas Tasatop';
   const PROVIDER = () => process.env.RECALL_TRANSCRIPT_PROVIDER || 'recallai';
   const LANG = () => process.env.RECALL_LANGUAGE || 'es';
 
