@@ -2919,7 +2919,13 @@ app.get('/api/b2c/cola', (req, res) => {
         etapa: cons.etapa, monto, montoFmt: 'S/ ' + monto.toLocaleString('es-PE'),
         score: ps.score, nivel: ps.nivel, diasEnEtapa: ps.diasEnEtapa,
         proximaAccion: cons.proximaAccion || null, fechaProxAccion: cons.fechaProxAccion || null,
-        intentos: gs.length, probabilidad: cons.probabilidad, detalle: ps.detalle
+        intentos: gs.length, probabilidad: cons.probabilidad, detalle: ps.detalle,
+        // v1.465: datos de cartera para que Mi Cola se vea igual que el kanban.
+        esCartera: l.esCartera || 0, esDemo: l.esDemo || 0, email: l.email || null, dni: l.dni || null,
+        carteraSoles: l.carteraSoles, carteraDolares: l.carteraDolares, carteraOpsSoles: l.carteraOpsSoles,
+        carteraOpsDolares: l.carteraOpsDolares, carteraMontoInvertido: l.carteraMontoInvertido,
+        carteraOperaciones: l.carteraOperaciones, carteraUltimaInversion: l.carteraUltimaInversion,
+        carteraVencimiento: l.carteraVencimiento
       });
     });
     cola.sort((a, b) => b.score - a.score || b.monto - a.monto);
@@ -7318,10 +7324,14 @@ function baseUrlPublica() {
 }
 // ---- Plantillas semilla: una por cada momento del embudo (editables por el admin) ----
 const CORREO_PLANTILLAS_BASE = [
-  { clave: 'presentacion', nombre: 'Presentación de la GP', orden: 10,
-    descripcion: 'Primer contacto con un cliente de cartera, antes de llamarlo.',
+  { clave: 'presentacion', nombre: 'Presentación (GP nueva para el cliente)', orden: 10,
+    descripcion: 'Primer contacto: el cliente NO conoce a esta GP. Se presenta como su nueva gestora.',
     asunto: 'Su nueva Gestora de Patrimonio en Tasatop',
     cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **Tasatop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
+  { clave: 'continuidad', nombre: 'Continuidad (cliente que ya la conoce)', orden: 15,
+    descripcion: 'Para clientes que ya saben quién es su GP: retoma el contacto de manera formal.',
+    asunto: 'Retomando contacto — {{gestora}}, Tasatop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nEspero que se encuentre muy bien. Le escribo para retomar nuestro contacto y ponerme nuevamente a su disposición.\n\nComo siempre, sigo siendo **{{gestora}}**, su Gestora de Patrimonio en **Tasatop**, y estaré atenta a mantenerle informado(a) de las operaciones que se ajusten a lo que usted busca.\n\nEn los próximos días me comunicaré con usted para conversar sobre las oportunidades vigentes. Si prefiere, puede escribirme directamente cuando lo necesite.\n\nQuedo a su disposición.' },
   { clave: 'no_contesto', nombre: 'No contestó la llamada', orden: 20,
     descripcion: 'Se intentó llamar y no hubo respuesta.',
     asunto: 'Intenté comunicarme con usted — {{gestora}}, Tasatop',
@@ -10037,7 +10047,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.464 (Botón de correo en la tarjeta y limpieza de marca del proveedor: (1) NUEVO ICONO DE CORREO en la tarjeta kanban, junto al de WhatsApp, visible solo si el lead tiene correo registrado; el botón Gestionar cede ancho (flex 1 1 auto) y los iconos bajan a 30px para que los tres entren sin desbordar. Al pulsarlo se abre el modal con el SELECTOR DE PLANTILLA (las 7 por etapa) y vista previa que cambia al elegir. (2) FLUJO POST-ENVÍO: al enviar se cierra el modal de correo y se abre automáticamente Registrar gestión con canal Email preseleccionado y el comentario prellenado con la plantilla enviada y el destinatario, para que la GP solo defina el próximo paso — mismo patrón que el cierre de llamada. (3) El NÚMERO de teléfono de la tarjeta vuelve a ser texto plano: el click-to-call ya lo cubre el botón de llamada y tenerlo duplicado confundía. (4) MARCA DEL PROVEEDOR: 12 textos visibles que nombraban al proveedor de telefonía fueron neutralizados (títulos de botones, avisos del softphone, chips de trazabilidad, encabezado del panel y mensajes de sesión); solo permanece dentro del widget embebido de terceros, que no es editable, y en comentarios y nombres de variables del código. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.465 (Paridad visual GP/admin, DNI copiable y plantilla de continuidad: (1) CAUSA RAÍZ de que las GP no vieran los indicadores de cartera: su vista por defecto es MI COLA, que se alimenta de /api/b2c/cola — un endpoint que no devolvía ningún campo de cartera, así que la tarjeta no podía pintar tier ni temperatura aunque el código existiera. Ahora la cola incluye esCartera, email, dni, montos por moneda, operaciones, última inversión y vencimiento, y su fila se pinta igual que la del kanban: acento dorado, badge ♻️ CARTERA, monto bimoneda, tier y temperatura. El backend siempre envió lo mismo a admin y gestora en /api/leads; la diferencia estaba solo en esta vista. (2) Botón de correo también en Mi Cola, junto al de llamada. (3) El botón Enviar presentación sale del panel dorado (ahora se usa el icono de la tarjeta) y en su lugar van el DNI y el correo como CHIPS COPIABLES con un clic, dentro de la caja dorada. (4) NUEVA PLANTILLA Continuidad para clientes que ya conocen a su GP: retoma el contacto de manera formal sin presentarse de nuevo; la de Presentación se renombra a GP nueva para el cliente para que la elección sea evidente. Total: 8 plantillas. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

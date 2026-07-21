@@ -987,14 +987,26 @@ function renderColaB2C(d) {
     const venc = c.fechaProxAccion && new Date(c.fechaProxAccion) < new Date();
     const prox = c.proximaAccion ? '<span class="cola-prox">🎯 ' + tr(c.proximaAccion) + (venc ? ' <span class="cola-venc">vencida</span>' : '') + '</span>' : '';
     const estanc = c.diasEnEtapa >= 3 ? '<span class="cola-estanc">⏳ ' + c.diasEnEtapa + 'd en etapa</span>' : '';
-    return '<div class="cola-fila" onclick="abrirGestion(\'' + c.codigo + '\')">' +
+    // v1.465: los clientes de cartera se ven igual aquí que en el kanban.
+    const tempC = c.esCartera ? cartTemp(c) : null;
+    const tierC = c.esCartera ? cartTier(c) : null;
+    const montosC = c.esCartera ? cartMontosCorto(c) : '';
+    const cartInfo = c.esCartera
+      ? '<span class="cola-cart">♻️ CARTERA</span>' +
+        (montosC ? '<span class="cola-cart-monto">💼 ' + montosC + '</span>' : '') +
+        (tierC ? '<span class="kcart-tier t-' + tierC.k + '" title="' + tierC.tip + '">' + tierC.txt + '</span>' : '') +
+        (tempC ? '<span class="kcart-temp tm-' + tempC.k + '" title="' + tempC.tip + '">' + tempC.txt + '</span>' : '')
+      : '';
+    return '<div class="cola-fila' + (c.esCartera ? ' cola-es-cartera' : '') + '" onclick="abrirGestion(\'' + c.codigo + '\')">' +
       '<span class="cola-num">' + (i + 1) + '</span>' +
       '<span class="cola-score ' + nivelColor[c.nivel] + '" title="Priority score">' + c.score + '</span>' +
       '<div class="cola-main"><div class="cola-nom">' + (c.nombre || c.codigo) + '</div>' +
-        '<div class="cola-meta"><span class="cola-etapa">' + (etLbl[c.etapa] || c.etapa) + '</span>' + prox + estanc + '</div></div>' +
+        '<div class="cola-meta"><span class="cola-etapa">' + (etLbl[c.etapa] || c.etapa) + '</span>' + prox + estanc + '</div>' +
+        (cartInfo ? '<div class="cola-meta cola-cart-linea">' + cartInfo + '</div>' : '') + '</div>' +
       '<div class="cola-right"><div class="cola-monto">' + c.montoFmt + '</div>' +
         '<div class="cola-sub">' + c.intentos + ' int · ' + c.probabilidad + '%</div></div>' +
-      '<div class="cola-acciones"><button class="cola-ll" onclick="event.stopPropagation();accionLlamar(\'' + c.codigo + '\')" title="Llamar">' + (typeof ICO_TEL !== 'undefined' ? ICO_TEL : '📞') + '</button></div>' +
+      '<div class="cola-acciones"><button class="cola-ll" onclick="event.stopPropagation();accionLlamar(\'' + c.codigo + '\')" title="Llamar">' + (typeof ICO_TEL !== 'undefined' ? ICO_TEL : '📞') + '</button>' +
+        (c.email ? '<button class="cola-ll cola-ml" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + c.codigo + '\')" title="Enviar correo">' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>' : '') + '</div>' +
       '</div>';
   }).join('');
   cont.innerHTML = '<div class="cola-wrap">' +
@@ -1753,9 +1765,6 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
       return '<div class="cart-linea">📅 <b>Vence:</b> ' + fmtFecha(l.carteraVencimiento) + ' (' + (d >= 0 ? 'en ' + d + ' días' : 'hace ' + Math.abs(d) + ' días') + ')</div>'; })() : '';
     const cont = document.getElementById('gCarteraBox');
     if (cont) {
-      const btnMail = l.email
-        ? '<button class="btn sec cart-btn-mail" onclick="abrirCorreoPresentacion(\'' + l.codigo + '\')">✉️ Enviar presentación</button>'
-        : '<span class="cart-sin-mail">Sin correo registrado</span>';
       cont.innerHTML = '<div class="cart-modal">' +
         '<div class="cart-modal-head"><span class="cart-modal-tit">♻️ Cliente de cartera activa</span>' +
           '<span class="kcart-tier t-' + tier.k + '" title="' + tier.tip + '">' + tier.txt + '</span>' +
@@ -1766,7 +1775,12 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
         (tk ? '<div class="cart-linea">🎯 <b>Ticket promedio:</b> ' + cartFmtMoneda(tk, 'S/') + ' por operación</div>' : '') +
         vencTxt +
         (l.carteraNotas ? '<div class="cart-modal-nota">📝 ' + esc(l.carteraNotas) + '</div>' : '') +
-        '<div class="cart-modal-acc">' + btnMail + '<span id="cartMailEstado" class="cart-mail-estado"></span></div>' +
+        // DNI y correo copiables, dentro de la caja dorada.
+        '<div class="cart-modal-acc">' +
+          (l.dni ? '<span class="cart-dato" title="Clic para copiar el DNI" onclick="cartCopiar(this,\'' + String(l.dni).replace(/'/g, "\\'") + '\')">🪪 DNI <b>' + esc(l.dni) + '</b> <span class="cart-copy">⧉</span></span>' : '') +
+          (l.email ? '<span class="cart-dato" title="Clic para copiar el correo" onclick="cartCopiar(this,\'' + String(l.email).replace(/'/g, "\\'") + '\')">✉ <b>' + esc(l.email) + '</b> <span class="cart-copy">⧉</span></span>' : '') +
+          '<span id="cartMailEstado" class="cart-mail-estado"></span>' +
+        '</div>' +
         '</div>';
       // Historial de correos (si ya se le envió algo, se muestra al costado del botón).
       api('/api/correos/lead/' + l.codigo).then(d => {
@@ -11622,4 +11636,12 @@ async function corrEstadoIntegracion() {
       (d.stats ? '<div style="font-size:12px;color:var(--muted);margin-top:6px">Enviados: <b>' + (d.stats.enviados || 0) + '</b> · Abiertos: <b>' + (d.stats.abiertos || 0) + '</b> · Bajas: <b>' + (d.stats.bajas || 0) + '</b></div>' : '');
     box.className = 'cart-box' + (d.listo ? '' : ' corr-pendiente');
   } catch (e) { }
+}
+
+// Copiar un dato de la caja de cartera (DNI, correo) con feedback visual.
+function cartCopiar(el, txt) {
+  navigator.clipboard.writeText(txt).then(() => {
+    const orig = el.querySelector('.cart-copy');
+    if (orig) { orig.textContent = '✓'; setTimeout(() => { orig.textContent = '⧉'; }, 1400); }
+  }).catch(() => {});
 }

@@ -3713,3 +3713,15 @@ body:has(#contKanban[style*="block"]) .content { max-width: none; }
 .kbtn-ic.ml { color: #B8860B; border-color: #EBD9A0; } .kbtn-ic.ml:hover { background: #FEF9E7; }
 .kbtns .kbtn.rg { flex: 1 1 auto; min-width: 0; }
 .kbtns .kbtn-ic { width: 30px; height: 30px; }
+
+/* Mi Cola: cliente de cartera igual que en el kanban (v1.465) */
+.cola-es-cartera { background: linear-gradient(90deg, #FFFBEB 0%, #FFFDF7 60%, transparent 100%); box-shadow: inset 3px 0 0 #D4A017; }
+.cola-cart-linea { margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cola-cart { background: linear-gradient(135deg, #D4A017, #B8860B); color: #fff; font-size: 8.5px; font-weight: 800; border-radius: 4px; padding: 1px 5px; letter-spacing: .03em; }
+.cola-cart-monto { font-size: 11px; font-weight: 700; color: #7A5C00; }
+.cola-ml { color: #B8860B !important; }
+/* DNI y correo copiables dentro de la caja dorada */
+.cart-dato { display: inline-flex; align-items: center; gap: 5px; background: #fff; border: 1px solid #EBD9A0; border-radius: 7px; padding: 3px 9px; font-size: 12px; color: #5C4708; cursor: pointer; }
+.cart-dato:hover { background: #FEF9E7; border-color: #D4A017; }
+.cart-dato b { color: #7A5C00; font-weight: 700; }
+.cart-copy { color: #B08C2E; font-size: 11px; }
