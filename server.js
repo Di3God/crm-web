@@ -612,6 +612,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS cartera_devoluciones (
 )`);
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_cartdev_codigo ON cartera_devoluciones (codigo)"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraVueltas INTEGER DEFAULT 0"); } catch (e) { }
+// v1.468: una persona puede usar la cuenta telefónica de otra (ej. Henry usando la cuenta que
+// era de Luis). Este mapeo reatribuye esas llamadas a quien realmente las hizo.
+db.exec(`CREATE TABLE IF NOT EXISTS agentes_alias (
+  agente TEXT PRIMARY KEY,
+  personaReal TEXT NOT NULL,
+  nota TEXT,
+  desde TEXT,
+  creadoEn TEXT,
+  creadoPor TEXT
+)`);
+// Columna con el nombre efectivo (ya reatribuido) para no recalcular en cada consulta.
+try { db.exec("ALTER TABLE llamadas ADD COLUMN agenteReal TEXT"); } catch (e) { }
 // v1.461: correos enviados desde el CRM + trazabilidad de apertura.
 db.exec(`CREATE TABLE IF NOT EXISTS correos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1077,19 +1089,21 @@ app.post('/api/webhooks/aircall/:token', (req, res) => {
       duracion = (sa > 0 && ea > sa) ? (ea - sa) : Number(c.duration || 0); // timbrada/espera
     }
     const agente = (c.user && (c.user.name || c.user.email)) || null;
+    // v1.468: agente REAL (por alias de cuenta o por el dueño del lead al que se llamó).
+    const agenteReal = agenteRealDe({ agente, codigo: lead ? lead.codigo : null, codigoB2B: solB2B ? solB2B.codigo : null });
     const fecha = new Date((c.ended_at ? c.ended_at * 1000 : Date.now())).toISOString();
     const aircallId = String(c.id || ('ac-' + Date.now()));
 
     const rIns = db.prepare(`INSERT OR IGNORE INTO llamadas
-      (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, fecha, crudo, codigoB2B)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      (aircall_id, codigo, telefono, direccion, contestada, duracion, agente, agenteReal, fecha, crudo, codigoB2B)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
       .run(aircallId, lead ? lead.codigo : null, numeroLead || null, direccion,
-           contestada, duracion, agente, fecha, JSON.stringify(ev).slice(0, 16000),
+           contestada, duracion, agente, agenteReal, fecha, JSON.stringify(ev).slice(0, 16000),
            solB2B ? solB2B.codigo : null);
     // Si la fila ya existía (creada por una transcripción que llegó antes), completar los datos de la llamada.
     if (!rIns.changes) {
-      db.prepare('UPDATE llamadas SET codigo=?, telefono=?, direccion=?, contestada=?, duracion=?, agente=?, fecha=?, crudo=?, codigoB2B=? WHERE aircall_id=?')
-        .run(lead ? lead.codigo : null, numeroLead || null, direccion, contestada, duracion, agente, fecha,
+      db.prepare('UPDATE llamadas SET codigo=?, telefono=?, direccion=?, contestada=?, duracion=?, agente=?, agenteReal=?, fecha=?, crudo=?, codigoB2B=? WHERE aircall_id=?')
+        .run(lead ? lead.codigo : null, numeroLead || null, direccion, contestada, duracion, agente, agenteReal, fecha,
              JSON.stringify(ev).slice(0, 16000), solB2B ? solB2B.codigo : null, aircallId);
     }
 
@@ -3105,6 +3119,71 @@ app.post('/api/gcal/backfill', soloAdmin, async (req, res) => {
   res.json({ ok: true, ...resultados });
 });
 
+// ---- v1.468: reatribución de llamadas cuando alguien usa la cuenta telefónica de otro ----
+// Devuelve la persona REAL detrás de una llamada. Prioridad:
+//  1) alias configurado (cuenta X → persona Y)
+//  2) el asesor dueño del lead al que se llamó (fuente más confiable: el número marcado)
+//  3) el agente tal cual viene del proveedor
+function agenteRealDe(ll, aliasMap) {
+  if (!ll) return null;
+  const alias = aliasMap ? aliasMap[ll.agente] : db.prepare('SELECT personaReal FROM agentes_alias WHERE agente=?').get(ll.agente)?.personaReal;
+  if (alias) return alias;
+  // Sin alias: si la llamada está vinculada a un lead, atribuir a su asesor.
+  if (ll.codigo) {
+    const l = db.prepare('SELECT asesor FROM leads WHERE codigo=?').get(ll.codigo);
+    if (l && l.asesor) return l.asesor;
+  }
+  if (ll.codigoB2B) {
+    const s = db.prepare('SELECT responsableActual FROM b2b_solicitudes WHERE codigo=?').get(ll.codigoB2B);
+    if (s && s.responsableActual) return s.responsableActual;
+  }
+  return ll.agente;
+}
+function aliasMapa() {
+  const m = {};
+  try { db.prepare('SELECT agente, personaReal FROM agentes_alias').all().forEach(a => { m[a.agente] = a.personaReal; }); } catch (e) { }
+  return m;
+}
+
+// GET /api/agentes-alias — lista de reatribuciones (admin y jefaturas).
+app.get('/api/agentes-alias', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const alias = db.prepare('SELECT * FROM agentes_alias ORDER BY agente').all();
+  // Agentes vistos en llamadas que NO son usuarios activos (candidatos a reatribuir).
+  const activos = new Set(db.prepare('SELECT nombre FROM usuarios WHERE activo=1').all().map(u => u.nombre));
+  const vistos = db.prepare("SELECT agente, COUNT(*) n, MAX(fecha) ultima FROM llamadas WHERE agente IS NOT NULL GROUP BY agente ORDER BY n DESC").all();
+  const huerfanos = vistos.filter(v => !activos.has(v.agente) && !alias.some(a => a.agente === v.agente));
+  const personas = db.prepare("SELECT nombre FROM usuarios WHERE activo=1 AND rol IN ('gestora','funcionario_b2b','asistente_creditos','jefa','jefe_b2b','admin') ORDER BY nombre").all().map(u => u.nombre);
+  res.json({ alias, huerfanos, personas, vistos });
+});
+
+// PUT /api/agentes-alias/:agente { personaReal, nota, desde } — crear o actualizar (solo admin).
+app.put('/api/agentes-alias/:agente', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const b = req.body || {};
+  if (!b.personaReal) return res.status(400).json({ error: 'Falta la persona real' });
+  const ahora = new Date().toISOString();
+  db.prepare(`INSERT INTO agentes_alias (agente, personaReal, nota, desde, creadoEn, creadoPor)
+    VALUES (?,?,?,?,?,?)
+    ON CONFLICT(agente) DO UPDATE SET personaReal=excluded.personaReal, nota=excluded.nota, desde=excluded.desde`)
+    .run(req.params.agente, b.personaReal, b.nota || null, b.desde || null, ahora, req.user.nombre);
+  // Reatribuir el histórico de esa cuenta (desde la fecha indicada, si se dio).
+  const upd = b.desde
+    ? db.prepare('UPDATE llamadas SET agenteReal=? WHERE agente=? AND fecha>=?').run(b.personaReal, req.params.agente, b.desde)
+    : db.prepare('UPDATE llamadas SET agenteReal=? WHERE agente=?').run(b.personaReal, req.params.agente);
+  auditar(req, 'agente_alias', null, req.params.agente + ' → ' + b.personaReal + ' (' + upd.changes + ' llamadas)');
+  res.json({ ok: true, reatribuidas: upd.changes });
+});
+
+// DELETE /api/agentes-alias/:agente — quitar la reatribución (solo admin).
+app.delete('/api/agentes-alias/:agente', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  db.prepare('DELETE FROM agentes_alias WHERE agente=?').run(req.params.agente);
+  db.prepare('UPDATE llamadas SET agenteReal=NULL WHERE agente=?').run(req.params.agente);
+  auditar(req, 'agente_alias_borrar', null, req.params.agente);
+  res.json({ ok: true });
+});
+
 // MÓDULO DE LLAMADAS (Aircall): consulta con filtros por fecha y agente, cliente vinculado
 // (lead B2C por 'codigo' o solicitud B2B por 'codigoB2B') y resumen por agente.
 app.get('/api/llamadas', (req, res) => {
@@ -3120,7 +3199,14 @@ app.get('/api/llamadas', (req, res) => {
   const d1 = /^\d{4}-\d{2}-\d{2}$/.test(hasta) ? hasta : d0;
   const ini = new Date(new Date(d0 + 'T00:00:00Z').getTime() + 5 * 3600000).toISOString();
   const fin = new Date(new Date(d1 + 'T00:00:00Z').getTime() + 5 * 3600000 + 86400000).toISOString();
-  let filas = db.prepare("SELECT id, aircall_id, codigo, codigoB2B, telefono, direccion, contestada, duracion, agente, fecha, sentimiento, (transcripcion IS NOT NULL) AS tieneTrans, (scoreIA IS NOT NULL) AS tieneScore FROM llamadas WHERE fecha>=? AND fecha<? ORDER BY fecha DESC LIMIT 1000").all(ini, fin);
+  let filas = db.prepare("SELECT id, aircall_id, codigo, codigoB2B, telefono, direccion, contestada, duracion, agente, agenteReal, fecha, sentimiento, (transcripcion IS NOT NULL) AS tieneTrans, (scoreIA IS NOT NULL) AS tieneScore FROM llamadas WHERE fecha>=? AND fecha<? ORDER BY fecha DESC LIMIT 1000").all(ini, fin);
+  // v1.468: reatribuir a quien realmente hizo la llamada (alias de cuenta o dueño del lead).
+  const _alias = aliasMapa();
+  filas.forEach(l => {
+    l.agenteCuenta = l.agente;                    // quién figura en el proveedor
+    l.agente = l.agenteReal || agenteRealDe(l, _alias); // quién la hizo de verdad
+    l.reatribuida = l.agente !== l.agenteCuenta;
+  });
   // Este módulo se usa en B2B (Centro de Operaciones) y B2C (Comité): el parámetro mundo
   // define qué agentes mostrar. B2B = funcionario_b2b/asistente_creditos; B2C = gestoras (GP).
   const mundo = (req.query.mundo === 'b2c') ? 'b2c' : 'b2b';
@@ -10136,7 +10222,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.467 (DEVOLVER A RESERVA reemplaza al desestimar en clientes de cartera: un cliente que ya invirtió no se descarta, vuelve al pool para que otra GP lo retome. (1) En el modal de gestión, la bandera roja se convierte en un botón ámbar ↩ solo para leads de cartera (los de marketing conservan el desestimar intacto). Abre un modal con motivo (7 opciones frecuentes) y comentario para la siguiente GP, y muestra el historial de devoluciones previas del cliente. (2) TRAZABILIDAD COMPLETA en la nueva tabla cartera_devoluciones: qué cliente, de qué GP venía, quién lo devolvió, motivo, comentario, CUÁNTAS GESTIONES se hicieron, CUÁNTOS DÍAS estuvo con esa GP, y —al reasignarse— a quién pasó y cuándo. El contador carteraVueltas marca los clientes que ya rotaron varias veces. Se registra además una gestión visible en la trazabilidad del lead. (3) Al devolver, el lead queda sin asesor y en reserva; el goteo diario ahora también considera los devueltos (asesor NULL) y cierra el ciclo registrando la reasignación automáticamente. (4) NUEVO PANEL en la vista de Cartera Activa (jefatura): devoluciones totales, días y gestiones promedio antes de devolver, cuántos ya fueron retomados, desglose por motivo, y tabla con el detalle de cada caso incluyendo si sigue en reserva o quién lo tiene ahora. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.468 (CUENTAS DE TELÉFONO COMPARTIDAS — reatribución de llamadas: cuando una GP hace llamadas desde una cuenta que figura a nombre de otra persona (caso Henry usando la cuenta que era de Luis Sanchez), sus llamadas no aparecían en el centro de llamadas ni en su resumen porque el filtro usaba el nombre del agente tal como lo reporta el proveedor. Ahora: (1) Nueva tabla agentes_alias que mapea cuenta → persona real, más la columna agenteReal en llamadas. (2) La reatribución sigue tres niveles de prioridad: alias configurado; si no hay alias, el asesor dueño del lead al que se llamó (o el responsable de la solicitud B2B) — el número marcado es la evidencia más confiable; y como último recurso el agente original. Esto significa que incluso sin configurar nada, una llamada vinculada a un lead ya se atribuye a su GP. (3) Panel de administración en la vista de Plantillas de correo: detecta automáticamente las cuentas que no corresponden a usuarios activos, muestra cuántas llamadas tienen y desde cuándo, y permite asignarlas a la persona real con un selector; al guardar se reatribuye todo el histórico de esa cuenta. (4) Las llamadas nuevas guardan el agente real desde el webhook, y el módulo marca cuáles fueron reatribuidas para que la jefatura vea la cuenta de origen. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

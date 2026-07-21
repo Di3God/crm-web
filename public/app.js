@@ -11583,6 +11583,7 @@ async function corrCargarPanel() {
       '</div>').join('');
     corrCargarFirmas();
     corrEstadoIntegracion();
+    cargarAliasAgentes();
   } catch (e) { $('corrListaPlantillas').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
 }
 function corrToggle(clave) {
@@ -11759,4 +11760,50 @@ async function cartCargarDevoluciones() {
           '<td>' + estado + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   } catch (e) { box.style.display = 'none'; }
+}
+
+// ============================================================
+// ===== CUENTAS DE TELÉFONO COMPARTIDAS (v1.468) =============
+// Reatribuye llamadas cuando alguien usa la cuenta de otro.
+// ============================================================
+async function cargarAliasAgentes() {
+  const box = $('aliasAgentes'); if (!box) return;
+  try {
+    const d = await api('/api/agentes-alias');
+    const opciones = (p) => '<option value="">— sin reatribuir —</option>' +
+      (d.personas || []).map(n => '<option value="' + esc(n) + '"' + (n === p ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+    const filas = [];
+    // Reatribuciones activas
+    (d.alias || []).forEach(a => filas.push({ agente: a.agente, personaReal: a.personaReal, nota: a.nota, activo: true }));
+    // Cuentas huérfanas detectadas (agentes que no son usuarios activos)
+    (d.huerfanos || []).forEach(h => filas.push({ agente: h.agente, personaReal: '', nota: h.n + ' llamadas · última ' + fmtFecha(h.ultima), activo: false }));
+    if (!filas.length) {
+      box.innerHTML = '<div class="vacio" style="font-size:12.5px">Todas las cuentas coinciden con personas activas. No hay nada que reatribuir.</div>';
+      return;
+    }
+    box.innerHTML = '<table class="cart-tabla"><thead><tr><th>Cuenta de teléfono</th><th>Las llamadas son de…</th><th>Detalle</th><th></th></tr></thead><tbody>' +
+      filas.map(f =>
+        '<tr' + (f.activo ? ' style="background:#F6FBF8"' : '') + '>' +
+        '<td><b>' + esc(f.agente) + '</b>' + (f.activo ? ' <span class="cart-pill" style="background:#D1FAE5;color:#065F46">reatribuida</span>' : '') + '</td>' +
+        '<td><select id="al-' + btoa(f.agente).replace(/[^a-zA-Z0-9]/g, '') + '" style="min-width:190px">' + opciones(f.personaReal) + '</select></td>' +
+        '<td style="font-size:11.5px;color:var(--muted)">' + esc(f.nota || '') + '</td>' +
+        '<td><button class="btn sec" onclick="guardarAliasAgente(\'' + esc(f.agente).replace(/'/g, "\\'") + '\')">Guardar</button></td>' +
+        '</tr>').join('') + '</tbody></table>';
+  } catch (e) { box.innerHTML = '<div class="vacio">No se pudo cargar.</div>'; }
+}
+async function guardarAliasAgente(agente) {
+  const id = 'al-' + btoa(agente).replace(/[^a-zA-Z0-9]/g, '');
+  const sel = document.getElementById(id); if (!sel) return;
+  const persona = sel.value;
+  try {
+    if (!persona) {
+      await api('/api/agentes-alias/' + encodeURIComponent(agente), { method: 'DELETE' });
+      alert('Reatribución eliminada.');
+    } else {
+      const r = await api('/api/agentes-alias/' + encodeURIComponent(agente), { method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personaReal: persona }) });
+      alert('Listo: ' + r.reatribuidas + ' llamada(s) ahora figuran a nombre de ' + persona + '.');
+    }
+    cargarAliasAgentes();
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
 }
