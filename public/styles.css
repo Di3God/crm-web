@@ -3725,3 +3725,8 @@ body:has(#contKanban[style*="block"]) .content { max-width: none; }
 .cart-dato:hover { background: #FEF9E7; border-color: #D4A017; }
 .cart-dato b { color: #7A5C00; font-weight: 700; }
 .cart-copy { color: #B08C2E; font-size: 11px; }
+
+/* Devolver a reserva (v1.467) — reemplaza la bandera roja en clientes de cartera */
+.mg-bandera.mg-devolver { color: #B8860B !important; border-color: #EBD9A0 !important; background: #FFFDF7 !important; font-size: 17px; font-weight: 800; }
+.mg-bandera.mg-devolver:hover { background: #FEF3C7 !important; }
+.dev-hist { background: #FFFBEB; border: 1px solid #EBD9A0; border-radius: 8px; padding: 8px 11px; font-size: 12px; color: #5C4708; margin-bottom: 12px; line-height: 1.6; }

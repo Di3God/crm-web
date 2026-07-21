@@ -646,7 +646,7 @@ function ir(v) {
   if (v === 'cohortes') cargarCohortes();
   if (v === 'brutos') cargarBrutos();
   if (v === 'releads') cargarReleads();
-  if (v === 'cartera') { cartCargarResumen(); cartCargarLista(); }
+  if (v === 'cartera') { cartCargarResumen(); cartCargarLista(); cartCargarDevoluciones(); }
   if (v === 'correos') corrCargarPanel();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
@@ -1747,6 +1747,22 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     (gLead.esCartera ? `<span class="sep">·</span><span class="chip-cartera">♻️ CARTERA ACTIVA</span>` : '');
   // v1.456: contexto de CARTERA ACTIVA — historial de inversión visible al gestionar.
   const pistasForm = [];
+  // v1.467: en cartera, la bandera roja (desestimar) se reemplaza por "Devolver a reserva":
+  // un cliente que ya invirtió no se descarta, vuelve al pool para que otra GP lo retome.
+  const btnBandera = document.getElementById('gMarcarPerdido');
+  if (btnBandera) {
+    if (gLead.esCartera) {
+      btnBandera.textContent = '↩';
+      btnBandera.title = 'Devolver a reserva (vuelve al pool de cartera)';
+      btnBandera.classList.add('mg-devolver');
+      btnBandera.setAttribute('onclick', "abrirDevolverReserva('" + gLead.codigo + "')");
+    } else {
+      btnBandera.textContent = '🚩';
+      btnBandera.title = 'Marcar perdido';
+      btnBandera.classList.remove('mg-devolver');
+      btnBandera.setAttribute('onclick', 'marcarPerdido()');
+    }
+  }
   if (gLead.esCartera) {
     const l = gLead, tier = cartTier(l), temp = cartTemp(l), ops = cartOpsTotal(l), tk = cartTicketProm(l);
     // Cajas por moneda (17 clientes operan en ambas: cada una con su volumen, ops y ticket).
@@ -1797,9 +1813,13 @@ async function abrirGestion(codigo, resultadoSugerido, canalDefault, modoCalif) 
     const cont = document.getElementById('gCarteraBox');
     if (cont) { cont.innerHTML = ''; cont.style.display = 'none'; }
   }
-  if (gLead.dni) pistasForm.push('🪪 DNI ' + gLead.dni);
-  if (gLead.interesInvertir) pistasForm.push('💡 Le interesa: ' + gLead.interesInvertir);
-  if (gLead.listo7dias) {
+  // v1.466: los leads de CARTERA se cargan manualmente (no vienen de formulario Meta), así que
+  // no se muestra el bloque "Respuestas del formulario"; su DNI ya está en la caja dorada.
+  if (!gLead.esCartera) {
+    if (gLead.dni) pistasForm.push('🪪 DNI ' + gLead.dni);
+    if (gLead.interesInvertir) pistasForm.push('💡 Le interesa: ' + gLead.interesInvertir);
+  }
+  if (gLead.listo7dias && !gLead.esCartera) {
     const listo7 = /s[ií]|listo|ya\b|claro/i.test(String(gLead.listo7dias));
     pistasForm.push((listo7 ? '🔥' : '🕐') + ' 7 días: ' + gLead.listo7dias);
   }
@@ -11644,4 +11664,99 @@ function cartCopiar(el, txt) {
     const orig = el.querySelector('.cart-copy');
     if (orig) { orig.textContent = '✓'; setTimeout(() => { orig.textContent = '⧉'; }, 1400); }
   }).catch(() => {});
+}
+
+// ============================================================
+// ===== DEVOLVER A RESERVA (v1.467) ==========================
+// Reemplaza al "desestimar" en clientes de cartera: el cliente
+// vuelve al pool y queda registrado quién lo tuvo, cuánto tiempo,
+// cuántas gestiones hizo y por qué lo devolvió.
+// ============================================================
+const CART_MOTIVOS_DEV = [
+  'No contesta tras varios intentos',
+  'Pidió que lo contacten más adelante',
+  'No tiene liquidez por ahora',
+  'Prefiere otro tipo de inversión',
+  'Solicitó cambiar de gestora',
+  'Datos de contacto desactualizados',
+  'Otro motivo'
+];
+async function abrirDevolverReserva(codigo) {
+  let hist = { devoluciones: [] };
+  try { hist = await api('/api/cartera/devoluciones?codigo=' + encodeURIComponent(codigo)); } catch (e) {}
+  const previas = hist.devoluciones.length
+    ? '<div class="dev-hist"><b>Historial:</b> este cliente ya volvió a reserva ' + hist.devoluciones.length + ' vez(ces).<br>' +
+      hist.devoluciones.slice(0, 3).map(d =>
+        '· ' + fmtFecha(d.devueltoEn) + ' — de <b>' + esc(primerNombre(d.asesorAnterior || '—')) + '</b>: ' + esc(d.motivo) +
+        ' <span style="color:#94A3B8">(' + d.gestionesConAsesor + ' gest.' + (d.diasConAsesor != null ? ', ' + d.diasConAsesor + 'd' : '') + ')</span>').join('<br>') +
+      '</div>'
+    : '';
+  let ov = document.getElementById('devOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'devOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = '<div class="corr-wrap" style="max-width:480px">' +
+    '<div class="corr-head">↩ Devolver a reserva</div>' +
+    '<p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55">El cliente vuelve al pool de cartera activa y podrá ser retomado por otra GP. No se pierde: queda registrado el trabajo hecho.</p>' +
+    previas +
+    '<label class="corr-lbl">Motivo<select id="devMotivo">' +
+      CART_MOTIVOS_DEV.map(m => '<option>' + m + '</option>').join('') + '</select></label>' +
+    '<label class="corr-lbl">Comentario <small>(opcional, pero ayuda a la siguiente GP)</small>' +
+      '<textarea id="devComent" rows="3" placeholder="Ej.: contesta pero siempre pide llamar después; su hijo maneja las inversiones."></textarea></label>' +
+    '<div class="corr-btns">' +
+      '<button class="btn sec" onclick="cerrarDevolver()">Cancelar</button>' +
+      '<button class="btn" id="devOk" onclick="confirmarDevolver(\'' + codigo + '\')">↩ Devolver a reserva</button>' +
+    '</div></div>';
+  ov.classList.add('act');
+}
+function cerrarDevolver() { const ov = document.getElementById('devOverlay'); if (ov) ov.classList.remove('act'); }
+async function confirmarDevolver(codigo) {
+  const btn = document.getElementById('devOk');
+  if (btn) { btn.disabled = true; btn.textContent = 'Devolviendo…'; }
+  try {
+    const r = await api('/api/cartera/devolver-uno', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo, motivo: $('devMotivo').value, comentario: $('devComent').value }) });
+    cerrarDevolver();
+    cerrar('ovGestion');
+    alert('Cliente devuelto a reserva.\n\nQuedó registrado: ' + r.gestiones + ' gestión(es)' + (r.dias != null ? ' en ' + r.dias + ' día(s)' : '') + '.');
+    if (typeof cargarLeads === 'function') cargarLeads();
+  } catch (e) {
+    alert('No se pudo devolver: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '↩ Devolver a reserva'; }
+  }
+}
+
+// Panel de seguimiento de devoluciones (jefatura): quién devolvió, por qué, y si ya fue retomado.
+async function cartCargarDevoluciones() {
+  const box = $('cartDevBox'); if (!box) return;
+  try {
+    const d = await api('/api/cartera/devoluciones');
+    if (!d.devoluciones || !d.devoluciones.length) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const R = d.resumen || {};
+    const kpis = '<div class="cart-kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">' +
+      '<div class="cart-kpi"><div class="cart-kpi-lbl">Devoluciones</div><div class="cart-kpi-val">' + (R.total || 0) + '</div><div class="cart-kpi-sub">' + (R.clientes || 0) + ' clientes distintos</div></div>' +
+      '<div class="cart-kpi"><div class="cart-kpi-lbl">Días promedio</div><div class="cart-kpi-val">' + (R.diasProm != null ? R.diasProm : '—') + '</div><div class="cart-kpi-sub">con la GP antes de devolver</div></div>' +
+      '<div class="cart-kpi"><div class="cart-kpi-lbl">Gestiones prom.</div><div class="cart-kpi-val">' + (R.gestProm != null ? R.gestProm : '—') + '</div><div class="cart-kpi-sub">antes de devolver</div></div>' +
+      '<div class="cart-kpi ok"><div class="cart-kpi-lbl">Ya retomados</div><div class="cart-kpi-val">' + d.devoluciones.filter(x => x.reasignadoEn).length + '</div><div class="cart-kpi-sub">reasignados a otra GP</div></div>' +
+      '</div>';
+    const motivos = (d.porMotivo || []).length
+      ? '<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">' +
+        d.porMotivo.map(m => '<span class="cart-pill">' + esc(m.motivo) + ': ' + m.n + '</span>').join('') + '</div>'
+      : '';
+    $('cartDevoluciones').innerHTML = kpis + motivos +
+      '<div style="max-height:320px;overflow-y:auto"><table class="cart-tabla"><thead><tr>' +
+      '<th>Cliente</th><th>Devuelto por</th><th>Motivo</th><th style="text-align:center">Trabajo hecho</th><th>Fecha</th><th>Estado</th>' +
+      '</tr></thead><tbody>' +
+      d.devoluciones.map(x => {
+        const estado = x.reasignadoEn
+          ? '<span style="color:#0F7B52;font-weight:700">→ ' + esc(primerNombre(x.reasignadoA || '—')) + '</span><div style="font-size:10.5px;color:var(--muted)">' + fechaRelativa(x.reasignadoEn) + '</div>'
+          : (x.carteraEstado === 'reserva' ? '<span style="color:#B7791F">en reserva</span>' : '<span style="color:#94A3B8">—</span>');
+        return '<tr><td><b>' + esc(x.cliente || x.codigo) + '</b>' +
+          (x.carteraVueltas > 1 ? ' <span class="cart-pill" style="background:#FEE2E2;color:#B91C1C">' + x.carteraVueltas + ' vueltas</span>' : '') + '</td>' +
+          '<td>' + esc(primerNombre(x.asesorAnterior || '—')) + '</td>' +
+          '<td style="font-size:12px">' + esc(x.motivo || '') + (x.comentario ? '<div style="font-size:10.5px;color:var(--muted)">' + esc(x.comentario) + '</div>' : '') + '</td>' +
+          '<td style="text-align:center">' + x.gestionesConAsesor + ' gest.' + (x.diasConAsesor != null ? '<div style="font-size:10.5px;color:var(--muted)">' + x.diasConAsesor + ' días</div>' : '') + '</td>' +
+          '<td style="font-size:12px">' + fmtFecha(x.devueltoEn) + '</td>' +
+          '<td>' + estado + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  } catch (e) { box.style.display = 'none'; }
 }

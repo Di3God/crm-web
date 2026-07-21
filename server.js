@@ -594,6 +594,24 @@ try { db.exec("ALTER TABLE leads ADD COLUMN carteraOpsDolares INTEGER"); } catch
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraTicketDolares REAL"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraMonedaPref TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE leads ADD COLUMN carteraUltMonto REAL"); } catch (e) { }
+// v1.467: trazabilidad de devoluciones a reserva (quién, cuándo, por qué, cuánto duró con esa GP).
+db.exec(`CREATE TABLE IF NOT EXISTS cartera_devoluciones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo TEXT NOT NULL,
+  cliente TEXT,
+  asesorAnterior TEXT,
+  devueltoPor TEXT,
+  motivo TEXT,
+  comentario TEXT,
+  gestionesConAsesor INTEGER DEFAULT 0,
+  diasConAsesor INTEGER,
+  liberadoEn TEXT,
+  devueltoEn TEXT NOT NULL,
+  reasignadoA TEXT,
+  reasignadoEn TEXT
+)`);
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_cartdev_codigo ON cartera_devoluciones (codigo)"); } catch (e) { }
+try { db.exec("ALTER TABLE leads ADD COLUMN carteraVueltas INTEGER DEFAULT 0"); } catch (e) { }
 // v1.461: correos enviados desde el CRM + trazabilidad de apertura.
 db.exec(`CREATE TABLE IF NOT EXISTS correos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7301,12 +7319,18 @@ function carteraLiberar(n, motivo, topeSinGestionar) {
     if (pend >= tope) { console.log('[cartera] ' + g + ': ' + pend + ' leads de marketing sin gestionar (tope ' + tope + '), no se libera cartera hoy'); return; }
     // Prioridad: vencimiento próximo → mayor monto invertido → última inversión más reciente
     // (un cliente que invirtió hace poco está más "caliente" que uno de hace 2 años).
+    // Incluye los que volvieron a reserva sin asesor (devueltos): cualquier GP puede retomarlos.
     const cand = db.prepare(`SELECT codigo FROM leads WHERE esCartera=1 AND COALESCE(carteraEstado,'reserva')='reserva'
-      AND asesor=? AND COALESCE(archivado,0)=0
+      AND (asesor=? OR asesor IS NULL) AND COALESCE(archivado,0)=0
       ORDER BY (CASE WHEN carteraVencimiento IS NULL THEN 1 ELSE 0 END), carteraVencimiento ASC,
                COALESCE(carteraMontoInvertido,0) DESC, carteraUltimaInversion DESC, id ASC LIMIT ?`).all(g, n);
     cand.forEach(c => {
-      db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?) WHERE codigo=?").run(ahora, ahora, c.codigo);
+      db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?), asesor=COALESCE(asesor,?) WHERE codigo=?").run(ahora, ahora, g, c.codigo);
+      // Si venía de una devolución, registrar a quién se reasignó y cuándo (cierra el ciclo).
+      try {
+        db.prepare(`UPDATE cartera_devoluciones SET reasignadoA=?, reasignadoEn=?
+          WHERE codigo=? AND reasignadoEn IS NULL`).run(g, ahora, c.codigo);
+      } catch (e) { }
       total++;
     });
     if (cand.length) console.log('[cartera] ' + g + ': ' + cand.length + ' liberados (' + motivo + ')');
@@ -7709,9 +7733,74 @@ app.post('/api/cartera/liberar-seleccion', (req, res) => {
   const ahora = new Date().toISOString();
   let n = 0;
   const upd = db.prepare("UPDATE leads SET carteraEstado='liberado', carteraLiberadoEn=?, fechaAsignacion=COALESCE(fechaAsignacion,?) WHERE codigo=? AND esCartera=1");
-  codigos.forEach(c => { const r = upd.run(ahora, ahora, c); if (r.changes) n++; });
+  const marcarReasig = db.prepare(`UPDATE cartera_devoluciones SET reasignadoA=(SELECT asesor FROM leads WHERE codigo=?), reasignadoEn=?
+    WHERE codigo=? AND reasignadoEn IS NULL`);
+  codigos.forEach(c => {
+    const r = upd.run(ahora, ahora, c);
+    if (r.changes) { n++; try { marcarReasig.run(c, ahora, c); } catch (e) { } }
+  });
   auditar(req, 'cartera_liberar_seleccion', null, n + ' liberados');
   res.json({ ok: true, liberados: n });
+});
+
+// POST /api/cartera/devolver-uno { codigo, motivo, comentario }
+// Devolución desde la ficha del lead (reemplaza al "desestimar" en clientes de cartera).
+// A diferencia del devolver masivo, este SÍ acepta leads ya gestionados: el cliente vuelve al
+// pool para que otra GP lo retome, y queda registrado cuánto se trabajó y por qué se devolvió.
+app.post('/api/cartera/devolver-uno', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const b = req.body || {};
+  const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(b.codigo);
+  if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+  if (!lead.esCartera) return res.status(422).json({ error: 'Este lead no es de cartera activa' });
+  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
+  const motivo = String(b.motivo || '').trim();
+  if (!motivo) return res.status(400).json({ error: 'Indica el motivo de la devolución' });
+
+  const ahora = new Date().toISOString();
+  const gest = db.prepare('SELECT COUNT(*) c FROM gestiones WHERE codigo=?').get(lead.codigo).c;
+  const desde = lead.carteraLiberadoEn || lead.fechaAsignacion;
+  const dias = desde ? Math.max(0, Math.round((Date.now() - new Date(desde).getTime()) / 86400000)) : null;
+
+  db.prepare(`INSERT INTO cartera_devoluciones (codigo, cliente, asesorAnterior, devueltoPor, motivo, comentario,
+      gestionesConAsesor, diasConAsesor, liberadoEn, devueltoEn)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(lead.codigo, lead.nombre, lead.asesor || null, req.user.nombre, motivo,
+      b.comentario ? String(b.comentario).trim() : null, gest, dias, lead.carteraLiberadoEn || null, ahora);
+
+  // Vuelve a reserva: sin asesor, para que el goteo o la jefatura lo reasignen.
+  db.prepare(`UPDATE leads SET carteraEstado='reserva', carteraLiberadoEn=NULL, asesor=NULL,
+    carteraVueltas=COALESCE(carteraVueltas,0)+1 WHERE codigo=?`).run(lead.codigo);
+
+  // Gestión visible en la trazabilidad del lead.
+  try {
+    db.prepare(`INSERT INTO gestiones (codigo, fecha, asesor, canal, resultado, comentario)
+      VALUES (?,?,?,?,?,?)`).run(lead.codigo, ahora, lead.asesor || req.user.nombre, 'Otro', 'Devuelto a reserva',
+      'Devuelto a cartera · ' + motivo + (b.comentario ? ' — ' + String(b.comentario).trim() : '') +
+      ' (tras ' + gest + (gest === 1 ? ' gestión' : ' gestiones') + (dias != null ? (dias === 0 ? ' el mismo día' : ' en ' + dias + (dias === 1 ? ' día' : ' días')) : '') + ')');
+  } catch (e) { console.error('[cartera] gestión de devolución:', e.message); }
+
+  auditar(req, 'cartera_devolver_uno', lead.codigo, motivo + ' · era de ' + (lead.asesor || 'sin asesor'));
+  res.json({ ok: true, gestiones: gest, dias });
+});
+
+// GET /api/cartera/devoluciones?codigo= — historial (para la ficha o el panel).
+app.get('/api/cartera/devoluciones', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  if (req.query.codigo) {
+    const filas = db.prepare('SELECT * FROM cartera_devoluciones WHERE codigo=? ORDER BY id DESC').all(req.query.codigo);
+    return res.json({ devoluciones: filas });
+  }
+  if (!['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const filas = db.prepare(`SELECT d.*, l.asesor AS asesorActual, l.carteraEstado, l.carteraVueltas
+    FROM cartera_devoluciones d LEFT JOIN leads l ON l.codigo = d.codigo
+    ORDER BY d.id DESC LIMIT 300`).all();
+  const resumen = db.prepare(`SELECT COUNT(*) total,
+      COUNT(DISTINCT codigo) clientes,
+      ROUND(AVG(diasConAsesor),1) diasProm,
+      ROUND(AVG(gestionesConAsesor),1) gestProm FROM cartera_devoluciones`).get();
+  const porMotivo = db.prepare('SELECT motivo, COUNT(*) n FROM cartera_devoluciones GROUP BY motivo ORDER BY n DESC').all();
+  const porAsesor = db.prepare('SELECT asesorAnterior, COUNT(*) n FROM cartera_devoluciones GROUP BY asesorAnterior ORDER BY n DESC').all();
+  res.json({ devoluciones: filas, resumen, porMotivo, porAsesor });
 });
 
 // POST /api/cartera/devolver { codigos: [] } — devuelve a reserva (solo si NO tienen gestiones).
@@ -10047,7 +10136,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.465 (Paridad visual GP/admin, DNI copiable y plantilla de continuidad: (1) CAUSA RAÍZ de que las GP no vieran los indicadores de cartera: su vista por defecto es MI COLA, que se alimenta de /api/b2c/cola — un endpoint que no devolvía ningún campo de cartera, así que la tarjeta no podía pintar tier ni temperatura aunque el código existiera. Ahora la cola incluye esCartera, email, dni, montos por moneda, operaciones, última inversión y vencimiento, y su fila se pinta igual que la del kanban: acento dorado, badge ♻️ CARTERA, monto bimoneda, tier y temperatura. El backend siempre envió lo mismo a admin y gestora en /api/leads; la diferencia estaba solo en esta vista. (2) Botón de correo también en Mi Cola, junto al de llamada. (3) El botón Enviar presentación sale del panel dorado (ahora se usa el icono de la tarjeta) y en su lugar van el DNI y el correo como CHIPS COPIABLES con un clic, dentro de la caja dorada. (4) NUEVA PLANTILLA Continuidad para clientes que ya conocen a su GP: retoma el contacto de manera formal sin presentarse de nuevo; la de Presentación se renombra a GP nueva para el cliente para que la elección sea evidente. Total: 8 plantillas. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.467 (DEVOLVER A RESERVA reemplaza al desestimar en clientes de cartera: un cliente que ya invirtió no se descarta, vuelve al pool para que otra GP lo retome. (1) En el modal de gestión, la bandera roja se convierte en un botón ámbar ↩ solo para leads de cartera (los de marketing conservan el desestimar intacto). Abre un modal con motivo (7 opciones frecuentes) y comentario para la siguiente GP, y muestra el historial de devoluciones previas del cliente. (2) TRAZABILIDAD COMPLETA en la nueva tabla cartera_devoluciones: qué cliente, de qué GP venía, quién lo devolvió, motivo, comentario, CUÁNTAS GESTIONES se hicieron, CUÁNTOS DÍAS estuvo con esa GP, y —al reasignarse— a quién pasó y cuándo. El contador carteraVueltas marca los clientes que ya rotaron varias veces. Se registra además una gestión visible en la trazabilidad del lead. (3) Al devolver, el lead queda sin asesor y en reserva; el goteo diario ahora también considera los devueltos (asesor NULL) y cierra el ciclo registrando la reasignación automáticamente. (4) NUEVO PANEL en la vista de Cartera Activa (jefatura): devoluciones totales, días y gestiones promedio antes de devolver, cuántos ya fueron retomados, desglose por motivo, y tabla con el detalle de cada caso incluyendo si sigue en reserva o quién lo tiene ahora. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
