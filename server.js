@@ -603,6 +603,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS correos (
   bajaEn TEXT
 )`);
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_correos_codigo ON correos (codigo, mundo)"); } catch (e) { }
+// v1.462: plantillas de correo editables por el admin + firma de cada GP.
+db.exec(`CREATE TABLE IF NOT EXISTS correo_plantillas (
+  clave TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL,
+  descripcion TEXT,
+  asunto TEXT NOT NULL,
+  cuerpo TEXT NOT NULL,
+  orden INTEGER DEFAULT 100,
+  activa INTEGER DEFAULT 1,
+  actualizadoEn TEXT,
+  actualizadoPor TEXT
+)`);
+try { db.exec("ALTER TABLE correos ADD COLUMN plantillaClave TEXT"); } catch (e) { }
+// Firma por gestora (cargo, teléfono, extras) — la edita el admin.
+try { db.exec("ALTER TABLE usuarios ADD COLUMN firmaCargo TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE usuarios ADD COLUMN firmaTelefono TEXT"); } catch (e) { }
+try { db.exec("ALTER TABLE usuarios ADD COLUMN firmaExtra TEXT"); } catch (e) { }
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_leads_cartera ON leads (esCartera, carteraEstado, asesor)"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalEventId TEXT"); } catch (e) { }
 try { db.exec("ALTER TABLE b2b_solicitudes ADD COLUMN gcalMeetLink TEXT"); } catch (e) { }
@@ -7288,7 +7305,110 @@ function carteraLiberar(n, motivo, topeSinGestionar) {
 function baseUrlPublica() {
   return process.env.APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 }
-// Plantilla de PRESENTACIÓN de la GP a su cliente de cartera.
+// ---- Plantillas semilla: una por cada momento del embudo (editables por el admin) ----
+const CORREO_PLANTILLAS_BASE = [
+  { clave: 'presentacion', nombre: 'Presentación de la GP', orden: 10,
+    descripcion: 'Primer contacto con un cliente de cartera, antes de llamarlo.',
+    asunto: 'Su nueva Gestora de Patrimonio en TasaTop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **TasaTop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
+  { clave: 'no_contesto', nombre: 'No contestó la llamada', orden: 20,
+    descripcion: 'Se intentó llamar y no hubo respuesta.',
+    asunto: 'Intenté comunicarme con usted — {{gestora}}, TasaTop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe llamé hace un momento y no logré ubicarle. Soy **{{gestora}}**, su Gestora de Patrimonio en TasaTop.\n\nQuería conversar con usted sobre las operaciones disponibles y ver de qué manera podemos hacer crecer su inversión.\n\n¿Qué horario le resulta más cómodo para llamarle? Puede responder a este correo o escribirme directamente a {{telefono_gp}}.' },
+  { clave: 'info_producto', nombre: 'Envío de información', orden: 30,
+    descripcion: 'El cliente pidió detalles del producto o de una operación.',
+    asunto: 'La información que me solicitó — TasaTop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nComo conversamos, le comparto la información sobre nuestras operaciones de inversión con **garantía inmobiliaria**.\n\nEn TasaTop financiamos a empresas que respaldan cada operación con un inmueble, lo que le permite invertir con un nivel de resguardo que difícilmente encuentra en otros instrumentos.\n\nQuedo atenta a sus consultas y con gusto le explico cualquier punto en detalle.' },
+  { clave: 'confirma_reunion', nombre: 'Confirmación de reunión', orden: 40,
+    descripcion: 'Se agendó una reunión y se confirma por escrito.',
+    asunto: 'Confirmación de nuestra reunión — TasaTop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe confirmo nuestra reunión. Recibirá por separado la invitación con el enlace de videollamada.\n\nEn ese espacio revisaremos las operaciones vigentes, resolveré sus dudas y veremos juntos qué alternativa se ajusta mejor a lo que usted busca.\n\nSi necesita reprogramar, escríbame con confianza.' },
+  { clave: 'post_reunion', nombre: 'Seguimiento post reunión', orden: 50,
+    descripcion: 'Después de la reunión, para mantener el impulso.',
+    asunto: 'Gracias por su tiempo — próximos pasos',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nGracias por el tiempo que me dedicó hoy. Fue muy útil entender qué está buscando para su inversión.\n\nComo quedamos, le haré llegar las operaciones que mejor se ajusten a su perfil apenas estén disponibles.\n\nCualquier consulta que surja mientras tanto, no dude en escribirme.' },
+  { clave: 'reactivacion', nombre: 'Reactivación de cliente dormido', orden: 60,
+    descripcion: 'Cliente de cartera que no invierte hace más de 6 meses.',
+    asunto: '{{primer_nombre}}, tenemos novedades para usted',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nHa pasado un tiempo desde su última inversión con nosotros y quería retomar el contacto.\n\nSoy **{{gestora}}**, su Gestora de Patrimonio. En estos meses hemos incorporado nuevas operaciones con garantía inmobiliaria y condiciones que creo que vale la pena que conozca.\n\nMe gustaría conversar unos minutos con usted para ponerle al día. ¿Le parece si le llamo esta semana?' },
+  { clave: 'agradecimiento', nombre: 'Agradecimiento por inversión', orden: 70,
+    descripcion: 'El cliente concretó una inversión.',
+    asunto: 'Gracias por su confianza — TasaTop',
+    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nSu inversión quedó registrada. Gracias por seguir confiando en nosotros.\n\nEstaré atenta al desarrollo de la operación y le mantendré informado(a) en cada etapa. Ante cualquier consulta, escríbame directamente.\n\nUn gusto acompañarle en este proceso.' }
+];
+function correoSembrarPlantillas() {
+  try {
+    const ins = db.prepare(`INSERT OR IGNORE INTO correo_plantillas (clave, nombre, descripcion, asunto, cuerpo, orden, activa, actualizadoEn, actualizadoPor)
+      VALUES (?,?,?,?,?,?,1,?,'sistema')`);
+    const ahora = new Date().toISOString();
+    CORREO_PLANTILLAS_BASE.forEach(p => ins.run(p.clave, p.nombre, p.descripcion, p.asunto, p.cuerpo, p.orden, ahora));
+  } catch (e) { console.error('[correos] sembrar plantillas:', e.message); }
+}
+correoSembrarPlantillas();
+
+// Config visual del correo (logo, colores, pie) — editable por el admin.
+function correoConfig() {
+  const base = { logoUrl: '', pie: 'TasaTop · Inversiones con garantía inmobiliaria', mostrarLogo: true, colorFirma: '0B2545' };
+  try {
+    const r = db.prepare("SELECT valor FROM app_config WHERE clave='correo_config'").get();
+    if (r && r.valor) return Object.assign(base, JSON.parse(r.valor));
+  } catch (e) { }
+  return base;
+}
+// Reemplaza {{variables}} y convierte **negritas** y saltos de línea a HTML.
+function correoRender(txt, vars) {
+  let s = String(txt || '');
+  Object.entries(vars).forEach(([k, v]) => { s = s.split('{{' + k + '}}').join(v == null ? '' : String(v)); });
+  return s;
+}
+function correoTextoAHtml(txt) {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return esc(txt).split(/\n\s*\n/).map(p =>
+    '<p style="margin:0 0 16px">' + p.replace(/\n/g, '<br>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') + '</p>'
+  ).join('');
+}
+// Arma el correo completo (layout con logo + cuerpo + firma + pie + pixel).
+function correoArmar({ plantilla, lead, gp, pixelId }) {
+  const cfg = correoConfig();
+  const base = baseUrlPublica();
+  // Primer nombre real: ignora prefijos como [DEMO] y respeta mayúsculas del original.
+  const limpio = String(lead.nombre || '').replace(/^\[[^\]]*\]\s*/, '').trim();
+  const primerNombre = limpio.split(/\s+/)[0] || 'estimado cliente';
+  const vars = {
+    cliente: lead.nombre || '', primer_nombre: primerNombre,
+    gestora: gp.nombre || 'TasaTop', correo_gp: gp.usuario || '',
+    telefono_gp: gp.firmaTelefono || '', cargo_gp: gp.firmaCargo || 'Gestora de Patrimonio',
+    empresa: 'TasaTop'
+  };
+  const asunto = correoRender(plantilla.asunto, vars);
+  const cuerpoTxt = correoRender(plantilla.cuerpo, vars);
+  const cuerpoHtml = correoTextoAHtml(cuerpoTxt);
+  const logo = (cfg.mostrarLogo && base)
+    ? '<tr><td style="padding-bottom:22px"><img src="' + base + '/logo-tasatop.png" alt="TasaTop" width="150" style="display:block;border:0;height:auto"></td></tr>'
+    : '';
+  const firmaExtra = gp.firmaExtra ? '<br><span style="color:#5A6B82;font-size:13px">' + String(gp.firmaExtra) + '</span>' : '';
+  const tel = gp.firmaTelefono ? ' · ' + gp.firmaTelefono : '';
+  const pixel = (base && pixelId) ? '<img src="' + base + '/t/o/' + pixelId + '.png" width="1" height="1" alt="" style="display:block;border:0">' : '';
+  const baja = (base && pixelId) ? '<br><a href="' + base + '/t/baja/' + pixelId + '" style="color:#94A3B8;text-decoration:underline">No deseo recibir más correos</a>' : '';
+  const html = '<!doctype html><html><body style="margin:0;padding:0;background:#F4F6F9">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F9;padding:24px 12px"><tr><td align="center">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:30px 32px;font-family:Arial,Helvetica,sans-serif;color:#22303F">' +
+    logo +
+    '<tr><td style="font-size:15px;line-height:1.65">' + cuerpoHtml +
+      '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:20px;padding-top:16px;border-top:1px solid #E8EDF3;width:100%"><tr><td style="font-family:Arial,Helvetica,sans-serif">' +
+        '<b style="color:#' + (cfg.colorFirma || '0B2545') + ';font-size:15px">' + (gp.nombre || '') + '</b><br>' +
+        '<span style="color:#5A6B82;font-size:13.5px">' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · TasaTop</span><br>' +
+        '<span style="color:#5A6B82;font-size:13.5px">' + (gp.usuario || '') + tel + '</span>' + firmaExtra +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding-top:20px;font-size:11px;color:#94A3B8;text-align:center;font-family:Arial,Helvetica,sans-serif">' +
+      String(cfg.pie || '') + baja + '</td></tr>' +
+    '</table></td></tr></table>' + pixel + '</body></html>';
+  const texto = cuerpoTxt.replace(/\*\*/g, '') + '\n\n' + (gp.nombre || '') + '\n' + (gp.firmaCargo || 'Gestora de Patrimonio') + ' · TasaTop\n' + (gp.usuario || '') + tel;
+  return { asunto, html, texto };
+}
+
+// Plantilla de PRESENTACIÓN (compatibilidad con v1.461).
 function correoPresentacion({ cliente, gestora, correoGP, telGP, pixelId }) {
   const base = baseUrlPublica();
   const primerNombre = String(cliente || '').trim().split(/\s+/)[0] || 'estimado cliente';
@@ -7322,6 +7442,83 @@ function correoPresentacion({ cliente, gestora, correoGP, telGP, pixelId }) {
   return { asunto: 'Su nueva Gestora de Patrimonio en TasaTop', html, texto };
 }
 
+// ---- ADMIN: gestión de plantillas ----
+// GET /api/correos/plantillas — lista para el panel (y para el selector de la GP).
+app.get('/api/correos/plantillas', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const soloActivas = req.query.todas !== '1' || !['admin'].includes(req.user.rol);
+  const filas = db.prepare('SELECT * FROM correo_plantillas' + (soloActivas ? ' WHERE activa=1' : '') + ' ORDER BY orden, nombre').all();
+  res.json({ plantillas: filas, config: correoConfig() });
+});
+
+// PUT /api/correos/plantillas/:clave — editar asunto/cuerpo/nombre (solo admin).
+app.put('/api/correos/plantillas/:clave', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const p = db.prepare('SELECT clave FROM correo_plantillas WHERE clave=?').get(req.params.clave);
+  const b = req.body || {};
+  const ahora = new Date().toISOString();
+  if (!p) {
+    if (!b.nombre || !b.asunto || !b.cuerpo) return res.status(400).json({ error: 'Faltan nombre, asunto o cuerpo' });
+    db.prepare(`INSERT INTO correo_plantillas (clave, nombre, descripcion, asunto, cuerpo, orden, activa, actualizadoEn, actualizadoPor)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(String(req.params.clave).toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      b.nombre, b.descripcion || '', b.asunto, b.cuerpo, Number(b.orden) || 100, b.activa === false ? 0 : 1, ahora, req.user.nombre);
+  } else {
+    db.prepare(`UPDATE correo_plantillas SET nombre=COALESCE(?,nombre), descripcion=COALESCE(?,descripcion),
+      asunto=COALESCE(?,asunto), cuerpo=COALESCE(?,cuerpo), orden=COALESCE(?,orden), activa=COALESCE(?,activa),
+      actualizadoEn=?, actualizadoPor=? WHERE clave=?`).run(b.nombre ?? null, b.descripcion ?? null, b.asunto ?? null,
+      b.cuerpo ?? null, b.orden != null ? Number(b.orden) : null, b.activa != null ? (b.activa ? 1 : 0) : null,
+      ahora, req.user.nombre, req.params.clave);
+  }
+  auditar(req, 'correo_plantilla_editar', null, req.params.clave);
+  res.json({ ok: true });
+});
+
+// POST /api/correos/config { pie, mostrarLogo, colorFirma } — apariencia global (solo admin).
+app.post('/api/correos/config', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const b = req.body || {};
+  const cfg = Object.assign(correoConfig(), {
+    pie: b.pie != null ? String(b.pie) : undefined,
+    mostrarLogo: b.mostrarLogo != null ? !!b.mostrarLogo : undefined,
+    colorFirma: b.colorFirma ? String(b.colorFirma).replace(/[^0-9A-Fa-f]/g, '').slice(0, 6) : undefined
+  });
+  Object.keys(cfg).forEach(k => cfg[k] === undefined && delete cfg[k]);
+  db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('correo_config',?)").run(JSON.stringify(cfg));
+  auditar(req, 'correo_config', null, JSON.stringify(cfg));
+  res.json({ ok: true, config: cfg });
+});
+
+// GET/PUT firmas del equipo (solo admin).
+app.get('/api/correos/firmas', (req, res) => {
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const filas = db.prepare(`SELECT nombre, usuario, rol, firmaCargo, firmaTelefono, firmaExtra
+    FROM usuarios WHERE activo=1 AND rol IN ('gestora','jefa','admin','funcionario_b2b','jefe_b2b') ORDER BY rol, nombre`).all();
+  res.json({ firmas: filas });
+});
+app.put('/api/correos/firmas/:usuario', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const b = req.body || {};
+  const r = db.prepare('UPDATE usuarios SET firmaCargo=?, firmaTelefono=?, firmaExtra=? WHERE usuario=?')
+    .run(b.cargo || null, b.telefono || null, b.extra || null, req.params.usuario);
+  if (!r.changes) return res.status(404).json({ error: 'Usuario no encontrado' });
+  auditar(req, 'correo_firma_editar', null, req.params.usuario);
+  res.json({ ok: true });
+});
+
+// GET /api/correos/vista-previa/:clave?codigo= — cómo queda la plantilla con datos reales.
+app.get('/api/correos/vista-previa/:clave', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  const p = db.prepare('SELECT * FROM correo_plantillas WHERE clave=?').get(req.params.clave);
+  if (!p) return res.status(404).json({ error: 'Plantilla no encontrada' });
+  // Datos reales si mandan código; si no, un ejemplo.
+  let lead = req.query.codigo ? db.prepare('SELECT * FROM leads WHERE codigo=?').get(req.query.codigo) : null;
+  if (!lead) lead = { nombre: 'Juan Pérez Ramos', email: 'cliente@ejemplo.com' };
+  let gp = db.prepare('SELECT nombre, usuario, firmaCargo, firmaTelefono, firmaExtra FROM usuarios WHERE nombre=?').get(lead.asesor || req.user.nombre)
+        || { nombre: req.user.nombre, usuario: req.user.usuario };
+  const armado = correoArmar({ plantilla: p, lead, gp, pixelId: null });
+  res.json({ asunto: armado.asunto, html: armado.html });
+});
+
 // GET /api/correos/plantilla/:codigo — devuelve la plantilla lista para revisar/editar.
 app.get('/api/correos/plantilla/:codigo', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'No autorizado' });
@@ -7329,14 +7526,19 @@ app.get('/api/correos/plantilla/:codigo', (req, res) => {
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
   if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
   // La GP que firma: la asignada al lead (su correo = su usuario del CRM).
-  const gp = db.prepare('SELECT nombre, usuario FROM usuarios WHERE nombre=? AND activo=1').get(lead.asesor || '');
-  const p = correoPresentacion({ cliente: lead.nombre, gestora: (gp && gp.nombre) || lead.asesor || 'TasaTop',
-    correoGP: (gp && gp.usuario) || '', telGP: '', pixelId: null });
+  const gp = db.prepare('SELECT nombre, usuario, firmaCargo, firmaTelefono, firmaExtra FROM usuarios WHERE nombre=? AND activo=1').get(lead.asesor || '')
+          || { nombre: lead.asesor || 'TasaTop', usuario: '' };
+  const clave = req.query.clave || 'presentacion';
+  const p = db.prepare('SELECT * FROM correo_plantillas WHERE clave=? AND activa=1').get(clave)
+         || db.prepare('SELECT * FROM correo_plantillas WHERE activa=1 ORDER BY orden LIMIT 1').get();
+  if (!p) return res.status(404).json({ error: 'No hay plantillas configuradas' });
+  const armado = correoArmar({ plantilla: p, lead, gp, pixelId: null });
   const previos = db.prepare('SELECT asunto, enviadoEn, abiertoEn, aperturas FROM correos WHERE codigo=? ORDER BY id DESC LIMIT 5').all(req.params.codigo);
+  const disponibles = db.prepare('SELECT clave, nombre, descripcion FROM correo_plantillas WHERE activa=1 ORDER BY orden, nombre').all();
   res.json({
-    para: lead.email || '', cliente: lead.nombre, gestora: (gp && gp.nombre) || lead.asesor,
-    remitente: (gp && gp.usuario) || '', asunto: p.asunto, html: p.html, previos,
-    listo: gmailApi.configurado()
+    para: lead.email || '', cliente: lead.nombre, gestora: gp.nombre,
+    remitente: gp.usuario || '', asunto: armado.asunto, html: armado.html, previos,
+    plantillaClave: p.clave, plantillas: disponibles, listo: gmailApi.configurado()
   });
 });
 
@@ -7358,14 +7560,15 @@ app.post('/api/correos/enviar', async (req, res) => {
   if (!gp || !String(gp.usuario).includes('@')) return res.status(422).json({ error: 'La gestora no tiene correo corporativo configurado' });
 
   const pixelId = require('node:crypto').randomBytes(16).toString('hex');
-  const plantilla = correoPresentacion({ cliente: lead.nombre, gestora: gp.nombre, correoGP: gp.usuario, telGP: b.telGP || '', pixelId });
-  const asunto = String(b.asunto || plantilla.asunto);
-  // Si el front mandó HTML editado, se respeta; se le inyecta el pixel y el link de baja.
-  let html = b.html ? String(b.html) : plantilla.html;
-  if (b.html && baseUrlPublica()) {
-    const extra = '<img src="' + baseUrlPublica() + '/t/o/' + pixelId + '.png" width="1" height="1" alt="" style="display:block;border:0" />';
-    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, extra + '</body>') : html + extra;
-  }
+  const clave = b.clave || 'presentacion';
+  const tpl = db.prepare('SELECT * FROM correo_plantillas WHERE clave=? AND activa=1').get(clave)
+           || db.prepare('SELECT * FROM correo_plantillas WHERE activa=1 ORDER BY orden LIMIT 1').get();
+  if (!tpl) return res.status(422).json({ error: 'No hay plantillas configuradas' });
+  const gpFirma = db.prepare('SELECT nombre, usuario, firmaCargo, firmaTelefono, firmaExtra FROM usuarios WHERE usuario=?').get(gp.usuario) || gp;
+  const armado = correoArmar({ plantilla: tpl, lead, gp: gpFirma, pixelId });
+  const asunto = String(b.asunto || armado.asunto);
+  const html = armado.html;
+  const plantilla = { texto: armado.texto };
 
   try {
     const r = await gmailApi.enviar({
@@ -7373,13 +7576,13 @@ app.post('/api/correos/enviar', async (req, res) => {
       para, asunto, html, textoPlano: plantilla.texto, responderA: gp.usuario, pixelId
     });
     const ahora = new Date().toISOString();
-    db.prepare(`INSERT INTO correos (pixelId, mundo, codigo, destinatario, remitente, asesor, asunto, plantilla, gmailId, threadId, enviadoEn)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(pixelId, 'b2c', lead.codigo, para, gp.usuario, gp.nombre, asunto, 'presentacion', r.id || null, r.threadId || null, ahora);
+    db.prepare(`INSERT INTO correos (pixelId, mundo, codigo, destinatario, remitente, asesor, asunto, plantilla, plantillaClave, gmailId, threadId, enviadoEn)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(pixelId, 'b2c', lead.codigo, para, gp.usuario, gp.nombre, asunto, tpl.nombre, tpl.clave, r.id || null, r.threadId || null, ahora);
     // Registrar la gestión con canal Email (trazabilidad en el embudo).
     try {
       db.prepare(`INSERT INTO gestiones (codigo, fecha, asesor, canal, resultado, proximaAccion, comentario, fechaProxAccion)
         VALUES (?,?,?,?,?,?,?,?)`).run(lead.codigo, ahora, gp.nombre, 'Email', 'Sin contacto - envio informacion',
-        'Llamar intento 3x5', 'Correo de presentación enviado a ' + para,
+        'Llamar intento 3x5', tpl.nombre + ' — correo enviado a ' + para,
         new Date(Date.now() + 24 * 3600000).toISOString());
     } catch (e) { console.error('[correos] no se pudo registrar la gestión:', e.message); }
     auditar(req, 'correo_enviar', lead.codigo, 'presentación → ' + para);
@@ -9822,7 +10025,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.461 (MÓDULO DE CORREO desde el CRM con trazabilidad — construido y listo, se activa solo cuando TI habilite el permiso: (1) gmail.js replica el patrón de google-calendar.js (JWT RS256 con node:crypto, delegación de dominio, token por cuenta con cache de 55 min) usando la MISMA credencial GOOGLE_CALENDAR_CREDENTIALS; no requiere variables nuevas en Railway. Requisitos de activación: habilitar Gmail API en Google Cloud y agregar el scope gmail.send a la delegación de dominio del Client ID existente. (2) Botón Enviar presentación en el panel de cartera del modal de gestión, con vista previa de la plantilla institucional (saludo por nombre, presentación de la GP como Gestora de Patrimonio, firma con su correo) y destinatario editable. El correo sale desde el Gmail de la GP asignada, queda en sus Enviados y las respuestas del cliente llegan a su bandeja. (3) Registro automático de la gestión con canal Email al enviar. (4) TRAZABILIDAD: tabla correos con pixel de apertura (GET /t/o/:pixelId.png, público, cachés desactivados) que registra primera apertura, número de aperturas y última; y link de baja voluntaria (GET /t/baja/:pixelId) que marca el correo y crea automáticamente una gestión Pidio no contactar para que la GP no lo vuelva a contactar. La ficha del lead muestra si el correo fue leído, cuántas veces, o si pidió la baja. (5) GET /api/correos/estado como diagnóstico: dice si la integración ya está activa y da el conteo de enviados, abiertos y bajas. Degradación limpia: mientras TI no active, la plantilla se puede revisar y el envío devuelve un error explicativo sin romper nada. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.462 (PLANTILLAS DE CORREO EDITABLES + logo TasaTop: (1) Nueva vista ✉️ Plantillas de correo (solo admin) para editar asunto y cuerpo de cada plantilla, el pie de página y la apariencia, con vista previa renderizada con datos reales. (2) SIETE PLANTILLAS SEMILLA, una por cada momento del embudo: presentación de la GP, no contestó la llamada, envío de información, confirmación de reunión, seguimiento post reunión, reactivación de cliente dormido y agradecimiento por inversión. La GP elige cuál usar desde un selector en el modal de envío y la vista previa se actualiza al instante. (3) VARIABLES que se resuelven al enviar: cliente, primer_nombre (ignora prefijos como [DEMO]), gestora, correo_gp, telefono_gp, cargo_gp; más formato simple con doble asterisco para negrita y línea en blanco para párrafo. (4) FIRMAS POR PERSONA editables por el admin (cargo, teléfono y línea extra) en la misma vista, aplicadas automáticamente al pie de cada correo. (5) LOGO de TasaTop extraído del SVG corporativo, compuesto con su máscara alfa y optimizado a PNG de 360px con transparencia (public/logo-tasatop.png), embebido por URL en la cabecera del correo y desactivable desde el panel. (6) El registro de gestión ahora nombra la plantilla usada y la tabla correos guarda su clave para métricas por tipo. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

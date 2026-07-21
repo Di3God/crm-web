@@ -33,6 +33,7 @@
         <button class="mundo-item oculto" id="mi-brutos" onclick="navB2C('brutos')">Ingresos</button>
         <button class="mundo-item oculto" id="mi-releads" onclick="navB2C('releads')">Base de Releads</button>
         <button class="mundo-item oculto" id="mi-cartera" onclick="navB2C('cartera')">♻️ Cartera Activa</button>
+        <button class="mundo-item oculto" id="mi-correos" onclick="navB2C('correos')">✉️ Plantillas de correo</button>
         <button class="mundo-item oculto" id="mi-dash" onclick="navB2C('dash')">Dashboard</button>
         <button class="mundo-item oculto" id="mi-comite" onclick="navB2C('comite')">📊 Comité</button>
         <button class="mundo-item oculto" id="mi-supervisor" onclick="navB2C('supervisor')">Supervisor</button>
@@ -810,6 +811,34 @@
         <button class="btn" id="cartBtnAccion" onclick="cartAccionSeleccion()">🚀 Liberar seleccionados</button>
       </div>
       <div id="cartLista"></div>
+    </div>
+  </section>
+
+  <!-- ===== PLANTILLAS DE CORREO (v1.462) ===== -->
+  <section id="v-correos" class="vista">
+    <h2>✉️ Plantillas de correo</h2>
+    <p class="sub">Edita los textos que las GP envían desde el CRM. Los cambios aplican de inmediato para todo el equipo.</p>
+
+    <div id="corrEstadoInt" class="cart-box" style="display:none"></div>
+
+    <div class="cart-box">
+      <div class="cart-tit">🎨 Apariencia del correo</div>
+      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;padding-bottom:6px"><input type="checkbox" id="corrLogo" style="width:auto" checked> Mostrar logo de TasaTop</label>
+        <label style="font-size:12px;flex:1;min-width:280px">Pie de página<input type="text" id="corrPie" placeholder="TasaTop · Inversiones con garantía inmobiliaria"></label>
+        <button class="btn" onclick="corrGuardarConfig()">💾 Guardar</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--muted);margin-top:8px">El enlace de baja se agrega automáticamente debajo del pie.</p>
+    </div>
+
+    <div class="cart-box">
+      <div class="cart-tit">📝 Plantillas por etapa</div>
+      <div id="corrListaPlantillas"></div>
+    </div>
+
+    <div class="cart-box">
+      <div class="cart-tit">✍️ Firmas del equipo <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— cargo y teléfono de cada persona</span></div>
+      <div id="corrFirmas"></div>
     </div>
   </section>
 

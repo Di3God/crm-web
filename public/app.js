@@ -574,7 +574,7 @@ async function arrancar() {
     document.querySelectorAll('.soloJefeB2B').forEach(e => e.classList.remove('oculto'));
     document.querySelectorAll('.soloAdminB2B').forEach(e => e.classList.remove('oculto'));
     verMundo('B2C'); verMundo('B2B'); verMundo('Mkt');
-    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-cartera', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-comite', 'mi-b2b-dia', 'mi-b2b-ops']);
+    ver(['mi-leads', 'mi-chat', 'mi-brutos', 'mi-releads', 'mi-cartera', 'mi-correos', 'mi-dash', 'mi-comite', 'mi-supervisor', 'mi-audit', 'mi-b2b-comite', 'mi-b2b-dia', 'mi-b2b-ops']);
     ver(['mi-b2b-sol', 'mi-b2b-ing', 'mi-b2b-releads', 'mi-b2b-audit']);
     ver(['mi-mkt-atrib']);
     mundoInicial = 'B2C';
@@ -647,6 +647,7 @@ function ir(v) {
   if (v === 'brutos') cargarBrutos();
   if (v === 'releads') cargarReleads();
   if (v === 'cartera') { cartCargarResumen(); cartCargarLista(); }
+  if (v === 'correos') corrCargarPanel();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
@@ -11453,6 +11454,10 @@ async function abrirCorreoPresentacion(codigo) {
         '<label>Para<input id="corrPara" type="email" value="' + esc(d.para || '') + '"></label>' +
         '<label>De<input id="corrDe" type="text" value="' + esc(d.remitente || '') + '" disabled title="Sale desde el Gmail de la gestora asignada"></label>' +
       '</div>' +
+      ((d.plantillas && d.plantillas.length > 1) ?
+        '<label class="corr-lbl">Plantilla<select id="corrTpl" onchange="corrCambiarTpl()">' +
+          d.plantillas.map(p => '<option value="' + p.clave + '"' + (p.clave === d.plantillaClave ? ' selected' : '') + '>' + esc(p.nombre) + '</option>').join('') +
+        '</select></label>' : '') +
       '<label class="corr-lbl">Asunto<input id="corrAsunto" type="text" value="' + esc(d.asunto || '') + '"></label>' +
       '<div class="corr-lbl">Vista previa <small>(así lo verá el cliente)</small></div>' +
       '<div class="corr-prev">' + d.html + '</div>' +
@@ -11467,6 +11472,16 @@ async function abrirCorreoPresentacion(codigo) {
   ov.classList.add('act');
 }
 function cerrarCorreo() { const ov = document.getElementById('corrOverlay'); if (ov) ov.classList.remove('act'); }
+// Cambiar de plantilla dentro del modal: recarga asunto y vista previa con los datos del cliente.
+async function corrCambiarTpl() {
+  const clave = $('corrTpl').value;
+  try {
+    const d = await api('/api/correos/plantilla/' + CORREO_COD + '?clave=' + encodeURIComponent(clave));
+    $('corrAsunto').value = d.asunto || '';
+    const prev = document.querySelector('#corrOverlay .corr-prev');
+    if (prev) prev.innerHTML = d.html;
+  } catch (e) { alert('No se pudo cargar la plantilla: ' + e.message); }
+}
 async function enviarCorreoPresentacion() {
   const btn = document.getElementById('corrEnviar');
   const para = document.getElementById('corrPara').value.trim();
@@ -11475,7 +11490,7 @@ async function enviarCorreoPresentacion() {
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
   try {
     await api('/api/correos/enviar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ codigo: CORREO_COD, para, asunto }) });
+      body: JSON.stringify({ codigo: CORREO_COD, para, asunto, clave: ($('corrTpl') ? $('corrTpl').value : 'presentacion') }) });
     cerrarCorreo();
     alert('Correo enviado. Quedó registrado como gestión con canal Email.');
     if (typeof cargarLeads === 'function') cargarLeads();
@@ -11483,4 +11498,113 @@ async function enviarCorreoPresentacion() {
     alert('No se pudo enviar: ' + e.message);
     if (btn) { btn.disabled = false; btn.textContent = '✉️ Enviar ahora'; }
   }
+}
+
+// ============================================================
+// ===== PANEL DE PLANTILLAS DE CORREO (v1.462) ===============
+// ============================================================
+let CORR_PLANTILLAS = [];
+async function corrCargarPanel() {
+  try {
+    const d = await api('/api/correos/plantillas?todas=1');
+    CORR_PLANTILLAS = d.plantillas || [];
+    if (d.config) {
+      if ($('corrLogo')) $('corrLogo').checked = d.config.mostrarLogo !== false;
+      if ($('corrPie')) $('corrPie').value = d.config.pie || '';
+    }
+    $('corrListaPlantillas').innerHTML = CORR_PLANTILLAS.map(p =>
+      '<div class="corr-tpl" id="tpl-' + p.clave + '">' +
+        '<div class="corr-tpl-head" onclick="corrToggle(\'' + p.clave + '\')">' +
+          '<div><b>' + esc(p.nombre) + '</b>' + (p.activa ? '' : ' <span class="cart-pill" style="background:#F3F4F6;color:#6B7280">inactiva</span>') +
+            '<div class="corr-tpl-desc">' + esc(p.descripcion || '') + '</div></div>' +
+          '<span class="corr-tpl-chev">▾</span>' +
+        '</div>' +
+        '<div class="corr-tpl-body" style="display:none">' +
+          '<label class="corr-lbl">Asunto<input type="text" id="a-' + p.clave + '" value="' + esc(p.asunto) + '"></label>' +
+          '<label class="corr-lbl">Cuerpo<textarea id="c-' + p.clave + '" rows="10">' + esc(p.cuerpo) + '</textarea></label>' +
+          '<div class="corr-vars">Variables: ' +
+            ['cliente', 'primer_nombre', 'gestora', 'correo_gp', 'telefono_gp', 'cargo_gp'].map(v =>
+              '<code onclick="corrInsertar(\'' + p.clave + '\',\'' + v + '\')" title="Clic para insertar">{{' + v + '}}</code>').join(' ') +
+            ' · **negrita** · línea en blanco = párrafo nuevo</div>' +
+          '<div class="corr-tpl-btns">' +
+            '<button class="btn sec" onclick="corrPrevia(\'' + p.clave + '\')">👁 Vista previa</button>' +
+            '<button class="btn" onclick="corrGuardarTpl(\'' + p.clave + '\')">💾 Guardar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>').join('');
+    corrCargarFirmas();
+    corrEstadoIntegracion();
+  } catch (e) { $('corrListaPlantillas').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+function corrToggle(clave) {
+  const b = document.querySelector('#tpl-' + clave + ' .corr-tpl-body');
+  const c = document.querySelector('#tpl-' + clave + ' .corr-tpl-chev');
+  const abierto = b.style.display !== 'none';
+  b.style.display = abierto ? 'none' : '';
+  if (c) c.textContent = abierto ? '▾' : '▴';
+}
+function corrInsertar(clave, v) {
+  const ta = $('c-' + clave); if (!ta) return;
+  const p = ta.selectionStart || 0;
+  ta.value = ta.value.slice(0, p) + '{{' + v + '}}' + ta.value.slice(ta.selectionEnd || p);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = p + v.length + 4;
+}
+async function corrGuardarTpl(clave) {
+  try {
+    await api('/api/correos/plantillas/' + clave, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asunto: $('a-' + clave).value, cuerpo: $('c-' + clave).value }) });
+    alert('Plantilla guardada. Ya aplica para todo el equipo.');
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+async function corrPrevia(clave) {
+  try {
+    await api('/api/correos/plantillas/' + clave, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asunto: $('a-' + clave).value, cuerpo: $('c-' + clave).value }) });
+    const d = await api('/api/correos/vista-previa/' + clave);
+    let ov = document.getElementById('corrOverlay');
+    if (!ov) { ov = document.createElement('div'); ov.id = 'corrOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
+    ov.innerHTML = '<div class="corr-wrap"><div class="corr-head">👁 Vista previa</div>' +
+      '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px"><b>Asunto:</b> ' + esc(d.asunto) + '</div>' +
+      '<div class="corr-prev">' + d.html + '</div>' +
+      '<div class="corr-btns"><button class="btn" onclick="cerrarCorreo()">Cerrar</button></div></div>';
+    ov.classList.add('act');
+  } catch (e) { alert('No se pudo generar: ' + e.message); }
+}
+async function corrGuardarConfig() {
+  try {
+    await api('/api/correos/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mostrarLogo: $('corrLogo').checked, pie: $('corrPie').value }) });
+    alert('Apariencia guardada.');
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+async function corrCargarFirmas() {
+  try {
+    const d = await api('/api/correos/firmas');
+    $('corrFirmas').innerHTML = '<table class="cart-tabla"><thead><tr><th>Persona</th><th>Cargo en la firma</th><th>Teléfono</th><th>Línea extra</th><th></th></tr></thead><tbody>' +
+      (d.firmas || []).map(f =>
+        '<tr><td><b>' + esc(f.nombre) + '</b><div style="font-size:11px;color:var(--muted)">' + esc(f.usuario) + '</div></td>' +
+        '<td><input type="text" id="fc-' + f.usuario + '" value="' + esc(f.firmaCargo || '') + '" placeholder="Gestora de Patrimonio" style="width:100%"></td>' +
+        '<td><input type="text" id="ft-' + f.usuario + '" value="' + esc(f.firmaTelefono || '') + '" placeholder="+51 999 888 777" style="width:100%"></td>' +
+        '<td><input type="text" id="fe-' + f.usuario + '" value="' + esc(f.firmaExtra || '') + '" placeholder="opcional" style="width:100%"></td>' +
+        '<td><button class="btn sec" onclick="corrGuardarFirma(\'' + f.usuario + '\')">Guardar</button></td></tr>').join('') +
+      '</tbody></table>';
+  } catch (e) { $('corrFirmas').innerHTML = '<div class="vacio">No se pudo cargar.</div>'; }
+}
+async function corrGuardarFirma(usuario) {
+  try {
+    await api('/api/correos/firmas/' + encodeURIComponent(usuario), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cargo: $('fc-' + usuario).value, telefono: $('ft-' + usuario).value, extra: $('fe-' + usuario).value }) });
+    alert('Firma guardada.');
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+async function corrEstadoIntegracion() {
+  try {
+    const d = await api('/api/correos/estado');
+    const box = $('corrEstadoInt'); if (!box) return;
+    box.style.display = '';
+    box.innerHTML = '<div class="cart-tit">' + (d.listo ? '✅ Integración con Gmail activa' : '⏳ Integración con Gmail pendiente') + '</div>' +
+      '<div style="font-size:12.5px;color:' + (d.listo ? '#0F7B52' : '#92700A') + '">' + esc(d.motivo) + '</div>' +
+      (d.stats ? '<div style="font-size:12px;color:var(--muted);margin-top:6px">Enviados: <b>' + (d.stats.enviados || 0) + '</b> · Abiertos: <b>' + (d.stats.abiertos || 0) + '</b> · Bajas: <b>' + (d.stats.bajas || 0) + '</b></div>' : '');
+    box.className = 'cart-box' + (d.listo ? '' : ' corr-pendiente');
+  } catch (e) { }
 }
