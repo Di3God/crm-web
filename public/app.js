@@ -652,6 +652,7 @@ function ir(v) {
   if (v === 'releads') cargarReleads();
   if (v === 'cartera') { cartCargarResumen(); cartCargarLista(); cartCargarDevoluciones(); }
   if (v === 'correos') corrCargarPanel();
+  if (v === 'espera') cargarEnEspera();
   if (v === 'chat') cargarChat();
   if (v === 'leads') cargarLeads();
   if (v === 'b2b') b2bRefrescar();
@@ -1016,7 +1017,8 @@ function renderColaB2C(d) {
           ? (c.esCartera
               ? '<button class="cola-ll cola-ml" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + c.codigo + '\')" title="Enviar correo">' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>'
               : '<button class="cola-ll cola-ml off" title="El envío de correos está habilitado solo para clientes de cartera activa" disabled>' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>')
-          : '') + '</div>' +
+          : '') +
+        '<button class="cola-ll cola-esp" onclick="event.stopPropagation();abrirModalEspera(\'' + c.codigo + '\')" title="Poner en espera">⏸</button>' + '</div>' +
       '</div>';
   }).join('');
   cont.innerHTML = '<div class="cola-wrap">' +
@@ -1415,8 +1417,9 @@ let K_DRAG = null;
 function kDragStart(e) {
   K_DRAG = { cod: e.target.dataset.cod, etapa: e.target.dataset.etapa };
   e.target.classList.add('drag');
+  esperaZonaMostrar(); // v1.475: aparece la zona "En espera" mientras se arrastra
 }
-function kDragEnd(e) { e.target.classList.remove('drag'); document.querySelectorAll('.kcol-body.drop').forEach(x => x.classList.remove('drop')); }
+function kDragEnd(e) { e.target.classList.remove('drag'); document.querySelectorAll('.kcol-body.drop').forEach(x => x.classList.remove('drop')); esperaZonaOcultar(); }
 function kDragOver(e) {
   e.preventDefault();
   const col = e.currentTarget.dataset.col;
@@ -11924,5 +11927,103 @@ async function waRestaurar() {
   try {
     await api('/api/b2b/wa-saludo', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plantilla: '' }) });
     cargarWaSaludo();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+
+// ============================================================
+// ===== EN ESPERA / STAND-BY (v1.475) ========================
+// El lead quiere invertir pero algo lo pausa. Se arrastra a la
+// zona flotante ⏸ y sale del embudo con motivo y fecha de retorno.
+// ============================================================
+function esperaZonaMostrar() {
+  let z = document.getElementById('esperaZona');
+  if (!z) {
+    z = document.createElement('div');
+    z.id = 'esperaZona';
+    z.className = 'espera-zona';
+    z.innerHTML = '<div class="espera-zona-ico">⏸</div><div class="espera-zona-txt">Soltar aquí:<br><b>En espera</b></div>';
+    z.ondragover = (e) => { e.preventDefault(); z.classList.add('drop'); };
+    z.ondragleave = () => z.classList.remove('drop');
+    z.ondrop = (e) => {
+      e.preventDefault(); z.classList.remove('drop'); esperaZonaOcultar();
+      if (K_DRAG && K_DRAG.cod) abrirModalEspera(K_DRAG.cod);
+    };
+    document.body.appendChild(z);
+  }
+  z.classList.add('act');
+}
+function esperaZonaOcultar() { const z = document.getElementById('esperaZona'); if (z) z.classList.remove('act', 'drop'); }
+
+const ESPERA_MOTIVOS_UI = [
+  'Espera operación con garantía inmobiliaria',
+  'Espera liquidez (venta, CTS, gratificación)',
+  'De viaje / fuera del país',
+  'Evaluando con su familia',
+  'Espera vencimiento de otra inversión',
+  'Pidió retomar más adelante',
+  'Otro'
+];
+function abrirModalEspera(codigo) {
+  const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  const en30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  let ov = document.getElementById('espOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'espOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = '<div class="corr-wrap" style="max-width:470px">' +
+    '<div class="corr-head">⏸ Poner en espera' + (l ? ' — ' + esc(l.nombre || codigo) : '') + '</div>' +
+    '<p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55">El cliente quiere invertir pero algo lo pausa. Sale del embudo y vuelve solo en la fecha que definas (o a los 90 días como tope).</p>' +
+    '<label class="corr-lbl">Motivo<select id="espMotivo">' + ESPERA_MOTIVOS_UI.map(m => '<option>' + m + '</option>').join('') + '</select></label>' +
+    '<label class="corr-lbl">¿Cuándo retomar? <small>(déjalo vacío si no hay fecha; tope 90 días)</small><input type="date" id="espHasta" value="' + en30 + '"></label>' +
+    '<label class="corr-lbl">Nota <small>(opcional)</small><textarea id="espNota" rows="2" placeholder="Ej.: quiere depa en Surco, ticket S/ 200K; avisarle apenas salga algo similar."></textarea></label>' +
+    '<div class="corr-btns">' +
+      '<button class="btn sec" onclick="cerrarModalEspera()">Cancelar</button>' +
+      '<button class="btn" id="espOk" onclick="confirmarEspera(\'' + codigo + '\')">⏸ Poner en espera</button>' +
+    '</div></div>';
+  ov.classList.add('act');
+}
+function cerrarModalEspera() { const ov = document.getElementById('espOverlay'); if (ov) ov.classList.remove('act'); }
+async function confirmarEspera(codigo) {
+  const btn = document.getElementById('espOk');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+  try {
+    await api('/api/leads/' + codigo + '/espera', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo: $('espMotivo').value, nota: $('espNota').value, hasta: $('espHasta').value || null }) });
+    cerrarModalEspera();
+    if (typeof cargarLeads === 'function') cargarLeads();
+    if (typeof cargarColaB2C === 'function' && VISTA_LEADS === 'cola') cargarColaB2C();
+  } catch (e) {
+    alert('No se pudo: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '⏸ Poner en espera'; }
+  }
+}
+
+// ---- Vista "En espera" ----
+async function cargarEnEspera() {
+  const cont = $('esperaLista'); if (!cont) return;
+  cont.innerHTML = '<div class="cola-loading">Cargando…</div>';
+  try {
+    const d = await api('/api/espera');
+    const motivos = (d.porMotivo || []).length
+      ? '<div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">' +
+        d.porMotivo.map(m => '<span class="cart-pill">' + esc(m.motivo || '—') + ': ' + m.n + '</span>').join('') + '</div>'
+      : '';
+    if (!d.filas.length) { cont.innerHTML = '<div class="vacio">No hay clientes en espera.</div>'; return; }
+    cont.innerHTML = motivos +
+      '<table class="cart-tabla"><thead><tr><th>Cliente</th><th>GP</th><th>Motivo</th><th>Desde</th><th>Retoma</th><th></th></tr></thead><tbody>' +
+      d.filas.map(f =>
+        '<tr' + (f.vencido ? ' style="background:#FFF8F0"' : '') + '>' +
+        '<td><b>' + esc(f.nombre || f.codigo) + '</b>' + (f.esCartera ? ' <span class="cart-pill" style="background:linear-gradient(135deg,#D4A017,#B8860B);color:#fff">♻️</span>' : '') + '</td>' +
+        '<td>' + esc(primerNombre(f.asesor || '—')) + '</td>' +
+        '<td style="font-size:12px">' + esc(f.esperaMotivo || '') + (f.esperaNota ? '<div style="font-size:10.5px;color:var(--muted)">' + esc(f.esperaNota) + '</div>' : '') + '</td>' +
+        '<td style="font-size:12px">' + (f.dias != null ? 'hace ' + f.dias + 'd' : '—') + '</td>' +
+        '<td style="font-size:12px">' + (f.esperaHasta ? f.esperaHasta : '<span style="color:var(--muted)">tope 90d</span>') + (f.vencido ? ' <b style="color:#B7791F">¡ya!</b>' : '') + '</td>' +
+        '<td><button class="btn sec" onclick="reactivarEspera(\'' + f.codigo + '\')">▶ Reactivar</button></td>' +
+        '</tr>').join('') + '</tbody></table>';
+  } catch (e) { cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+async function reactivarEspera(codigo) {
+  try {
+    await api('/api/leads/' + codigo + '/espera/reactivar', { method: 'POST' });
+    cargarEnEspera();
+    if (typeof cargarLeads === 'function') cargarLeads();
   } catch (e) { alert('No se pudo: ' + e.message); }
 }

@@ -3734,3 +3734,15 @@ body:has(#contKanban[style*="block"]) .content { max-width: none; }
 /* Correo deshabilitado en leads de marketing (v1.471) */
 .kbtn-ic.ml.off, .cola-ll.cola-ml.off { opacity: .35; cursor: not-allowed; color: #94A3B8 !important; border-color: var(--line) !important; }
 .kbtn-ic.ml.off:hover, .cola-ll.cola-ml.off:hover { background: transparent !important; }
+
+/* ===== EN ESPERA (v1.475) ===== */
+.espera-zona { position: fixed; right: 22px; bottom: 90px; z-index: 8500; width: 118px; padding: 14px 10px; text-align: center;
+  background: #FFF7E6; border: 2px dashed #D4A017; border-radius: 14px; color: #7A5C00;
+  opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .15s, transform .15s; }
+.espera-zona.act { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.espera-zona.drop { background: #FDEBC8; border-color: #B8860B; box-shadow: 0 6px 22px rgba(212,160,23,.35); transform: scale(1.06); }
+.espera-zona-ico { font-size: 26px; margin-bottom: 4px; }
+.espera-zona-txt { font-size: 11.5px; line-height: 1.35; }
+.espera-zona-txt b { font-size: 12.5px; }
+
+.cola-ll.cola-esp { color: #B8860B !important; font-size: 13px; }
