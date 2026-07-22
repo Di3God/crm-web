@@ -533,6 +533,9 @@ async function arrancar() {
     document.querySelectorAll('.soloAdmin, .asignador').forEach(e => e.classList.remove('oculto'));
   }
   // Módulo de llamadas B2B: admin y Jefe B2B (Dante). El endpoint /api/llamadas permite ambos.
+  if (['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(YO.rol)) {
+    const m = $('mi-b2b-ruc10'); if (m) m.classList.remove('oculto');
+  }
   if (['admin', 'jefe_b2b'].includes(YO.rol)) {
     document.querySelectorAll('.soloLlamadasB2B').forEach(e => e.classList.remove('oculto'));
   }
@@ -679,6 +682,7 @@ function navB2B(which) {
   if (which === 'dia') { ir('b2b-dia'); return; }
   if (which === 'ops') { ir('b2b-ops'); return; }
   if (which === 'comite') { ir('b2b-comite'); return; }
+  if (which === 'ruc10') { ir('b2b-ruc10'); cargarRuc10(); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -11824,4 +11828,52 @@ async function guardarAliasAgente(agente) {
     }
     cargarAliasAgentes();
   } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+
+// ============================================================
+// ===== CASOS RUC 10 (v1.472) ================================
+// ============================================================
+async function cargarRuc10() {
+  const cont = $('ruc10Lista'); if (!cont) return;
+  cont.innerHTML = '<div class="cola-loading">Cargando…</div>';
+  try {
+    const d = await api('/api/b2b/ruc10');
+    $('ruc10Resumen').innerHTML =
+      '<div class="cart-kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">' +
+      '<div class="cart-kpi"><div class="cart-kpi-lbl">En cola</div><div class="cart-kpi-val">' + d.filas.length + '</div><div class="cart-kpi-sub">esperando decisión</div></div>' +
+      '<div class="cart-kpi"><div class="cart-kpi-lbl">Total recibidos</div><div class="cart-kpi-val">' + d.total + '</div><div class="cart-kpi-sub">históricos con RUC 10</div></div>' +
+      '<div class="cart-kpi ok"><div class="cart-kpi-lbl">Promovidos</div><div class="cart-kpi-val">' + d.promovidos + '</div><div class="cart-kpi-sub">excepciones aprobadas</div></div>' +
+      '</div>';
+    if (!d.filas.length) { cont.innerHTML = '<div class="vacio">No hay casos pendientes.</div>'; return; }
+    cont.innerHTML = '<table class="cart-tabla"><thead><tr>' +
+      '<th>Código</th><th>RUC / Razón social</th><th>Contacto</th><th>Monto</th><th>Campaña</th><th>Ingreso</th><th></th>' +
+      '</tr></thead><tbody>' +
+      d.filas.map(s =>
+        '<tr>' +
+        '<td><b style="font-size:11.5px">' + esc(s.codigo) + '</b></td>' +
+        '<td><b>' + esc(s.ruc || '—') + '</b>' + (s.razonSocial ? '<div style="font-size:11.5px;color:var(--muted)">' + esc(s.razonSocial) + '</div>' : '') + '</td>' +
+        '<td style="font-size:12px">' + esc(s.contacto || '—') + (s.telefono ? '<div style="font-size:11px;color:var(--muted)">' + esc(s.telefono) + '</div>' : '') + '</td>' +
+        '<td style="font-size:12px">' + (s.montoSolicitado ? 'S/ ' + Number(s.montoSolicitado).toLocaleString('es-PE') : esc(s.montoRango || '—')) + '</td>' +
+        '<td style="font-size:11.5px;color:var(--muted)">' + esc(s.campana || '—') + '</td>' +
+        '<td style="font-size:11.5px">' + fmtFecha(s.fechaIngreso) + '</td>' +
+        '<td style="white-space:nowrap">' +
+          '<button class="btn sec" onclick="ruc10Promover(\'' + s.codigo + '\')" title="Tratarlo como oportunidad real">✓ Aprobar</button> ' +
+          '<button class="btn sec" onclick="ruc10Descartar(\'' + s.codigo + '\')" title="Cerrar el caso">✕</button>' +
+        '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) { cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+async function ruc10Promover(codigo) {
+  if (!confirm('¿Convertir este caso en oportunidad? Se asignará a un funcionario y entrará al pipeline.')) return;
+  try {
+    const r = await api('/api/b2b/ruc10/' + codigo + '/promover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    alert('Listo. Asignado a ' + (r.asignadoA || 'sin asignar') + '.');
+    cargarRuc10();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+async function ruc10Descartar(codigo) {
+  if (!confirm('¿Descartar este caso? Quedará como no elegible.')) return;
+  try {
+    await api('/api/b2b/ruc10/' + codigo + '/descartar', { method: 'POST' });
+    cargarRuc10();
+  } catch (e) { alert('No se pudo: ' + e.message); }
 }

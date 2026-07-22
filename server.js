@@ -1541,6 +1541,11 @@ function procesarSolicitudB2B(norm, opts = {}) {
     }
     return { estado: 'duplicado_activo', codigoSolicitud: existente.codigo, mensajeError: `⚠ Solicitud activa duplicada (${existente.codigo}) — gestión manual` };
   }
+  // v1.472: RUC 10 (persona natural). El formulario pide RUC 20, pero algunos ingresan un RUC 10
+  // igual. Estos NO se crean como oportunidad: quedan en cola como caso particular, sin asignar
+  // y sin alerta de WhatsApp, para que jefatura decida si aplica una excepción. No se descartan
+  // (siguen contando como lead recibido de marketing) ni se archivan.
+  const esRuc10 = norm.ruc && String(norm.ruc).trim().startsWith('10');
   // Nueva: se crea automática en estado Nuevo, con round-robin entre operadores B2B.
   const codigo = generarCodigoB2B();
   const ahora = (opts.fechaIngreso || new Date().toISOString()); // reproceso conserva la fecha original de llegada
@@ -1550,7 +1555,7 @@ function procesarSolicitudB2B(norm, opts = {}) {
   const B2B_MIN_MONTO_AUTOASIGNAR = 300000;
   const montoEfectivo = norm.monto != null ? Number(norm.monto) : montoRangoFijo(norm.montoRango);
   const bajoFoco = B2B_MIN_MONTO_AUTOASIGNAR > 0 && montoEfectivo != null && montoEfectivo < B2B_MIN_MONTO_AUTOASIGNAR;
-  const op = (opts.sinAutoasignar || bajoFoco) ? null : elegirOperadorB2BRoundRobin();
+  const op = (opts.sinAutoasignar || bajoFoco || esRuc10) ? null : elegirOperadorB2BRoundRobin();
   db.prepare(`INSERT INTO b2b_solicitudes
     (codigo, ruc, razonSocial, contacto, telefono, email, fuente, montoSolicitado, montoRango, ticket,
      tieneInmueble, tipoInmueble, areaInmueble, registradoSunarp, departamentoInmueble,
@@ -1560,8 +1565,16 @@ function procesarSolicitudB2B(norm, opts = {}) {
       norm.monto, norm.montoRango, ticket, norm.tieneInmueble, norm.tipoInmueble, norm.areaInmueble,
       norm.registradoSunarp, norm.departamentoInmueble,
       norm.campana, norm.conjunto, norm.anuncio, norm.adId,
-      'Nuevo', op, op, ahora);
-  if (bajoFoco) {
+      esRuc10 ? 'RUC 10' : 'Nuevo', op, op, ahora);
+  if (esRuc10) {
+    // Caso particular RUC 10: se enriquece con SUNAT para tener el dato, pero no genera
+    // oportunidad ni alerta. Queda visible en la cola de casos particulares.
+    enriquecerSunatAsync(codigo);
+    try {
+      db.prepare('INSERT INTO auditoria (fecha, usuario, nombre, accion, objetivo, detalle) VALUES (?,?,?,?,?,?)')
+        .run(new Date().toISOString(), '(auto)', '(auto)', 'b2b_ruc10_cola', codigo, 'RUC ' + norm.ruc + ' inicia en 10 (persona natural): queda en cola, no se crea como oportunidad');
+    } catch (e) { }
+  } else if (bajoFoco) {
     // Ticket bajo el foco del mes: SUNAT sí (deja el expediente listo), alerta de WhatsApp NO.
     enriquecerSunatAsync(codigo);
     try {
@@ -5721,6 +5734,8 @@ app.get('/api/b2b/solicitudes', soloB2B, (req, res) => {
     return res.json({ solicitudes: filas, total: filas.length, desestimados: true });
   }
   let filas = db.prepare('SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=? ORDER BY fechaIngreso DESC, id DESC').all(verArchivados ? 1 : 0);
+  // v1.472: los RUC 10 no son oportunidades — viven en su propia cola, no en el tablero.
+  if (estado !== 'RUC 10') filas = filas.filter(s => s.estado !== 'RUC 10');
   filas = filtrarPorAlcanceB2B(req.user, filas);
   if (estado) filas = filas.filter(s => s.estado === estado);
   if (q) filas = filas.filter(s => [s.razonSocial, s.ruc, s.contacto, s.codigo].some(v => String(v || '').toLowerCase().includes(q)));
@@ -5772,7 +5787,7 @@ app.put('/api/b2b/solicitudes/reasignar-lote', soloB2B, (req, res) => {
 // Detectar duplicados por RUC (mismo RUC en 2+ solicitudes activas). Para la bandeja de ingresos.
 app.get('/api/b2b/duplicados', soloB2B, (req, res) => {
   const filas = db.prepare(`SELECT ruc, COUNT(*) n, GROUP_CONCAT(codigo) codigos FROM b2b_solicitudes
-    WHERE archivado IS NOT 1 AND estado <> 'No elegible' AND ruc IS NOT NULL AND TRIM(ruc) <> ''
+    WHERE archivado IS NOT 1 AND estado NOT IN ('No elegible','RUC 10') AND ruc IS NOT NULL AND TRIM(ruc) <> ''
     GROUP BY ruc HAVING n > 1`).all();
   const grupos = filas.map(f => {
     const cods = String(f.codigos).split(',');
@@ -7071,7 +7086,7 @@ app.get('/api/b2b/dashboard/ia', soloB2B, async (req, res) => {
 app.get('/api/b2b/comando', soloB2B, (req, res) => {
   try {
     const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
-    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado NOT IN ('No elegible','RUC 10')").all();
     filas = filtrarPorAlcanceB2B(req.user, filas);
     const asesor = (req.query.asesor || '').trim();
     const nombreAsesor = !esJefe ? req.user.nombre : (asesor || null);
@@ -7128,7 +7143,7 @@ app.get('/api/b2b/comando', soloB2B, (req, res) => {
 app.get('/api/b2b/cola', soloB2B, (req, res) => {
   try {
     const esJefe = ['admin', 'jefe_b2b', 'jefe_creditos', 'jefa'].includes(req.user.rol);
-    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'").all();
+    let filas = db.prepare("SELECT * FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado NOT IN ('No elegible','RUC 10')").all();
     filas = filtrarPorAlcanceB2B(req.user, filas);
     // Filtro por asesor: funcionario siempre a lo suyo; jefe puede elegir uno.
     const asesor = (req.query.asesor || '').trim();
@@ -7498,6 +7513,24 @@ const CORREO_PLANTILLAS_BASE = [
 ];
 // v1.471: las plantillas ya guardadas conservan el saludo antiguo; se migran una sola vez
 // para que todo el equipo pase al saludo personalizado sin reeditar plantilla por plantilla.
+// v1.472: los RUC 10 que ya entraron como oportunidad se mueven a la cola de casos
+// particulares, EXCEPTO los que ya fueron trabajados (tienen gestiones o avanzaron de etapa):
+// esos se respetan, porque el equipo ya invirtió esfuerzo en ellos.
+function migrarRuc10Existentes() {
+  try {
+    if (db.prepare("SELECT 1 FROM app_config WHERE clave='mig_ruc10_v1472'").get()) return;
+    const cand = db.prepare(`SELECT s.codigo, s.ruc, s.estado,
+        (SELECT COUNT(*) FROM b2b_gestiones g WHERE g.codigoSolicitud = s.codigo) gest
+      FROM b2b_solicitudes s
+      WHERE s.ruc LIKE '10%' AND COALESCE(s.archivado,0)=0 AND s.estado='Nuevo'`).all();
+    const upd = db.prepare("UPDATE b2b_solicitudes SET estado='RUC 10', asistente=NULL, responsableActual=NULL WHERE codigo=?");
+    let n = 0;
+    cand.forEach(c => { if (!c.gest) { upd.run(c.codigo); n++; } });
+    db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('mig_ruc10_v1472',?)").run(new Date().toISOString());
+    if (n) console.log('[b2b] ' + n + ' solicitud(es) con RUC 10 movidas a la cola de casos particulares (sin gestiones previas)');
+  } catch (e) { console.error('[b2b] migrar RUC 10:', e.message); }
+}
+
 function correoMigrarSaludo() {
   try {
     if (db.prepare("SELECT 1 FROM app_config WHERE clave='mig_saludo_v1471'").get()) return;
@@ -7519,6 +7552,7 @@ function correoSembrarPlantillas() {
 }
 correoSembrarPlantillas();
 correoMigrarSaludo();
+migrarRuc10Existentes();
 
 // Config visual del correo (logo, colores, pie) — editable por el admin.
 function correoConfig() {
@@ -7926,6 +7960,43 @@ app.post('/api/cartera/devolver-uno', (req, res) => {
   res.json({ ok: true, gestiones: gest, dias });
 });
 
+// GET /api/b2b/ruc10 — cola de casos particulares (personas naturales que llenaron el
+// formulario B2B). No son oportunidades, pero se conservan por si jefatura aprueba una excepción.
+app.get('/api/b2b/ruc10', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'Solo jefatura' });
+  }
+  const filas = db.prepare(`SELECT codigo, ruc, razonSocial, contacto, telefono, email, montoSolicitado,
+      montoRango, ticket, campana, anuncio, sunatEstado, sunatDepartamento, fechaIngreso, estado
+    FROM b2b_solicitudes WHERE estado='RUC 10' AND COALESCE(archivado,0)=0
+    ORDER BY fechaIngreso DESC, id DESC`).all();
+  const total = db.prepare("SELECT COUNT(*) n FROM b2b_solicitudes WHERE estado='RUC 10'").get().n;
+  const promovidos = db.prepare("SELECT COUNT(*) n FROM auditoria WHERE accion='b2b_ruc10_promover'").get().n;
+  res.json({ filas, total, promovidos });
+});
+
+// POST /api/b2b/ruc10/:codigo/promover — jefatura decide tratarlo como oportunidad real.
+app.post('/api/b2b/ruc10/:codigo/promover', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const s = db.prepare("SELECT * FROM b2b_solicitudes WHERE codigo=? AND estado='RUC 10'").get(req.params.codigo);
+  if (!s) return res.status(404).json({ error: 'No encontrado o ya fue procesado' });
+  const op = req.body && req.body.asignarA ? req.body.asignarA : elegirOperadorB2BRoundRobin();
+  db.prepare("UPDATE b2b_solicitudes SET estado='Nuevo', asistente=?, responsableActual=? WHERE codigo=?")
+    .run(op, op, req.params.codigo);
+  auditar(req, 'b2b_ruc10_promover', req.params.codigo, 'Excepción aprobada · asignado a ' + (op || 'sin asignar'));
+  try { enriquecerSunatYAvisar(req.params.codigo, !!s.ruc); } catch (e) { }
+  res.json({ ok: true, asignadoA: op });
+});
+
+// POST /api/b2b/ruc10/:codigo/descartar — cerrar el caso sin convertirlo en oportunidad.
+app.post('/api/b2b/ruc10/:codigo/descartar', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  const r = db.prepare("UPDATE b2b_solicitudes SET estado='No elegible', archivado=1, motivoDescarte='RUC 10 - persona natural' WHERE codigo=? AND estado='RUC 10'").run(req.params.codigo);
+  if (!r.changes) return res.status(404).json({ error: 'No encontrado o ya fue procesado' });
+  auditar(req, 'b2b_ruc10_descartar', req.params.codigo, 'Descartado por jefatura');
+  res.json({ ok: true });
+});
+
 // GET /api/cartera/devoluciones?codigo= — historial (para la ficha o el panel).
 app.get('/api/cartera/devoluciones', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'No autorizado' });
@@ -8278,7 +8349,7 @@ app.get('/api/b2b/dia', soloB2B, (req, res) => {
 function calcularEmbudoB2B(asesor) {
   const wA = asesor ? " AND responsableActual=?" : "";
   const argsA = asesor ? [asesor] : [];
-  const activas = db.prepare("SELECT codigo, estado, montoSolicitado, montoRango FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado <> 'No elegible'" + wA).all(...argsA);
+  const activas = db.prepare("SELECT codigo, estado, montoSolicitado, montoRango FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 AND estado NOT IN ('No elegible','RUC 10')" + wA).all(...argsA);
   const desest = db.prepare("SELECT COUNT(*) n FROM b2b_solicitudes WHERE (COALESCE(archivado,0)=1 OR estado='No elegible')" + wA).get(...argsA).n;
   const etapas = COLUMNAS_KANBAN_B2B;
   const ordEt = {}; etapas.forEach((e, i) => ordEt[e] = i);
@@ -8325,7 +8396,7 @@ function analizarDesestimadosB2B(asesor) {
 // No toca las 'No elegible' ni archivadas. Solo admin.
 app.post('/api/b2b/demo/reset-inicial', soloB2B, (req, res) => {
   if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
-  const activas = "COALESCE(archivado,0)=0 AND estado <> 'No elegible'";
+  const activas = "COALESCE(archivado,0)=0 AND estado NOT IN ('No elegible','RUC 10')";
   // Validadas por SUNAT → Filtro credito
   const rOk = db.prepare("UPDATE b2b_solicitudes SET estado='Filtro credito', fechaEtapa=? WHERE " + activas + " AND sunatEstado='ok'").run(new Date().toISOString());
   // No validadas (error/pendiente/null) → Nuevo (primera columna)
@@ -10279,7 +10350,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.471 (Saludo personalizado y correo restringido a cartera: (1) SALUDO DINÁMICO: las plantillas pasan de Estimado(a) {{primer_nombre}} a {{saludo_completo}}, que produce Jhenifer, buenos días — el primer nombre Capitalizado (los datos llegan en MAYÚSCULAS desde el Excel y mezclados desde el formulario; ahora se normaliza respetando tildes) y el saludo según la HORA DE PERÚ al momento del envío: buenos días antes de las 12, buenas tardes hasta las 19, buenas noches después. Se agregan las variables saludo y saludo_completo, usables en cualquier plantilla. Migración one-shot que actualiza las plantillas ya guardadas para que el equipo no tenga que reeditarlas una por una. (2) ENVÍO RESTRINGIDO A CARTERA ACTIVA: en los leads de marketing el icono de correo sigue visible en la tarjeta y en Mi Cola pero aparece atenuado y deshabilitado, con el motivo en el tooltip; el servidor rechaza el envío con 403 aunque se llame directo a la API. La razón es de entregabilidad: los correos de leads de marketing no están verificados (errores de tipeo, dominios inexistentes) y una tasa alta de rebote degrada la reputación del dominio, lo que afectaría los envíos de TODO el equipo, incluidos los de cartera. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.472 (CASOS RUC 10: aunque el formulario B2B pide RUC 20, algunos leads ingresan con RUC 10 (persona natural). Estos ya NO se crean como oportunidad: (1) Al ingresar, la solicitud queda en estado RUC 10, SIN asignar y SIN alerta de WhatsApp, pero sí se enriquece con SUNAT para dejar el expediente listo. No se archiva ni se descarta, de modo que el lead sigue contando como recibido en la bandeja de ingresos y en las métricas de marketing. (2) Quedan EXCLUIDOS del pipeline: no aparecen en el kanban, no entran al embudo, no inflan el conteo de oportunidades activas ni participan en la detección de duplicados. (3) NUEVA VISTA Casos RUC 10 en el menú B2B (jefatura): lista los casos en cola con RUC, razón social, contacto, monto y campaña, más el conteo de recibidos y de excepciones aprobadas. Desde ahí se puede APROBAR el caso —pasa a Nuevo, se asigna por round-robin y dispara la alerta, es decir se convierte en oportunidad real— o DESCARTARLO como no elegible. (4) Migración one-shot: los RUC 10 que ya estaban en el tablero se mueven a la cola, EXCEPTO los que ya tienen gestiones o avanzaron de etapa, que se respetan porque el equipo ya invirtió trabajo en ellos. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

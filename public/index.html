@@ -47,6 +47,7 @@
         <button class="mundo-item oculto" id="mi-b2b-sol" onclick="navB2B('sol')">Solicitudes</button>
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
+        <button class="mundo-item oculto" id="mi-b2b-ruc10" onclick="navB2B('ruc10')">🪪 Casos RUC 10</button>
         <button class="mundo-item oculto" id="mi-b2b-dia" onclick="navB2B('dia')">📊 Gestión del día</button>
         <button class="mundo-item oculto" id="mi-b2b-ops" onclick="navB2B('ops')">🎛 Centro de Operaciones</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
@@ -850,6 +851,16 @@
       <div class="cart-tit">📞 Cuentas de teléfono compartidas <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— cuando alguien usa la cuenta de otra persona</span></div>
       <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.55">Si una GP hace llamadas desde una cuenta que figura a nombre de otra persona, indícalo aquí: sus llamadas se le atribuirán correctamente en el centro de llamadas y en sus métricas.</p>
       <div id="aliasAgentes"></div>
+    </div>
+  </section>
+
+  <!-- ===== CASOS RUC 10 (v1.472) ===== -->
+  <section id="v-b2b-ruc10" class="vista">
+    <h2>🪪 Casos RUC 10</h2>
+    <p class="sub">Personas naturales que llenaron el formulario B2B. No entran al pipeline como oportunidad, pero quedan aquí por si corresponde una excepción.</p>
+    <div class="cart-box">
+      <div id="ruc10Resumen"></div>
+      <div id="ruc10Lista"></div>
     </div>
   </section>
 
