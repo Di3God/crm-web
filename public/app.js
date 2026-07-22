@@ -1006,7 +1006,11 @@ function renderColaB2C(d) {
       '<div class="cola-right"><div class="cola-monto">' + c.montoFmt + '</div>' +
         '<div class="cola-sub">' + c.intentos + ' int · ' + c.probabilidad + '%</div></div>' +
       '<div class="cola-acciones"><button class="cola-ll" onclick="event.stopPropagation();accionLlamar(\'' + c.codigo + '\')" title="Llamar">' + (typeof ICO_TEL !== 'undefined' ? ICO_TEL : '📞') + '</button>' +
-        (c.email ? '<button class="cola-ll cola-ml" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + c.codigo + '\')" title="Enviar correo">' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>' : '') + '</div>' +
+        (c.email
+          ? (c.esCartera
+              ? '<button class="cola-ll cola-ml" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + c.codigo + '\')" title="Enviar correo">' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>'
+              : '<button class="cola-ll cola-ml off" title="El envío de correos está habilitado solo para clientes de cartera activa" disabled>' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>')
+          : '') + '</div>' +
       '</div>';
   }).join('');
   cont.innerHTML = '<div class="cola-wrap">' +
@@ -1324,7 +1328,11 @@ function kanbanCard(l) {
       '<button class="kbtn rg" onclick="event.stopPropagation();accionRegistrar(\'' + l.codigo + '\')">Gestionar</button>' +
       '<button class="kbtn-ic ll" title="Llamar" onclick="event.stopPropagation();accionLlamar(\'' + l.codigo + '\')">' + ICO_TEL + '</button>' +
       '<button class="kbtn-ic wa" title="WhatsApp" onclick="event.stopPropagation();accionWhatsApp(\'' + l.codigo + '\')">' + ICO_WA + '</button>' +
-      (l.email ? '<button class="kbtn-ic ml" title="Enviar correo" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + l.codigo + '\')">' + ICO_MAIL + '</button>' : '') +
+      (l.email
+        ? (l.esCartera
+            ? '<button class="kbtn-ic ml" title="Enviar correo" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + l.codigo + '\')">' + ICO_MAIL + '</button>'
+            : '<button class="kbtn-ic ml off" title="El envío de correos está habilitado solo para clientes de cartera activa" disabled>' + ICO_MAIL + '</button>')
+        : '') +
     '</div>' +
   '</div>';
 }
@@ -11474,6 +11482,12 @@ function cartTicketProm(l) {
 // ============================================================
 let CORREO_COD = null;
 async function abrirCorreoPresentacion(codigo) {
+  // v1.471: el envío desde el CRM está habilitado solo para clientes de cartera activa.
+  const lRef = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
+  if (lRef && !lRef.esCartera) {
+    alert('El envío de correos desde el CRM está habilitado solo para clientes de cartera activa.');
+    return;
+  }
   CORREO_COD = codigo;
   let d;
   try { d = await api('/api/correos/plantilla/' + codigo); }

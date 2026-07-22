@@ -7466,36 +7466,49 @@ const CORREO_PLANTILLAS_BASE = [
   { clave: 'presentacion', nombre: 'Presentación (GP nueva para el cliente)', orden: 10,
     descripcion: 'Primer contacto: el cliente NO conoce a esta GP. Se presenta como su nueva gestora.',
     asunto: 'Su nueva Gestora de Patrimonio en Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **Tasatop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
+    cuerpo: '{{saludo_completo}}.\n\nLe escribo para presentarme: soy **{{gestora}}**, y desde ahora seré su Gestora de Patrimonio en **Tasatop**.\n\nMi rol es acompañarle en sus inversiones: mantenerle al tanto de las operaciones disponibles, resolver cualquier consulta y asegurarme de que su capital esté trabajando en las mejores condiciones.\n\nAgradecemos la confianza que ha depositado en nosotros. En los próximos días me estaré comunicando con usted para conversar sobre las oportunidades vigentes.\n\nQuedo a su disposición.' },
   { clave: 'continuidad', nombre: 'Continuidad (cliente que ya la conoce)', orden: 15,
     descripcion: 'Para clientes que ya saben quién es su GP: retoma el contacto de manera formal.',
     asunto: 'Retomando contacto — {{gestora}}, Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nEspero que se encuentre muy bien. Le escribo para retomar nuestro contacto y ponerme nuevamente a su disposición.\n\nComo siempre, sigo siendo **{{gestora}}**, su Gestora de Patrimonio en **Tasatop**, y estaré atenta a mantenerle informado(a) de las operaciones que se ajusten a lo que usted busca.\n\nEn los próximos días me comunicaré con usted para conversar sobre las oportunidades vigentes. Si prefiere, puede escribirme directamente cuando lo necesite.\n\nQuedo a su disposición.' },
+    cuerpo: '{{saludo_completo}}.\n\nEspero que se encuentre muy bien. Le escribo para retomar nuestro contacto y ponerme nuevamente a su disposición.\n\nComo siempre, sigo siendo **{{gestora}}**, su Gestora de Patrimonio en **Tasatop**, y estaré atenta a mantenerle informado(a) de las operaciones que se ajusten a lo que usted busca.\n\nEn los próximos días me comunicaré con usted para conversar sobre las oportunidades vigentes. Si prefiere, puede escribirme directamente cuando lo necesite.\n\nQuedo a su disposición.' },
   { clave: 'no_contesto', nombre: 'No contestó la llamada', orden: 20,
     descripcion: 'Se intentó llamar y no hubo respuesta.',
     asunto: 'Intenté comunicarme con usted — {{gestora}}, Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe llamé hace un momento y no logré ubicarle. Soy **{{gestora}}**, su Gestora de Patrimonio en Tasatop.\n\nQuería conversar con usted sobre las operaciones disponibles y ver de qué manera podemos hacer crecer su inversión.\n\n¿Qué horario le resulta más cómodo para llamarle? Puede responder a este correo o escribirme directamente a {{telefono_gp}}.' },
+    cuerpo: '{{saludo_completo}}.\n\nLe llamé hace un momento y no logré ubicarle. Soy **{{gestora}}**, su Gestora de Patrimonio en Tasatop.\n\nQuería conversar con usted sobre las operaciones disponibles y ver de qué manera podemos hacer crecer su inversión.\n\n¿Qué horario le resulta más cómodo para llamarle? Puede responder a este correo o escribirme directamente a {{telefono_gp}}.' },
   { clave: 'info_producto', nombre: 'Envío de información', orden: 30,
     descripcion: 'El cliente pidió detalles del producto o de una operación.',
     asunto: 'La información que me solicitó — Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nComo conversamos, le comparto la información sobre nuestras operaciones de inversión con **garantía inmobiliaria**.\n\nEn Tasatop financiamos a empresas que respaldan cada operación con un inmueble, lo que le permite invertir con un nivel de resguardo que difícilmente encuentra en otros instrumentos.\n\nQuedo atenta a sus consultas y con gusto le explico cualquier punto en detalle.' },
+    cuerpo: '{{saludo_completo}}.\n\nComo conversamos, le comparto la información sobre nuestras operaciones de inversión con **garantía inmobiliaria**.\n\nEn Tasatop financiamos a empresas que respaldan cada operación con un inmueble, lo que le permite invertir con un nivel de resguardo que difícilmente encuentra en otros instrumentos.\n\nQuedo atenta a sus consultas y con gusto le explico cualquier punto en detalle.' },
   { clave: 'confirma_reunion', nombre: 'Confirmación de reunión', orden: 40,
     descripcion: 'Se agendó una reunión y se confirma por escrito.',
     asunto: 'Confirmación de nuestra reunión — Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nLe confirmo nuestra reunión. Recibirá por separado la invitación con el enlace de videollamada.\n\nEn ese espacio revisaremos las operaciones vigentes, resolveré sus dudas y veremos juntos qué alternativa se ajusta mejor a lo que usted busca.\n\nSi necesita reprogramar, escríbame con confianza.' },
+    cuerpo: '{{saludo_completo}}.\n\nLe confirmo nuestra reunión. Recibirá por separado la invitación con el enlace de videollamada.\n\nEn ese espacio revisaremos las operaciones vigentes, resolveré sus dudas y veremos juntos qué alternativa se ajusta mejor a lo que usted busca.\n\nSi necesita reprogramar, escríbame con confianza.' },
   { clave: 'post_reunion', nombre: 'Seguimiento post reunión', orden: 50,
     descripcion: 'Después de la reunión, para mantener el impulso.',
     asunto: 'Gracias por su tiempo — próximos pasos',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nGracias por el tiempo que me dedicó hoy. Fue muy útil entender qué está buscando para su inversión.\n\nComo quedamos, le haré llegar las operaciones que mejor se ajusten a su perfil apenas estén disponibles.\n\nCualquier consulta que surja mientras tanto, no dude en escribirme.' },
+    cuerpo: '{{saludo_completo}}.\n\nGracias por el tiempo que me dedicó hoy. Fue muy útil entender qué está buscando para su inversión.\n\nComo quedamos, le haré llegar las operaciones que mejor se ajusten a su perfil apenas estén disponibles.\n\nCualquier consulta que surja mientras tanto, no dude en escribirme.' },
   { clave: 'reactivacion', nombre: 'Reactivación de cliente dormido', orden: 60,
     descripcion: 'Cliente de cartera que no invierte hace más de 6 meses.',
     asunto: '{{primer_nombre}}, tenemos novedades para usted',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nHa pasado un tiempo desde su última inversión con nosotros y quería retomar el contacto.\n\nSoy **{{gestora}}**, su Gestora de Patrimonio. En estos meses hemos incorporado nuevas operaciones con garantía inmobiliaria y condiciones que creo que vale la pena que conozca.\n\nMe gustaría conversar unos minutos con usted para ponerle al día. ¿Le parece si le llamo esta semana?' },
+    cuerpo: '{{saludo_completo}}.\n\nHa pasado un tiempo desde su última inversión con nosotros y quería retomar el contacto.\n\nSoy **{{gestora}}**, su Gestora de Patrimonio. En estos meses hemos incorporado nuevas operaciones con garantía inmobiliaria y condiciones que creo que vale la pena que conozca.\n\nMe gustaría conversar unos minutos con usted para ponerle al día. ¿Le parece si le llamo esta semana?' },
   { clave: 'agradecimiento', nombre: 'Agradecimiento por inversión', orden: 70,
     descripcion: 'El cliente concretó una inversión.',
     asunto: 'Gracias por su confianza — Tasatop',
-    cuerpo: 'Estimado(a) {{primer_nombre}},\n\nSu inversión quedó registrada. Gracias por seguir confiando en nosotros.\n\nEstaré atenta al desarrollo de la operación y le mantendré informado(a) en cada etapa. Ante cualquier consulta, escríbame directamente.\n\nUn gusto acompañarle en este proceso.' }
+    cuerpo: '{{saludo_completo}}.\n\nSu inversión quedó registrada. Gracias por seguir confiando en nosotros.\n\nEstaré atenta al desarrollo de la operación y le mantendré informado(a) en cada etapa. Ante cualquier consulta, escríbame directamente.\n\nUn gusto acompañarle en este proceso.' }
 ];
+// v1.471: las plantillas ya guardadas conservan el saludo antiguo; se migran una sola vez
+// para que todo el equipo pase al saludo personalizado sin reeditar plantilla por plantilla.
+function correoMigrarSaludo() {
+  try {
+    if (db.prepare("SELECT 1 FROM app_config WHERE clave='mig_saludo_v1471'").get()) return;
+    const filas = db.prepare("SELECT clave, cuerpo FROM correo_plantillas WHERE cuerpo LIKE '%Estimado(a) {{primer_nombre}},%'").all();
+    const upd = db.prepare('UPDATE correo_plantillas SET cuerpo=? WHERE clave=?');
+    filas.forEach(f => upd.run(String(f.cuerpo).replace('Estimado(a) {{primer_nombre}},', '{{saludo_completo}}.'), f.clave));
+    db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('mig_saludo_v1471',?)").run(new Date().toISOString());
+    if (filas.length) console.log('[correos] saludo personalizado aplicado a ' + filas.length + ' plantilla(s)');
+  } catch (e) { console.error('[correos] migrar saludo:', e.message); }
+}
+
 function correoSembrarPlantillas() {
   try {
     const ins = db.prepare(`INSERT OR IGNORE INTO correo_plantillas (clave, nombre, descripcion, asunto, cuerpo, orden, activa, actualizadoEn, actualizadoPor)
@@ -7505,6 +7518,7 @@ function correoSembrarPlantillas() {
   } catch (e) { console.error('[correos] sembrar plantillas:', e.message); }
 }
 correoSembrarPlantillas();
+correoMigrarSaludo();
 
 // Config visual del correo (logo, colores, pie) — editable por el admin.
 function correoConfig() {
@@ -7531,11 +7545,21 @@ function correoTextoAHtml(txt) {
 function correoArmar({ plantilla, lead, gp, pixelId }) {
   const cfg = correoConfig();
   const base = baseUrlPublica();
-  // Primer nombre real: ignora prefijos como [DEMO] y respeta mayúsculas del original.
+  // v1.471: primer nombre en Capitalizado (los datos llegan en MAYÚSCULAS o mezclados desde el
+  // Excel y el formulario). Ignora prefijos como [DEMO] y toma SOLO la primera palabra.
   const limpio = String(lead.nombre || '').replace(/^\[[^\]]*\]\s*/, '').trim();
-  const primerNombre = limpio.split(/\s+/)[0] || 'estimado cliente';
+  const crudo = limpio.split(/\s+/)[0] || '';
+  const primerNombre = crudo
+    ? crudo.charAt(0).toLocaleUpperCase('es-PE') + crudo.slice(1).toLocaleLowerCase('es-PE')
+    : 'estimado cliente';
+  // Saludo segun la hora de Peru (UTC-5) al momento del envio.
+  const horaPeru = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Lima', hour: '2-digit', hour12: false }));
+  const saludoHora = horaPeru < 12 ? 'buenos dias' : (horaPeru < 19 ? 'buenas tardes' : 'buenas noches');
+  const saludoTilde = saludoHora === 'buenos dias' ? 'buenos días' : saludoHora;
   const vars = {
     cliente: lead.nombre || '', primer_nombre: primerNombre,
+    saludo: saludoTilde,
+    saludo_completo: primerNombre + ', ' + saludoTilde,
     gestora: gp.nombre || 'Tasatop', correo_gp: gp.usuario || '',
     telefono_gp: gp.firmaTelefono || '', cargo_gp: gp.firmaCargo || 'Gestora de Patrimonio',
     empresa: 'Tasatop'
@@ -7711,6 +7735,10 @@ app.post('/api/correos/enviar', async (req, res) => {
   const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(b.codigo);
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
   if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
+  // v1.471: el envío desde el CRM está habilitado solo para clientes de cartera activa.
+  // Los leads de marketing tienen correos sin verificar (errores de tipeo, dominios muertos):
+  // enviarles en volumen degradaría la reputación del dominio y afectaría a TODO el equipo.
+  if (!lead.esCartera) return res.status(403).json({ error: 'El envío de correos desde el CRM está habilitado solo para clientes de cartera activa.' });
   const para = String(b.para || lead.email || '').trim();
   if (!para.includes('@')) return res.status(422).json({ error: 'El cliente no tiene correo válido' });
 
@@ -10251,7 +10279,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.470 (Agendamiento automático: descripción limpia e invitados de jefatura por defecto. (1) La descripción del evento de Google Calendar ahora dice únicamente Agendado desde MiTasatop — se eliminaron el código de inversionista, el nombre del cliente y su teléfono, que quedaban expuestos a todos los invitados del evento. En B2B se conserva solo la logística (modalidad y lugar) y el aviso de transcripción, que es lo que el equipo necesita ver. (2) INVITADOS FIJOS en todo agendamiento automático: en B2C entran jnazario@tasatop.com y jdelgado@tasatop.com; en B2B, jnazario@tasatop.com y dleon@tasatop.com. Además se agrega SIEMPRE al propio gestor de la reunión, de modo que el evento aparece en su calendario aunque el evento se cree en su nombre. La lista se arma con un helper central (invitadosEvento) que descarta vacíos, normaliza y deduplica, así que si la GP es la propia jefa no se duplica su correo. (3) FIX en google-calendar.js: actualizarEvento no enviaba invitados, por lo que al REPROGRAMAR una reunión los invitados fijos nunca se incorporaban a eventos creados antes de esta versión; ahora se propagan también en la actualización. Aplica a los tres puntos de agendamiento: backfill masivo, registro de gestión (Agendó/Reprogramó reunión) y agenda B2B. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.471 (Saludo personalizado y correo restringido a cartera: (1) SALUDO DINÁMICO: las plantillas pasan de Estimado(a) {{primer_nombre}} a {{saludo_completo}}, que produce Jhenifer, buenos días — el primer nombre Capitalizado (los datos llegan en MAYÚSCULAS desde el Excel y mezclados desde el formulario; ahora se normaliza respetando tildes) y el saludo según la HORA DE PERÚ al momento del envío: buenos días antes de las 12, buenas tardes hasta las 19, buenas noches después. Se agregan las variables saludo y saludo_completo, usables en cualquier plantilla. Migración one-shot que actualiza las plantillas ya guardadas para que el equipo no tenga que reeditarlas una por una. (2) ENVÍO RESTRINGIDO A CARTERA ACTIVA: en los leads de marketing el icono de correo sigue visible en la tarjeta y en Mi Cola pero aparece atenuado y deshabilitado, con el motivo en el tooltip; el servidor rechaza el envío con 403 aunque se llame directo a la API. La razón es de entregabilidad: los correos de leads de marketing no están verificados (errores de tipeo, dominios inexistentes) y una tasa alta de rebote degrada la reputación del dominio, lo que afectaría los envíos de TODO el equipo, incluidos los de cartera. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
