@@ -8008,8 +8008,11 @@ app.post('/api/leads/:codigo/espera', (req, res) => {
   const b = req.body || {};
   const motivo = String(b.motivo || '').trim();
   if (!motivo) return res.status(400).json({ error: 'Indica el motivo' });
-  const hasta = b.hasta ? String(b.hasta).slice(0, 10) : null;
-  if (hasta && !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) return res.status(400).json({ error: 'Fecha inválida' });
+  // v1.476: comentario OBLIGATORIO — es el contexto que necesitará quien lo retome en 15 días.
+  const nota = String(b.nota || '').trim();
+  if (!nota) return res.status(400).json({ error: 'El comentario es obligatorio: describe qué espera el cliente' });
+  // Plazo FIJO de 15 días para todos (ya no lo elige la GP).
+  const hasta = new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
   const ahora = new Date().toISOString();
   // La etapa es CALCULADA desde las gestiones (no es columna): se guarda solo como referencia
   // informativa; al reactivar, el lead retoma su etapa real automáticamente.
@@ -8017,12 +8020,11 @@ app.post('/api/leads/:codigo/espera', (req, res) => {
   try { etapaInfo = leadConsolidado(lead).etapa; } catch (e) { }
   db.prepare(`UPDATE leads SET enEspera=1, esperaMotivo=?, esperaNota=?, esperaDesde=?, esperaHasta=?,
     esperaEtapaPrevia=?, esperaVolvioEn=NULL WHERE codigo=?`)
-    .run(motivo, b.nota ? String(b.nota).trim() : null, ahora, hasta, etapaInfo, lead.codigo);
+    .run(motivo, nota, ahora, hasta, etapaInfo, lead.codigo);
   try {
     db.prepare(`INSERT INTO gestiones (codigo, fecha, asesor, canal, resultado, comentario)
       VALUES (?,?,?,?,?,?)`).run(lead.codigo, ahora, req.user.nombre, 'Otro', 'Puesto en espera',
-      '⏸ ' + motivo + (b.nota ? ' — ' + String(b.nota).trim() : '') +
-      (hasta ? ' · retoma el ' + hasta : ' · sin fecha (tope 90 días)'));
+      '⌛ ' + motivo + ' — ' + nota + ' · retoma el ' + hasta);
   } catch (e) { }
   auditar(req, 'lead_espera', lead.codigo, motivo + (hasta ? ' hasta ' + hasta : ''));
   res.json({ ok: true });
@@ -8031,10 +8033,13 @@ app.post('/api/leads/:codigo/espera', (req, res) => {
 // POST /api/leads/:codigo/espera/reactivar — vuelve al embudo.
 // (No se usa /reactivar a secas: esa ruta ya existe para la cuarentena y capturaría primero.)
 app.post('/api/leads/:codigo/espera/reactivar', (req, res) => {
-  if (!req.user) return res.status(401).json({ error: 'No autorizado' });
+  // v1.476: la GP NO puede regresar un lead de espera — vuelve solo a los 15 días.
+  // Solo jefatura puede adelantar el retorno (ej. salió la operación que el cliente esperaba).
+  if (!req.user || !['admin', 'jefa'].includes(req.user.rol)) {
+    return res.status(403).json({ error: 'El lead volverá solo al cumplir su plazo. Solo jefatura puede adelantarlo.' });
+  }
   const lead = db.prepare('SELECT * FROM leads WHERE codigo=?').get(req.params.codigo);
   if (!lead || !lead.enEspera) return res.status(404).json({ error: 'No está en espera' });
-  if (req.user.rol === 'gestora' && lead.asesor !== req.user.nombre) return res.status(403).json({ error: 'Este lead no es tuyo' });
   reactivarLeadEnEspera(lead, req.user.nombre);
   auditar(req, 'lead_reactivar', lead.codigo, 'manual');
   res.json({ ok: true });
@@ -8056,7 +8061,7 @@ app.get('/api/espera', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'No autorizado' });
   const propios = req.user.rol === 'gestora';
   let filas = db.prepare(`SELECT codigo, nombre, telefono, email, asesor, esCartera, esperaMotivo,
-      esperaNota, esperaDesde, esperaHasta, esperaEtapaPrevia FROM leads
+      esperaNota, esperaDesde, esperaHasta, esperaEtapaPrevia, montoPotencial, montoReal FROM leads
     WHERE enEspera=1 AND COALESCE(archivado,0)=0 ${propios ? 'AND asesor=?' : ''}
     ORDER BY COALESCE(esperaHasta,'9999') ASC, esperaDesde ASC`).all(...(propios ? [req.user.nombre] : []));
   const hoy = new Date().toISOString().slice(0, 10);
@@ -8066,7 +8071,9 @@ app.get('/api/espera', (req, res) => {
   });
   const porMotivo = db.prepare(`SELECT esperaMotivo motivo, COUNT(*) n FROM leads
     WHERE enEspera=1 AND COALESCE(archivado,0)=0 GROUP BY esperaMotivo ORDER BY n DESC`).all();
-  res.json({ filas, porMotivo, motivos: ESPERA_MOTIVOS });
+  // Potencial total pausado (lo que hay "dentro del reloj").
+  const potencial = filas.reduce((s, f) => s + (Number(f.montoReal || f.montoPotencial || 0) || 0), 0);
+  res.json({ filas, porMotivo, motivos: ESPERA_MOTIVOS, potencial, puedeReactivar: !propios });
 });
 
 // Retorno automático: corre a diario — reactiva los que llegaron a su fecha, y los sin fecha al
@@ -10498,7 +10505,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.475 (EN ESPERA / STAND-BY: para clientes que SÍ quieren invertir pero algo los pausa (ej. esperan una operación con garantía inmobiliaria), sin desestimarlos ni ensuciar el embudo. (1) ZONA DE ARRASTRE flotante ⏸ que aparece solo mientras se arrastra una tarjeta del kanban: se suelta ahí y se abre el modal con 7 motivos frecuentes (garantía inmobiliaria, liquidez, viaje, familia, vencimiento de otra inversión…), nota opcional y FECHA DE RETORNO (por defecto en 30 días, o vacía con tope de 90). En Mi Cola, botón ⏸ en cada fila (ahí no hay drag). Aplica a leads de marketing y de cartera activa por igual. (2) El lead SALE del embudo: no aparece en kanban, tabla, Mi Cola ni dashboard, y no cuenta en las métricas de conversión. Conserva su GP (en cartera respeta la relación construida). (3) RETORNO AUTOMÁTICO: un job (al arrancar y cada hora) reactiva los que llegaron a su fecha, y los sin fecha al cumplir 90 días; el lead reaparece con una gestión Volvió de espera y próxima acción hoy, así entra a la cola del día de su GP. La etapa NO se pierde: se recalcula sola desde las gestiones. (4) NUEVA VISTA ⏸ En espera (menú B2C): la GP ve los suyos y jefatura todo, con desglose por motivo — si hay 12 esperando garantía inmobiliaria, eso es demanda insatisfecha medible para originación — días en espera, fecha de retomo, aviso ¡ya! para vencidos y botón de reactivación manual. FIX: la ruta de reactivar es /espera/reactivar porque /reactivar ya existía para cuarentena y capturaba primero. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.476 (EN ESPERA versión reloj de arena: (1) La zona de arrastre se reemplaza por un RELOJ DE ARENA ⌛ flotante SIEMPRE visible en la vista kanban, con contador de cuántos leads hay dentro. Al arrastrar una tarjeta el reloj SE AGRANDA Y GIRA (animación de volteo continuo, como un reloj dándose la vuelta); al pasar la tarjeta encima crece aún más, y al recibir el lead emite un pulso de confirmación. (2) PLAZO FIJO DE 15 DÍAS para todos — la GP ya no elige fecha; el servidor la calcula. (3) MOTIVO Y COMENTARIO OBLIGATORIOS: el comentario describe qué espera exactamente el cliente y lo leerá quien lo retome; el servidor rechaza el envío sin él. (4) SIN VUELTA ATRÁS para la GP: una vez en espera, el lead regresa solo al cumplir los 15 días (job horario); solo jefatura puede adelantar el retorno desde la vista En espera (botón Adelantar), por ejemplo si sale la operación que el cliente esperaba. El modal lo advierte antes de confirmar. (5) CLIC EN EL RELOJ: muestra qué leads están dentro con su motivo, comentario, monto y fecha de retorno, más el POTENCIAL PAUSADO total en soles. La vista de jefatura también muestra ese potencial. En Mi Cola el botón pasa a ⌛. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".

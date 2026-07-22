@@ -960,6 +960,7 @@ function cambiarPagina(d) { PAG_ACTUAL += d; render(); }
 function cambiarPagSize() { PAG_SIZE = parseInt($('pagSize').value); PAG_ACTUAL = 1; render(); }
 function setVista(v) {
   VISTA_LEADS = v;
+  if (typeof esperaRelojVisibilidad === 'function') setTimeout(esperaRelojVisibilidad, 50);
   const tgCola = $('tg-cola'); if (tgCola) tgCola.classList.toggle('act', v === 'cola');
   $('tg-tabla').classList.toggle('act', v === 'tabla');
   $('tg-kanban').classList.toggle('act', v === 'kanban');
@@ -1018,7 +1019,7 @@ function renderColaB2C(d) {
               ? '<button class="cola-ll cola-ml" onclick="event.stopPropagation();abrirCorreoPresentacion(\'' + c.codigo + '\')" title="Enviar correo">' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>'
               : '<button class="cola-ll cola-ml off" title="El envío de correos está habilitado solo para clientes de cartera activa" disabled>' + (typeof ICO_MAIL !== 'undefined' ? ICO_MAIL : '✉') + '</button>')
           : '') +
-        '<button class="cola-ll cola-esp" onclick="event.stopPropagation();abrirModalEspera(\'' + c.codigo + '\')" title="Poner en espera">⏸</button>' + '</div>' +
+        '<button class="cola-ll cola-esp" onclick="event.stopPropagation();abrirModalEspera(\'' + c.codigo + '\')" title="Poner en espera (15 días)">⌛</button>' + '</div>' +
       '</div>';
   }).join('');
   cont.innerHTML = '<div class="cola-wrap">' +
@@ -11935,24 +11936,46 @@ async function waRestaurar() {
 // El lead quiere invertir pero algo lo pausa. Se arrastra a la
 // zona flotante ⏸ y sale del embudo con motivo y fecha de retorno.
 // ============================================================
-function esperaZonaMostrar() {
-  let z = document.getElementById('esperaZona');
+// Reloj de arena flotante: SIEMPRE visible en el kanban. Al arrastrar una tarjeta gira y se
+// agranda; se suelta encima → modal de espera. Con clic normal muestra qué leads hay dentro.
+function esperaReloj() {
+  let z = document.getElementById('esperaReloj');
   if (!z) {
     z = document.createElement('div');
-    z.id = 'esperaZona';
-    z.className = 'espera-zona';
-    z.innerHTML = '<div class="espera-zona-ico">⏸</div><div class="espera-zona-txt">Soltar aquí:<br><b>En espera</b></div>';
+    z.id = 'esperaReloj';
+    z.className = 'espera-reloj';
+    z.title = 'En espera — arrastra un lead aquí, o haz clic para ver los que están dentro';
+    z.innerHTML = '<div class="espera-reloj-ico">⌛</div><div class="espera-reloj-txt">En espera</div><div class="espera-reloj-badge oculto" id="esperaRelojN"></div>';
+    z.onclick = () => { if (!z.classList.contains('drag-on')) abrirVerEspera(); };
     z.ondragover = (e) => { e.preventDefault(); z.classList.add('drop'); };
     z.ondragleave = () => z.classList.remove('drop');
     z.ondrop = (e) => {
-      e.preventDefault(); z.classList.remove('drop'); esperaZonaOcultar();
+      e.preventDefault(); z.classList.remove('drop', 'drag-on');
       if (K_DRAG && K_DRAG.cod) abrirModalEspera(K_DRAG.cod);
     };
     document.body.appendChild(z);
+    esperaRelojContador();
   }
-  z.classList.add('act');
+  return z;
 }
-function esperaZonaOcultar() { const z = document.getElementById('esperaZona'); if (z) z.classList.remove('act', 'drop'); }
+function esperaRelojContador() {
+  api('/api/espera').then(d => {
+    const b = document.getElementById('esperaRelojN');
+    if (!b) return;
+    const n = (d.filas || []).length;
+    b.textContent = n;
+    b.classList.toggle('oculto', !n);
+  }).catch(() => {});
+}
+function esperaZonaMostrar() { const z = esperaReloj(); z.classList.add('drag-on'); }
+function esperaZonaOcultar() { const z = document.getElementById('esperaReloj'); if (z) z.classList.remove('drag-on', 'drop'); }
+// El reloj vive solo en la vista kanban.
+function esperaRelojVisibilidad() {
+  const z = esperaReloj();
+  const enKanban = (typeof VISTA_LEADS !== 'undefined' && VISTA_LEADS === 'kanban') &&
+    document.getElementById('v-leads') && document.getElementById('v-leads').classList.contains('act');
+  z.classList.toggle('oculto', !enKanban);
+}
 
 const ESPERA_MOTIVOS_UI = [
   'Espera operación con garantía inmobiliaria',
@@ -11965,35 +11988,71 @@ const ESPERA_MOTIVOS_UI = [
 ];
 function abrirModalEspera(codigo) {
   const l = (typeof LEADS !== 'undefined' ? LEADS : []).find(x => x.codigo === codigo);
-  const en30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
   let ov = document.getElementById('espOverlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'espOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
   ov.innerHTML = '<div class="corr-wrap" style="max-width:470px">' +
-    '<div class="corr-head">⏸ Poner en espera' + (l ? ' — ' + esc(l.nombre || codigo) : '') + '</div>' +
-    '<p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55">El cliente quiere invertir pero algo lo pausa. Sale del embudo y vuelve solo en la fecha que definas (o a los 90 días como tope).</p>' +
-    '<label class="corr-lbl">Motivo<select id="espMotivo">' + ESPERA_MOTIVOS_UI.map(m => '<option>' + m + '</option>').join('') + '</select></label>' +
-    '<label class="corr-lbl">¿Cuándo retomar? <small>(déjalo vacío si no hay fecha; tope 90 días)</small><input type="date" id="espHasta" value="' + en30 + '"></label>' +
-    '<label class="corr-lbl">Nota <small>(opcional)</small><textarea id="espNota" rows="2" placeholder="Ej.: quiere depa en Surco, ticket S/ 200K; avisarle apenas salga algo similar."></textarea></label>' +
+    '<div class="corr-head">⌛ Poner en espera' + (l ? ' — ' + esc(l.nombre || codigo) : '') + '</div>' +
+    '<div class="esp-aviso">El lead sale del embudo y <b>vuelve solo en 15 días</b>. No podrás regresarlo antes, así que confirma que de verdad está pausado.</div>' +
+    '<label class="corr-lbl">¿Por qué se pausa? <span class="esp-req">*</span><select id="espMotivo">' + ESPERA_MOTIVOS_UI.map(m => '<option>' + m + '</option>').join('') + '</select></label>' +
+    '<label class="corr-lbl">Comentario <span class="esp-req">*</span> <small>(qué espera exactamente — lo leerá quien lo retome)</small>' +
+      '<textarea id="espNota" rows="3" placeholder="Ej.: quiere depa en Surco, ticket S/ 200K; avisarle apenas salga algo similar."></textarea></label>' +
     '<div class="corr-btns">' +
       '<button class="btn sec" onclick="cerrarModalEspera()">Cancelar</button>' +
-      '<button class="btn" id="espOk" onclick="confirmarEspera(\'' + codigo + '\')">⏸ Poner en espera</button>' +
+      '<button class="btn" id="espOk" onclick="confirmarEspera(\'' + codigo + '\')">⌛ Enviar a espera (15 días)</button>' +
     '</div></div>';
   ov.classList.add('act');
 }
 function cerrarModalEspera() { const ov = document.getElementById('espOverlay'); if (ov) ov.classList.remove('act'); }
 async function confirmarEspera(codigo) {
+  const nota = $('espNota').value.trim();
+  if (!nota) { alert('El comentario es obligatorio: describe qué espera el cliente.'); $('espNota').focus(); return; }
   const btn = document.getElementById('espOk');
-  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
   try {
     await api('/api/leads/' + codigo + '/espera', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ motivo: $('espMotivo').value, nota: $('espNota').value, hasta: $('espHasta').value || null }) });
+      body: JSON.stringify({ motivo: $('espMotivo').value, nota }) });
     cerrarModalEspera();
+    // Feedback: el reloj "recibe" el lead con un pulso.
+    const z = document.getElementById('esperaReloj');
+    if (z) { z.classList.add('pulso'); setTimeout(() => z.classList.remove('pulso'), 700); }
+    esperaRelojContador();
     if (typeof cargarLeads === 'function') cargarLeads();
     if (typeof cargarColaB2C === 'function' && VISTA_LEADS === 'cola') cargarColaB2C();
   } catch (e) {
     alert('No se pudo: ' + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = '⏸ Poner en espera'; }
+    if (btn) { btn.disabled = false; btn.textContent = '⌛ Enviar a espera (15 días)'; }
   }
+}
+
+// ---- Ver qué hay dentro del reloj (clic) ----
+async function abrirVerEspera() {
+  let d;
+  try { d = await api('/api/espera'); }
+  catch (e) { return alert('No se pudo cargar: ' + e.message); }
+  const filas = d.filas || [];
+  const pot = Number(d.potencial || 0);
+  let ov = document.getElementById('verEspOverlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'verEspOverlay'; ov.className = 'corr-overlay'; document.body.appendChild(ov); }
+  const lista = filas.length
+    ? '<table class="cart-tabla"><thead><tr><th>Cliente</th><th>Motivo</th><th>Monto</th><th>Vuelve</th></tr></thead><tbody>' +
+      filas.map(f => {
+        const m = Number(f.montoReal || f.montoPotencial || 0);
+        return '<tr>' +
+          '<td><b>' + esc(f.nombre || f.codigo) + '</b>' + (f.esCartera ? ' ♻️' : '') + '</td>' +
+          '<td style="font-size:12px">' + esc(f.esperaMotivo || '') + (f.esperaNota ? '<div style="font-size:10.5px;color:var(--muted)">' + esc(f.esperaNota) + '</div>' : '') + '</td>' +
+          '<td style="font-size:12px;white-space:nowrap">' + (m ? 'S/ ' + m.toLocaleString('es-PE') : '—') + '</td>' +
+          '<td style="font-size:12px;white-space:nowrap">' + (f.esperaHasta || '—') + (f.vencido ? ' <b style="color:#B7791F">¡ya!</b>' : '') + '</td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>'
+    : '<div class="vacio">El reloj está vacío: no tienes leads en espera.</div>';
+  ov.innerHTML = '<div class="corr-wrap" style="max-width:560px">' +
+    '<div class="corr-head">⌛ En espera — ' + filas.length + ' lead(s)</div>' +
+    (pot ? '<div class="esp-potencial">Potencial pausado: <b>S/ ' + pot.toLocaleString('es-PE') + '</b></div>' : '') +
+    '<div style="max-height:340px;overflow-y:auto">' + lista + '</div>' +
+    '<p style="font-size:11.5px;color:var(--muted);margin:10px 0 0">Cada lead vuelve solo a los 15 días, con una gestión de retorno y prioridad en tu cola del día.</p>' +
+    '<div class="corr-btns"><button class="btn" onclick="document.getElementById(\'verEspOverlay\').classList.remove(\'act\')">Cerrar</button></div>' +
+    '</div>';
+  ov.classList.add('act');
 }
 
 // ---- Vista "En espera" ----
@@ -12007,7 +12066,8 @@ async function cargarEnEspera() {
         d.porMotivo.map(m => '<span class="cart-pill">' + esc(m.motivo || '—') + ': ' + m.n + '</span>').join('') + '</div>'
       : '';
     if (!d.filas.length) { cont.innerHTML = '<div class="vacio">No hay clientes en espera.</div>'; return; }
-    cont.innerHTML = motivos +
+    const pot = Number(d.potencial || 0);
+    cont.innerHTML = (pot ? '<div class="esp-potencial">Potencial pausado: <b>S/ ' + pot.toLocaleString('es-PE') + '</b> en ' + d.filas.length + ' lead(s)</div>' : '') + motivos +
       '<table class="cart-tabla"><thead><tr><th>Cliente</th><th>GP</th><th>Motivo</th><th>Desde</th><th>Retoma</th><th></th></tr></thead><tbody>' +
       d.filas.map(f =>
         '<tr' + (f.vencido ? ' style="background:#FFF8F0"' : '') + '>' +
@@ -12016,7 +12076,7 @@ async function cargarEnEspera() {
         '<td style="font-size:12px">' + esc(f.esperaMotivo || '') + (f.esperaNota ? '<div style="font-size:10.5px;color:var(--muted)">' + esc(f.esperaNota) + '</div>' : '') + '</td>' +
         '<td style="font-size:12px">' + (f.dias != null ? 'hace ' + f.dias + 'd' : '—') + '</td>' +
         '<td style="font-size:12px">' + (f.esperaHasta ? f.esperaHasta : '<span style="color:var(--muted)">tope 90d</span>') + (f.vencido ? ' <b style="color:#B7791F">¡ya!</b>' : '') + '</td>' +
-        '<td><button class="btn sec" onclick="reactivarEspera(\'' + f.codigo + '\')">▶ Reactivar</button></td>' +
+        (d.puedeReactivar ? '<td><button class="btn sec" onclick="reactivarEspera(\'' + f.codigo + '\')" title="Adelantar el retorno (solo jefatura)">▶ Adelantar</button></td>' : '<td></td>') +
         '</tr>').join('') + '</tbody></table>';
   } catch (e) { cont.innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
 }
