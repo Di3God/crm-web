@@ -48,6 +48,7 @@
         <button class="mundo-item oculto" id="mi-b2b-ing" onclick="navB2B('ing')">Bandeja de ingresos</button>
         <button class="mundo-item oculto" id="mi-b2b-releads" onclick="navB2B('releads')">Base de Releads B2B</button>
         <button class="mundo-item oculto" id="mi-b2b-ruc10" onclick="navB2B('ruc10')">🪪 Casos RUC 10</button>
+        <button class="mundo-item oculto" id="mi-b2b-wa" onclick="navB2B('wa')">💬 Mensaje de bienvenida</button>
         <button class="mundo-item oculto" id="mi-b2b-dia" onclick="navB2B('dia')">📊 Gestión del día</button>
         <button class="mundo-item oculto" id="mi-b2b-ops" onclick="navB2B('ops')">🎛 Centro de Operaciones</button>
         <button class="mundo-item oculto" id="mi-b2b-audit" onclick="navB2B('audit')">Auditoría B2B</button>
@@ -851,6 +852,25 @@
       <div class="cart-tit">📞 Cuentas de teléfono compartidas <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— cuando alguien usa la cuenta de otra persona</span></div>
       <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.55">Si una GP hace llamadas desde una cuenta que figura a nombre de otra persona, indícalo aquí: sus llamadas se le atribuirán correctamente en el centro de llamadas y en sus métricas.</p>
       <div id="aliasAgentes"></div>
+    </div>
+  </section>
+
+  <!-- ===== MENSAJES DE WHATSAPP B2B (v1.473) ===== -->
+  <section id="v-b2b-wa" class="vista">
+    <h2>💬 Mensaje de bienvenida B2B</h2>
+    <p class="sub">Al llegar un lead, el bot envía al grupo tres mensajes: la alerta de siempre, este saludo listo para copiar, y el nombre del contacto para guardar en la agenda.</p>
+    <div class="cart-box">
+      <div class="cart-tit">📝 Plantilla del saludo</div>
+      <label class="corr-lbl">Texto<textarea id="waSaludoTpl" rows="10"></textarea></label>
+      <div class="corr-vars">Variables: <code onclick="waInsertar('primer_nombre')">{{primer_nombre}}</code> <code onclick="waInsertar('contacto')">{{contacto}}</code> <code onclick="waInsertar('empresa')">{{empresa}}</code> <code onclick="waInsertar('funcionario')">{{funcionario}}</code> <code onclick="waInsertar('monto')">{{monto}}</code> <code onclick="waInsertar('saludo')">{{saludo}}</code> · *negrita* de WhatsApp</div>
+      <div class="corr-tpl-btns">
+        <button class="btn sec" onclick="waRestaurar()">↩ Restaurar por defecto</button>
+        <button class="btn" onclick="waGuardarSaludo()">💾 Guardar</button>
+      </div>
+    </div>
+    <div class="cart-box">
+      <div class="cart-tit">👁 Vista previa <span style="font-weight:500;font-size:11.5px;color:var(--muted)">— con el último lead recibido</span></div>
+      <div id="waPrevia"></div>
     </div>
   </section>
 

@@ -413,10 +413,89 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
         '\n👔 Asignado: ' + (f.responsableActual ? primerNom(f.responsableActual) : 'Sin asignar') +
         '\n\n¡Contáctalo ahora!' + (link ? ' ' + link : '');
       enviarAlertaB2BWA(txt); // fire-and-forget
+      // v1.473: tras la alerta van dos mensajes más, listos para copiar y pegar:
+      //  2) el saludo de entrada personalizado con los datos del lead
+      //  3) "Contacto - Empresa" para guardar la agenda con un formato uniforme
+      // Se envían con retraso escalonado para que lleguen en orden y no se mezclen en el grupo.
+      setTimeout(() => { try { enviarBloquesCopiar(f); } catch (e) { console.error('[WA-B2B] bloques copiar:', e.message); } }, 1200);
       // Watchdog: si a los 30 min el lead NO tiene ninguna gestión registrada, avisar que no se enfríe.
       // (v1.447: ventana ampliada de 15 a 30 min — la primera búsqueda en centrales de riesgo toma unos minutos.)
       programarAlertaSinAtender(codigo);
     } catch (e) { console.error('[WA-B2B] alerta nueva solicitud:', e.message); }
+  }
+
+  // ---- v1.473: bloques para copiar y pegar (saludo + contacto) ----
+  // Plantilla editable desde el CRM (app_config: wa_b2b_saludo). Variables disponibles:
+  //   {{contacto}} {{primer_nombre}} {{empresa}} {{funcionario}} {{monto}} {{saludo}}
+  const WA_B2B_SALUDO_DEFECTO =
+    'Hola {{primer_nombre}}. Soy {{funcionario}} de Tasatop.\n\n' +
+    'Gracias por dejarme tu solicitud de financiamiento para {{empresa}}. La recibí correctamente.\n\n' +
+    'Voy a realizar una precalificación inicial con la información que enviaste. Si el caso cumple los criterios básicos, coordinaré contigo la validación de la garantía y los siguientes pasos.\n\n' +
+    '¿Estás de acuerdo con que iniciemos esta precalificación? 👇\n\n' +
+    'Responde con una opción:\n' +
+    '1. Estoy de acuerdo\n' +
+    '2. No deseo continuar';
+
+  function plantillaSaludoB2B() {
+    try {
+      const r = db.prepare("SELECT valor FROM app_config WHERE clave='wa_b2b_saludo'").get();
+      if (r && r.valor && r.valor.trim()) return r.valor;
+    } catch (e) { }
+    return WA_B2B_SALUDO_DEFECTO;
+  }
+
+  function saludoPorHora() {
+    const h = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Lima', hour: '2-digit', hour12: false }));
+    return h < 12 ? 'buenos días' : (h < 19 ? 'buenas tardes' : 'buenas noches');
+  }
+
+  // Capitaliza respetando tildes y toma solo la primera palabra.
+  function primerNombreCap(nombre) {
+    const limpio = String(nombre || '').replace(/^\[[^\]]*\]\s*/, '').trim();
+    const c = limpio.split(/\s+/)[0] || '';
+    return c ? c.charAt(0).toLocaleUpperCase('es-PE') + c.slice(1).toLocaleLowerCase('es-PE') : '';
+  }
+
+  // Title Case para nombres de persona: los datos llegan en MAYÚSCULAS desde el formulario.
+  function nombreCap(nombre) {
+    const s = String(nombre || '').trim();
+    if (!s) return '';
+    return s.toLocaleLowerCase('es-PE').replace(/(^|\s|-)([a-záéíóúñ])/g, (m, p, l) => p + l.toLocaleUpperCase('es-PE'));
+  }
+
+  // Razón social en formato legible: quita el tipo societario para que el contacto sea corto.
+  function empresaCorta(razon) {
+    let s = String(razon || '').trim();
+    if (!s) return '';
+    s = s.replace(/\s+(S\.?A\.?C\.?|S\.?A\.?|E\.?I\.?R\.?L\.?|S\.?R\.?L\.?|SOCIEDAD ANONIMA CERRADA|SOCIEDAD ANONIMA|EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA|SOCIEDAD COMERCIAL DE RESPONSABILIDAD LIMITADA)\.?\s*$/i, '');
+    // Title Case: los datos de SUNAT llegan en MAYÚSCULAS.
+    return s.trim().toLocaleLowerCase('es-PE').replace(/(^|\s|&|-)([a-záéíóúñ])/g, (m, p, l) => p + l.toLocaleUpperCase('es-PE'));
+  }
+
+  function enviarBloquesCopiar(f) {
+    const contacto = String(f.contacto || '').trim();
+    const empresa = empresaCorta(f.razonSocial || f.nombreComercial || '');
+    const primer = primerNombreCap(contacto);
+    const monto = f.montoSolicitado != null ? fmtS(f.montoSolicitado) : (f.montoRango || 'su requerimiento');
+    const func = f.responsableActual ? primerNom(f.responsableActual) : 'un asesor';
+    const vars = {
+      contacto: contacto || '—',
+      primer_nombre: primer || 'estimado cliente',
+      empresa: empresa || 'su empresa',
+      funcionario: func,
+      monto: monto,
+      saludo: saludoPorHora()
+    };
+    let saludo = plantillaSaludoB2B();
+    Object.entries(vars).forEach(([k, v]) => { saludo = saludo.split('{{' + k + '}}').join(v); });
+
+    // Mensaje 2: el saludo listo para copiar (sin adornos, para que se pegue tal cual).
+    enviarAlertaB2BWA(saludo);
+
+    // Mensaje 3: nombre de contacto para guardar en la agenda.
+    const cN = nombreCap(contacto);
+    const nombreContacto = (cN && empresa) ? cN + ' - ' + empresa : (cN || empresa || 'Contacto Tasatop');
+    setTimeout(() => { enviarAlertaB2BWA(nombreContacto); }, 900);
   }
 
   // Programa una verificación a los 30 min de llegar el lead. Si sigue sin gestión, lanza alerta.
@@ -548,5 +627,20 @@ module.exports = function ({ db, enviarAlertaWA, peruFecha, etapaKanbanB2B, slaE
     }, 5 * 60 * 1000);
   }
 
-  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA, resumenGestionPorAsesor, enviarResumenGestion, iniciarResumenGestion, iniciarWatchdogSinAtender };
+  // Vista previa para el panel de administración (sin enviar nada).
+  function previaBloquesCopiar(f) {
+    const contacto = String(f.contacto || '').trim();
+    const empresa = empresaCorta(f.razonSocial || f.nombreComercial || '');
+    const primer = primerNombreCap(contacto);
+    const monto = f.montoSolicitado != null ? fmtS(f.montoSolicitado) : (f.montoRango || 'su requerimiento');
+    const func = f.responsableActual ? primerNom(f.responsableActual) : 'un asesor';
+    const vars = { contacto: contacto || '—', primer_nombre: primer || 'estimado cliente', empresa: empresa || 'su empresa', funcionario: func, monto, saludo: saludoPorHora() };
+    let saludo = plantillaSaludoB2B();
+    Object.entries(vars).forEach(([k, v]) => { saludo = saludo.split('{{' + k + '}}').join(v); });
+    const cN = nombreCap(contacto);
+    const nombreContacto = (cN && empresa) ? cN + ' - ' + empresa : (cN || empresa || 'Contacto Tasatop');
+    return { saludo, nombreContacto, plantilla: plantillaSaludoB2B(), defecto: WA_B2B_SALUDO_DEFECTO };
+  }
+
+  return { generarCorte, enviarCorteAhora, iniciarCortes, alertaNuevaSolicitud, enviarAlertaB2BWA, resumenGestionPorAsesor, enviarResumenGestion, iniciarResumenGestion, iniciarWatchdogSinAtender, previaBloquesCopiar };
 };

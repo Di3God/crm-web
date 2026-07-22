@@ -535,6 +535,7 @@ async function arrancar() {
   // Módulo de llamadas B2B: admin y Jefe B2B (Dante). El endpoint /api/llamadas permite ambos.
   if (['admin', 'jefa', 'jefe_b2b', 'jefe_creditos'].includes(YO.rol)) {
     const m = $('mi-b2b-ruc10'); if (m) m.classList.remove('oculto');
+    const mw = $('mi-b2b-wa'); if (mw) mw.classList.remove('oculto');
   }
   if (['admin', 'jefe_b2b'].includes(YO.rol)) {
     document.querySelectorAll('.soloLlamadasB2B').forEach(e => e.classList.remove('oculto'));
@@ -683,6 +684,7 @@ function navB2B(which) {
   if (which === 'ops') { ir('b2b-ops'); return; }
   if (which === 'comite') { ir('b2b-comite'); return; }
   if (which === 'ruc10') { ir('b2b-ruc10'); cargarRuc10(); return; }
+  if (which === 'wa') { ir('b2b-wa'); cargarWaSaludo(); return; }
   ir('b2b');
   b2bTab(which === 'ing' ? 'ing' : 'sol');
 }
@@ -11875,5 +11877,52 @@ async function ruc10Descartar(codigo) {
   try {
     await api('/api/b2b/ruc10/' + codigo + '/descartar', { method: 'POST' });
     cargarRuc10();
+  } catch (e) { alert('No se pudo: ' + e.message); }
+}
+
+// ============================================================
+// ===== MENSAJE DE BIENVENIDA B2B (v1.473) ===================
+// ============================================================
+let WA_SALUDO_DEFECTO = '';
+async function cargarWaSaludo() {
+  try {
+    const d = await api('/api/b2b/wa-saludo');
+    WA_SALUDO_DEFECTO = d.defecto || '';
+    if ($('waSaludoTpl')) $('waSaludoTpl').value = d.plantilla || '';
+    waPintarPrevia(d);
+  } catch (e) { if ($('waPrevia')) $('waPrevia').innerHTML = '<div class="vacio">No se pudo cargar: ' + esc(e.message) + '</div>'; }
+}
+function waPintarPrevia(d) {
+  const burbuja = (txt, etiqueta) =>
+    '<div style="margin-bottom:12px">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">' + etiqueta + '</div>' +
+      '<div style="background:#DCF8C6;border-radius:10px;padding:10px 13px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;max-width:440px;color:#111">' + esc(txt) + '</div>' +
+    '</div>';
+  $('waPrevia').innerHTML =
+    '<div style="background:#ECE5DD;border-radius:12px;padding:14px">' +
+      burbuja('💰 Nueva oportunidad: … (la alerta que ya envía el bot)', '1 · Alerta') +
+      burbuja(d.saludo || '', '2 · Saludo para copiar y enviar al cliente') +
+      burbuja(d.nombreContacto || '', '3 · Nombre para guardar el contacto') +
+    '</div>';
+}
+function waInsertar(v) {
+  const ta = $('waSaludoTpl'); if (!ta) return;
+  const p = ta.selectionStart || 0;
+  ta.value = ta.value.slice(0, p) + '{{' + v + '}}' + ta.value.slice(ta.selectionEnd || p);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = p + v.length + 4;
+}
+async function waGuardarSaludo() {
+  try {
+    await api('/api/b2b/wa-saludo', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plantilla: $('waSaludoTpl').value }) });
+    alert('Guardado. Aplica al siguiente lead que llegue.');
+    cargarWaSaludo();
+  } catch (e) { alert('No se pudo guardar: ' + e.message); }
+}
+async function waRestaurar() {
+  if (!confirm('¿Volver al texto por defecto?')) return;
+  try {
+    await api('/api/b2b/wa-saludo', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plantilla: '' }) });
+    cargarWaSaludo();
   } catch (e) { alert('No se pudo: ' + e.message); }
 }

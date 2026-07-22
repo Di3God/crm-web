@@ -7516,6 +7516,16 @@ const CORREO_PLANTILLAS_BASE = [
 // v1.472: los RUC 10 que ya entraron como oportunidad se mueven a la cola de casos
 // particulares, EXCEPTO los que ya fueron trabajados (tienen gestiones o avanzaron de etapa):
 // esos se respetan, porque el equipo ya invirtió esfuerzo en ellos.
+// v1.474: la plantilla de bienvenida B2B cambió; se limpia la versión guardada una sola vez
+// para que tome el texto nuevo por defecto (si el admin ya la editó a mano, se respeta).
+function migrarSaludoWaB2B() {
+  try {
+    if (db.prepare("SELECT 1 FROM app_config WHERE clave='mig_wa_saludo_v1474'").get()) return;
+    db.prepare("DELETE FROM app_config WHERE clave='wa_b2b_saludo'").run();
+    db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('mig_wa_saludo_v1474',?)").run(new Date().toISOString());
+  } catch (e) { }
+}
+
 function migrarRuc10Existentes() {
   try {
     if (db.prepare("SELECT 1 FROM app_config WHERE clave='mig_ruc10_v1472'").get()) return;
@@ -7553,6 +7563,7 @@ function correoSembrarPlantillas() {
 correoSembrarPlantillas();
 correoMigrarSaludo();
 migrarRuc10Existentes();
+migrarSaludoWaB2B();
 
 // Config visual del correo (logo, colores, pie) — editable por el admin.
 function correoConfig() {
@@ -7958,6 +7969,30 @@ app.post('/api/cartera/devolver-uno', (req, res) => {
 
   auditar(req, 'cartera_devolver_uno', lead.codigo, motivo + ' · era de ' + (lead.asesor || 'sin asesor'));
   res.json({ ok: true, gestiones: gest, dias });
+});
+
+// ---- v1.473: plantilla del saludo de WhatsApp B2B ----
+// GET /api/b2b/wa-saludo — plantilla actual + vista previa con un lead real.
+app.get('/api/b2b/wa-saludo', (req, res) => {
+  if (!req.user || !['admin', 'jefa', 'jefe_b2b'].includes(req.user.rol)) return res.status(403).json({ error: 'Solo jefatura' });
+  // Ejemplo: el último lead recibido, o uno ficticio si aún no hay.
+  const ej = db.prepare("SELECT contacto, razonSocial, nombreComercial, montoSolicitado, montoRango, responsableActual FROM b2b_solicitudes WHERE COALESCE(archivado,0)=0 ORDER BY id DESC LIMIT 1").get()
+    || { contacto: 'Juan Pérez Ramos', razonSocial: 'DISTRIBUIDORA EL SOL S.A.C.', montoSolicitado: 500000, responsableActual: 'Bony Segil' };
+  const p = alertasWAB2B.previaBloquesCopiar(ej);
+  res.json(p);
+});
+
+// PUT /api/b2b/wa-saludo { plantilla } — editar (solo admin). Vacío = volver al texto por defecto.
+app.put('/api/b2b/wa-saludo', (req, res) => {
+  if (!req.user || req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const t = (req.body && req.body.plantilla != null) ? String(req.body.plantilla) : '';
+  if (t.trim()) {
+    db.prepare("INSERT OR REPLACE INTO app_config (clave,valor) VALUES ('wa_b2b_saludo',?)").run(t);
+  } else {
+    db.prepare("DELETE FROM app_config WHERE clave='wa_b2b_saludo'").run();
+  }
+  auditar(req, 'b2b_wa_saludo', null, t.trim() ? 'plantilla actualizada' : 'restaurada por defecto');
+  res.json({ ok: true });
 });
 
 // GET /api/b2b/ruc10 — cola de casos particulares (personas naturales que llenaron el
@@ -10350,7 +10385,7 @@ setInterval(() => {
   try { db.prepare("DELETE FROM wa_cola WHERE estado='enviada' AND creado < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()); } catch (e) {}
 }, 24 * 60 * 60 * 1000);
 
-const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.472 (CASOS RUC 10: aunque el formulario B2B pide RUC 20, algunos leads ingresan con RUC 10 (persona natural). Estos ya NO se crean como oportunidad: (1) Al ingresar, la solicitud queda en estado RUC 10, SIN asignar y SIN alerta de WhatsApp, pero sí se enriquece con SUNAT para dejar el expediente listo. No se archiva ni se descarta, de modo que el lead sigue contando como recibido en la bandeja de ingresos y en las métricas de marketing. (2) Quedan EXCLUIDOS del pipeline: no aparecen en el kanban, no entran al embudo, no inflan el conteo de oportunidades activas ni participan en la detección de duplicados. (3) NUEVA VISTA Casos RUC 10 en el menú B2B (jefatura): lista los casos en cola con RUC, razón social, contacto, monto y campaña, más el conteo de recibidos y de excepciones aprobadas. Desde ahí se puede APROBAR el caso —pasa a Nuevo, se asigna por round-robin y dispara la alerta, es decir se convierte en oportunidad real— o DESCARTARLO como no elegible. (4) Migración one-shot: los RUC 10 que ya estaban en el tablero se mueven a la cola, EXCEPTO los que ya tienen gestiones o avanzaron de etapa, que se respetan porque el equipo ya invirtió trabajo en ellos. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
+const server = app.listen(PORT, () => console.log(`CRM Tasatop Web v1.474 (Plantilla real del mensaje de bienvenida B2B: se reemplaza el texto propuesto por el que usa el equipo — saludo directo, agradecimiento por la solicitud, aviso de precalificación inicial y cierre con las dos opciones numeradas de respuesta. El nombre del funcionario se toma del responsable asignado a esa solicitud, no de un nombre fijo, así cada uno se presenta con el suyo. Migración one-shot que limpia la plantilla guardada para que todos tomen el texto nuevo. Front: Ctrl+F5) corriendo en puerto ${PORT}`));
 
 // Apagado limpio: cuando Railway reemplaza la version envia SIGTERM. Cerramos
 // ordenado y salimos con codigo 0 para que NO se marque como "crashed".
